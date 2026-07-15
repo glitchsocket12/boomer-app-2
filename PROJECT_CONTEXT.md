@@ -1,0 +1,257 @@
+# PROJECT_CONTEXT.md — Boomer
+
+_A living document. Update it as the project evolves. If something is uncertain, it's marked "unknown" rather than guessed._
+
+---
+
+## 1. Purpose and Vision
+
+Boomer is a mobile-friendly web app designed for adults aged 50–70 who want help staying connected to the people who matter in their lives. The founder (the person you're working with) has no professional coding background and is building this hands-on, learning as they go — explanations should stay in plain language, and major decisions should be checked in on before being built, not just announced.
+
+The core insight driving the product: people don't forget the big things, they forget the *texture* — who was at an event, what was discussed, what's going on with someone's grandkids, what a friend mentioned in passing three months ago. Boomer's job is to be an effortless, conversational memory aid for that texture, so the next time you see someone, you're not starting cold.
+
+**The founder's own words on what makes the app special:** "the output is what is going to make the app special" — meaning the quality, warmth, and usefulness of what the app gives back (not just what it stores) is the actual product. A proactive framing they liked: the app inviting someone back into a memory ("want to take a trip down memory lane about this event?").
+
+## 2. Original Goals / MVP Scope
+
+The founder's original brief specified exactly two core features:
+
+1. **"Add a Moment"** — a conversational feature where the user describes a recent social event (typed or spoken) and an AI asks follow-up questions (who was there, what was discussed), saving the result as notes tied to each person mentioned. Later, the user can ask "tell me about [person]" and get a summary.
+2. **Simple Reminders** — manually add important dates (birthdays, anniversaries) for people, with a notification a few days before ("It's almost [name]'s birthday").
+
+Build order requested: user accounts/login first, then Reminders, then Add a Moment.
+
+Since then, the project has grown well beyond this original two-feature scope (see Section 8). The automatic email-sending half of Reminders was explicitly deferred early on and has not yet been revisited.
+
+## 3. Technology Stack
+
+- **Frontend:** React (via Vite), written in **TypeScript** (`.tsx`/`.ts`) — this happened somewhat by accident, because StackBlitz's default "React" starter template uses TypeScript even when "React" (not "React + TS") is selected. The founder is not a TS expert; keep type annotations light and pragmatic, not strict/idiomatic TS.
+- **Backend / database / auth:** Supabase (Postgres + built-in auth + Edge Functions). Chosen specifically because it bundles auth and a database together, minimizing setup for a beginner.
+- **AI:** Anthropic's Claude API, called exclusively from Supabase **Edge Functions** (Deno-based serverless functions) — never from the frontend — because the API key must never be exposed in browser-visible code.
+- **Dev environment:** **StackBlitz** (browser-based, no local install) — chosen because the founder has no dev environment set up and wanted zero-install. This has caused significant friction throughout the project (see Section 9) and is the reason for now moving to Claude Code.
+- **Hosting/deployment:** Not yet set up. The app has only ever run inside StackBlitz's preview; there is no production deployment (e.g. Vercel/Netlify) yet.
+- **Model name in use:** `claude-sonnet-5` in all Edge Functions. (Earlier revisions mistakenly used an invalid model string, `claude-sonnet-4-6`, which caused a silent failure mode — see Section 9.)
+
+## 4. Project Architecture
+
+```
+src/
+├── main.tsx / index.css      — app entry point, minimal global styles
+├── App.tsx                   — top-level "traffic controller": auth state,
+│                                tab navigation (Home / People / Groups /
+│                                Events / Add a Moment), and routes to a
+│                                person's profile (PersonDetail) when one
+│                                is selected from anywhere in the app
+├── lib/
+│   └── supabase.ts           — single shared Supabase client, reads
+│                                VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+│                                from .env
+├── pages/
+│   ├── Login.tsx              — combined sign up / log in screen
+│   ├── Home.tsx                — THE MAIN SCREEN. A continuous chat thread
+│   │                             (not one-shot search) that calls the
+│   │                             `converse` Edge Function. Handles
+│   │                             questions, new memories, corrections,
+│   │                             and group tagging, all in one thread.
+│   ├── People.tsx              — list of people, add a person (first +
+│   │                             last name), add a reminder date per
+│   │                             person, click a person to view their
+│   │                             profile
+│   ├── PersonDetail.tsx        — one person's profile: all notes about
+│   │                             them (chronological), plus a "fact bar"
+│   │                             to add a detail (routes through the
+│   │                             `add-fact` Edge Function, which decides
+│   │                             if it's a last-name correction or a
+│   │                             plain note)
+│   ├── Groups.tsx               — lists groups (e.g. "Academy Friends")
+│   │                             and their members; groups are created
+│   │                             CONVERSATIONALLY (via Home), not through
+│   │                             a manual "create group" form
+│   ├── Events.tsx               — browsable list of all moments/events
+│   │                             (independent of any one person), shows
+│   │                             attendees and any group tags
+│   └── AddAMoment.tsx           — the ORIGINAL standalone "Add a Moment"
+│                                 conversational capture flow, calls the
+│                                 `chat` Edge Function. Still present but
+│                                 largely superseded by Home's unified
+│                                 conversation — kept as a dedicated
+│                                 capture-only entry point.
+├── components/
+│   └── UpdateMomentChat.tsx     — small inline conversational widget for
+│                                 adding detail to an already-identified
+│                                 moment, calls the `update-moment` Edge
+│                                 Function. Was mainly used before Home
+│                                 became fully conversational; may now be
+│                                 partially redundant with Home's general
+│                                 capability to update moments in-thread.
+```
+
+**Supabase Edge Functions (Deno, in the Supabase dashboard, not local CLI):**
+
+| Function | Purpose | Status |
+|---|---|---|
+| `chat` | Original Add-a-Moment capture conversation | Active, used by `AddAMoment.tsx` |
+| `search` | Original one-shot search (superseded) | Deployed but no longer called by the app |
+| `update-moment` | Add detail to one specific moment | Active, used by `UpdateMomentChat.tsx` |
+| `add-fact` | Classifies a typed fact as a last-name correction vs. a plain note | Active, used by `PersonDetail.tsx` and `Home.tsx`'s per-person note adding |
+| `converse` | **The main unified brain.** One conversation handles: answering questions (about people, groups, or events), capturing brand-new moments, updating existing moments, renaming placeholder people, last-name corrections, and creating/tagging groups — all decided per-turn from conversational context. This is what `Home.tsx` calls. | Active, actively evolving |
+
+**Important:** `search`, `chat`, and `update-moment` still exist and are deployed, but `converse` has absorbed most of their responsibility for the main Home experience. They are not necessarily kept in sync with each other anymore — treat `converse` as the source of truth for prompt-engineering patterns going forward, and consider whether the older functions should be deprecated/removed or deliberately kept for their narrower entry points (AddAMoment tab, PersonDetail fact bar).
+
+## 5. Database Structure (Supabase / Postgres)
+
+All tables use Row Level Security (RLS), scoped so a user can only ever see/modify their own data (via `auth.uid()` matching either directly or through a join back to `people`/`moments`/`groups`).
+
+```
+people
+  id            uuid PK
+  user_id       uuid → auth.users
+  name          text            (first name — historically just "name",
+                                  functions as first name once last_name
+                                  was added)
+  last_name     text, nullable  (added later; many older/seeded people
+                                  may have this blank)
+  created_at
+
+moments                          ("events" in the UI/Events page)
+  id            uuid PK
+  user_id       uuid → auth.users
+  raw_description text          (original raw conversation text, kept
+                                  for reference)
+  occasion      text, nullable
+  location      text, nullable
+  when_text     text, nullable  (INTENTIONALLY free-text, not a date —
+                                  people describe timing loosely, "last
+                                  summer" etc. The `converse` function
+                                  reasons about actual dates by comparing
+                                  when_text's *meaning* against the
+                                  moment's created_at timestamp — see
+                                  Section 8, date reasoning)
+  details       jsonb, nullable (OPEN-ENDED tags, e.g. {"mood": "...",
+                                  "food": "..."} — deliberately NOT fixed
+                                  columns, because real debriefs surface
+                                  unpredictable categories. Trade-off:
+                                  great for AI-driven search/reasoning,
+                                  not good for structured reporting/
+                                  filtering later if that's ever wanted.)
+  created_at    timestamp        (the REAL date the moment was recorded —
+                                  used together with when_text for date
+                                  math)
+
+notes
+  id            uuid PK
+  person_id     uuid → people
+  moment_id     uuid → moments, NULLABLE (nullable was added later
+                                  specifically so a note can be a
+                                  standalone manually-added FACT about a
+                                  person, not tied to any one moment —
+                                  e.g. "married to X, shares a house")
+  content       text
+  created_at
+
+reminders
+  id            uuid PK
+  person_id     uuid → people
+  label         text            (e.g. "Birthday", "Anniversary")
+  month         int
+  day           int
+  created_at
+  -- NOTE: no year field; NOTE: no automatic email-sending is wired up
+  -- yet, this table only supports the manual/in-app half of Reminders
+
+groups
+  id            uuid PK
+  user_id       uuid → auth.users
+  name          text            (e.g. "Academy Friends")
+  created_at
+
+person_groups                    (join table, many-to-many)
+  person_id     uuid → people
+  group_id      uuid → groups
+  PK (person_id, group_id)
+
+moment_groups                    (join table, many-to-many)
+  moment_id     uuid → moments
+  group_id      uuid → groups
+  PK (moment_id, group_id)
+```
+
+## 6. Features Already Built (and confirmed working end-to-end)
+
+- Sign up / log in (Supabase Auth, email confirmation currently **disabled** in the Supabase dashboard for ease of testing — see Section 10, this needs to be re-enabled before real users)
+- People list: add a person (first + last name), view list
+- Reminders: manually add a birthday/anniversary date per person, visible in their card on the People page. **No automatic email/notification sending exists yet.**
+- Add a Moment: conversational capture (who/what/where/occasion/mood/etc.), auto-creates people who don't exist yet, saves notes per person
+- Person profile page: chronological notes, a "fact bar" to add a detail directly (routes through AI classification to decide if it's a structured correction like a last name, or a plain note)
+- **Unified Home conversation** (the main current interface): a persistent chat thread, not one-shot search, that can:
+  - Answer broad questions about a person ("tell me about Steve") by synthesizing across ALL their notes/moments
+  - Answer narrow questions about a specific event
+  - Gracefully handle "nothing found" by suggesting close matches or asking a clarifying question, rather than dead-ending
+  - Correctly reason about relative dates ("last summer") using the moment's actual recorded date + today's date, so it can answer things like "how many years ago"
+  - Capture a brand-new memory conversationally, mid-thread
+  - Update/add detail to an already-recorded moment
+  - Rename a placeholder person (e.g. "Clare's mom") to a real name once given, rather than creating a duplicate
+  - Recognize and apply last-name corrections
+  - Recognize and create/tag Groups conversationally (e.g. "Mike is one of my Academy friends")
+  - Show clickable chips for every person mentioned by name in a reply (not just the main subject), which navigate to that person's profile
+- Groups page: lists groups and members (read-only view; groups are created via conversation, not a manual form)
+- Events page: browsable list of all moments, with attendees and group tags, independent of any one person
+- Demo/seed data: a fictional persona "John & Jane Doe" (61-year-old retired Air Force veteran in Colorado Springs) with ~18 people, ~22 moments, and 90+ notes, seeded via direct SQL for demo/testing purposes (SQL files were generated and handed off, not run by the assistant directly — the user runs them in the Supabase SQL Editor)
+
+## 7. Features Currently In Progress / Explicitly Deferred
+
+- **Automatic email reminders** — deferred early on ("Not yet — let's move to Add a Moment first and come back to this"). Never revisited since. The `reminders` table exists but nothing sends anything automatically.
+- **Voice input** for Add a Moment — the founder said this mattered "a lot" for this audience, using the browser's built-in Web Speech API (free, best support in Chrome/Android, weaker on iPhone Safari). **Not yet built.**
+- **Weather/time metadata enrichment** on moments (pulling historical weather for the date/location of an event) — discussed as an interesting idea, explicitly deferred in favor of other priorities. Would require geocoding + a historical weather API (e.g. Open-Meteo, free/no-key).
+- **iPhone Contacts integration** — using a person's real saved address/contact info from the user's phone contacts — explicitly deferred as unnecessary complexity for now.
+- **Tuning AI conversation quality** — the founder has repeatedly noted the AI could ask better/more thorough follow-up questions before wrapping up a conversation; called "good for MVP, but something to improve" more than once. This is an ongoing, never-fully-resolved thread, not a discrete task.
+- **Groups tagging for moments** — the data model (`moment_groups`) and the `converse` prompt both support tagging a moment/event with a group conversationally, but as of the last working session this had just been built and not yet tested/confirmed by the founder.
+
+## 8. Key UX / Product Decisions (and the reasoning behind them)
+
+- **Web app (PWA-capable), not native mobile.** Vastly simpler for a beginner to build/deploy than App Store distribution; can be added to a phone home screen later if needed.
+- **Email reminders instead of push notifications.** Founder initially wanted true phone push notifications (would have required PWA installability), but explicitly walked this back to "email is probably fine for now" to reduce scope.
+- **A shared "People" concept from the start**, rather than building Reminders as a fully standalone feature — a deliberate early decision so that Reminders and Add a Moment (and later, Groups/Events) all reference the same underlying people, avoiding rework.
+- **Flexible/open-ended `details` field on moments (jsonb), not fixed columns per category.** Reasoning: a real debrief of an event surfaces unpredictable categories (mood, food, topics, weather mentioned, etc.) that can't be fully enumerated in advance. Trade-off explicitly acknowledged: this makes broad AI-driven search very capable, but is NOT well-suited to structured reporting/analytics later (e.g. "chart every mood logged this year") if that's ever wanted — that would need more rigid columns.
+- **`when_text` is free text, not a date field**, because people describe timing loosely ("last weekend," "back in March"). The system compensates by also storing the moment's real `created_at` and having the AI reason about what the relative phrase *actually* meant relative to that real date, plus today's date for anything like "how many years ago."
+- **Last name as a separate, AI-correctable field**, added specifically to help disambiguate people/relationships (e.g. recognizing two people share a last name and might be married). Chosen over a plain manual edit field — the founder explicitly preferred the more elegant "smart fact bar" (type a correction in natural language, an AI classification step decides if it's a structured update or a general note) over a simple form field, accepting the added complexity as worthwhile.
+- **Renaming a placeholder person instead of creating a duplicate.** A real bug was found and fixed: if a moment mentions an unnamed person (e.g. "her mom"), the AI is instructed to use a clear placeholder name (e.g. "Clare's mom") as its own distinct person — and later, when a real name is given, the conversation logic explicitly treats that as a RENAME of the existing placeholder person, not a new person, to avoid duplicate/fragmented profiles.
+- **Home redesigned from one-shot search into a continuous conversational thread**, specifically so follow-up messages can naturally correct, extend, or create memories without restarting — this was a deliberate, explicitly-discussed architecture decision (not an incremental tweak), including agreeing to merge what had been three separate Edge Functions (`search`, `update-moment`, `add-fact`-like logic) into the single `converse` function that decides intent per turn.
+- **Groups created conversationally, not via a manual "create group" form** — consistent with the overall product philosophy that the app should feel like talking to someone, not filling out data-entry forms. Groups (and moment-group tagging) can also apply to events, not just people, per the founder's explicit request.
+- **Vague, generic questions should synthesize everything known, not require an exact phrase match.** A real bug was found (`tell me about Steve` failed, but a more specific phrasing worked) and fixed by explicitly instructing the AI to treat broad person-questions as "summarize everything," and to never dead-end on a miss — instead suggest a close match or ask a clarifying, memory-jogging question.
+
+## 9. Bugs Found and Fixed (worth knowing so they aren't reintroduced)
+
+- **Invalid Anthropic model name** (`claude-sonnet-4-6`) caused every AI call to silently fail, with the app quietly showing a generic "Sorry, I couldn't process that" instead of surfacing the real API error. Fixed by using `claude-sonnet-5` and by improving error visibility during debugging (a temporary DEBUG passthrough was used once and then removed). **If future debugging is needed, don't assume a generic fallback message means the whole system is broken — check Edge Function logs/invocations for the actual upstream error first.**
+- **Assistant-message "prefill" trick (`{role: "assistant", content: "{"}`) to force clean JSON output is NOT supported by this model/setup** — it caused a hard `invalid_request_error`. The working fix instead parses the JSON out of the reply text directly (finds the first `{` and last `}` and parses that slice), tolerating any stray text Claude might add around the JSON.
+- **Search/converse originally only matched people by first name**, meaning last-name-based questions ("tell me about the Rudigers") silently returned nothing even though the data existed. Fixed by including last names in the name-matching maps built for the AI's context.
+- **A search reply could mention multiple people by name in its prose, but only the primary subject got a clickable profile link** — fixed by explicitly instructing the AI that `relevant_people` must include every name mentioned in the reply text, not just the main subject.
+- **Two people who were actually one couple's unnamed parents got created as a single merged profile**, and giving their real names afterward didn't fix it. Root cause: the AI was bundling multiple distinct people under one vague label (e.g. "her parents") instead of treating them as separate individuals with separate placeholders. Fixed at the source (instructed to always use one placeholder per distinct individual) plus added a rename mechanism as a safety net.
+- **StackBlitz/GitHub workflow was a major source of non-code friction**: a GitHub folder upload silently failed to include the `src` folder (common browser drag-drop limitation), leading to a confusing multi-hour debugging detour chasing a "does the file exist?" Vite error that had nothing to do with the code itself. Ultimately resolved by abandoning the GitHub-import path and creating files directly inside a fresh StackBlitz project instead.
+- **Multiple large code pastes were silently truncated mid-paste** (e.g. `AddAMoment.tsx`, `converse`), producing confusing parse errors that looked code-related but were actually paste/environment issues. **Lesson: for large files, prefer providing a downloadable file over a giant inline code block when possible**, and if a paste-related error occurs, first suspect truncation before suspecting logic errors.
+- **A stray duplicate declaration and a literal "constconst" typo** crept into the `converse` function during iterative patching. **Lesson: past a certain size/complexity, prefer replacing a whole file cleanly rather than making many small incremental find-and-replace edits to it**, since incremental edits on top of a long conversation are error-prone to track by hand.
+
+## 10. Known Limitations / Things NOT Yet Done
+
+- **No automatic email sending** for reminders (table exists, no sending logic).
+- **No voice input** yet, despite being an explicitly stated priority.
+- **Email confirmation is disabled** in Supabase Auth (was turned off specifically to ease local testing, since Supabase's default confirmation link points to `localhost:3000`, which doesn't resolve in StackBlitz). **This must be reconsidered/re-enabled before any real users sign up**, or a proper redirect URL must be configured.
+- **No production deployment** — the app only exists inside StackBlitz's dev preview. Nothing has been deployed to a real hosting provider yet.
+- **`search`, `chat`, and `update-moment` Edge Functions may be stale/out of sync** with the improvements made to `converse` (date reasoning, last-name matching, relevant_people-mentions-everyone, graceful "nothing found" handling, etc.) since those fixes were applied to `converse` but not necessarily backported to the older functions still used by `AddAMoment.tsx` and `PersonDetail.tsx`'s fact bar.
+- **AI conversation quality (depth of follow-up questions) is an acknowledged ongoing weakness**, not a solved problem — expect the founder to keep raising this.
+- **No automated tests exist.** All verification so far has been manual, click-through testing by the founder in the StackBlitz preview.
+- **UUIDs in the demo seed-data SQL were handwritten/generated by the assistant for demo purposes** (e.g. `10000000-0000-0000-0000-000000000001`) — these are NOT how real user data will look; don't assume production IDs follow any particular pattern.
+
+## 11. Things a Future AI Assistant Must Understand Before Changing This Code
+
+1. **The founder is a genuine coding beginner.** Explanations should stay in plain, jargon-light language. Don't assume familiarity with git, npm, TypeScript, or general dev workflows — but they've now picked up a fair amount through this process (they can read a file tree, run terminal commands when told exactly what to type, and understand the shape of the architecture at a conceptual level).
+2. **Check in before major/architectural decisions**, don't just build silently — this has been the working pattern throughout, and deviating from it (building something significant without confirming direction first) would be inconsistent with how this project has been run.
+3. **`converse` is the living, central piece of the whole app.** Almost all product intelligence lives in its system prompt and its JSON response-handling logic. Future feature work will very likely mean extending this function's prompt/schema rather than building something parallel to it.
+4. **Prefer whole-file replacement over incremental patching once a file is complex**, per the lessons in Section 9 — this codebase has a track record of incremental-edit bugs (duplicate declarations, typos from partial pastes).
+5. **The data model favors flexibility (jsonb, free-text dates) over rigid structure**, by deliberate choice, in service of AI-driven conversational search being the primary way data is consumed — don't "clean this up" into strict typed columns without checking whether that trade-off is still wanted.
+6. **Nothing here has been production-hardened.** Auth email confirmation is off, there's no deployed hosting, and there are no tests. Treat this as a working prototype/demo, not a production system, unless told otherwise.
+7. **The demo data (John & Jane Doe persona) is fake/seed data for demonstration purposes only** — don't confuse it with real user data, and don't assume its patterns (fixed hand-written UUIDs, uniform note counts, etc.) reflect how real usage will look.
+
+---
+
+_End of document. Update this file as the project progresses — it's meant to be the single source of truth for anyone (human or AI) picking this project up._
