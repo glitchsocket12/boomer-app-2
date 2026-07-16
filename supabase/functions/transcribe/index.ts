@@ -54,7 +54,7 @@ serve(async (req) => {
       const errorBody = await response.text()
       console.error("OpenAI transcription error", response.status, errorBody)
       return new Response(
-        JSON.stringify({ error: "transcription_failed", text: "" }),
+        JSON.stringify({ error: "transcription_failed", text: "", detail: errorBody.slice(0, 300) }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
