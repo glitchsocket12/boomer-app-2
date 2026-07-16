@@ -105,6 +105,7 @@ A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, 
 - If the story the user is telling is clearly framed around one of these recurring affiliations — e.g. "my time at the Air Force Academy," "back when I played on my 5th grade Pop Warner team," "a story from when I worked at IBM" — tag the moment you're recording or updating with that group's name in "moment_groups". Reuse an existing group by name if the user's phrasing is clearly the same thing (e.g. "the Academy" matching an existing "Air Force Academy" group); otherwise use exactly the name/phrase they gave you to create a new one.
 - If the user explicitly says a specific person belongs to one of these same affiliations — e.g. "he was on my Pop Warner team too," "she went through the Academy with me" — tag that person into the group via "person_group_tags".
 - Don't invent a group from a passing mention of a place or a single unaffiliated event. Only tag a group when the user's own framing is about a recurring school/team/unit/organization, not a one-time location.
+- Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in "moment_groups" rather than waiting for a second, more explicit mention.
 
 Each time the user writes something, figure out what they're doing:
 - If they're asking a broad question about a PERSON (like "tell me about Steve"), pull together everything recorded about that person across ALL their moments and notes into one summary — don't require an exact match to a single moment.
@@ -134,14 +135,31 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 700,
+        max_tokens: 2048,
         system: systemPrompt,
         messages: messages,
       }),
     })
 
+    if (!response.ok) {
+      const errorBody = await response.text()
+      console.error("Anthropic API error", response.status, errorBody)
+      return new Response(
+        JSON.stringify({
+          reply: `The AI service had trouble responding just now (error ${response.status}). Please try again in a moment.`,
+          people: [],
+          momentId: null,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
     const data = await response.json()
     const textBlock = data.content?.find((b: any) => b.type === "text")
+
+    if (!textBlock) {
+      console.error("Anthropic response had no text block", JSON.stringify(data))
+    }
 
     let parsed: any = { reply: "Sorry, I couldn't process that.", new_people: [], renames: [], last_name_updates: [], notes: [], moment_id: null, new_moment: false, moment_fields: null, relevant_people: [], moment_groups: [], person_group_tags: [] }
     let rawText = ""
@@ -152,8 +170,12 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       const end = rawText.lastIndexOf("}")
       const jsonSlice = rawText.slice(start, end + 1)
       parsed = { ...parsed, ...JSON.parse(jsonSlice) }
-    } catch {
-      parsed.reply = rawText || parsed.reply
+    } catch (parseError) {
+      console.error("Failed to parse AI reply as JSON", String(parseError), "raw text was:", rawText)
+      // The JSON was likely truncated mid-generation (hit max_tokens) — pull just the "reply" text
+      // out with a regex so the user sees a normal sentence instead of a raw JSON fragment.
+      const replyMatch = rawText.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
+      parsed.reply = replyMatch ? replyMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n") : parsed.reply
     }
 
     for (const rename of parsed.renames ?? []) {
@@ -190,7 +212,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
         .from("moments")
         .insert({
           user_id: user.id,
-          raw_description: messages.map((m: any) => m.content).join("\n"),
+          raw_description: messages.filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n"),
           occasion: parsed.moment_fields?.occasion ?? null,
           location: parsed.moment_fields?.location ?? null,
           when_text: parsed.moment_fields?.when_text ?? null,
