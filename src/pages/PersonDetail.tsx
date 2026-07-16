@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { GroupChip, EventChip } from '../components/Chips'
 import VoiceInputButton from '../components/VoiceInputButton'
+import AutoGrowTextarea from '../components/AutoGrowTextarea'
 
 type Note = {
   id: string
@@ -61,8 +62,7 @@ export default function PersonDetail({
     setLoading(false)
   }
 
-  async function handleAddFact(e: FormEvent) {
-    e.preventDefault()
+  async function submitFact() {
     if (!newFact.trim()) return
     setSaving(true)
 
@@ -73,6 +73,11 @@ export default function PersonDetail({
     setNewFact('')
     setSaving(false)
     loadData()
+  }
+
+  function handleAddFact(e: FormEvent) {
+    e.preventDefault()
+    submitFact()
   }
 
   const affiliatedEvents = new Map<string, { id: string; summary: string }>()
@@ -116,12 +121,13 @@ export default function PersonDetail({
       )}
 
       <form onSubmit={handleAddFact} style={styles.addForm}>
-        <input
-          type="text"
+        <AutoGrowTextarea
           value={newFact}
-          onChange={(e) => setNewFact(e.target.value)}
+          onChange={setNewFact}
+          onEnter={submitFact}
           placeholder={`Add a fact about ${personName}, e.g. "Married to Manuel, they share a house"`}
           style={styles.addInput}
+          disabled={saving}
         />
         <VoiceInputButton
           disabled={saving}
@@ -171,7 +177,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' },
   affiliationRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
-  addForm: { display: 'flex', gap: '0.5rem', marginBottom: '2rem' },
+  addForm: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem', marginBottom: '2rem' },
   addInput: { flex: 1, fontSize: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #CCC' },
   addButton: {
     fontSize: '1rem',

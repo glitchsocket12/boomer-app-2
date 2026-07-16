@@ -85,18 +85,29 @@ src/
 │   │                             became fully conversational; may now be
 │   │                             partially redundant with Home's general
 │   │                             capability to update moments in-thread.
-│   └── VoiceInputButton.tsx     — reusable mic button (added 2026-07-16),
-│                                 records audio via the browser's
-│                                 MediaRecorder API, sends it to the
-│                                 `transcribe` Edge Function, and hands the
-│                                 transcribed text back to whichever text
-│                                 box it's next to. Used by Home.tsx,
-│                                 UpdateMomentChat.tsx, and PersonDetail.tsx's
-│                                 fact bar — every conversational/text-entry
-│                                 point in the app. Renders nothing (returns
-│                                 null) on a browser with no MediaRecorder
-│                                 support, so it fails invisibly rather than
-│                                 showing a broken button.
+│   ├── VoiceInputButton.tsx     — reusable mic button (added 2026-07-16),
+│   │                             records audio via the browser's
+│   │                             MediaRecorder API, sends it to the
+│   │                             `transcribe` Edge Function, and hands the
+│   │                             transcribed text back to whichever text
+│   │                             box it's next to. Used by Home.tsx,
+│   │                             UpdateMomentChat.tsx, and PersonDetail.tsx's
+│   │                             fact bar — every conversational/text-entry
+│   │                             point in the app. Renders nothing (returns
+│   │                             null) on a browser with no MediaRecorder
+│   │                             support, so it fails invisibly rather than
+│   │                             showing a broken button.
+│   └── AutoGrowTextarea.tsx     — reusable text box (added 2026-07-16) that
+│                                 grows downward as its content wraps, instead
+│                                 of cutting text off/scrolling horizontally
+│                                 like a single-line `<input>` did. Enter
+│                                 sends (via an `onEnter` callback prop),
+│                                 Shift+Enter inserts a manual line break.
+│                                 Capped at 160px tall, then scrolls internally
+│                                 rather than growing forever. Used in the
+│                                 same three places as VoiceInputButton.tsx
+│                                 above, replacing the plain `<input>` each
+│                                 had before.
 ```
 
 **As of 2026-07-15, the standalone "Add a Moment" page (`AddAMoment.tsx`) was removed** — Home's unified conversation already covers that capture flow, so the separate page/tab was redundant. Its Edge Function (`chat`) is still deployed but is now unused by the frontend entirely (see the Edge Functions table below). The Events and Groups tabs (described above) were also actually wired into the nav bar for the first time as part of this same change — the architecture doc had described them for a while, but they weren't reachable from the UI until now.
@@ -237,6 +248,7 @@ moment_groups                    (join table, many-to-many)
   - **First real-world test (2026-07-16) surfaced two problems, both since fixed:** (1) the button gave no feedback about what state it was in or what to do next (just a color change) — fixed with the speech-bubble status described above; (2) transcription failed every single time with no visible error. Root cause, found by directly calling the deployed `transcribe` function with a synthetic audio clip and reading OpenAI's own error text: the `OPENAI_API_KEY` secret had never actually been added in Supabase (adding OpenAI billing alone didn't fix it — the key itself was the missing piece). **Fixed** once the founder added the secret under Supabase dashboard → **Edge Functions → Secrets** (a project-wide secrets list, not something attached to the individual function — worth remembering, since that's the part that was easy to miss). Confirmed working end-to-end via a direct test call (real `200` response with real transcribed text back from OpenAI) same day. Errors are also now shown to the user as an actual on-screen message instead of silently resetting, for if this or a similar failure ever recurs.
   - **Known gap, not addressed yet:** the founder's stated expectation was live, word-by-word captions while speaking, like some other voice assistants — not currently possible with this batch-style Whisper approach (transcription only happens after you stop recording). A live-captions assist could be added later using the free Web Speech API purely as an on-screen visual aid (not the saved text) on browsers that support it — but that's Chrome/Android/desktop only, not iPhone Safari, so it would be a partial improvement, not a fix everywhere. Not built; flagged here as a possible follow-up, not started.
   - **Still not click-tested inside the actual app UI, by anyone, as of this writing** — the backend fix was confirmed working via a direct call to the Edge Function (real transcribed text came back), but not yet by actually clicking the mic button in the live app post-fix. The assistant can't do this itself (requires logging in, which it can't do without entering a password); worth the founder giving it one more try in the app to confirm the full loop end-to-end.
+- **Text boxes grow downward instead of cutting text off** (built 2026-07-16): the same three text-entry points as voice input (Home's main chat, the Event-detail "add more detail" chat, and the person profile's fact bar) now use `AutoGrowTextarea.tsx` instead of a single-line `<input>`. As you type a long message, the box grows taller (wrapping text onto new lines) instead of scrolling sideways and hiding what you've already typed, up to a 160px-tall cap, then it scrolls internally. Enter still sends, same as before; Shift+Enter now also inserts a manual line break, which wasn't previously possible with a single-line input. Not click-tested inside the app by the assistant, for the same login-related reason noted above for voice input — build passes and the page loads without errors, but worth the founder confirming the growing behavior looks right on an actual long message.
 - **Events page now sorted by when things actually happened, not when they were recorded, with a consistent date format** (built 2026-07-16). Added a nullable `moments.event_date` column (real `date`, see Section 5). When `converse` captures a brand-new moment, it now also resolves a best-guess actual calendar date from the user's own words (e.g. "last week," "May of 2027," "back in college") plus today's date and conversation context, and saves it alongside the existing free-text `when_text` (which is untouched and still shown on Event detail). The top-level Events page and `GroupDetail.tsx`'s event list both sort newest-to-oldest by `event_date`, falling back to `created_at` when it's null (true for everything recorded before this change), and both display a uniform "Month Year" (e.g. "November 2027") instead of the previously inconsistent raw `when_text`/date mix. This was an explicit, deliberate exception to the "when_text is intentionally free-text, don't add rigid date columns" principle in Section 11 — checked in with the founder first; the founder wanted the AI to actively reason out real dates from spoken-style relative phrases ("she'll say 'last week,' the AI needs to figure out the actual date from today's date"), not just leave dates unstructured. `event_date` is a best-effort AI guess, not user-verified ground truth — it's used only for sorting/display, and the existing when_text-vs-created_at date reasoning `converse` uses to answer questions was left as-is (see Section 8). Click-tested end-to-end, including a live "last week" phrase resolving to the correct date and sorting into the right chronological position.
 
 ## 7. Features Currently In Progress / Explicitly Deferred

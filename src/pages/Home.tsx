@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import VoiceInputButton from '../components/VoiceInputButton'
+import AutoGrowTextarea from '../components/AutoGrowTextarea'
 
 type PersonRef = { id: string; name: string }
 type ChatMessage = {
@@ -72,11 +73,10 @@ export default function Home({ onSelectPerson }: { onSelectPerson: (person: Pers
       </div>
 
       <div style={styles.inputRow}>
-        <input
-          type="text"
+        <AutoGrowTextarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+          onChange={setInput}
+          onEnter={handleSend}
           placeholder="Ask, share, or add a detail…"
           style={styles.input}
           disabled={sending}
@@ -125,7 +125,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
   },
-  inputRow: { display: 'flex', gap: '0.75rem', marginTop: '1rem', borderTop: '1px solid #E5E3DE', paddingTop: '1rem' },
+  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.75rem', marginTop: '1rem', borderTop: '1px solid #E5E3DE', paddingTop: '1rem' },
   input: { flex: 1, fontSize: '1.1rem', padding: '0.65rem', borderRadius: '8px', border: '1px solid #CCC' },
   button: {
     fontSize: '1.1rem',

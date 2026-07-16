@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import VoiceInputButton from './VoiceInputButton'
+import AutoGrowTextarea from './AutoGrowTextarea'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 
@@ -116,11 +117,10 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
       ))}
       {sending && <div style={styles.assistantBubble}>…</div>}
       <div style={styles.inputRow}>
-        <input
-          type="text"
+        <AutoGrowTextarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+          onChange={setInput}
+          onEnter={sendMessage}
           placeholder="What else do you remember?"
           style={styles.input}
           disabled={sending}
@@ -141,7 +141,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   box: { marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   userBubble: { alignSelf: 'flex-end', backgroundColor: '#2E4034', color: '#FFF', padding: '0.5rem 0.85rem', borderRadius: '10px', maxWidth: '85%', fontSize: '0.95rem' },
   assistantBubble: { alignSelf: 'flex-start', backgroundColor: '#F1F1EE', color: '#222', padding: '0.5rem 0.85rem', borderRadius: '10px', maxWidth: '85%', fontSize: '0.95rem' },
-  inputRow: { display: 'flex', gap: '0.5rem', marginTop: '0.25rem' },
+  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem', marginTop: '0.25rem' },
   input: { flex: 1, fontSize: '0.95rem', padding: '0.5rem', borderRadius: '6px', border: '1px solid #CCC' },
   button: { fontSize: '0.95rem', padding: '0.5rem 0.9rem', borderRadius: '6px', border: 'none', backgroundColor: '#2E4034', color: '#FFF', cursor: 'pointer' },
   doneText: { marginTop: '0.75rem', fontSize: '0.95rem', color: '#2E4034' },
