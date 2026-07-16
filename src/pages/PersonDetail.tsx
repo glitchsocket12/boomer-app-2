@@ -1,39 +1,62 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { summarize } from '../lib/summarize'
+import { GroupChip, EventChip } from '../components/Chips'
 
 type Note = {
   id: string
   content: string
   created_at: string
+  moment_id: string | null
+  moments: { id: string; occasion: string | null; raw_description: string } | null
 }
+
+type GroupRef = { id: string; name: string }
+
+const AFFILIATION_LIMIT = 5
 
 export default function PersonDetail({
   personId,
   personName,
   onBack,
+  backLabel,
+  onSelectGroup,
+  onSelectEvent,
 }: {
   personId: string
   personName: string
   onBack: () => void
+  backLabel: string
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
   const [notes, setNotes] = useState<Note[]>([])
+  const [groups, setGroups] = useState<GroupRef[]>([])
   const [loading, setLoading] = useState(true)
   const [newFact, setNewFact] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    loadNotes()
+    loadData()
   }, [personId])
 
-  async function loadNotes() {
+  async function loadData() {
     setLoading(true)
-    const { data } = await supabase
-      .from('notes')
-      .select('id, content, created_at')
-      .eq('person_id', personId)
-      .order('created_at', { ascending: false })
 
-    setNotes(data ?? [])
+    const [notesRes, groupsRes] = await Promise.all([
+      supabase
+        .from('notes')
+        .select('id, content, created_at, moment_id, moments(id, occasion, raw_description)')
+        .eq('person_id', personId)
+        .order('created_at', { ascending: false }),
+      supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
+    ])
+
+    setNotes((notesRes.data as unknown as Note[]) ?? [])
+
+    const groupRows = (groupsRes.data as unknown as { groups: GroupRef | null }[]) ?? []
+    setGroups(groupRows.map((r) => r.groups).filter((g): g is GroupRef => g !== null))
+
     setLoading(false)
   }
 
@@ -48,13 +71,48 @@ export default function PersonDetail({
 
     setNewFact('')
     setSaving(false)
-    loadNotes()
+    loadData()
   }
+
+  const affiliatedEvents = new Map<string, { id: string; summary: string }>()
+  for (const n of notes) {
+    if (n.moments) {
+      affiliatedEvents.set(n.moments.id, { id: n.moments.id, summary: summarize(n.moments.occasion, n.moments.raw_description) })
+    }
+  }
+  const allEvents = Array.from(affiliatedEvents.values())
+  const shownEvents = allEvents.slice(0, AFFILIATION_LIMIT)
+  const shownGroups = groups.slice(0, AFFILIATION_LIMIT)
 
   return (
     <div style={styles.page}>
-      <button onClick={onBack} style={styles.backButton}>← Back to People</button>
+      <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
       <h1 style={styles.heading}>{personName}</h1>
+
+      {!loading && (groups.length > 0 || allEvents.length > 0) && (
+        <div style={styles.affiliations}>
+          {shownGroups.length > 0 && (
+            <div style={styles.affiliationRow}>
+              {shownGroups.map((g) => (
+                <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+              ))}
+              {groups.length > AFFILIATION_LIMIT && (
+                <span style={styles.moreText}>+{groups.length - AFFILIATION_LIMIT} more</span>
+              )}
+            </div>
+          )}
+          {shownEvents.length > 0 && (
+            <div style={styles.affiliationRow}>
+              {shownEvents.map((e) => (
+                <EventChip key={e.id} label={e.summary} onClick={() => onSelectEvent(e)} />
+              ))}
+              {allEvents.length > AFFILIATION_LIMIT && (
+                <span style={styles.moreText}>+{allEvents.length - AFFILIATION_LIMIT} more</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <form onSubmit={handleAddFact} style={styles.addForm}>
         <input
@@ -105,6 +163,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
   },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1rem' },
+  affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' },
+  affiliationRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
+  moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
   addForm: { display: 'flex', gap: '0.5rem', marginBottom: '2rem' },
   addInput: { flex: 1, fontSize: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #CCC' },
   addButton: {

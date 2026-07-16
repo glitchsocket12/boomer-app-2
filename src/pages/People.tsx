@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import PersonDetail from './PersonDetail'
 
 type Reminder = {
   id: string
@@ -16,12 +15,11 @@ type Person = {
   reminders: Reminder[]
 }
 
-export default function People() {
+export default function People({ onSelectPerson }: { onSelectPerson: (person: { id: string; name: string }) => void }) {
   const [people, setPeople] = useState<Person[]>([])
   const [newName, setNewName] = useState('')
   const [newLastName, setNewLastName] = useState('')
   const [loading, setLoading] = useState(true)
-  const [viewingPerson, setViewingPerson] = useState<Person | null>(null)
 
   // Load the current user's people (and their reminders) when the page opens
   useEffect(() => {
@@ -64,16 +62,6 @@ export default function People() {
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
-  if (viewingPerson) {
-    return (
-      <PersonDetail
-        personId={viewingPerson.id}
-        personName={viewingPerson.name}
-        onBack={() => setViewingPerson(null)}
-      />
-    )
-  }
-
   return (
     <div style={styles.page}>
       <h1 style={styles.heading}>People</h1>
@@ -99,7 +87,8 @@ export default function People() {
       <div style={styles.list}>
         {people.length === 0 && <p style={styles.empty}>No one added yet — add someone above.</p>}
         {people.map((person) => (
-          <PersonCard key={person.id} person={person} onAddReminder={handleAddReminder} onViewPerson={setViewingPerson} />        ))}
+          <PersonCard key={person.id} person={person} onAddReminder={handleAddReminder} onViewPerson={onSelectPerson} />
+        ))}
       </div>
     </div>
   )
@@ -114,7 +103,7 @@ function PersonCard({
 }: {
   person: Person
   onAddReminder: (personId: string, label: string, month: number, day: number) => void
-  onViewPerson: (person: Person) => void
+  onViewPerson: (person: { id: string; name: string }) => void
 }) {
   const [label, setLabel] = useState('Birthday')
   const [month, setMonth] = useState('')

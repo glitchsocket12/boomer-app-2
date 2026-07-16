@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { summarize } from '../lib/summarize'
 
 type Moment = {
   id: string
@@ -10,21 +11,18 @@ type Moment = {
   created_at: string
 }
 
-function summarize(occasion: string | null, rawDescription: string, wordLimit = 6): string {
-  const text = occasion?.trim() || rawDescription?.trim() || 'Untitled moment'
-  const words = text.split(/\s+/)
-  if (words.length <= wordLimit) return text
-  return words.slice(0, wordLimit).join(' ') + '…'
-}
-
 export default function GroupDetail({
   groupId,
   groupName,
   onSelectEvent,
+  onBack,
+  backLabel,
 }: {
   groupId: string
   groupName: string
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onBack: () => void
+  backLabel: string
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
@@ -49,6 +47,7 @@ export default function GroupDetail({
 
   return (
     <div style={styles.page}>
+      <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
       <h1 style={styles.heading}>{groupName}</h1>
 
       {moments.length === 0 && (
@@ -78,6 +77,15 @@ export default function GroupDetail({
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '1rem',
+    cursor: 'pointer',
+    marginBottom: '1rem',
+    padding: 0,
+  },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1.5rem' },
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },

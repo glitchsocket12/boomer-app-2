@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { PersonChip } from '../components/Chips'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 
@@ -63,9 +64,7 @@ export default function Groups({
               ) : (
                 <div style={styles.chipRow}>
                   {members.map((p) => (
-                    <button key={p.id} onClick={() => onSelectPerson(p)} style={styles.personChip}>
-                      {p.name}{p.last_name ? ` ${p.last_name}` : ''}
-                    </button>
+                    <PersonChip key={p.id} label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`} onClick={() => onSelectPerson(p)} />
                   ))}
                 </div>
               )}
@@ -101,13 +100,4 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '0.75rem',
   },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
-  personChip: {
-    fontSize: '0.9rem',
-    padding: '0.35rem 0.8rem',
-    borderRadius: '999px',
-    border: '1px solid #2E4034',
-    backgroundColor: 'transparent',
-    color: '#2E4034',
-    cursor: 'pointer',
-  },
 }

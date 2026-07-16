@@ -33,7 +33,9 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
 
     let parsed: { done: boolean; new_people: string[]; additional_notes: { person: string; note: string }[] } | null = null
     try {
-      const obj = JSON.parse(reply.trim())
+      const start = reply.indexOf('{')
+      const end = reply.lastIndexOf('}')
+      const obj = JSON.parse(reply.slice(start, end + 1))
       if (obj.done === true) parsed = obj
     } catch {
       // not a completion yet, just a follow-up question
