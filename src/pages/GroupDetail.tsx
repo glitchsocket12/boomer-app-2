@@ -8,8 +8,13 @@ type Moment = {
   occasion: string | null
   location: string | null
   when_text: string | null
+  event_date: string | null
   raw_description: string
   created_at: string
+}
+
+function eventSortDate(moment: Pick<Moment, 'event_date' | 'created_at'>): Date {
+  return moment.event_date ? new Date(`${moment.event_date}T00:00:00`) : new Date(moment.created_at)
 }
 
 export default function GroupDetail({
@@ -45,11 +50,13 @@ export default function GroupDetail({
     setLoading(true)
     const { data } = await supabase
       .from('moments')
-      .select('id, occasion, location, when_text, raw_description, created_at, moment_groups!inner(group_id)')
+      .select('id, occasion, location, when_text, event_date, raw_description, created_at, moment_groups!inner(group_id)')
       .eq('moment_groups.group_id', groupId)
-      .order('created_at', { ascending: false })
 
-    setMoments((data as unknown as Moment[]) ?? [])
+    const sorted = ((data as unknown as Moment[]) ?? []).sort(
+      (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
+    )
+    setMoments(sorted)
     setLoading(false)
   }
 

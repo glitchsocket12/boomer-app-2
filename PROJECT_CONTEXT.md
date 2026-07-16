@@ -122,13 +122,30 @@ moments                          ("events" in the UI/Events page)
                                   for reference)
   occasion      text, nullable
   location      text, nullable
-  when_text     text, nullable  (INTENTIONALLY free-text, not a date —
+  when_text     text, nullable  (INTENTIONALLY free-text, kept verbatim —
                                   people describe timing loosely, "last
-                                  summer" etc. The `converse` function
-                                  reasons about actual dates by comparing
-                                  when_text's *meaning* against the
-                                  moment's created_at timestamp — see
-                                  Section 8, date reasoning)
+                                  summer" etc. Still shown as-is on the
+                                  Event detail page. For ANSWERING
+                                  questions in conversation, `converse`
+                                  still reasons about when_text's meaning
+                                  relative to created_at, not event_date
+                                  — see Section 8, date reasoning; this
+                                  wasn't changed.)
+  event_date    date, nullable  (added 2026-07-16. A real calendar date
+                                  the `converse` AI resolves from when_text
+                                  + today's date + surrounding context at
+                                  capture time, e.g. "last week" -> an
+                                  actual YYYY-MM-DD. Best-effort, not
+                                  user-verified — used for sorting/display
+                                  only, not treated as ground truth.
+                                  NULL for anything recorded before this
+                                  was added, and possibly null going
+                                  forward too if the AI truly has no time
+                                  clue to work with. Pages fall back to
+                                  created_at when null — see
+                                  eventSortDate()/formatMonthYear() in
+                                  Events.tsx and the matching helper in
+                                  GroupDetail.tsx.)
   details       jsonb, nullable (OPEN-ENDED tags, e.g. {"mood": "...",
                                   "food": "..."} — deliberately NOT fixed
                                   columns, because real debriefs surface
@@ -202,6 +219,7 @@ moment_groups                    (join table, many-to-many)
 - **Event detail now has a conversational "add more detail" section**, reusing the existing `UpdateMomentChat.tsx` component (previously only reachable from `PersonDetail.tsx`'s fact bar) inside `EventDetail.tsx`, below the existing notes list. Saving refreshes the event's notes in place. Building this surfaced a real bug — see Section 9, the `UpdateMomentChat` JSON-fence bug — now fixed.
 - **Rename an Event or Group directly from its detail page** (built 2026-07-15) — a small pencil-icon button (`components/EditButton.tsx`, shared between both pages) sits just to the right of the heading in `EventDetail.tsx` and `GroupDetail.tsx`; clicking it swaps the heading for an inline text input with Save/Cancel. This is the first manual (non-conversational) rename control in the app — everywhere else, names are only ever set/corrected by talking to Home. Saving an Event updates `moments.occasion` directly (blank clears it back to the "Untitled moment" fallback used everywhere else); saving a Group updates `groups.name` (must be non-empty). Both call straight through the Supabase client from the component — no Edge Function involved, since no AI classification is needed for a direct rename. `App.tsx`'s `navStack`/breadcrumb caches each crumb's label at the time it was pushed, so a `renameCurrentCrumb` helper in `App.tsx` (passed down as an `onRenamed` prop) patches the current crumb's label in place after a successful save, keeping the breadcrumb trail in sync without a full reload. The Events/Groups list pages and any other page that shows the old name self-correct next time they mount, since they always refetch on load. Click-tested end-to-end (including confirming the rename persists after navigating away and back).
 - Demo/seed data: a fictional persona "John & Jane Doe" (61-year-old retired Air Force veteran in Colorado Springs) with ~18 people, ~22 moments, and 90+ notes, seeded via direct SQL for demo/testing purposes (SQL files were generated and handed off, not run by the assistant directly — the user runs them in the Supabase SQL Editor)
+- **Events page now sorted by when things actually happened, not when they were recorded, with a consistent date format** (built 2026-07-16). Added a nullable `moments.event_date` column (real `date`, see Section 5). When `converse` captures a brand-new moment, it now also resolves a best-guess actual calendar date from the user's own words (e.g. "last week," "May of 2027," "back in college") plus today's date and conversation context, and saves it alongside the existing free-text `when_text` (which is untouched and still shown on Event detail). The top-level Events page and `GroupDetail.tsx`'s event list both sort newest-to-oldest by `event_date`, falling back to `created_at` when it's null (true for everything recorded before this change), and both display a uniform "Month Year" (e.g. "November 2027") instead of the previously inconsistent raw `when_text`/date mix. This was an explicit, deliberate exception to the "when_text is intentionally free-text, don't add rigid date columns" principle in Section 11 — checked in with the founder first; the founder wanted the AI to actively reason out real dates from spoken-style relative phrases ("she'll say 'last week,' the AI needs to figure out the actual date from today's date"), not just leave dates unstructured. `event_date` is a best-effort AI guess, not user-verified ground truth — it's used only for sorting/display, and the existing when_text-vs-created_at date reasoning `converse` uses to answer questions was left as-is (see Section 8). Click-tested end-to-end, including a live "last week" phrase resolving to the correct date and sorting into the right chronological position.
 
 ## 7. Features Currently In Progress / Explicitly Deferred
 

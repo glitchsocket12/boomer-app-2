@@ -88,6 +88,7 @@ serve(async (req) => {
       .join("\n")
 
     const todayString = new Date().toDateString()
+    const todayIso = new Date().toISOString().slice(0, 10)
 
     const systemPrompt = `You are Boomer's memory assistant. You help someone build and explore a record of their social moments and the people in their life, entirely through natural conversation.
 
@@ -120,7 +121,9 @@ At the end of EVERY turn, respond with ONLY a JSON object in this exact shape an
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
-Leave arrays empty and fields null when they don't apply — most simple questions will have empty arrays. Only set "new_moment": true and fill "moment_fields" (occasion, location, when_text) when you're capturing a genuinely brand-new event.`
+Leave arrays empty and fields null when they don't apply — most simple questions will have empty arrays. Only set "new_moment": true and fill "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
+
+When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Today's date is ${todayIso}. Resolve relative phrases against today (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -191,6 +194,7 @@ Leave arrays empty and fields null when they don't apply — most simple questio
           occasion: parsed.moment_fields?.occasion ?? null,
           location: parsed.moment_fields?.location ?? null,
           when_text: parsed.moment_fields?.when_text ?? null,
+          event_date: parsed.moment_fields?.event_date ?? null,
         })
         .select()
         .single()

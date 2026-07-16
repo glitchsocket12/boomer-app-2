@@ -10,10 +10,19 @@ type Moment = {
   occasion: string | null
   location: string | null
   when_text: string | null
+  event_date: string | null
   raw_description: string
   created_at: string
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: { id: string; name: string } | null }[]
+}
+
+function eventSortDate(moment: Pick<Moment, 'event_date' | 'created_at'>): Date {
+  return moment.event_date ? new Date(`${moment.event_date}T00:00:00`) : new Date(moment.created_at)
+}
+
+function formatMonthYear(moment: Pick<Moment, 'event_date' | 'created_at'>): string {
+  return eventSortDate(moment).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 }
 
 export default function Events({
@@ -37,11 +46,13 @@ export default function Events({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name))'
+        'id, occasion, location, when_text, event_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name))'
       )
-      .order('created_at', { ascending: false })
 
-    setMoments((data as unknown as Moment[]) ?? [])
+    const sorted = ((data as unknown as Moment[]) ?? []).sort(
+      (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
+    )
+    setMoments(sorted)
     setLoading(false)
   }
 
@@ -74,8 +85,7 @@ export default function Events({
                 {moment.occasion || 'Untitled moment'}
               </button>
               <p style={styles.meta}>
-                {[moment.when_text, moment.location].filter(Boolean).join(' · ') ||
-                  new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ')}
               </p>
 
               {attendees.size > 0 && (
