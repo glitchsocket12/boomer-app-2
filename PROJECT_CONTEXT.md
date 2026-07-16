@@ -28,8 +28,8 @@ Since then, the project has grown well beyond this original two-feature scope (s
 - **Frontend:** React (via Vite), written in **TypeScript** (`.tsx`/`.ts`) — this happened somewhat by accident, because StackBlitz's default "React" starter template uses TypeScript even when "React" (not "React + TS") is selected. The founder is not a TS expert; keep type annotations light and pragmatic, not strict/idiomatic TS.
 - **Backend / database / auth:** Supabase (Postgres + built-in auth + Edge Functions). Chosen specifically because it bundles auth and a database together, minimizing setup for a beginner.
 - **AI:** Anthropic's Claude API, called exclusively from Supabase **Edge Functions** (Deno-based serverless functions) — never from the frontend — because the API key must never be exposed in browser-visible code.
-- **Dev environment:** **StackBlitz** (browser-based, no local install) — chosen because the founder has no dev environment set up and wanted zero-install. This has caused significant friction throughout the project (see Section 9) and is the reason for now moving to Claude Code.
-- **Hosting/deployment:** Not yet set up. The app has only ever run inside StackBlitz's preview; there is no production deployment (e.g. Vercel/Netlify) yet.
+- **Dev environment:** As of 2026-07-15, moved off StackBlitz to **Claude Code working directly in a local folder** (`C:\Users\jakev\Downloads\boomer-app-2`), specifically to stop the copy-paste workflow between claude.ai chat and StackBlitz that caused repeated friction (see Section 9). Node.js/npm and the Supabase CLI (as a local devDependency, run via `npx supabase`) are now installed on this machine. Edge Functions were pulled out of the Supabase dashboard into `supabase/functions/` in this repo, so both frontend and backend are now edited and deployed from the same local repo — no more pasting code into either StackBlitz or the Supabase dashboard.
+- **Hosting/deployment:** **Live on Vercel** as of 2026-07-15 (`https://boomer-app-2-eight.vercel.app/`), connected to the GitHub repo (`github.com/glitchsocket12/boomer-app-2`) for auto-deploy on every push to `main`. `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` are set as environment variables in Vercel's project settings (not from `.env`, which is git-ignored).
 - **Model name in use:** `claude-sonnet-5` in all Edge Functions. (Earlier revisions mistakenly used an invalid model string, `claude-sonnet-4-6`, which caused a silent failure mode — see Section 9.)
 
 ## 4. Project Architecture
@@ -38,10 +38,12 @@ Since then, the project has grown well beyond this original two-feature scope (s
 src/
 ├── main.tsx / index.css      — app entry point, minimal global styles
 ├── App.tsx                   — top-level "traffic controller": auth state,
-│                                tab navigation (Home / People / Groups /
-│                                Events / Add a Moment), and routes to a
-│                                person's profile (PersonDetail) when one
-│                                is selected from anywhere in the app
+│                                tab navigation (Home / People / Events /
+│                                Groups), and routes to a person's profile
+│                                (PersonDetail) when one is selected from
+│                                anywhere in the app. Each tab is wrapped
+│                                in an ErrorBoundary so a bug in one page
+│                                can't blank the whole app (see Section 9).
 ├── lib/
 │   └── supabase.ts           — single shared Supabase client, reads
 │                                VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
@@ -67,16 +69,14 @@ src/
 │   │                             and their members; groups are created
 │   │                             CONVERSATIONALLY (via Home), not through
 │   │                             a manual "create group" form
-│   ├── Events.tsx               — browsable list of all moments/events
-│   │                             (independent of any one person), shows
-│   │                             attendees and any group tags
-│   └── AddAMoment.tsx           — the ORIGINAL standalone "Add a Moment"
-│                                 conversational capture flow, calls the
-│                                 `chat` Edge Function. Still present but
-│                                 largely superseded by Home's unified
-│                                 conversation — kept as a dedicated
-│                                 capture-only entry point.
+│   └── Events.tsx               — browsable list of all moments/events
+│                                 (independent of any one person), shows
+│                                 attendees (as clickable chips to their
+│                                 profile) and any group tags
 ├── components/
+│   ├── ErrorBoundary.tsx        — catches a render-time crash in whatever
+│   │                             it wraps and shows an error message
+│   │                             instead of taking down the whole app
 │   └── UpdateMomentChat.tsx     — small inline conversational widget for
 │                                 adding detail to an already-identified
 │                                 moment, calls the `update-moment` Edge
@@ -86,17 +86,19 @@ src/
 │                                 capability to update moments in-thread.
 ```
 
+**As of 2026-07-15, the standalone "Add a Moment" page (`AddAMoment.tsx`) was removed** — Home's unified conversation already covers that capture flow, so the separate page/tab was redundant. Its Edge Function (`chat`) is still deployed but is now unused by the frontend entirely (see the Edge Functions table below). The Events and Groups tabs (described above) were also actually wired into the nav bar for the first time as part of this same change — the architecture doc had described them for a while, but they weren't reachable from the UI until now.
+
 **Supabase Edge Functions (Deno, in the Supabase dashboard, not local CLI):**
 
 | Function | Purpose | Status |
 |---|---|---|
-| `chat` | Original Add-a-Moment capture conversation | Active, used by `AddAMoment.tsx` |
+| `chat` | Original Add-a-Moment capture conversation | Deployed but no longer called by the app — `AddAMoment.tsx` was removed 2026-07-15 |
 | `search` | Original one-shot search (superseded) | Deployed but no longer called by the app |
 | `update-moment` | Add detail to one specific moment | Active, used by `UpdateMomentChat.tsx` |
 | `add-fact` | Classifies a typed fact as a last-name correction vs. a plain note | Active, used by `PersonDetail.tsx` and `Home.tsx`'s per-person note adding |
 | `converse` | **The main unified brain.** One conversation handles: answering questions (about people, groups, or events), capturing brand-new moments, updating existing moments, renaming placeholder people, last-name corrections, and creating/tagging groups — all decided per-turn from conversational context. This is what `Home.tsx` calls. | Active, actively evolving |
 
-**Important:** `search`, `chat`, and `update-moment` still exist and are deployed, but `converse` has absorbed most of their responsibility for the main Home experience. They are not necessarily kept in sync with each other anymore — treat `converse` as the source of truth for prompt-engineering patterns going forward, and consider whether the older functions should be deprecated/removed or deliberately kept for their narrower entry points (AddAMoment tab, PersonDetail fact bar).
+**Important:** `search`, `chat`, and `update-moment` still exist and are deployed, but `converse` has absorbed most of their responsibility for the main Home experience. They are not necessarily kept in sync with each other anymore — treat `converse` as the source of truth for prompt-engineering patterns going forward. `chat` in particular now has zero callers in the frontend and is a candidate for deletion; `update-moment` is still used by `UpdateMomentChat.tsx`, and `add-fact` is still used by `PersonDetail.tsx`'s fact bar.
 
 ## 5. Database Structure (Supabase / Postgres)
 
@@ -181,7 +183,6 @@ moment_groups                    (join table, many-to-many)
 - Sign up / log in (Supabase Auth, email confirmation currently **disabled** in the Supabase dashboard for ease of testing — see Section 10, this needs to be re-enabled before real users)
 - People list: add a person (first + last name), view list
 - Reminders: manually add a birthday/anniversary date per person, visible in their card on the People page. **No automatic email/notification sending exists yet.**
-- Add a Moment: conversational capture (who/what/where/occasion/mood/etc.), auto-creates people who don't exist yet, saves notes per person
 - Person profile page: chronological notes, a "fact bar" to add a detail directly (routes through AI classification to decide if it's a structured correction like a last name, or a plain note)
 - **Unified Home conversation** (the main current interface): a persistent chat thread, not one-shot search, that can:
   - Answer broad questions about a person ("tell me about Steve") by synthesizing across ALL their notes/moments
@@ -194,8 +195,9 @@ moment_groups                    (join table, many-to-many)
   - Recognize and apply last-name corrections
   - Recognize and create/tag Groups conversationally (e.g. "Mike is one of my Academy friends")
   - Show clickable chips for every person mentioned by name in a reply (not just the main subject), which navigate to that person's profile
-- Groups page: lists groups and members (read-only view; groups are created via conversation, not a manual form)
-- Events page: browsable list of all moments, with attendees and group tags, independent of any one person
+- Groups page: lists groups and members (read-only view; groups are created via conversation, not a manual form). Confirmed working end-to-end (click-tested) 2026-07-15, though empty until a group actually gets tagged via Home.
+- Events page: browsable list of all moments, with attendees (clickable, jump to profile) and group tags, independent of any one person. Confirmed working end-to-end (click-tested) 2026-07-15.
+- Both Events and Groups are now reachable from the main nav bar (Home / People / Events / Groups) — the standalone "Add a Moment" tab was removed since Home's conversation already covers that capture flow.
 - Demo/seed data: a fictional persona "John & Jane Doe" (61-year-old retired Air Force veteran in Colorado Springs) with ~18 people, ~22 moments, and 90+ notes, seeded via direct SQL for demo/testing purposes (SQL files were generated and handed off, not run by the assistant directly — the user runs them in the Supabase SQL Editor)
 
 ## 7. Features Currently In Progress / Explicitly Deferred
@@ -205,7 +207,7 @@ moment_groups                    (join table, many-to-many)
 - **Weather/time metadata enrichment** on moments (pulling historical weather for the date/location of an event) — discussed as an interesting idea, explicitly deferred in favor of other priorities. Would require geocoding + a historical weather API (e.g. Open-Meteo, free/no-key).
 - **iPhone Contacts integration** — using a person's real saved address/contact info from the user's phone contacts — explicitly deferred as unnecessary complexity for now.
 - **Tuning AI conversation quality** — the founder has repeatedly noted the AI could ask better/more thorough follow-up questions before wrapping up a conversation; called "good for MVP, but something to improve" more than once. This is an ongoing, never-fully-resolved thread, not a discrete task.
-- **Groups tagging for moments** — the data model (`moment_groups`) and the `converse` prompt both support tagging a moment/event with a group conversationally, but as of the last working session this had just been built and not yet tested/confirmed by the founder.
+- **Groups tagging for moments** — the data model (`moment_groups`) and the `converse` prompt both support tagging a moment/event with a group conversationally. The Groups page itself now works end-to-end (confirmed 2026-07-15), but no group has actually been created via conversation yet, so the conversational tagging flow itself is still unconfirmed.
 
 ## 8. Key UX / Product Decisions (and the reasoning behind them)
 
@@ -230,14 +232,18 @@ moment_groups                    (join table, many-to-many)
 - **StackBlitz/GitHub workflow was a major source of non-code friction**: a GitHub folder upload silently failed to include the `src` folder (common browser drag-drop limitation), leading to a confusing multi-hour debugging detour chasing a "does the file exist?" Vite error that had nothing to do with the code itself. Ultimately resolved by abandoning the GitHub-import path and creating files directly inside a fresh StackBlitz project instead.
 - **Multiple large code pastes were silently truncated mid-paste** (e.g. `AddAMoment.tsx`, `converse`), producing confusing parse errors that looked code-related but were actually paste/environment issues. **Lesson: for large files, prefer providing a downloadable file over a giant inline code block when possible**, and if a paste-related error occurs, first suspect truncation before suspecting logic errors.
 - **A stray duplicate declaration and a literal "constconst" typo** crept into the `converse` function during iterative patching. **Lesson: past a certain size/complexity, prefer replacing a whole file cleanly rather than making many small incremental find-and-replace edits to it**, since incremental edits on top of a long conversation are error-prone to track by hand.
+- **`verbatimModuleSyntax` (in `tsconfig`) requires type-only imports.** `import { FormEvent } from 'react'` in `Login.tsx`, `People.tsx`, and `PersonDetail.tsx` built fine locally but failed Vercel's build (`error TS1484`) — local dev had been silently tolerating it. Fixed with `import { type FormEvent } from 'react'`. **Lesson: a clean local dev server is not proof a production build will succeed; run `npm run build` locally before assuming a deploy will work.**
+- **Supabase's query builder mistypes many-to-one nested joins as arrays, but returns a single object at runtime.** Building the Events and Groups pages, `notes(people(...))` and `moment_groups(groups(...))` were typed by TypeScript as if `people`/`groups` could be arrays (Supabase's JS client can't infer real foreign-key cardinality without generated schema types). Trusting that inferred type instead of the actual database relationship (a note belongs to exactly one person, a moment_groups row tags exactly one group) caused a `TypeError: object is not iterable` at runtime the moment real data loaded, which crashed the whole app to a blank white page with no visible error — because there was no error boundary anywhere. Fixed by (1) matching the code to the real one-to-one/many-to-one shape (a nullable single object, not an array) rather than bending the code to satisfy the type checker, and (2) adding `ErrorBoundary.tsx`, now wrapped around each tab in `App.tsx`, so a future bug like this shows an error message instead of blanking the app. **Lesson: when a Supabase nested-select's inferred TypeScript type doesn't match the actual foreign-key relationship, trust the database schema (check whether the join is really one-to-many or many-to-one) over the type checker, and use `as unknown as T` to correct the type rather than reshaping the code around a wrong inferred type.**
+- **First production deploy showed a totally blank white page, with no console errors.** Root cause: Vite bakes `VITE_*` env vars into the bundle at *build time*, not read live at runtime. A Vercel auto-deploy (triggered by a git push) built and shipped *before* the Supabase env vars had been correctly saved in Vercel's dashboard, so `createClient(undefined, undefined)` failed at startup with no visible error. **Lesson: after adding/changing env vars in Vercel, you must trigger a fresh deploy (e.g. "Redeploy" on the latest deployment) — saving the variables alone does not update an already-built deployment.** Also: Vercel's default "Visit" link for a deployment can be a protected preview-style URL (e.g. `boomer-app-2-<hash>-boomer-app.vercel.app`) that silently redirects to a Vercel login page for anyone without dashboard access; the real public URL is the plain `boomer-app-2-eight.vercel.app` production alias.
 
 ## 10. Known Limitations / Things NOT Yet Done
 
 - **No automatic email sending** for reminders (table exists, no sending logic).
 - **No voice input** yet, despite being an explicitly stated priority.
 - **Email confirmation is disabled** in Supabase Auth (was turned off specifically to ease local testing, since Supabase's default confirmation link points to `localhost:3000`, which doesn't resolve in StackBlitz). **This must be reconsidered/re-enabled before any real users sign up**, or a proper redirect URL must be configured.
-- **No production deployment** — the app only exists inside StackBlitz's dev preview. Nothing has been deployed to a real hosting provider yet.
-- **`search`, `chat`, and `update-moment` Edge Functions may be stale/out of sync** with the improvements made to `converse` (date reasoning, last-name matching, relevant_people-mentions-everyone, graceful "nothing found" handling, etc.) since those fixes were applied to `converse` but not necessarily backported to the older functions still used by `AddAMoment.tsx` and `PersonDetail.tsx`'s fact bar.
+- **Production deployment now live** on Vercel (`https://boomer-app-2-eight.vercel.app/`), auto-deploying from GitHub `main` — resolved as of 2026-07-15 (see Section 3, Section 9).
+- **`search`, `chat`, and `update-moment` Edge Functions may be stale/out of sync** with the improvements made to `converse` (date reasoning, last-name matching, relevant_people-mentions-everyone, graceful "nothing found" handling, etc.) since those fixes were applied to `converse` but not necessarily backported. `chat` is now fully unused by the frontend (`AddAMoment.tsx` was removed) and is a candidate for deletion rather than backporting; `update-moment` is still used by `PersonDetail.tsx`'s fact bar via `UpdateMomentChat.tsx`.
+- **No error boundaries existed anywhere until 2026-07-15** — a crash in any one page used to blank the entire app with zero on-screen feedback. A generic `ErrorBoundary` now wraps each tab (see Section 4, Section 9), but it only shows a raw error message/stack trace, which is fine for debugging but not something a non-technical end user should ever actually see — worth designing a friendlier fallback before this goes to real users.
 - **AI conversation quality (depth of follow-up questions) is an acknowledged ongoing weakness**, not a solved problem — expect the founder to keep raising this.
 - **No automated tests exist.** All verification so far has been manual, click-through testing by the founder in the StackBlitz preview.
 - **UUIDs in the demo seed-data SQL were handwritten/generated by the assistant for demo purposes** (e.g. `10000000-0000-0000-0000-000000000001`) — these are NOT how real user data will look; don't assume production IDs follow any particular pattern.
@@ -251,6 +257,7 @@ moment_groups                    (join table, many-to-many)
 5. **The data model favors flexibility (jsonb, free-text dates) over rigid structure**, by deliberate choice, in service of AI-driven conversational search being the primary way data is consumed — don't "clean this up" into strict typed columns without checking whether that trade-off is still wanted.
 6. **Nothing here has been production-hardened.** Auth email confirmation is off, there's no deployed hosting, and there are no tests. Treat this as a working prototype/demo, not a production system, unless told otherwise.
 7. **The demo data (John & Jane Doe persona) is fake/seed data for demonstration purposes only** — don't confuse it with real user data, and don't assume its patterns (fixed hand-written UUIDs, uniform note counts, etc.) reflect how real usage will look.
+8. **See `CLAUDE.md` in the repo root for standing workflow permissions** — as of 2026-07-15, the founder has explicitly asked for verified changes to be committed and pushed to `main` (which auto-deploys to production) without asking each time, and for this document to be kept up to date without being asked. This does not relax the "check in before major/architectural decisions" rule above — it's specifically about not needing manual sign-off on routine follow-through once work is done and verified.
 
 ---
 

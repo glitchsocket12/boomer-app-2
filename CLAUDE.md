@@ -1,0 +1,8 @@
+# Standing instructions for this repo
+
+The founder (see PROJECT_CONTEXT.md) is a non-technical, first-time builder and cannot review code diffs. Two standing permissions apply here, so they don't need to be asked for each time:
+
+1. **Commit and push to `main` after finishing and verifying a change**, without asking for confirmation first. This repo auto-deploys to production on Vercel on every push to `main` — there is no staging step — so this means verified changes go live automatically. "Verified" means: build passes (`npm run build`) and, for anything with a visible UI effect, it's been clicked through in the browser preview.
+2. **Keep `PROJECT_CONTEXT.md` up to date on your own** after making changes, without waiting to be asked. Update the relevant section(s) (architecture, features built, known limitations, bugs fixed) so it stays an accurate living doc — don't just leave it stale.
+
+Neither of these removes the general rule of checking in before *major/architectural* decisions (see PROJECT_CONTEXT.md Section 11) — that still applies. This is specifically about not needing a manual "yes, push it" / "yes, update the doc" for routine follow-through once work is actually done and verified.
