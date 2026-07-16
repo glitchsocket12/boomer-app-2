@@ -49,13 +49,27 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 500,
+        max_tokens: 1500,
         system: systemPrompt,
         messages,
       }),
     })
 
+    if (!response.ok) {
+      const errorBody = await response.text()
+      console.error("Anthropic API error", response.status, errorBody)
+      return new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: "Sorry, I'm having trouble responding right now — please try again in a moment." }],
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
     const data = await response.json()
+    if (!data.content?.find((b: any) => b.type === "text")) {
+      console.error("Anthropic response had no text block", JSON.stringify(data))
+    }
     return new Response(JSON.stringify(data), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })

@@ -31,6 +31,11 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
     const textBlock = data.content?.find((b: any) => b.type === 'text')
     const reply = textBlock?.text ?? ''
 
+    if (!reply.trim()) {
+      setMessages([...newMessages, { role: 'assistant', content: "Sorry, I didn't get a response there — please try again." }])
+      return
+    }
+
     let parsed: { done: boolean; new_people: string[]; additional_notes: { person: string; note: string }[] } | null = null
     try {
       const start = reply.indexOf('{')
