@@ -223,8 +223,8 @@ moment_groups                    (join table, many-to-many)
 ## 6. Features Already Built (and confirmed working end-to-end)
 
 - Sign up / log in (Supabase Auth, email confirmation currently **disabled** in the Supabase dashboard for ease of testing — see Section 10, this needs to be re-enabled before real users)
-- People list: add a person (first + last name), view list
-- Reminders: manually add a birthday/anniversary date per person, visible in their card on the People page. **No automatic email/notification sending exists yet.**
+- People list: add a person (first + last name), view list. Each person's card shows their full name (first + last, when a last name is on file) and a row of labeled field cells — Last name, Birthday, Anniversary — that show the value if set or a subtle "not added" placeholder if missing, so it's obvious what info is still needed. Click any cell to add/edit it inline. Any other custom important date (e.g. "Graduation") still shows below as a plain list item, added via a free-text label + month/day form.
+- Reminders: manually add a birthday/anniversary date per person (via the field cells above) or any other custom-labeled date. **No automatic email/notification sending exists yet.**
 - Person profile page: chronological notes, a "fact bar" to add a detail directly (routes through AI classification to decide if it's a structured correction like a last name, or a plain note)
 - **Unified Home conversation** (the main current interface): a persistent chat thread, not one-shot search, that can:
   - Answer broad questions about a person ("tell me about Steve") by synthesizing across ALL their notes/moments
