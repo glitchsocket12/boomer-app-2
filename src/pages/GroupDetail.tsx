@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
+import EditButton from '../components/EditButton'
 
 type Moment = {
   id: string
@@ -102,9 +103,7 @@ export default function GroupDetail({
       ) : (
         <div style={styles.headingRow}>
           <h1 style={styles.heading}>{name}</h1>
-          <button onClick={() => setEditingName(true)} style={styles.renameButton}>
-            Rename
-          </button>
+          <EditButton label="Rename group" onClick={() => setEditingName(true)} />
         </div>
       )}
 
@@ -145,17 +144,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
   },
   heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
-  headingRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' },
-  renameButton: {
-    background: 'none',
-    border: 'none',
-    color: '#2E4034',
-    fontSize: '0.9rem',
-    fontFamily: 'Georgia, serif',
-    textDecoration: 'underline',
-    cursor: 'pointer',
-    padding: 0,
-  },
+  headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.5rem', flexWrap: 'wrap' },
   renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap' },
   renameInput: {
     fontSize: '1.5rem',

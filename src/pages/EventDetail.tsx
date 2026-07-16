@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { PersonChip, GroupChip } from '../components/Chips'
 import UpdateMomentChat from '../components/UpdateMomentChat'
+import EditButton from '../components/EditButton'
 import { summarize } from '../lib/summarize'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
@@ -121,15 +122,13 @@ export default function EventDetail({
       ) : (
         <div style={styles.headingRow}>
           <h1 style={styles.heading}>{moment.occasion || 'Untitled moment'}</h1>
-          <button
+          <EditButton
+            label="Rename event"
             onClick={() => {
               setTitleInput(moment.occasion ?? '')
               setEditingTitle(true)
             }}
-            style={styles.renameButton}
-          >
-            Rename
-          </button>
+          />
         </div>
       )}
       <p style={styles.meta}>
@@ -209,17 +208,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
   },
   heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
-  headingRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' },
-  renameButton: {
-    background: 'none',
-    border: 'none',
-    color: '#2E4034',
-    fontSize: '0.9rem',
-    fontFamily: 'Georgia, serif',
-    textDecoration: 'underline',
-    cursor: 'pointer',
-    padding: 0,
-  },
+  headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem', flexWrap: 'wrap' },
   renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.25rem', flexWrap: 'wrap' },
   renameInput: {
     fontSize: '1.5rem',
