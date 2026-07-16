@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import VoiceInputButton from './VoiceInputButton'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 
@@ -123,6 +124,10 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
           placeholder="What else do you remember?"
           style={styles.input}
           disabled={sending}
+        />
+        <VoiceInputButton
+          disabled={sending}
+          onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
         />
         <button onClick={sendMessage} disabled={sending} style={styles.button}>
           Send

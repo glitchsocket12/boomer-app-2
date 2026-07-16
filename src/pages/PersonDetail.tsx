@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { GroupChip, EventChip } from '../components/Chips'
+import VoiceInputButton from '../components/VoiceInputButton'
 
 type Note = {
   id: string
@@ -121,6 +122,10 @@ export default function PersonDetail({
           onChange={(e) => setNewFact(e.target.value)}
           placeholder={`Add a fact about ${personName}, e.g. "Married to Manuel, they share a house"`}
           style={styles.addInput}
+        />
+        <VoiceInputButton
+          disabled={saving}
+          onTranscribed={(text) => setNewFact((prev) => (prev ? `${prev} ${text}` : text))}
         />
         <button type="submit" disabled={saving} style={styles.addButton}>
           {saving ? '…' : 'Add'}

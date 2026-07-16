@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import VoiceInputButton from '../components/VoiceInputButton'
 
 type PersonRef = { id: string; name: string }
 type ChatMessage = {
@@ -79,6 +80,10 @@ export default function Home({ onSelectPerson }: { onSelectPerson: (person: Pers
           placeholder="Ask, share, or add a detail…"
           style={styles.input}
           disabled={sending}
+        />
+        <VoiceInputButton
+          disabled={sending}
+          onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
         />
         <button onClick={handleSend} disabled={sending} style={styles.button}>
           Send
