@@ -55,6 +55,10 @@ export default function App() {
     setNavStack((s) => s.slice(0, index + 1))
   }
 
+  function renameCurrentCrumb(newLabel: string) {
+    setNavStack((s) => (s.length === 0 ? s : [...s.slice(0, -1), { ...s[s.length - 1], label: newLabel }]))
+  }
+
   if (checkingSession) {
     return <p style={{ textAlign: 'center', marginTop: '4rem' }}>Loading…</p>
   }
@@ -97,6 +101,7 @@ export default function App() {
         onBack={popCrumb}
         backLabel={parentLabel}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+        onRenamed={renameCurrentCrumb}
       />
     )
   } else if (current?.type === 'event') {
@@ -107,6 +112,7 @@ export default function App() {
         backLabel={parentLabel}
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
+        onRenamed={renameCurrentCrumb}
       />
     )
   } else {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 
@@ -17,18 +17,27 @@ export default function GroupDetail({
   onSelectEvent,
   onBack,
   backLabel,
+  onRenamed,
 }: {
   groupId: string
   groupName: string
   onSelectEvent: (event: { id: string; summary: string }) => void
   onBack: () => void
   backLabel: string
+  onRenamed?: (newName: string) => void
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
+  const [name, setName] = useState(groupName)
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState(groupName)
+  const [savingName, setSavingName] = useState(false)
 
   useEffect(() => {
     loadMoments()
+    setName(groupName)
+    setNameInput(groupName)
+    setEditingName(false)
   }, [groupId])
 
   async function loadMoments() {
@@ -43,12 +52,61 @@ export default function GroupDetail({
     setLoading(false)
   }
 
+  async function handleSaveName(e: FormEvent) {
+    e.preventDefault()
+    const trimmed = nameInput.trim()
+    if (!trimmed || trimmed === name) {
+      setEditingName(false)
+      setNameInput(name)
+      return
+    }
+    setSavingName(true)
+    const { error } = await supabase.from('groups').update({ name: trimmed }).eq('id', groupId)
+    setSavingName(false)
+    if (error) return
+
+    setName(trimmed)
+    setEditingName(false)
+    onRenamed?.(trimmed)
+  }
+
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
-      <h1 style={styles.heading}>{groupName}</h1>
+
+      {editingName ? (
+        <form onSubmit={handleSaveName} style={styles.renameForm}>
+          <input
+            type="text"
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+            style={styles.renameInput}
+            autoFocus
+          />
+          <button type="submit" disabled={savingName || !nameInput.trim()} style={styles.saveButton}>
+            {savingName ? '…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingName(false)
+              setNameInput(name)
+            }}
+            style={styles.cancelButton}
+          >
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div style={styles.headingRow}>
+          <h1 style={styles.heading}>{name}</h1>
+          <button onClick={() => setEditingName(true)} style={styles.renameButton}>
+            Rename
+          </button>
+        </div>
+      )}
 
       {moments.length === 0 && (
         <p style={styles.empty}>No events tagged to this group yet — mention this affiliation on Home while telling a story and it'll show up here.</p>
@@ -86,7 +144,46 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '1rem',
     padding: 0,
   },
-  heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1.5rem' },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
+  headingRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' },
+  renameButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '0.9rem',
+    fontFamily: 'Georgia, serif',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap' },
+  renameInput: {
+    fontSize: '1.5rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E4034',
+    padding: '0.25rem 0.5rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    flex: '1 1 200px',
+  },
+  saveButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
+  cancelButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    backgroundColor: '#FFF',
+    color: '#555',
+    cursor: 'pointer',
+  },
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   card: {

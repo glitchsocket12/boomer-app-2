@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { PersonChip, GroupChip } from '../components/Chips'
 import UpdateMomentChat from '../components/UpdateMomentChat'
+import { summarize } from '../lib/summarize'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string }
@@ -25,18 +26,24 @@ export default function EventDetail({
   onSelectGroup,
   onBack,
   backLabel,
+  onRenamed,
 }: {
   eventId: string
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onBack: () => void
   backLabel: string
+  onRenamed?: (newSummary: string) => void
 }) {
   const [moment, setMoment] = useState<MomentDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleInput, setTitleInput] = useState('')
+  const [savingTitle, setSavingTitle] = useState(false)
 
   useEffect(() => {
     loadMoment()
+    setEditingTitle(false)
   }, [eventId])
 
   async function loadMoment() {
@@ -51,6 +58,25 @@ export default function EventDetail({
 
     setMoment((data as unknown as MomentDetail) ?? null)
     setLoading(false)
+  }
+
+  async function handleSaveTitle(e: FormEvent) {
+    e.preventDefault()
+    if (!moment) return
+    const trimmed = titleInput.trim()
+    const newOccasion = trimmed || null
+    if (newOccasion === moment.occasion) {
+      setEditingTitle(false)
+      return
+    }
+    setSavingTitle(true)
+    const { error } = await supabase.from('moments').update({ occasion: newOccasion }).eq('id', moment.id)
+    setSavingTitle(false)
+    if (error) return
+
+    setMoment({ ...moment, occasion: newOccasion })
+    setEditingTitle(false)
+    onRenamed?.(summarize(newOccasion, moment.raw_description))
   }
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
@@ -71,7 +97,41 @@ export default function EventDetail({
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
-      <h1 style={styles.heading}>{moment.occasion || 'Untitled moment'}</h1>
+      {editingTitle ? (
+        <form onSubmit={handleSaveTitle} style={styles.renameForm}>
+          <input
+            type="text"
+            value={titleInput}
+            onChange={(e) => setTitleInput(e.target.value)}
+            placeholder="Untitled moment"
+            style={styles.renameInput}
+            autoFocus
+          />
+          <button type="submit" disabled={savingTitle} style={styles.saveButton}>
+            {savingTitle ? '…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditingTitle(false)}
+            style={styles.cancelButton}
+          >
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div style={styles.headingRow}>
+          <h1 style={styles.heading}>{moment.occasion || 'Untitled moment'}</h1>
+          <button
+            onClick={() => {
+              setTitleInput(moment.occasion ?? '')
+              setEditingTitle(true)
+            }}
+            style={styles.renameButton}
+          >
+            Rename
+          </button>
+        </div>
+      )}
       <p style={styles.meta}>
         {[moment.when_text, moment.location].filter(Boolean).join(' · ') ||
           new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
@@ -148,7 +208,46 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '1rem',
     padding: 0,
   },
-  heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.25rem' },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
+  headingRow: { display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' },
+  renameButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '0.9rem',
+    fontFamily: 'Georgia, serif',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.25rem', flexWrap: 'wrap' },
+  renameInput: {
+    fontSize: '1.5rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E4034',
+    padding: '0.25rem 0.5rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    flex: '1 1 200px',
+  },
+  saveButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
+  cancelButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    backgroundColor: '#FFF',
+    color: '#555',
+    cursor: 'pointer',
+  },
   meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#888' },
   description: { fontSize: '1.05rem', color: '#2E2E2E', lineHeight: 1.6, marginBottom: '1.5rem' },
   detailsBox: {
