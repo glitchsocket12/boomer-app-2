@@ -43,12 +43,22 @@ serve(async (req) => {
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
+    // A bare first name only maps to a person if that first name is unique — otherwise two different
+    // people sharing a first name (e.g. two "Bob"s) would silently collide and whichever was processed
+    // last would win every lookup by that first name, misattributing notes/group tags to the wrong one.
+    const ambiguousFirstNames = new Set<string>()
     for (const p of people ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
-      idByName[p.name.toLowerCase()] = p.id
+      const firstNameKey = p.name.toLowerCase()
+      if (idByName[firstNameKey] && idByName[firstNameKey] !== p.id) {
+        ambiguousFirstNames.add(firstNameKey)
+      } else {
+        idByName[firstNameKey] = p.id
+      }
     }
+    for (const key of ambiguousFirstNames) delete idByName[key]
 
     const groupNameById: Record<string, string> = {}
     const idByGroupName: Record<string, string> = {}
@@ -87,6 +97,8 @@ serve(async (req) => {
       .map((g: any) => `${g.name} (members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"})`)
       .join("\n")
 
+    const peopleRoster = (people ?? []).map((p: any) => nameById[p.id]).join(", ")
+
     const todayString = new Date().toDateString()
     const todayIso = new Date().toISOString().slice(0, 10)
 
@@ -99,6 +111,11 @@ ${context || "(none recorded yet)"}
 
 Here are the groups already created:
 ${groupsContext || "(none yet)"}
+
+Here is everyone already recorded, by full name where a last name is known:
+${peopleRoster || "(none yet)"}
+
+IMPORTANT — disambiguating people who share a first name: check the roster above for any other recorded person with the same first name as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", or "last_name_updates". If there's a collision (e.g. two different people both named "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name — a bare shared first name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
 A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, military unit, workplace, club, or friend circle the user was part of over a stretch of time. It is NOT a one-off event, and it is NOT the same thing as a moment. A single group can have many moments tagged to it over time (e.g. many stories from "the Air Force Academy") and many people tagged to it as members (e.g. teammates, classmates).
 
