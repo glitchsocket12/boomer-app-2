@@ -22,12 +22,15 @@ serve(async (req) => {
 
     const [{ data: person }, { data: notes }, { data: allPeople }] = await Promise.all([
       supabaseClient.from("people").select("name, last_name").eq("id", personId).single(),
-      supabaseClient.from("notes").select("content").eq("person_id", personId).order("created_at", { ascending: true }),
-      supabaseClient.from("people").select("id, name, last_name"),
+      supabaseClient.from("notes").select("id, content").eq("person_id", personId).order("created_at", { ascending: true }),
+      supabaseClient.from("people").select("id, name, last_name, nicknames"),
     ])
 
     const name = person?.name ?? "this person"
-    const noteText = (notes ?? []).map((n) => n.content).join("\n")
+    const validNoteIds = new Set((notes ?? []).map((n) => n.id))
+    // Tag each note with its own id so the model can tell us exactly which note(s) a fact came
+    // from — same [X_ID: ...] tagging technique search.ts/update-group already use for moments.
+    const noteText = (notes ?? []).map((n) => `[NOTE_ID: ${n.id}] ${n.content}`).join("\n")
 
     if (!noteText.trim()) {
       return new Response(JSON.stringify({ facts: [] }), {
@@ -35,23 +38,29 @@ serve(async (req) => {
       })
     }
 
-    // Same ambiguous-first-name-safe lookup used by add-fact/converse/update-moment, so a
-    // spouse's bare first name only resolves to a real profile link when it's unambiguous.
+    // Same ambiguous-key-safe lookup used by add-fact/converse/update-moment, so a spouse's bare
+    // first name or nickname only resolves to a real profile link when it's unambiguous.
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
-    const ambiguousFirstNames = new Set<string>()
+    const ambiguousKeys = new Set<string>()
+    function claimKey(key: string, id: string) {
+      if (!key) return
+      if (idByName[key] && idByName[key] !== id) {
+        ambiguousKeys.add(key)
+      } else {
+        idByName[key] = id
+      }
+    }
     for (const p of allPeople ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
-      const firstNameKey = p.name.toLowerCase()
-      if (idByName[firstNameKey] && idByName[firstNameKey] !== p.id) {
-        ambiguousFirstNames.add(firstNameKey)
-      } else {
-        idByName[firstNameKey] = p.id
+      claimKey(p.name.toLowerCase(), p.id)
+      for (const nickname of (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)) {
+        claimKey(nickname.toLowerCase(), p.id)
       }
     }
-    for (const key of ambiguousFirstNames) delete idByName[key]
+    for (const key of ambiguousKeys) delete idByName[key]
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -62,8 +71,8 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 500,
-        system: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events.
+        max_tokens: 600,
+        system: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events, each prefixed with its own "[NOTE_ID: ...]" tag.
 
 Only extract facts that are EXPLICITLY stated in the notes. Never infer, guess, or pad with generic filler. Focus specifically on these categories:
 - "spouse": their spouse or partner
@@ -72,10 +81,11 @@ Only extract facts that are EXPLICITLY stated in the notes. Never infer, guess, 
 - "education": a school or college they attended
 - "other": at most 2 other clearly-stated close-relationship facts (e.g. parents, siblings) — only if directly stated, not inferred
 
-Do not use one-off event/gathering details (who attended a party, what was served, etc.) unless the text directly states a relationship fact. If a category isn't clearly stated anywhere in the notes, omit it entirely rather than guessing.
+Do not use one-off event/gathering details (who attended a party, what was served, etc.) unless the text directly states a relationship fact. If a category isn't clearly stated anywhere in the notes, omit it entirely rather than guessing. If notes disagree (e.g. two different spellings/names given for the same relationship), prefer treating them as separate facts rather than silently merging or picking one — the app will let the user reconcile these.
 
 Respond with ONLY a JSON object in this exact shape:
-{"facts": [{"category": "kids" | "location" | "education" | "other", "text": "short factual bullet, under 15 words, third person"} | {"category": "spouse", "relationship_label": "a short lead-in phrase describing the relationship as stated, e.g. \"Married to\", \"Engaged to\", \"Partner of\" — or, if no name is given at all, a complete standalone phrase like \"Married.\"", "person_name": "the spouse's name exactly as given, or null if no name was given"}]}
+{"facts": [{"category": "kids" | "location" | "education" | "other", "text": "short factual bullet, under 15 words, third person", "note_ids": ["..."]} | {"category": "spouse", "relationship_label": "a short lead-in phrase describing the relationship as stated, e.g. \"Married to\", \"Engaged to\", \"Partner of\" — or, if no name is given at all, a complete standalone phrase like \"Married.\"", "person_name": "the spouse's name exactly as given, or null if no name was given", "note_ids": ["..."]}]}
+"note_ids" must list the exact NOTE_ID value(s) (from the "[NOTE_ID: ...]" tags above) that this specific fact was drawn from — every note directly supporting it, and only those.
 For the "spouse" fact, "relationship_label" must NEVER include the person's name itself — the app renders the name separately (as a clickable link when possible), so repeating it in "relationship_label" would show the name twice.
 If nothing qualifies, respond {"facts": []}.`,
         messages: [{ role: "user", content: noteText }],
@@ -86,7 +96,7 @@ If nothing qualifies, respond {"facts": []}.`,
     const textBlock = data.content?.find((b: any) => b.type === "text")
 
     let result: {
-      facts: { category: string; text?: string; relationship_label?: string; person_name?: string | null }[]
+      facts: { category: string; text?: string; relationship_label?: string; person_name?: string | null; note_ids?: string[] }[]
     } = { facts: [] }
     try {
       result = { ...result, ...JSON.parse((textBlock?.text ?? "").trim()) }
@@ -95,20 +105,24 @@ If nothing qualifies, respond {"facts": []}.`,
     }
 
     const facts = (result.facts ?? []).map((f) => {
+      // Never trust the model's note_ids blindly — drop anything that isn't a real note on this
+      // person, same "don't trust a required field" lesson as elsewhere in this app.
+      const noteIds = (f.note_ids ?? []).filter((id) => validNoteIds.has(id))
+
       if (f.category !== "spouse") {
-        return { category: f.category, text: f.text }
+        return { category: f.category, text: f.text, noteIds }
       }
       // The model doesn't always fill in relationship_label even when told to — fall back to
       // "Married to" (the overwhelmingly common case) rather than ever rendering a bare name
       // with no lead-in text.
       const relationshipLabel = f.relationship_label?.trim() || (f.person_name ? "Married to" : "Married.")
       if (!f.person_name) {
-        return { category: f.category, relationshipLabel }
+        return { category: f.category, relationshipLabel, noteIds }
       }
       const spouseId = idByName[f.person_name.toLowerCase()]
       return spouseId
-        ? { category: f.category, relationshipLabel, personId: spouseId, personName: nameById[spouseId] }
-        : { category: f.category, relationshipLabel, personName: f.person_name }
+        ? { category: f.category, relationshipLabel, personId: spouseId, personName: nameById[spouseId], noteIds }
+        : { category: f.category, relationshipLabel, personName: f.person_name, noteIds }
     })
 
     return new Response(JSON.stringify({ facts }), {

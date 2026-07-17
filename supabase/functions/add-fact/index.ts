@@ -26,7 +26,7 @@ serve(async (req) => {
 
     const { data: person } = await supabaseClient
       .from("people")
-      .select("name, last_name, reminders(id, label, month, day)")
+      .select("name, last_name, nicknames, reminders(id, label, month, day)")
       .eq("id", personId)
       .single()
 
@@ -38,25 +38,31 @@ serve(async (req) => {
     const { data: existingGroups } = await supabaseClient.from("groups").select("id, name")
     const groupsRoster = (existingGroups ?? []).map((g) => g.name).join(", ")
 
-    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name")
+    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
-    // A bare first name only maps to a person if that first name is unique — same
-    // ambiguous-first-name guard used in converse/update-moment (see PROJECT_CONTEXT.md
-    // Section 9, the "two Bobs" bug) so a spouse mention never misattaches to the wrong person.
-    const ambiguousFirstNames = new Set<string>()
+    // A bare first name or nickname only maps to a person if that key is unique — same
+    // ambiguous-key guard used in converse/update-moment (see PROJECT_CONTEXT.md Section 9,
+    // the "two Bobs" bug) so a spouse mention never misattaches to the wrong person.
+    const ambiguousKeys = new Set<string>()
+    function claimKey(key: string, id: string) {
+      if (!key) return
+      if (idByName[key] && idByName[key] !== id) {
+        ambiguousKeys.add(key)
+      } else {
+        idByName[key] = id
+      }
+    }
     for (const p of allPeople ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
-      const firstNameKey = p.name.toLowerCase()
-      if (idByName[firstNameKey] && idByName[firstNameKey] !== p.id) {
-        ambiguousFirstNames.add(firstNameKey)
-      } else {
-        idByName[firstNameKey] = p.id
+      claimKey(p.name.toLowerCase(), p.id)
+      for (const nickname of (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)) {
+        claimKey(nickname.toLowerCase(), p.id)
       }
     }
-    for (const key of ambiguousFirstNames) delete idByName[key]
+    for (const key of ambiguousKeys) delete idByName[key]
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -68,13 +74,13 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 400,
-        system: `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.
+        system: `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, nicknames/goes-by = ${person?.nicknames || "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.
 
 Respond ONLY with a JSON object in this exact shape:
 {"type": "name_update" | "birthday_update" | "anniversary_update" | "note", "value": <see below>, "group_signal": null | {"group_name": "string", "confidence": "high" | "medium"}, "spouse_signal": null | {"person_name": "string"}}
 
 "type"/"value" pairing:
-- Providing or correcting their NAME — first name, last name, or a full "First Last" spelling correction (e.g. "Their name is spelled Jonathan Smith", "Her last name is Peterson", "It's actually spelled Katherine, not Catherine"): {"type": "name_update", "value": {"first_name": "TheFirstName" or null, "last_name": "TheLastName" or null}}. Only include the part(s) actually being given/corrected — set the other to null. If the user states a full "First Last" name, include BOTH as the authoritative spelling of the whole name, even if one part already matches what's on file.
+- Providing or correcting their NAME — first name, last name, a full "First Last" spelling correction, and/or a NICKNAME or "goes by" name (e.g. "Their name is spelled Jonathan Smith", "Her last name is Peterson", "It's actually spelled Katherine, not Catherine", "He goes by Bob", "Everyone calls her Gigi"): {"type": "name_update", "value": {"first_name": "TheFirstName" or null, "last_name": "TheLastName" or null, "nicknames": ["NewNickname1"] or null}}. Only include the part(s) actually being given/corrected — set the others to null. If the user states a full "First Last" name, include BOTH as the authoritative spelling of the whole name, even if one part already matches what's on file. "nicknames" is for a name they go by that ISN'T their formal first/last name (e.g. a childhood nickname, a name only some people call them, "Grandpa Joe") — list only newly-stated nickname(s), not ones already on file.
 - Providing or correcting their BIRTHDAY (month/day only, no year): {"type": "birthday_update", "value": {"month": 1-12, "day": 1-31}}
 - Providing or correcting their ANNIVERSARY date (month/day only, no year): {"type": "anniversary_update", "value": {"month": 1-12, "day": 1-31}}
 - Anything else (a plain fact, memory, or detail that doesn't fit the above): {"type": "note", "value": "the text, lightly cleaned up if needed, otherwise unchanged"}
@@ -111,9 +117,20 @@ Never set a group_signal for a single one-off event or a bare location mention.
     }
 
     if (result.type === "name_update") {
-      const updates: { name?: string; last_name?: string } = {}
+      const updates: { name?: string; last_name?: string; nicknames?: string } = {}
       if (result.value?.first_name) updates.name = result.value.first_name
       if (result.value?.last_name) updates.last_name = result.value.last_name
+      if (Array.isArray(result.value?.nicknames) && result.value.nicknames.length > 0) {
+        // Add newly-stated nicknames alongside whatever's already on file, rather than
+        // replacing — same additive, dedupe-by-lowercase spirit as the spouse-note dedupe below.
+        const existing = (person?.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+        const merged = [...existing]
+        for (const nickname of result.value.nicknames) {
+          const trimmed = String(nickname).trim()
+          if (trimmed && !merged.some((n) => n.toLowerCase() === trimmed.toLowerCase())) merged.push(trimmed)
+        }
+        updates.nicknames = merged.join(", ")
+      }
       if (Object.keys(updates).length > 0) {
         await supabaseClient.from("people").update(updates).eq("id", personId)
       }

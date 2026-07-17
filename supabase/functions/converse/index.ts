@@ -33,7 +33,7 @@ serve(async (req) => {
       )
     }
 
-    const { data: people } = await supabaseClient.from("people").select("id, name, last_name")
+    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
     const { data: moments } = await supabaseClient
       .from("moments")
       .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
@@ -43,22 +43,30 @@ serve(async (req) => {
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
-    // A bare first name only maps to a person if that first name is unique — otherwise two different
-    // people sharing a first name (e.g. two "Bob"s) would silently collide and whichever was processed
-    // last would win every lookup by that first name, misattributing notes/group tags to the wrong one.
-    const ambiguousFirstNames = new Set<string>()
+    const nicknamesById: Record<string, string[]> = {}
+    // A bare first name or nickname only maps to a person if that key is unique — otherwise two
+    // different people sharing one (e.g. two "Bob"s, or two people who both go by "Bob") would
+    // silently collide and whichever was processed last would win every lookup, misattributing
+    // notes/group tags to the wrong one.
+    const ambiguousKeys = new Set<string>()
+    function claimKey(key: string, id: string) {
+      if (!key) return
+      if (idByName[key] && idByName[key] !== id) {
+        ambiguousKeys.add(key)
+      } else {
+        idByName[key] = id
+      }
+    }
     for (const p of people ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
-      const firstNameKey = p.name.toLowerCase()
-      if (idByName[firstNameKey] && idByName[firstNameKey] !== p.id) {
-        ambiguousFirstNames.add(firstNameKey)
-      } else {
-        idByName[firstNameKey] = p.id
-      }
+      claimKey(p.name.toLowerCase(), p.id)
+      const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      if (nicknames.length > 0) nicknamesById[p.id] = nicknames
+      for (const nickname of nicknames) claimKey(nickname.toLowerCase(), p.id)
     }
-    for (const key of ambiguousFirstNames) delete idByName[key]
+    for (const key of ambiguousKeys) delete idByName[key]
 
     const groupNameById: Record<string, string> = {}
     const idByGroupName: Record<string, string> = {}
@@ -97,7 +105,12 @@ serve(async (req) => {
       .map((g: any) => `${g.name} (members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"})`)
       .join("\n")
 
-    const peopleRoster = (people ?? []).map((p: any) => nameById[p.id]).join(", ")
+    const peopleRoster = (people ?? [])
+      .map((p: any) => {
+        const nicknames = nicknamesById[p.id]
+        return nicknames ? `${nameById[p.id]} (also goes by: ${nicknames.join(", ")})` : nameById[p.id]
+      })
+      .join(", ")
 
     const todayString = new Date().toDateString()
     const todayIso = new Date().toISOString().slice(0, 10)
@@ -115,7 +128,9 @@ ${groupsContext || "(none yet)"}
 Here is everyone already recorded, by full name where a last name is known:
 ${peopleRoster || "(none yet)"}
 
-IMPORTANT — disambiguating people who share a first name: check the roster above for any other recorded person with the same first name as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", or "last_name_updates". If there's a collision (e.g. two different people both named "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name — a bare shared first name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
+Some people in the roster above have a nickname or "goes by" name shown in parentheses (e.g. "Joseph Smith (also goes by: Grandpa Joe)") — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "notes", "relevant_people", "person_group_tags", etc., and it will still resolve to the same person.
+
+IMPORTANT — disambiguating people who share a first name or nickname: check the roster above for any other recorded person with the same first name or nickname as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", or "last_name_updates". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name or nickname — a bare shared name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
 A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, military unit, workplace, club, or friend circle the user was part of over a stretch of time. It is NOT a one-off event, and it is NOT the same thing as a moment. A single group can have many moments tagged to it over time (e.g. many stories from "the Air Force Academy") and many people tagged to it as members (e.g. teammates, classmates).
 

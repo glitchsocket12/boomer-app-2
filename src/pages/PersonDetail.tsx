@@ -18,7 +18,7 @@ type GroupRef = { id: string; name: string }
 
 type Reminder = { id: string; label: string; month: number; day: number }
 
-type PersonRow = { name: string; last_name: string | null; reminders: Reminder[] }
+type PersonRow = { name: string; last_name: string | null; nicknames: string | null; reminders: Reminder[] }
 
 type KeyFact = {
   category: 'spouse' | 'kids' | 'location' | 'education' | 'other'
@@ -26,6 +26,7 @@ type KeyFact = {
   relationshipLabel?: string
   personId?: string
   personName?: string
+  noteIds: string[]
 }
 
 const AFFILIATION_LIMIT = 5
@@ -85,13 +86,16 @@ export default function PersonDetail({
       setFactsLoading(false)
       return
     }
-    setFactsLoading(true)
-    supabase.functions
-      .invoke('person-facts', { body: { personId } })
-      .then(({ data }) => setKeyFacts((data?.facts as KeyFact[]) ?? []))
-      .finally(() => setFactsLoading(false))
+    refreshFacts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personId, loading, notes.length])
+
+  async function refreshFacts() {
+    setFactsLoading(true)
+    const { data } = await supabase.functions.invoke('person-facts', { body: { personId } })
+    setKeyFacts((data?.facts as KeyFact[]) ?? [])
+    setFactsLoading(false)
+  }
 
   async function loadData() {
     setLoading(true)
@@ -103,7 +107,7 @@ export default function PersonDetail({
         .eq('person_id', personId)
         .order('created_at', { ascending: false }),
       supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
-      supabase.from('people').select('name, last_name, reminders(id, label, month, day)').eq('id', personId).single(),
+      supabase.from('people').select('name, last_name, nicknames, reminders(id, label, month, day)').eq('id', personId).single(),
     ])
 
     setNotes((notesRes.data as unknown as Note[]) ?? [])
@@ -118,6 +122,11 @@ export default function PersonDetail({
 
   async function handleSaveLastName(lastName: string) {
     await supabase.from('people').update({ last_name: lastName.trim() || null }).eq('id', personId)
+    loadData()
+  }
+
+  async function handleSaveNicknames(nicknames: string) {
+    await supabase.from('people').update({ nicknames: nicknames.trim() || null }).eq('id', personId)
     loadData()
   }
 
@@ -155,6 +164,25 @@ export default function PersonDetail({
     submitFact()
   }
 
+  // Editing a Key Fact tile edits the underlying note it was drawn from directly, so the
+  // correction improves the data everywhere (not just how this one bullet displays) and
+  // won't drift back on the next reload, since Key Facts are re-extracted from notes fresh
+  // every visit.
+  async function handleEditFact(noteId: string, newContent: string) {
+    await supabase.from('notes').update({ content: newContent }).eq('id', noteId)
+    await loadData()
+    refreshFacts()
+  }
+
+  // Deleting a Key Fact permanently removes the note(s) it came from — confirmed with the
+  // founder this should actually delete the source text (not just hide the bullet), so a bad
+  // duplicate/mismatched fact can't resurface on the next reload.
+  async function handleDeleteFact(noteIds: string[]) {
+    await supabase.from('notes').delete().in('id', noteIds)
+    await loadData()
+    refreshFacts()
+  }
+
   async function confirmSuggestedGroup() {
     if (!suggestedGroup) return
     const groupName = suggestedGroup
@@ -183,6 +211,9 @@ export default function PersonDetail({
       loadData()
     }
   }
+
+  const notesById = new Map<string, Note>()
+  for (const n of notes) notesById.set(n.id, n)
 
   const affiliatedEvents = new Map<string, { id: string; summary: string }>()
   for (const n of notes) {
@@ -213,6 +244,12 @@ export default function PersonDetail({
             value={person?.last_name ?? ''}
             onSave={handleSaveLastName}
           />
+          <TextFieldCell
+            label="Goes by"
+            value={person?.nicknames ?? ''}
+            placeholder="e.g. Bob, Grandpa Joe"
+            onSave={handleSaveNicknames}
+          />
           <DateFieldCell
             label="Birthday"
             reminder={birthday}
@@ -237,22 +274,15 @@ export default function PersonDetail({
           ) : (
             <ul style={styles.keyFactsList}>
               {keyFacts.map((f, i) => (
-                <li key={i} style={styles.keyFactsItem}>
-                  {f.category === 'spouse' ? (
-                    <>
-                      <span>{f.relationshipLabel}</span>
-                      {f.personName && (
-                        f.personId ? (
-                          <PersonChip label={f.personName} onClick={() => onSelectPerson({ id: f.personId!, name: f.personName! })} />
-                        ) : (
-                          <span>{f.personName}.</span>
-                        )
-                      )}
-                    </>
-                  ) : (
-                    <span>{f.text}</span>
-                  )}
-                </li>
+                <KeyFactItem
+                  key={i}
+                  fact={f}
+                  notesById={notesById}
+                  onSelectPerson={onSelectPerson}
+                  onSelectEvent={onSelectEvent}
+                  onEdit={handleEditFact}
+                  onDelete={handleDeleteFact}
+                />
               ))}
             </ul>
           )}
@@ -369,6 +399,136 @@ export default function PersonDetail({
   )
 }
 
+// One Key Fact bullet. Hovering reveals a pencil + trash badge in the corner (same
+// wrapper-plus-corner-badge pattern used for member/suggestion chips elsewhere in the app,
+// chosen specifically because it doesn't resize the row on hover and so can't flicker).
+// Below the bullet, shows the date it was added plus where it came from: a clickable event
+// button if it was tied to a moment, or plain text if it was added directly on this profile.
+function KeyFactItem({
+  fact,
+  notesById,
+  onSelectPerson,
+  onSelectEvent,
+  onEdit,
+  onDelete,
+}: {
+  fact: KeyFact
+  notesById: Map<string, Note>
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  onEdit: (noteId: string, newContent: string) => void
+  onDelete: (noteIds: string[]) => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  const sourceNotes = fact.noteIds.map((id) => notesById.get(id)).filter((n): n is Note => !!n)
+  const primaryNote = sourceNotes[0]
+  const canEdit = sourceNotes.length === 1
+  const canDelete = sourceNotes.length > 0 && sourceNotes.length === fact.noteIds.length
+
+  function startEditing() {
+    setDraft(primaryNote?.content ?? '')
+    setEditing(true)
+  }
+
+  function commitEdit() {
+    if (primaryNote && draft.trim()) onEdit(primaryNote.id, draft.trim())
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <li style={styles.keyFactsItemEditing}>
+        <form onSubmit={(e) => { e.preventDefault(); commitEdit() }} style={styles.keyFactEditForm}>
+          <AutoGrowTextarea value={draft} onChange={setDraft} onEnter={commitEdit} style={styles.keyFactEditInput} />
+          <div style={styles.keyFactEditButtonRow}>
+            <button type="submit" style={styles.cellSaveButton}>Save</button>
+            <button type="button" onClick={() => setEditing(false)} style={styles.keyFactCancelButton}>Cancel</button>
+          </div>
+        </form>
+      </li>
+    )
+  }
+
+  return (
+    <li
+      style={styles.keyFactsWrapper}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={styles.keyFactsItem}>
+        {fact.category === 'spouse' ? (
+          <>
+            <span>{fact.relationshipLabel}</span>
+            {fact.personName && (
+              fact.personId ? (
+                <PersonChip label={fact.personName} onClick={() => onSelectPerson({ id: fact.personId!, name: fact.personName! })} />
+              ) : (
+                <span>{fact.personName}.</span>
+              )
+            )}
+          </>
+        ) : (
+          <span>{fact.text}</span>
+        )}
+      </div>
+
+      {primaryNote && (
+        <div style={styles.keyFactSource}>
+          <span style={styles.keyFactSourceDate}>
+            {new Date(primaryNote.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+          {primaryNote.moments ? (
+            <button
+              type="button"
+              style={styles.keyFactSourceButton}
+              onClick={() => onSelectEvent({ id: primaryNote.moments!.id, summary: summarize(primaryNote.moments!.occasion, primaryNote.moments!.raw_description) })}
+            >
+              Added through: {summarize(primaryNote.moments.occasion, primaryNote.moments.raw_description)}
+            </button>
+          ) : (
+            <span style={styles.keyFactSourceText}>Added through this person's profile</span>
+          )}
+        </div>
+      )}
+
+      {hovered && (canEdit || canDelete) && (
+        <div style={styles.keyFactBadgeRow}>
+          {canEdit && (
+            <button
+              onClick={startEditing}
+              aria-label="Edit this fact"
+              style={styles.keyFactBadge}
+            >
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          )}
+          {canDelete && (
+            <button
+              onClick={() => onDelete(fact.noteIds)}
+              aria-label="Delete this fact"
+              style={{ ...styles.keyFactBadge, ...styles.keyFactDeleteBadge }}
+            >
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
+    </li>
+  )
+}
+
 // A single read-only labeled field, for dates that aren't Birthday/Anniversary.
 // Shows the value we have; these come from the chat, not a click-to-edit form.
 function FieldCell({ label, value }: { label: string; value?: string }) {
@@ -385,10 +545,12 @@ function FieldCell({ label, value }: { label: string; value?: string }) {
 function TextFieldCell({
   label,
   value,
+  placeholder,
   onSave,
 }: {
   label: string
   value: string
+  placeholder?: string
   onSave: (value: string) => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -413,6 +575,7 @@ function TextFieldCell({
           autoFocus
           type="text"
           value={draft}
+          placeholder={placeholder}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={save}
           style={styles.cellInput}
@@ -571,6 +734,49 @@ const styles: { [key: string]: React.CSSProperties } = {
   keyFactsLoading: { margin: 0, fontSize: '0.9rem', color: '#999', fontStyle: 'italic' },
   keyFactsList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' },
   keyFactsItem: { fontSize: '0.98rem', color: '#2E2E2E', lineHeight: 1.4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' },
+  keyFactsWrapper: { position: 'relative', display: 'flex', flexDirection: 'column', gap: '0.3rem', paddingRight: '2.6rem' },
+  keyFactBadgeRow: { position: 'absolute', top: '-6px', right: '-6px', display: 'flex', gap: '0.3rem' },
+  keyFactBadge: {
+    width: '20px',
+    height: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    border: '1px solid #999',
+    backgroundColor: '#FFF',
+    color: '#555',
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+  },
+  keyFactDeleteBadge: { borderColor: '#B04A3B', color: '#B04A3B' },
+  keyFactSource: { display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' },
+  keyFactSourceDate: { fontSize: '0.75rem', color: '#999' },
+  keyFactSourceText: { fontSize: '0.75rem', color: '#999', fontStyle: 'italic' },
+  keyFactSourceButton: {
+    fontSize: '0.75rem',
+    padding: '0.2rem 0.55rem',
+    borderRadius: '5px',
+    border: '1px solid #3B6EA5',
+    backgroundColor: '#EAF1FA',
+    color: '#2C5079',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  keyFactsItemEditing: { display: 'block' },
+  keyFactEditForm: { display: 'flex', flexDirection: 'column', gap: '0.4rem' },
+  keyFactEditInput: { fontSize: '0.95rem', padding: '0.5rem', borderRadius: '6px', border: '1px solid #CCC' },
+  keyFactEditButtonRow: { display: 'flex', gap: '0.5rem' },
+  keyFactCancelButton: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #999',
+    backgroundColor: 'transparent',
+    color: '#666',
+    cursor: 'pointer',
+  },
   nudgeBox: {
     display: 'flex',
     flexDirection: 'column',

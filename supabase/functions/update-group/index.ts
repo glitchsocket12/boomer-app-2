@@ -41,28 +41,35 @@ serve(async (req) => {
       .eq("id", groupId)
       .single()
 
-    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name")
+    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
     const { data: allMoments } = await supabaseClient.from("moments").select("id, occasion, raw_description")
 
     const fullName = (p: { name: string; last_name: string | null }) =>
       p.last_name ? `${p.name} ${p.last_name}` : p.name
 
-    // A bare first name only maps to a person if that first name is unique — otherwise two
-    // different people sharing a first name would collide (see PROJECT_CONTEXT.md Section 9,
-    // the "two Bobs" bug — same fix ported here from converse/update-moment).
+    // A bare first name or nickname only maps to a person if that key is unique — otherwise two
+    // different people sharing one would collide (see PROJECT_CONTEXT.md Section 9, the "two
+    // Bobs" bug — same fix ported here from converse/update-moment).
     const idByName: Record<string, string> = {}
-    const ambiguousFirstNames = new Set<string>()
+    const nicknamesById: Record<string, string[]> = {}
+    const ambiguousKeys = new Set<string>()
+    function claimKey(key: string, id: string) {
+      if (!key) return
+      if (idByName[key] && idByName[key] !== id) {
+        ambiguousKeys.add(key)
+      } else {
+        idByName[key] = id
+      }
+    }
     for (const p of allPeople ?? []) {
       const name = fullName(p)
       idByName[name.toLowerCase()] = p.id
-      const firstKey = p.name.toLowerCase()
-      if (idByName[firstKey] && idByName[firstKey] !== p.id) {
-        ambiguousFirstNames.add(firstKey)
-      } else {
-        idByName[firstKey] = p.id
-      }
+      claimKey(p.name.toLowerCase(), p.id)
+      const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      if (nicknames.length > 0) nicknamesById[p.id] = nicknames
+      for (const nickname of nicknames) claimKey(nickname.toLowerCase(), p.id)
     }
-    for (const key of ambiguousFirstNames) delete idByName[key]
+    for (const key of ambiguousKeys) delete idByName[key]
 
     // Members = explicit person_groups roster ONLY. Attending an event tagged to this group
     // doesn't make someone a member (the same event can be tagged to multiple groups), so
@@ -90,7 +97,12 @@ serve(async (req) => {
       .map((m) => `[MOMENT_ID: ${m.id}] ${m.occasion || m.raw_description}`)
       .join("\n")
 
-    const knownPeople = (allPeople ?? []).map((p) => fullName(p)).join(", ")
+    const knownPeople = (allPeople ?? [])
+      .map((p) => {
+        const nicknames = nicknamesById[p.id]
+        return nicknames ? `${fullName(p)} (also goes by: ${nicknames.join(", ")})` : fullName(p)
+      })
+      .join(", ")
 
     const systemPrompt = `You are helping the user edit a group called "${group?.name ?? "Unknown"}" in an app called Boomer. Groups tag together people and events that share a recurring affiliation (a team, a school, a workplace, a family branch, etc.). A group's membership (who belongs to the group) is intentionally independent from which events are tagged to it — someone can be a member without having attended every, or any, tagged event.
 
@@ -101,7 +113,9 @@ Other events NOT tagged to this group (reference these by their exact MOMENT_ID 
 ${otherEvents || "(none)"}
 All people already in the app (match against these before assuming someone is new): ${knownPeople || "(none)"}
 
-IMPORTANT — disambiguating people who share a first name: if the user names someone who shares a first name with another recorded person, use that person's full name (first + last) instead of just the bare first name. If you can't tell which same-named person they mean from context, ask instead of guessing.
+Some people in the list above have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname, and it will still resolve to the same person.
+
+IMPORTANT — disambiguating people who share a first name or nickname: if the user names someone who shares a first name or nickname with another recorded person, use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person they mean from context, ask instead of guessing.
 
 The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), or tag/untag events. Don't finish right away — first ask a short, natural follow-up like "Anything else you'd like to change?" so they have a chance to make more edits in one go. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 

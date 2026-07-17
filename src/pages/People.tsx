@@ -11,6 +11,7 @@ type Person = {
   id: string
   name: string
   last_name: string | null
+  nicknames: string | null
   person_groups: { groups: GroupRef | null }[]
   notes: { moment_id: string | null; moments: { id: string; occasion: string | null; raw_description: string } | null }[]
 }
@@ -43,7 +44,7 @@ export default function People({
     const { data, error } = await supabase
       .from('people')
       .select(
-        'id, name, last_name, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description))'
+        'id, name, last_name, nicknames, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description))'
       )
       .order('name')
 
@@ -73,7 +74,8 @@ export default function People({
 
   const filteredPeople = people.filter((person) => {
     const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
-    return fullName.toLowerCase().includes(search.trim().toLowerCase())
+    const query = search.trim().toLowerCase()
+    return fullName.toLowerCase().includes(query) || (person.nicknames ?? '').toLowerCase().includes(query)
   })
 
   return (

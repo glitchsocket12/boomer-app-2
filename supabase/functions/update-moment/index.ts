@@ -42,7 +42,7 @@ serve(async (req) => {
       .from("notes")
       .select("content, person_id")
       .eq("moment_id", momentId)
-    const { data: people } = await supabaseClient.from("people").select("id, name, last_name")
+    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
     const { data: existingGroups } = await supabaseClient.from("groups").select("id, name")
     const { data: existingMomentGroups } = await supabaseClient
       .from("moment_groups")
@@ -63,25 +63,37 @@ serve(async (req) => {
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
-    // A bare first name only maps to a person if that first name is unique — otherwise two
-    // different people sharing a first name would collide and whichever loaded last would win
-    // every lookup, silently misattaching a note to the wrong person (see PROJECT_CONTEXT.md
-    // Section 9, the "two Bobs" bug — same fix ported here from converse/index.ts).
-    const ambiguousFirstNames = new Set<string>()
+    const nicknamesById: Record<string, string[]> = {}
+    // A bare first name or nickname only maps to a person if that key is unique — otherwise two
+    // different people sharing one would collide and whichever loaded last would win every
+    // lookup, silently misattaching a note to the wrong person (see PROJECT_CONTEXT.md Section 9,
+    // the "two Bobs" bug — same fix ported here from converse/index.ts).
+    const ambiguousKeys = new Set<string>()
+    function claimKey(key: string, id: string) {
+      if (!key) return
+      if (idByName[key] && idByName[key] !== id) {
+        ambiguousKeys.add(key)
+      } else {
+        idByName[key] = id
+      }
+    }
     for (const p of people ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
-      const firstNameKey = p.name.toLowerCase()
-      if (idByName[firstNameKey] && idByName[firstNameKey] !== p.id) {
-        ambiguousFirstNames.add(firstNameKey)
-      } else {
-        idByName[firstNameKey] = p.id
-      }
+      claimKey(p.name.toLowerCase(), p.id)
+      const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      if (nicknames.length > 0) nicknamesById[p.id] = nicknames
+      for (const nickname of nicknames) claimKey(nickname.toLowerCase(), p.id)
     }
-    for (const key of ambiguousFirstNames) delete idByName[key]
+    for (const key of ambiguousKeys) delete idByName[key]
 
-    const peopleRoster = (people ?? []).map((p: any) => nameById[p.id]).join(", ")
+    const peopleRoster = (people ?? [])
+      .map((p: any) => {
+        const nicknames = nicknamesById[p.id]
+        return nicknames ? `${nameById[p.id]} (also goes by: ${nicknames.join(", ")})` : nameById[p.id]
+      })
+      .join(", ")
 
     const existingSummary = `Occasion: ${moment?.occasion ?? "unknown"} | Location: ${moment?.location ?? "unknown"} | When (in the user's words): ${moment?.when_text ?? "unknown"} | Resolved calendar date: ${moment?.event_date ?? "not set"} | Already tagged to groups: ${taggedGroupNames.join(", ") || "none"}. Already recorded notes: ${(existingNotes ?? [])
       .map((n: any) => `${nameById[n.person_id] ?? "someone"}: ${n.content}`)
@@ -97,7 +109,9 @@ Here is everyone already recorded, by full name where a last name is known: ${pe
 
 Here are the groups already on file: ${groupsRoster || "(none yet)"}
 
-IMPORTANT — disambiguating people who share a first name: check the roster above for any other recorded person with the same first name as whoever you're about to write into "new_people" or "additional_notes". If there's a collision (e.g. two different people both named "Bob"), you MUST use that person's full name (first + last) instead of just the bare first name. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
+Some people in the roster above have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "new_people"/"additional_notes", and it will still resolve to the same person.
+
+IMPORTANT — disambiguating people who share a first name or nickname: check the roster above for any other recorded person with the same first name or nickname as whoever you're about to write into "new_people" or "additional_notes". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
 When the user shares a new detail, don't finish right away — first ask a short, natural follow-up question like "Anything else you remember about this?" so they have a chance to add more. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 
