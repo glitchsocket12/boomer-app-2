@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import EditButton from '../components/EditButton'
 import { PersonChip, GroupChip } from '../components/Chips'
+import UpdateGroupChat from '../components/UpdateGroupChat'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string }
@@ -196,6 +197,20 @@ export default function GroupDetail({
           )
         })}
       </div>
+
+      <h2 style={styles.editHeading}>Edit this group</h2>
+      <p style={styles.chatHint}>Add or remove someone, tag or untag an event, or rename it — just tell me what to change.</p>
+      <UpdateGroupChat
+        groupId={groupId}
+        onSaved={({ rename }) => {
+          if (rename) {
+            setName(rename)
+            onRenamed?.(rename)
+          }
+          loadMoments()
+          loadSummary()
+        }}
+      />
     </div>
   )
 }
@@ -266,4 +281,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   chipRow: { display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' },
   description: { margin: '0 0 0.75rem 0', fontSize: '1rem', color: '#2E2E2E', lineHeight: 1.5 },
   chipLabel: { margin: '0 0 0.4rem 0', fontSize: '0.85rem', fontWeight: 'bold', color: '#2E4034' },
+  editHeading: { fontSize: '1.2rem', color: '#2E4034', margin: '2rem 0 0.5rem 0' },
+  chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
 }
