@@ -22,7 +22,8 @@ type PersonRow = { name: string; last_name: string | null; reminders: Reminder[]
 
 type KeyFact = {
   category: 'spouse' | 'kids' | 'location' | 'education' | 'other'
-  text: string
+  text?: string
+  relationshipLabel?: string
   personId?: string
   personName?: string
 }
@@ -237,11 +238,19 @@ export default function PersonDetail({
             <ul style={styles.keyFactsList}>
               {keyFacts.map((f, i) => (
                 <li key={i} style={styles.keyFactsItem}>
-                  <span>{f.text}</span>
-                  {f.personId && f.personName && (
-                    <span style={styles.keyFactsChip}>
-                      <PersonChip label={f.personName} onClick={() => onSelectPerson({ id: f.personId!, name: f.personName! })} />
-                    </span>
+                  {f.category === 'spouse' ? (
+                    <>
+                      <span>{f.relationshipLabel}</span>
+                      {f.personName && (
+                        f.personId ? (
+                          <PersonChip label={f.personName} onClick={() => onSelectPerson({ id: f.personId!, name: f.personName! })} />
+                        ) : (
+                          <span>{f.personName}.</span>
+                        )
+                      )}
+                    </>
+                  ) : (
+                    <span>{f.text}</span>
                   )}
                 </li>
               ))}
@@ -562,7 +571,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   keyFactsLoading: { margin: 0, fontSize: '0.9rem', color: '#999', fontStyle: 'italic' },
   keyFactsList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' },
   keyFactsItem: { fontSize: '0.98rem', color: '#2E2E2E', lineHeight: 1.4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' },
-  keyFactsChip: { display: 'inline-flex' },
   nudgeBox: {
     display: 'flex',
     flexDirection: 'column',
