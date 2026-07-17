@@ -6,7 +6,7 @@ import EditButton from '../components/EditButton'
 import { summarize } from '../lib/summarize'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
-type GroupRef = { id: string; name: string }
+type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
 type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null }
 
 type MomentDetail = {
@@ -54,7 +54,7 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, people(id, name, last_name)), moment_groups(groups(id, name))'
+        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name))))'
       )
       .eq('id', eventId)
       .single()
@@ -80,6 +80,11 @@ export default function EventDetail({
     // conversation ends), so it must not flash the whole page to a "Loading…" state mid-conversation.
     await supabase.from('moments').update({ summary: null }).eq('id', eventId)
     await loadMoment(true)
+  }
+
+  async function handleAddAttendee(person: PersonRef) {
+    await supabase.from('notes').insert({ person_id: person.id, moment_id: eventId, content: 'Was there.' })
+    await handleNoteSaved()
   }
 
   async function handleSaveTitle(e: FormEvent) {
@@ -112,6 +117,13 @@ export default function EventDetail({
   const groups = (moment.moment_groups ?? [])
     .map((mg) => mg.groups)
     .filter((g): g is GroupRef => g !== null)
+
+  const suggestedAttendees = new Map<string, PersonRef>()
+  for (const g of groups) {
+    for (const pg of g.person_groups ?? []) {
+      if (pg.people && !attendees.has(pg.people.id)) suggestedAttendees.set(pg.people.id, pg.people)
+    }
+  }
 
   const details = moment.details && typeof moment.details === 'object' ? Object.entries(moment.details) : []
 
@@ -211,6 +223,24 @@ export default function EventDetail({
                 label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
                 onClick={() => onSelectPerson(p)}
               />
+            ))}
+          </div>
+        </>
+      )}
+
+      {suggestedAttendees.size > 0 && (
+        <>
+          <h2 style={styles.subheading}>Also from the affiliated group?</h2>
+          <p style={styles.chatHint}>Tap a name to add them to who was there.</p>
+          <div style={styles.chipRow}>
+            {Array.from(suggestedAttendees.values()).map((p) => (
+              <button
+                key={p.id}
+                onClick={() => handleAddAttendee(p)}
+                style={styles.suggestChip}
+              >
+                + {p.name}{p.last_name ? ` ${p.last_name}` : ''}
+              </button>
             ))}
           </div>
         </>
@@ -322,6 +352,16 @@ const styles: { [key: string]: React.CSSProperties } = {
   subheading: { fontSize: '1.2rem', color: '#2E4034', margin: '1.5rem 0 0.5rem 0' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' },
+  suggestChip: {
+    fontSize: '0.9rem',
+    padding: '0.35rem 0.8rem',
+    borderRadius: '999px',
+    border: '1px dashed #2E4034',
+    backgroundColor: 'transparent',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
   notesList: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   noteCard: {
     backgroundColor: '#FFF',
