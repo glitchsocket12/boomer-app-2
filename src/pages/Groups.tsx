@@ -11,10 +11,14 @@ type Group = {
   name: string
   summary: string | null
   person_groups: { people: PersonRef | null }[]
-  moment_groups: { moments: (MomentRef & { notes: { people: PersonRef | null }[] }) | null }[]
+  moment_groups: { moments: MomentRef | null }[]
 }
 
 const AFFILIATION_LIMIT = 4
+// Caps how many member chips a single group tile can show before collapsing the rest into a
+// "+N more" — a group with a large explicit roster (e.g. an extended family) shouldn't be able
+// to dominate the whole page. Full roster is still visible by clicking into the group.
+const MEMBER_LIMIT = 5
 
 export default function Groups({
   onSelectPerson,
@@ -38,7 +42,7 @@ export default function Groups({
     const { data } = await supabase
       .from('groups')
       .select(
-        'id, name, summary, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description, notes(people(id, name, last_name))))'
+        'id, name, summary, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description))'
       )
       .order('name')
 
@@ -73,22 +77,15 @@ export default function Groups({
 
       <div style={styles.list}>
         {groups.map((group) => {
-          // "Members" is the explicit roster (person_groups) ONLY. Attending an event tagged to
-          // this group doesn't make someone a member — a shared event can be tagged to multiple
-          // groups (e.g. a wedding tagged to both a friend group and the couple's family group),
-          // so anyone at that event isn't necessarily part of every group it's tagged to.
+          // "Members" is the explicit roster (person_groups) ONLY — this list page intentionally
+          // does NOT show event-only attendees or any add/remove affordance; that management
+          // (including the "also seen at this group's events" suggestions) only lives on a
+          // group's own detail page, not here, so a tile can't accidentally change membership
+          // with a stray click.
           const explicitMembers = (group.person_groups ?? [])
             .map((pg) => pg.people)
             .filter((p): p is PersonRef => p !== null)
-
-          const explicitIds = new Set(explicitMembers.map((p) => p.id))
-          const eventOnlyById = new Map<string, PersonRef>()
-          for (const mg of group.moment_groups ?? []) {
-            for (const n of mg.moments?.notes ?? []) {
-              if (n.people && !explicitIds.has(n.people.id)) eventOnlyById.set(n.people.id, n.people)
-            }
-          }
-          const eventOnlyAttendees = [...eventOnlyById.values()]
+          const shownMembers = explicitMembers.slice(0, MEMBER_LIMIT)
 
           const eventMap = new Map<string, { id: string; summary: string }>()
           for (const mg of group.moment_groups ?? []) {
@@ -111,23 +108,13 @@ export default function Groups({
                 <p style={styles.empty}>No members yet.</p>
               ) : (
                 <div style={styles.chipRow}>
-                  {explicitMembers.map((p) => (
+                  {shownMembers.map((p) => (
                     <PersonChip key={p.id} label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`} onClick={() => onSelectPerson(p)} />
                   ))}
+                  {explicitMembers.length > MEMBER_LIMIT && (
+                    <span style={styles.moreText}>+{explicitMembers.length - MEMBER_LIMIT} more</span>
+                  )}
                 </div>
-              )}
-
-              {eventOnlyAttendees.length > 0 && (
-                <>
-                  <p style={styles.eventOnlyLabel}>Also seen at this group's events</p>
-                  <div style={styles.chipRow}>
-                    {eventOnlyAttendees.map((p) => (
-                      <button key={p.id} onClick={() => onSelectPerson(p)} style={styles.eventOnlyChip}>
-                        {`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-                      </button>
-                    ))}
-                  </div>
-                </>
               )}
 
               {shownEvents.length > 0 && (
@@ -173,16 +160,5 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   summary: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#666', fontStyle: 'italic' },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
-  eventOnlyLabel: { margin: '0.5rem 0 0.4rem 0', fontSize: '0.8rem', color: '#888', fontStyle: 'italic' },
-  eventOnlyChip: {
-    fontSize: '0.9rem',
-    padding: '0.35rem 0.8rem',
-    borderRadius: '999px',
-    border: '1px dashed #2E4034',
-    backgroundColor: 'transparent',
-    color: '#2E4034',
-    cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
-  },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
 }
