@@ -109,14 +109,19 @@ src/
 │   │                             same three places as VoiceInputButton.tsx
 │   │                             above, replacing the plain `<input>` each
 │   │                             had before.
-│   └── PhotoGallery.tsx         — DISPLAY-ONLY placeholder (added 2026-07-17)
-│                                 for the future photo gallery feature (see
-│                                 Section 7, item 10). Renders a "Gallery"
-│                                 section with 4 static decorative tiles, no
-│                                 real photos/upload/storage. Used on
-│                                 PersonDetail.tsx, EventDetail.tsx, and
-│                                 GroupDetail.tsx purely to demonstrate the
-│                                 layout to the founder.
+│   ├── PhotoGallery.tsx         — DISPLAY-ONLY placeholder (added 2026-07-17)
+│   │                             for the future photo gallery feature (see
+│   │                             Section 7, item 10). Renders a "Gallery"
+│   │                             section with 4 static decorative tiles, no
+│   │                             real photos/upload/storage. Used on
+│   │                             PersonDetail.tsx, EventDetail.tsx, and
+│   │                             GroupDetail.tsx purely to demonstrate the
+│   │                             layout to the founder.
+│   └── RefreshButton.tsx        — small icon button (added 2026-07-17) with
+│                                 a spinning-while-loading state (reuses the
+│                                 `spin` keyframe in index.css). Used next to
+│                                 a group's AI-generated summary on
+│                                 GroupDetail.tsx to regenerate it on demand.
 ```
 
 **As of 2026-07-15, the standalone "Add a Moment" page (`AddAMoment.tsx`) was removed** — Home's unified conversation already covers that capture flow, so the separate page/tab was redundant. Its Edge Function (`chat`) is still deployed but is now unused by the frontend entirely (see the Edge Functions table below). The Events and Groups tabs (described above) were also actually wired into the nav bar for the first time as part of this same change — the architecture doc had described them for a while, but they weren't reachable from the UI until now.
@@ -302,8 +307,8 @@ moment_groups                    (join table, many-to-many)
 - **Tuning AI conversation quality** — the founder has repeatedly noted the AI could ask better/more thorough follow-up questions before wrapping up a conversation; called "good for MVP, but something to improve" more than once. This is an ongoing, never-fully-resolved thread, not a discrete task.
 - ~~Groups tagging for moments~~ — **done and confirmed 2026-07-15** (see Section 6). No longer deferred; moved here to note it's resolved, not tracked as a gap.
 - **Existing (pre-2026-07-15) moments and people are NOT retroactively grouped.** Group tagging only happens going forward, on new conversation turns. If the founder wants old moments (like the seeded "Air Force safety school" entry) tagged into a group, that has to be resurfaced/re-mentioned in a Home conversation — there's no batch/backfill tool for this.
-- **UI/UX feature backlog, requested 2026-07-16, not yet started.** Ordered easiest to hardest (see that conversation for full reasoning):
-  1. Refresh button next to a group's AI-generated description (re-calls `summarize-group`, result persists until refreshed again).
+- **UI/UX feature backlog, requested 2026-07-16.** Ordered easiest to hardest (see that conversation for full reasoning):
+  1. ~~Refresh button next to a group's AI-generated description~~ — **done 2026-07-17.** A small refresh icon (`src/components/RefreshButton.tsx`) next to `GroupDetail.tsx`'s summary re-calls `summarize-group`; the new result saves to `groups.summary` (existing behavior of that function) and persists across reloads until refreshed again. Click-tested end-to-end.
   2. Hover-to-reveal trash/remove icon on person/event/group chips (e.g. removing someone mistakenly added to an event).
   3. Cap group tiles at ~4 member names, then "+N more" instead of names stacking unevenly.
   4. Search bar on the People page (client-side name filter).

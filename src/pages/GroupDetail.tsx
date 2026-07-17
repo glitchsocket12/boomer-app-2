@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import EditButton from '../components/EditButton'
+import RefreshButton from '../components/RefreshButton'
 import { PersonChip, GroupChip } from '../components/Chips'
 import UpdateGroupChat from '../components/UpdateGroupChat'
 import PhotoGallery from '../components/PhotoGallery'
@@ -50,6 +51,7 @@ export default function GroupDetail({
   const [nameInput, setNameInput] = useState(groupName)
   const [savingName, setSavingName] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
+  const [refreshingSummary, setRefreshingSummary] = useState(false)
   const requestedMomentSummaries = useRef(new Set<string>())
 
   useEffect(() => {
@@ -70,6 +72,13 @@ export default function GroupDetail({
       const { data: generated } = await supabase.functions.invoke('summarize-group', { body: { groupId } })
       if (generated?.summary) setSummary(generated.summary)
     }
+  }
+
+  async function refreshSummary() {
+    setRefreshingSummary(true)
+    const { data } = await supabase.functions.invoke('summarize-group', { body: { groupId } })
+    if (data?.summary) setSummary(data.summary)
+    setRefreshingSummary(false)
   }
 
   // The explicit roster (person_groups) — "who I've said is in this group," independent of
@@ -185,7 +194,10 @@ export default function GroupDetail({
         </div>
       )}
 
-      <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
+      <div style={styles.summaryRow}>
+        <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
+        <RefreshButton label="Refresh description" onClick={refreshSummary} refreshing={refreshingSummary} />
+      </div>
 
       <PhotoGallery />
 
@@ -294,7 +306,8 @@ const styles: { [key: string]: React.CSSProperties } = {
   heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
   headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'wrap' },
   renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' },
-  summary: { margin: '0 0 1.5rem 0', fontSize: '1rem', color: '#666', fontStyle: 'italic' },
+  summaryRow: { display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '1.5rem' },
+  summary: { margin: 0, flex: 1, fontSize: '1rem', color: '#666', fontStyle: 'italic' },
   membersHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem 0' },
   renameInput: {
     fontSize: '1.5rem',
