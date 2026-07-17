@@ -98,6 +98,27 @@ export default function GroupDetail({
     setExplicitMembers(explicit)
   }
 
+  // Membership changed — the cached AI summary is now stale (same reasoning `update-group`
+  // uses server-side), so clear it and let loadSummary() regenerate on next render.
+  async function invalidateSummary() {
+    await supabase.from('groups').update({ summary: null }).eq('id', groupId)
+    loadSummary()
+  }
+
+  async function handleAddMember(person: PersonRef) {
+    await supabase
+      .from('person_groups')
+      .upsert({ person_id: person.id, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+    loadMembers()
+    invalidateSummary()
+  }
+
+  async function handleRemoveMember(person: PersonRef) {
+    await supabase.from('person_groups').delete().eq('person_id', person.id).eq('group_id', groupId)
+    loadMembers()
+    invalidateSummary()
+  }
+
   async function loadMoments(silent = false) {
     if (!silent) setLoading(true)
     const { data } = await supabase
@@ -209,10 +230,11 @@ export default function GroupDetail({
       ) : (
         <div style={styles.chipRow}>
           {explicitMembers.map((p) => (
-            <PersonChip
+            <MemberChip
               key={p.id}
-              label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-              onClick={() => onSelectPerson(p)}
+              person={p}
+              onSelect={() => onSelectPerson(p)}
+              onRemove={() => handleRemoveMember(p)}
             />
           ))}
         </div>
@@ -220,12 +242,12 @@ export default function GroupDetail({
 
       {eventOnlyAttendees.length > 0 && (
         <>
-          <p style={styles.eventOnlyLabel}>Also seen at this group's events</p>
+          <p style={styles.eventOnlyLabel}>Also seen at this group's events — tap to add as a member</p>
           <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
             {eventOnlyAttendees.map((p) => (
               <button
                 key={p.id}
-                onClick={() => onSelectPerson(p)}
+                onClick={() => handleAddMember(p)}
                 style={styles.eventOnlyChip}
               >
                 {`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
@@ -311,7 +333,55 @@ export default function GroupDetail({
   )
 }
 
+// A member chip that reveals a trash icon on hover — hovering swaps its click action from
+// "go to profile" to "remove from this group," so the same control does either depending on
+// whether you're actively hovering it (mouse-only; on touch it just behaves like a normal chip).
+function MemberChip({
+  person,
+  onSelect,
+  onRemove,
+}: {
+  person: PersonRef
+  onSelect: () => void
+  onRemove: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+
+  return (
+    <button
+      onClick={hovered ? onRemove : onSelect}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      aria-label={hovered ? `Remove ${label} from this group` : label}
+      style={{ ...styles.person, opacity: hovered ? 0.55 : 1 }}
+    >
+      {hovered ? (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 6h18" />
+          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          <path d="M10 11v6" />
+          <path d="M14 11v6" />
+        </svg>
+      ) : (
+        label
+      )}
+    </button>
+  )
+}
+
 const styles: { [key: string]: React.CSSProperties } = {
+  person: {
+    fontSize: '0.9rem',
+    padding: '0.35rem 0.8rem',
+    borderRadius: '999px',
+    border: '1px solid #2E4034',
+    backgroundColor: 'transparent',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
   page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
