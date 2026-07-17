@@ -2,6 +2,10 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import EditButton from '../components/EditButton'
+import { PersonChip, GroupChip } from '../components/Chips'
+
+type PersonRef = { id: string; name: string; last_name: string | null }
+type GroupRef = { id: string; name: string }
 
 type Moment = {
   id: string
@@ -11,6 +15,8 @@ type Moment = {
   event_date: string | null
   raw_description: string
   created_at: string
+  notes: { people: PersonRef | null }[]
+  moment_groups: { groups: GroupRef | null }[]
 }
 
 function eventSortDate(moment: Pick<Moment, 'event_date' | 'created_at'>): Date {
@@ -20,6 +26,8 @@ function eventSortDate(moment: Pick<Moment, 'event_date' | 'created_at'>): Date 
 export default function GroupDetail({
   groupId,
   groupName,
+  onSelectPerson,
+  onSelectGroup,
   onSelectEvent,
   onBack,
   backLabel,
@@ -27,6 +35,8 @@ export default function GroupDetail({
 }: {
   groupId: string
   groupName: string
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onBack: () => void
   backLabel: string
@@ -50,7 +60,9 @@ export default function GroupDetail({
     setLoading(true)
     const { data } = await supabase
       .from('moments')
-      .select('id, occasion, location, when_text, event_date, raw_description, created_at, moment_groups!inner(group_id)')
+      .select(
+        'id, occasion, location, when_text, event_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups!inner(group_id, groups(id, name))'
+      )
       .eq('moment_groups.group_id', groupId)
 
     const sorted = ((data as unknown as Moment[]) ?? []).sort(
@@ -121,16 +133,50 @@ export default function GroupDetail({
       <div style={styles.list}>
         {moments.map((moment) => {
           const summary = summarize(moment.occasion, moment.raw_description)
+
+          const attendees = new Map<string, PersonRef>()
+          for (const n of moment.notes ?? []) {
+            if (n.people) attendees.set(n.people.id, n.people)
+          }
+
+          const groups = (moment.moment_groups ?? [])
+            .map((mg) => mg.groups)
+            .filter((g): g is GroupRef => g !== null)
+
           return (
             <div key={moment.id} style={styles.card}>
-              <p style={styles.summary}>{summary}</p>
+              <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
+                {moment.occasion || 'Untitled moment'}
+              </button>
               <p style={styles.meta}>
                 {[moment.when_text, moment.location].filter(Boolean).join(' · ') ||
                   new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
               </p>
-              <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.seeMore}>
-                See more →
-              </button>
+
+              {groups.length > 0 && (
+                <div style={styles.chipRow}>
+                  {groups.map((g) => (
+                    <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                  ))}
+                </div>
+              )}
+
+              <p style={styles.description}>{moment.raw_description}</p>
+
+              {attendees.size > 0 && (
+                <>
+                  <p style={styles.chipLabel}>Who was there</p>
+                  <div style={styles.chipRow}>
+                    {Array.from(attendees.values()).map((p) => (
+                      <PersonChip
+                        key={p.id}
+                        label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
+                        onClick={() => onSelectPerson(p)}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )
         })}
@@ -188,15 +234,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '1.25rem',
     boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
   },
-  summary: { margin: '0 0 0.25rem 0', fontSize: '1.15rem', color: '#2E2E2E' },
-  meta: { margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: '#888' },
-  seeMore: {
+  titleButton: {
+    display: 'block',
+    margin: '0 0 0.25rem 0',
+    padding: 0,
+    fontSize: '1.3rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E2E2E',
     background: 'none',
     border: 'none',
-    color: '#2E4034',
-    fontSize: '0.95rem',
-    fontFamily: 'Georgia, serif',
+    textAlign: 'left',
     cursor: 'pointer',
-    padding: 0,
   },
+  meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#888' },
+  chipRow: { display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' },
+  description: { margin: '0 0 0.75rem 0', fontSize: '1rem', color: '#2E2E2E', lineHeight: 1.5 },
+  chipLabel: { margin: '0 0 0.4rem 0', fontSize: '0.85rem', fontWeight: 'bold', color: '#2E4034' },
 }

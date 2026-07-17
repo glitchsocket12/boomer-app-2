@@ -100,6 +100,8 @@ export default function App() {
         groupName={current.label}
         onBack={popCrumb}
         backLabel={parentLabel}
+        onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+        onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onRenamed={renameCurrentCrumb}
       />
