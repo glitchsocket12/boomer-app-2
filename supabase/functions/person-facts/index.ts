@@ -98,13 +98,17 @@ If nothing qualifies, respond {"facts": []}.`,
       if (f.category !== "spouse") {
         return { category: f.category, text: f.text }
       }
+      // The model doesn't always fill in relationship_label even when told to — fall back to
+      // "Married to" (the overwhelmingly common case) rather than ever rendering a bare name
+      // with no lead-in text.
+      const relationshipLabel = f.relationship_label?.trim() || (f.person_name ? "Married to" : "Married.")
       if (!f.person_name) {
-        return { category: f.category, relationshipLabel: f.relationship_label }
+        return { category: f.category, relationshipLabel }
       }
       const spouseId = idByName[f.person_name.toLowerCase()]
       return spouseId
-        ? { category: f.category, relationshipLabel: f.relationship_label, personId: spouseId, personName: nameById[spouseId] }
-        : { category: f.category, relationshipLabel: f.relationship_label, personName: f.person_name }
+        ? { category: f.category, relationshipLabel, personId: spouseId, personName: nameById[spouseId] }
+        : { category: f.category, relationshipLabel, personName: f.person_name }
     })
 
     return new Response(JSON.stringify({ facts }), {
