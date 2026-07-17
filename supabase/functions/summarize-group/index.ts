@@ -23,7 +23,7 @@ serve(async (req) => {
     const { data: group } = await supabaseClient
       .from("groups")
       .select(
-        "id, name, person_groups(people(name, last_name)), moment_groups(moments(occasion, raw_description, notes(people(name, last_name))))"
+        "id, name, person_groups(people(name, last_name)), moment_groups(moments(occasion, raw_description))"
       )
       .eq("id", groupId)
       .single()
@@ -38,14 +38,12 @@ serve(async (req) => {
     const fullName = (p: { name: string; last_name: string | null }) =>
       p.last_name ? `${p.name} ${p.last_name}` : p.name
 
+    // Members = explicit person_groups roster ONLY. Attending an event tagged to this group
+    // doesn't make someone a member (the same event can be tagged to multiple groups), so
+    // event attendees are intentionally not folded into this set.
     const memberNames = new Set<string>()
     for (const pg of group.person_groups ?? []) {
       if (pg.people) memberNames.add(fullName(pg.people))
-    }
-    for (const mg of group.moment_groups ?? []) {
-      for (const n of mg.moments?.notes ?? []) {
-        if (n.people) memberNames.add(fullName(n.people))
-      }
     }
 
     const events = (group.moment_groups ?? [])

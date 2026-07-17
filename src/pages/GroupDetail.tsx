@@ -148,17 +148,19 @@ export default function GroupDetail({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
-  // "Who's in this group" is a union of the explicit roster (person_groups) plus anyone who
-  // shows up in the notes of an event tagged to this group — same union Groups.tsx already
-  // uses for its member chips (PROJECT_CONTEXT.md Section 6, "Fixed: a group's member chips...").
-  const membersById = new Map<string, PersonRef>()
-  for (const p of explicitMembers) membersById.set(p.id, p)
+  // "Who's in this group" is the explicit roster (person_groups) ONLY — someone attending an
+  // event tagged to this group doesn't make them a member (a shared event can be tagged to
+  // multiple groups, e.g. a wedding tagged to both "Wings of Blue" and the couple's family
+  // group; attendees of that event aren't members of every group it's tagged to). Attendees
+  // who aren't explicit members are shown separately below, clearly labeled, not folded in.
+  const explicitIds = new Set(explicitMembers.map((p) => p.id))
+  const eventOnlyAttendeesById = new Map<string, PersonRef>()
   for (const m of moments) {
     for (const n of m.notes ?? []) {
-      if (n.people) membersById.set(n.people.id, n.people)
+      if (n.people && !explicitIds.has(n.people.id)) eventOnlyAttendeesById.set(n.people.id, n.people)
     }
   }
-  const groupMembers = [...membersById.values()]
+  const eventOnlyAttendees = [...eventOnlyAttendeesById.values()]
 
   return (
     <div style={styles.page}>
@@ -202,11 +204,11 @@ export default function GroupDetail({
       <PhotoGallery />
 
       <h2 style={styles.membersHeading}>Who's in this group</h2>
-      {groupMembers.length === 0 ? (
+      {explicitMembers.length === 0 ? (
         <p style={styles.empty}>No members yet — add someone using the chat box below.</p>
       ) : (
-        <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
-          {groupMembers.map((p) => (
+        <div style={styles.chipRow}>
+          {explicitMembers.map((p) => (
             <PersonChip
               key={p.id}
               label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
@@ -214,6 +216,23 @@ export default function GroupDetail({
             />
           ))}
         </div>
+      )}
+
+      {eventOnlyAttendees.length > 0 && (
+        <>
+          <p style={styles.eventOnlyLabel}>Also seen at this group's events</p>
+          <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
+            {eventOnlyAttendees.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => onSelectPerson(p)}
+                style={styles.eventOnlyChip}
+              >
+                {`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {moments.length === 0 && (
@@ -309,6 +328,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   summaryRow: { display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '1.5rem' },
   summary: { margin: 0, flex: 1, fontSize: '1rem', color: '#666', fontStyle: 'italic' },
   membersHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem 0' },
+  eventOnlyLabel: { margin: '0.75rem 0 0.5rem 0', fontSize: '0.85rem', color: '#888', fontStyle: 'italic' },
+  eventOnlyChip: {
+    fontSize: '0.9rem',
+    padding: '0.35rem 0.8rem',
+    borderRadius: '999px',
+    border: '1px dashed #2E4034',
+    backgroundColor: 'transparent',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
   renameInput: {
     fontSize: '1.5rem',
     fontFamily: 'Georgia, serif',

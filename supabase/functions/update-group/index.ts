@@ -36,7 +36,7 @@ serve(async (req) => {
     const { data: group } = await supabaseClient
       .from("groups")
       .select(
-        "id, name, person_groups(person_id, people(id, name, last_name)), moment_groups(moment_id, moments(id, occasion, raw_description, notes(people(id, name, last_name))))"
+        "id, name, person_groups(person_id, people(id, name, last_name)), moment_groups(moment_id, moments(id, occasion, raw_description))"
       )
       .eq("id", groupId)
       .single()
@@ -64,17 +64,16 @@ serve(async (req) => {
     }
     for (const key of ambiguousFirstNames) delete idByName[key]
 
+    // Members = explicit person_groups roster ONLY. Attending an event tagged to this group
+    // doesn't make someone a member (the same event can be tagged to multiple groups), so
+    // event attendees are intentionally not folded into this set — matches the system prompt
+    // below, which already tells the AI membership is independent of tagged events.
     const currentMemberIds = new Set<string>()
     const currentMembers = new Set<string>()
     for (const pg of group?.person_groups ?? []) {
       if (pg.people) {
         currentMemberIds.add(pg.person_id)
         currentMembers.add(fullName(pg.people))
-      }
-    }
-    for (const mg of group?.moment_groups ?? []) {
-      for (const n of mg.moments?.notes ?? []) {
-        if (n.people) currentMembers.add(fullName(n.people))
       }
     }
 
