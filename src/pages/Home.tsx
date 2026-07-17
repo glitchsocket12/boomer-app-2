@@ -2,15 +2,25 @@ import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import { EventChip } from '../components/Chips'
+import { summarize } from '../lib/summarize'
 
 type PersonRef = { id: string; name: string }
+type EventRef = { id: string; summary: string }
 type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   people?: PersonRef[]
+  event?: EventRef
 }
 
-export default function Home({ onSelectPerson }: { onSelectPerson: (person: PersonRef) => void }) {
+export default function Home({
+  onSelectPerson,
+  onSelectEvent,
+}: {
+  onSelectPerson: (person: PersonRef) => void
+  onSelectEvent: (event: EventRef) => void
+}) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -42,7 +52,19 @@ export default function Home({ onSelectPerson }: { onSelectPerson: (person: Pers
       return
     }
 
-    setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [] }])
+    let event: EventRef | undefined
+    if (data.momentId) {
+      const { data: moment } = await supabase
+        .from('moments')
+        .select('occasion, raw_description')
+        .eq('id', data.momentId)
+        .single()
+      if (moment) {
+        event = { id: data.momentId, summary: summarize(moment.occasion, moment.raw_description) }
+      }
+    }
+
+    setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [], event }])
   }
 
   return (
@@ -57,13 +79,14 @@ export default function Home({ onSelectPerson }: { onSelectPerson: (person: Pers
         {thread.map((m, i) => (
           <div key={i}>
             <div style={m.role === 'user' ? styles.userBubble : styles.assistantBubble}>{m.content}</div>
-            {m.people && m.people.length > 0 && (
+            {((m.people && m.people.length > 0) || m.event) && (
               <div style={styles.peopleRow}>
-                {m.people.map((p) => (
+                {m.people?.map((p) => (
                   <button key={p.id} onClick={() => onSelectPerson(p)} style={styles.personChip}>
                     {p.name}
                   </button>
                 ))}
+                {m.event && <EventChip label={m.event.summary} onClick={() => onSelectEvent(m.event!)} />}
               </div>
             )}
           </div>

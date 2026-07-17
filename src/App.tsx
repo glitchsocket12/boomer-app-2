@@ -120,7 +120,12 @@ export default function App() {
   } else {
     content = (
       <>
-        {view === 'home' && <Home onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })} />}
+        {view === 'home' && (
+          <Home
+            onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+            onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+          />
+        )}
         {view === 'people' && (
           <People
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
