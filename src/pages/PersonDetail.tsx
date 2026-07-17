@@ -15,7 +15,19 @@ type Note = {
 
 type GroupRef = { id: string; name: string }
 
+type Reminder = { id: string; label: string; month: number; day: number }
+
+type PersonRow = { name: string; last_name: string | null; reminders: Reminder[] }
+
 const AFFILIATION_LIMIT = 5
+
+const MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+]
+
+function formatDate(month: number, day: number) {
+  return `${MONTH_NAMES[month - 1] ?? month} ${day}`
+}
 
 export default function PersonDetail({
   personId,
@@ -34,6 +46,7 @@ export default function PersonDetail({
 }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [groups, setGroups] = useState<GroupRef[]>([])
+  const [person, setPerson] = useState<PersonRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [newFact, setNewFact] = useState('')
   const [saving, setSaving] = useState(false)
@@ -45,19 +58,22 @@ export default function PersonDetail({
   async function loadData() {
     setLoading(true)
 
-    const [notesRes, groupsRes] = await Promise.all([
+    const [notesRes, groupsRes, personRes] = await Promise.all([
       supabase
         .from('notes')
         .select('id, content, created_at, moment_id, moments(id, occasion, raw_description)')
         .eq('person_id', personId)
         .order('created_at', { ascending: false }),
       supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
+      supabase.from('people').select('name, last_name, reminders(id, label, month, day)').eq('id', personId).single(),
     ])
 
     setNotes((notesRes.data as unknown as Note[]) ?? [])
 
     const groupRows = (groupsRes.data as unknown as { groups: GroupRef | null }[]) ?? []
     setGroups(groupRows.map((r) => r.groups).filter((g): g is GroupRef => g !== null))
+
+    setPerson((personRes.data as unknown as PersonRow) ?? null)
 
     setLoading(false)
   }
@@ -90,10 +106,26 @@ export default function PersonDetail({
   const shownEvents = allEvents.slice(0, AFFILIATION_LIMIT)
   const shownGroups = groups.slice(0, AFFILIATION_LIMIT)
 
+  const fullName = person ? `${person.name}${person.last_name ? ` ${person.last_name}` : ''}` : personName
+  const birthday = person?.reminders?.find((r) => r.label === 'Birthday') ?? null
+  const anniversary = person?.reminders?.find((r) => r.label === 'Anniversary') ?? null
+  const otherDates = person?.reminders?.filter((r) => r.label !== 'Birthday' && r.label !== 'Anniversary') ?? []
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
-      <h1 style={styles.heading}>{personName}</h1>
+      <h1 style={styles.heading}>{fullName}</h1>
+
+      {!loading && (
+        <div style={styles.fieldsGrid}>
+          <FieldCell label="Last name" value={person?.last_name ?? undefined} />
+          <FieldCell label="Birthday" value={birthday ? formatDate(birthday.month, birthday.day) : undefined} />
+          <FieldCell label="Anniversary" value={anniversary ? formatDate(anniversary.month, anniversary.day) : undefined} />
+          {otherDates.map((r) => (
+            <FieldCell key={r.id} label={r.label} value={formatDate(r.month, r.day)} />
+          ))}
+        </div>
+      )}
 
       {!loading && (groups.length > 0 || allEvents.length > 0) && (
         <div style={styles.affiliations}>
@@ -162,6 +194,17 @@ export default function PersonDetail({
   )
 }
 
+// A single read-only labeled field. Shows the value when we have it, or a
+// subtle placeholder when it's missing, to prompt adding it via the chat.
+function FieldCell({ label, value }: { label: string; value?: string }) {
+  return (
+    <div style={styles.cell}>
+      <span style={styles.cellLabel}>{label}</span>
+      <span style={value ? styles.cellValue : styles.cellValueEmpty}>{value || 'not on file'}</span>
+    </div>
+  )
+}
+
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
   backButton: {
@@ -174,6 +217,29 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
   },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1rem' },
+  fieldsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+    gap: '0.6rem',
+    marginBottom: '1.5rem',
+  },
+  cell: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.25rem',
+    padding: '0.5rem 0.65rem',
+    borderRadius: '8px',
+    border: '1px solid #E3E3E3',
+    backgroundColor: '#FAFAF8',
+  },
+  cellLabel: {
+    fontSize: '0.7rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+    color: '#999',
+  },
+  cellValue: { fontSize: '1rem', color: '#2E2E2E' },
+  cellValueEmpty: { fontSize: '0.95rem', color: '#B8B8B0', fontStyle: 'italic' },
   affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' },
   affiliationRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },

@@ -1,35 +1,37 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { summarize } from '../lib/summarize'
+import { GroupChip, EventChip } from '../components/Chips'
 
-type Reminder = {
-  id: string
-  label: string
-  month: number
-  day: number
-}
+type GroupRef = { id: string; name: string }
+type EventRef = { id: string; summary: string }
 
 type Person = {
   id: string
   name: string
   last_name: string | null
-  reminders: Reminder[]
+  person_groups: { groups: GroupRef | null }[]
+  notes: { moment_id: string | null; moments: { id: string; occasion: string | null; raw_description: string } | null }[]
 }
 
-const MONTH_NAMES = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-]
+const AFFILIATION_LIMIT = 4
 
-function formatDate(month: number, day: number) {
-  return `${MONTH_NAMES[month - 1] ?? month} ${day}`
-}
-
-export default function People({ onSelectPerson }: { onSelectPerson: (person: { id: string; name: string }) => void }) {
+export default function People({
+  onSelectPerson,
+  onSelectGroup,
+  onSelectEvent,
+}: {
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+}) {
   const [people, setPeople] = useState<Person[]>([])
   const [newName, setNewName] = useState('')
   const [newLastName, setNewLastName] = useState('')
   const [loading, setLoading] = useState(true)
 
-  // Load the current user's people (and their reminders) when the page opens
+  // Load the current user's people, along with which groups and events
+  // they're tied to, when the page opens
   useEffect(() => {
     loadPeople()
   }, [])
@@ -38,11 +40,13 @@ export default function People({ onSelectPerson }: { onSelectPerson: (person: { 
     setLoading(true)
     const { data, error } = await supabase
       .from('people')
-      .select('id, name, last_name, reminders(id, label, month, day)')
+      .select(
+        'id, name, last_name, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description))'
+      )
       .order('name')
 
     if (!error && data) {
-      setPeople(data as Person[])
+      setPeople(data as unknown as Person[])
     }
     setLoading(false)
   }
@@ -90,55 +94,80 @@ export default function People({ onSelectPerson }: { onSelectPerson: (person: { 
       <div style={styles.list}>
         {people.length === 0 && <p style={styles.empty}>No one added yet — add someone above.</p>}
         {people.map((person) => (
-          <PersonCard key={person.id} person={person} onViewPerson={onSelectPerson} />
+          <PersonCard
+            key={person.id}
+            person={person}
+            onViewPerson={onSelectPerson}
+            onSelectGroup={onSelectGroup}
+            onSelectEvent={onSelectEvent}
+          />
         ))}
       </div>
     </div>
   )
 }
 
-// One standardized tile per person: full name, then the same three
-// labeled fields for everyone (last name, birthday, anniversary) so it's
-// obvious at a glance what info is on file and what's still missing.
-// Adding or correcting info happens through the chat, not on this page.
+// One tile per person, matching the Groups/Events tile convention: the
+// name is the clickable title, and a row of color-coded chips underneath
+// shows which groups and events they're tied to, for quick navigation.
 function PersonCard({
   person,
   onViewPerson,
+  onSelectGroup,
+  onSelectEvent,
 }: {
   person: Person
   onViewPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
-  const birthday = person.reminders?.find((r) => r.label === 'Birthday') ?? null
-  const anniversary = person.reminders?.find((r) => r.label === 'Anniversary') ?? null
-  const otherDates = person.reminders?.filter((r) => r.label !== 'Birthday' && r.label !== 'Anniversary') ?? []
-
   const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
 
-  return (
-    <div style={styles.card} onClick={() => onViewPerson(person)}>
-      <h2 style={styles.personName}>
-        {fullName} <span style={{ fontSize: '0.9rem', color: '#888' }}>(view notes)</span>
-      </h2>
+  const groups = (person.person_groups ?? [])
+    .map((pg) => pg.groups)
+    .filter((g): g is GroupRef => g !== null)
 
-      <div style={styles.fieldsGrid}>
-        <FieldCell label="Last name" value={person.last_name ?? undefined} />
-        <FieldCell label="Birthday" value={birthday ? formatDate(birthday.month, birthday.day) : undefined} />
-        <FieldCell label="Anniversary" value={anniversary ? formatDate(anniversary.month, anniversary.day) : undefined} />
-        {otherDates.map((r) => (
-          <FieldCell key={r.id} label={r.label} value={formatDate(r.month, r.day)} />
-        ))}
-      </div>
-    </div>
-  )
-}
+  const eventMap = new Map<string, EventRef>()
+  for (const n of person.notes ?? []) {
+    if (n.moments) {
+      eventMap.set(n.moments.id, { id: n.moments.id, summary: summarize(n.moments.occasion, n.moments.raw_description) })
+    }
+  }
+  const events = Array.from(eventMap.values())
 
-// A single read-only labeled cell. Shows the value when we have it, or a
-// subtle placeholder when it's missing, so every tile has the same shape.
-function FieldCell({ label, value }: { label: string; value?: string }) {
+  const shownGroups = groups.slice(0, AFFILIATION_LIMIT)
+  const shownEvents = events.slice(0, AFFILIATION_LIMIT)
+
   return (
-    <div style={styles.cell}>
-      <span style={styles.cellLabel}>{label}</span>
-      <span style={value ? styles.cellValue : styles.cellValueEmpty}>{value || 'not on file'}</span>
+    <div style={styles.card}>
+      <button onClick={() => onViewPerson(person)} style={styles.titleButton}>
+        {fullName}
+      </button>
+
+      {(groups.length > 0 || events.length > 0) && (
+        <div style={styles.affiliations}>
+          {shownGroups.length > 0 && (
+            <div style={styles.chipRow}>
+              {shownGroups.map((g) => (
+                <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+              ))}
+              {groups.length > AFFILIATION_LIMIT && (
+                <span style={styles.moreText}>+{groups.length - AFFILIATION_LIMIT} more</span>
+              )}
+            </div>
+          )}
+          {shownEvents.length > 0 && (
+            <div style={styles.chipRow}>
+              {shownEvents.map((e) => (
+                <EventChip key={e.id} label={e.summary} onClick={() => onSelectEvent(e)} />
+              ))}
+              {events.length > AFFILIATION_LIMIT && (
+                <span style={styles.moreText}>+{events.length - AFFILIATION_LIMIT} more</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -164,29 +193,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: '10px',
     padding: '1.25rem',
     boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
+  },
+  titleButton: {
+    display: 'block',
+    margin: 0,
+    padding: 0,
+    fontSize: '1.3rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E2E2E',
+    background: 'none',
+    border: 'none',
+    textAlign: 'left',
     cursor: 'pointer',
   },
-  personName: { margin: '0 0 0.75rem 0', fontSize: '1.3rem', color: '#2E2E2E' },
-  fieldsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-    gap: '0.6rem',
-  },
-  cell: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.25rem',
-    padding: '0.5rem 0.65rem',
-    borderRadius: '8px',
-    border: '1px solid #E3E3E3',
-    backgroundColor: '#FAFAF8',
-  },
-  cellLabel: {
-    fontSize: '0.7rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    color: '#999',
-  },
-  cellValue: { fontSize: '1rem', color: '#2E2E2E' },
-  cellValueEmpty: { fontSize: '0.95rem', color: '#B8B8B0', fontStyle: 'italic' },
+  affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' },
+  chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
+  moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
 }

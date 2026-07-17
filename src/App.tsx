@@ -119,7 +119,13 @@ export default function App() {
     content = (
       <>
         {view === 'home' && <Home onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })} />}
-        {view === 'people' && <People onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })} />}
+        {view === 'people' && (
+          <People
+            onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+            onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
+            onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+          />
+        )}
         {view === 'events' && (
           <Events
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
