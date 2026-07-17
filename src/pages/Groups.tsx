@@ -53,10 +53,8 @@ export default function Groups({
 
           return (
             <div key={group.id} style={styles.card}>
-              <h2 style={styles.title}>{group.name}</h2>
-
-              <button onClick={() => onSelectGroup(group)} style={styles.viewEvents}>
-                View events →
+              <button onClick={() => onSelectGroup(group)} style={styles.titleButton}>
+                {group.name}
               </button>
 
               {members.length === 0 ? (
@@ -87,17 +85,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '1.25rem',
     boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
   },
-  title: { margin: '0 0 0.5rem 0', fontSize: '1.3rem', color: '#2E2E2E' },
-  viewEvents: {
+  titleButton: {
     display: 'block',
+    margin: '0 0 0.75rem 0',
+    padding: 0,
+    fontSize: '1.3rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E2E2E',
     background: 'none',
     border: 'none',
-    color: '#2E4034',
-    fontSize: '0.95rem',
-    fontFamily: 'Georgia, serif',
+    textAlign: 'left',
     cursor: 'pointer',
-    padding: 0,
-    marginBottom: '0.75rem',
   },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
 }
