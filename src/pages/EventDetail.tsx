@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { PersonChip, GroupChip } from '../components/Chips'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
+import PhotoGallery from '../components/PhotoGallery'
 import { summarize } from '../lib/summarize'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
@@ -212,6 +213,8 @@ export default function EventDetail({
           ))}
         </div>
       )}
+
+      <PhotoGallery />
 
       {attendees.size > 0 && (
         <>

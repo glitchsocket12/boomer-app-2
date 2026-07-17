@@ -5,6 +5,7 @@ import { eventSortDate } from '../lib/dates'
 import EditButton from '../components/EditButton'
 import { PersonChip, GroupChip } from '../components/Chips'
 import UpdateGroupChat from '../components/UpdateGroupChat'
+import PhotoGallery from '../components/PhotoGallery'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string }
@@ -185,6 +186,8 @@ export default function GroupDetail({
       )}
 
       <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
+
+      <PhotoGallery />
 
       <h2 style={styles.membersHeading}>Who's in this group</h2>
       {groupMembers.length === 0 ? (

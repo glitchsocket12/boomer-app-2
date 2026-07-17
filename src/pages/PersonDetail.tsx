@@ -4,6 +4,7 @@ import { summarize } from '../lib/summarize'
 import { GroupChip, EventChip } from '../components/Chips'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import PhotoGallery from '../components/PhotoGallery'
 
 type Note = {
   id: string
@@ -213,6 +214,8 @@ export default function PersonDetail({
           )}
         </div>
       )}
+
+      <PhotoGallery />
 
       <form onSubmit={handleAddFact} style={styles.addForm}>
         <AutoGrowTextarea

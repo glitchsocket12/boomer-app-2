@@ -98,17 +98,25 @@ src/
 │   │                             null) on a browser with no MediaRecorder
 │   │                             support, so it fails invisibly rather than
 │   │                             showing a broken button.
-│   └── AutoGrowTextarea.tsx     — reusable text box (added 2026-07-16) that
-│                                 grows downward as its content wraps, instead
-│                                 of cutting text off/scrolling horizontally
-│                                 like a single-line `<input>` did. Enter
-│                                 sends (via an `onEnter` callback prop),
-│                                 Shift+Enter inserts a manual line break.
-│                                 Capped at 160px tall, then scrolls internally
-│                                 rather than growing forever. Used in the
-│                                 same three places as VoiceInputButton.tsx
-│                                 above, replacing the plain `<input>` each
-│                                 had before.
+│   ├── AutoGrowTextarea.tsx     — reusable text box (added 2026-07-16) that
+│   │                             grows downward as its content wraps, instead
+│   │                             of cutting text off/scrolling horizontally
+│   │                             like a single-line `<input>` did. Enter
+│   │                             sends (via an `onEnter` callback prop),
+│   │                             Shift+Enter inserts a manual line break.
+│   │                             Capped at 160px tall, then scrolls internally
+│   │                             rather than growing forever. Used in the
+│   │                             same three places as VoiceInputButton.tsx
+│   │                             above, replacing the plain `<input>` each
+│   │                             had before.
+│   └── PhotoGallery.tsx         — DISPLAY-ONLY placeholder (added 2026-07-17)
+│                                 for the future photo gallery feature (see
+│                                 Section 7, item 10). Renders a "Gallery"
+│                                 section with 4 static decorative tiles, no
+│                                 real photos/upload/storage. Used on
+│                                 PersonDetail.tsx, EventDetail.tsx, and
+│                                 GroupDetail.tsx purely to demonstrate the
+│                                 layout to the founder.
 ```
 
 **As of 2026-07-15, the standalone "Add a Moment" page (`AddAMoment.tsx`) was removed** — Home's unified conversation already covers that capture flow, so the separate page/tab was redundant. Its Edge Function (`chat`) is still deployed but is now unused by the frontend entirely (see the Edge Functions table below). The Events and Groups tabs (described above) were also actually wired into the nav bar for the first time as part of this same change — the architecture doc had described them for a while, but they weren't reachable from the UI until now.
@@ -305,6 +313,7 @@ moment_groups                    (join table, many-to-many)
   8. Manual tags on events, with AI-suggested tags (similar pattern to existing group-tagging suggestions) — needs a schema change.
   9. AI/"fuzzy" semantic search (e.g. typing "wedding" surfaces wedding-related events without an exact text match) — needs a new AI-backed search Edge Function, not a simple filter.
   10. **Photo gallery for people/events/groups, added 2026-07-17.** Photos attached to a person/event/group tile, shown as an additional gallery view alongside the text-based memory. **Key constraint surfaced and decided:** a web app cannot silently auto-sync with a phone's photo library — that requires native photo-library permissions (iOS PhotoKit), only possible from a real installed app, tying directly to the founder's eventual iPhone-app goal (see Section 8). Decision: build **manual photo upload/attach now** (with embedded metadata like date-taken used to help auto-suggest which event a photo belongs to, manual tagging as the fallback), and revisit true automatic camera-roll syncing only once/if the native app happens. Likely the most involved item on this list — needs a new Supabase Storage bucket, upload UI across three different tile types, and metadata extraction, not just frontend display logic.
+     - **Visual placeholder built 2026-07-17** (`src/components/PhotoGallery.tsx`) — a "Gallery" section with 4 static, decorative pastel tiles (a camera icon, no real images) now appears on `PersonDetail.tsx`, `EventDetail.tsx`, and `GroupDetail.tsx`, captioned "Preview of an upcoming feature — these are placeholders, not real photos yet." This is display-only, to demonstrate the layout/format to the founder: no upload, no storage, no Supabase Storage bucket, no metadata extraction. The actual upload/attach/tagging functionality above is still not built.
 - **Edge Function test coverage is a known follow-up, not yet started.** The 2026-07-16 Vitest setup (see Section 3, Section 10) only covers frontend pure-logic helpers. The higher-risk untested code is the AI-classification logic in `converse`/`add-fact` — covering that would require mocking the Anthropic API and the Supabase client, a bigger project than the minimal setup done so far.
 
 ## 8. Key UX / Product Decisions (and the reasoning behind them)
