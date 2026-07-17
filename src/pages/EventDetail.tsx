@@ -178,11 +178,14 @@ export default function EventDetail({
       </p>
 
       {groups.length > 0 && (
-        <div style={styles.chipRow}>
-          {groups.map((g) => (
-            <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-          ))}
-        </div>
+        <>
+          <h2 style={styles.subheading}>Affiliated Groups</h2>
+          <div style={styles.chipRow}>
+            {groups.map((g) => (
+              <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+            ))}
+          </div>
+        </>
       )}
 
       <p style={styles.description}>{moment.summary || 'Putting this memory into words…'}</p>

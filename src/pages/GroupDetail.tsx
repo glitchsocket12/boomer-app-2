@@ -45,6 +45,7 @@ export default function GroupDetail({
   onRenamed?: (newName: string) => void
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
+  const [explicitMembers, setExplicitMembers] = useState<PersonRef[]>([])
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState(groupName)
   const [editingName, setEditingName] = useState(false)
@@ -55,6 +56,7 @@ export default function GroupDetail({
 
   useEffect(() => {
     loadMoments()
+    loadMembers()
     loadSummary()
     setName(groupName)
     setNameInput(groupName)
@@ -72,8 +74,25 @@ export default function GroupDetail({
     }
   }
 
-  async function loadMoments() {
-    setLoading(true)
+  // The explicit roster (person_groups) — "who I've said is in this group," independent of
+  // whether they've attended any tagged event. Refetched fresh each time, not merged with
+  // stale state, so a removal actually takes effect.
+  async function loadMembers() {
+    const { data } = await supabase
+      .from('groups')
+      .select('person_groups(people(id, name, last_name))')
+      .eq('id', groupId)
+      .single()
+
+    const explicit = ((data as unknown as { person_groups: { people: PersonRef | null }[] } | null)?.person_groups ?? [])
+      .map((pg) => pg.people)
+      .filter((p): p is PersonRef => p !== null)
+
+    setExplicitMembers(explicit)
+  }
+
+  async function loadMoments(silent = false) {
+    if (!silent) setLoading(true)
     const { data } = await supabase
       .from('moments')
       .select(
@@ -85,7 +104,7 @@ export default function GroupDetail({
       (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
     )
     setMoments(sorted)
-    setLoading(false)
+    if (!silent) setLoading(false)
 
     for (const m of sorted) {
       if (!m.summary && !requestedMomentSummaries.current.has(m.id)) {
@@ -122,6 +141,18 @@ export default function GroupDetail({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
+  // "Who's in this group" is a union of the explicit roster (person_groups) plus anyone who
+  // shows up in the notes of an event tagged to this group — same union Groups.tsx already
+  // uses for its member chips (PROJECT_CONTEXT.md Section 6, "Fixed: a group's member chips...").
+  const membersById = new Map<string, PersonRef>()
+  for (const p of explicitMembers) membersById.set(p.id, p)
+  for (const m of moments) {
+    for (const n of m.notes ?? []) {
+      if (n.people) membersById.set(n.people.id, n.people)
+    }
+  }
+  const groupMembers = [...membersById.values()]
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -157,6 +188,21 @@ export default function GroupDetail({
       )}
 
       <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
+
+      <h2 style={styles.membersHeading}>Who's in this group</h2>
+      {groupMembers.length === 0 ? (
+        <p style={styles.empty}>No members yet — add someone using the chat box below.</p>
+      ) : (
+        <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
+          {groupMembers.map((p) => (
+            <PersonChip
+              key={p.id}
+              label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
+              onClick={() => onSelectPerson(p)}
+            />
+          ))}
+        </div>
+      )}
 
       {moments.length === 0 && (
         <p style={styles.empty}>No events tagged to this group yet — mention this affiliation on Home while telling a story and it'll show up here.</p>
@@ -223,7 +269,10 @@ export default function GroupDetail({
             setName(rename)
             onRenamed?.(rename)
           }
-          loadMoments()
+          // Silent: this fires after every chat turn now (not just the final "done" turn), so a
+          // full loading-state flip here would unmount the in-progress chat mid-conversation.
+          loadMoments(true)
+          loadMembers()
           loadSummary()
         }}
       />
@@ -246,6 +295,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'wrap' },
   renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' },
   summary: { margin: '0 0 1.5rem 0', fontSize: '1rem', color: '#666', fontStyle: 'italic' },
+  membersHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem 0' },
   renameInput: {
     fontSize: '1.5rem',
     fontFamily: 'Georgia, serif',

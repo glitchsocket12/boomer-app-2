@@ -43,6 +43,23 @@ serve(async (req) => {
       .select("content, person_id")
       .eq("moment_id", momentId)
     const { data: people } = await supabaseClient.from("people").select("id, name, last_name")
+    const { data: existingGroups } = await supabaseClient.from("groups").select("id, name")
+    const { data: existingMomentGroups } = await supabaseClient
+      .from("moment_groups")
+      .select("group_id")
+      .eq("moment_id", momentId)
+
+    const groupNameById: Record<string, string> = {}
+    const idByGroupName: Record<string, string> = {}
+    for (const g of existingGroups ?? []) {
+      groupNameById[g.id] = g.name
+      idByGroupName[g.name.toLowerCase()] = g.id
+    }
+    const taggedGroupIds = new Set((existingMomentGroups ?? []).map((mg: any) => mg.group_id))
+    const taggedGroupNames = Array.from(taggedGroupIds)
+      .map((id) => groupNameById[id])
+      .filter(Boolean)
+    const groupsRoster = (existingGroups ?? []).map((g) => g.name).join(", ")
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
@@ -66,7 +83,7 @@ serve(async (req) => {
 
     const peopleRoster = (people ?? []).map((p: any) => nameById[p.id]).join(", ")
 
-    const existingSummary = `Occasion: ${moment?.occasion ?? "unknown"} | Location: ${moment?.location ?? "unknown"} | When (in the user's words): ${moment?.when_text ?? "unknown"} | Resolved calendar date: ${moment?.event_date ?? "not set"}. Already recorded notes: ${(existingNotes ?? [])
+    const existingSummary = `Occasion: ${moment?.occasion ?? "unknown"} | Location: ${moment?.location ?? "unknown"} | When (in the user's words): ${moment?.when_text ?? "unknown"} | Resolved calendar date: ${moment?.event_date ?? "not set"} | Already tagged to groups: ${taggedGroupNames.join(", ") || "none"}. Already recorded notes: ${(existingNotes ?? [])
       .map((n: any) => `${nameById[n.person_id] ?? "someone"}: ${n.content}`)
       .join("; ") || "none"}`
 
@@ -78,14 +95,16 @@ Here's what's already known about this moment: ${existingSummary}
 
 Here is everyone already recorded, by full name where a last name is known: ${peopleRoster || "(none yet)"}
 
+Here are the groups already on file: ${groupsRoster || "(none yet)"}
+
 IMPORTANT — disambiguating people who share a first name: check the roster above for any other recorded person with the same first name as whoever you're about to write into "new_people" or "additional_notes". If there's a collision (e.g. two different people both named "Bob"), you MUST use that person's full name (first + last) instead of just the bare first name. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
 When the user shares a new detail, don't finish right away — first ask a short, natural follow-up question like "Anything else you remember about this?" so they have a chance to add more. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null}}
+{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null}, "add_groups": ["Group Name"]}
 
-This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known above.
+This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known above.
 
 CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "additional_notes": a person only shows up as having attended if they have at least one note tied to this moment. So whenever the user mentions someone was AT this event — even in passing, even with no other detail about them — you MUST still include an entry for them in "additional_notes" (e.g. {"person": "Name1", "note": "Was there."}) so they get linked. Do not just add them to "new_people" and stop — a person with no note attached will silently NOT appear as having attended, which is the whole point of recording them.
 
@@ -93,7 +112,9 @@ CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "a
 - "when_text": the user's own words describing timing (e.g. "fall of 2025"), only when they give timing info different from what's already known.
 - "event_date": your best-guess actual calendar date as "YYYY-MM-DD" matching whatever "when_text" you just set. Resolve relative phrases against today's date (${todayIso}). If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year, use the 1st of that month. If only a year, use January 1. Always give your single closest best guess rather than a range.
 - "location" / "occasion": only set when the user is giving new or corrected info for that specific field.
-Leave any of these four keys null when the user didn't touch that field this turn.`
+Leave any of these four keys null when the user didn't touch that field this turn.
+
+"add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Affiliated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster above if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail.`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -128,6 +149,7 @@ Leave any of these four keys null when the user didn't touch that field this tur
       new_people: [],
       additional_notes: [],
       moment_field_updates: null,
+      add_groups: [],
     }
     let rawText = ""
     try {
@@ -181,7 +203,33 @@ Leave any of these four keys null when the user didn't touch that field this tur
       await supabaseClient.from("moments").update(fieldUpdates).eq("id", momentId)
     }
 
-    const changed = (parsed.new_people?.length ?? 0) > 0 || notesAdded > 0 || Object.keys(fieldUpdates).length > 0
+    let groupsTagged = 0
+    for (const groupName of parsed.add_groups ?? []) {
+      const key = groupName.toLowerCase()
+      let groupId = idByGroupName[key]
+      if (!groupId) {
+        const { data: newGroup } = await supabaseClient
+          .from("groups")
+          .insert({ user_id: user.id, name: groupName })
+          .select()
+          .single()
+        if (newGroup) {
+          groupId = newGroup.id
+          idByGroupName[key] = groupId
+        }
+      }
+      if (groupId && !taggedGroupIds.has(groupId)) {
+        await supabaseClient
+          .from("moment_groups")
+          .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
+        // The group's cached AI summary (see summarize-group) is now stale since its tagged events changed.
+        await supabaseClient.from("groups").update({ summary: null }).eq("id", groupId)
+        taggedGroupIds.add(groupId)
+        groupsTagged++
+      }
+    }
+
+    const changed = (parsed.new_people?.length ?? 0) > 0 || notesAdded > 0 || Object.keys(fieldUpdates).length > 0 || groupsTagged > 0
 
     return new Response(JSON.stringify({ reply: parsed.reply, done: parsed.done === true, changed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
