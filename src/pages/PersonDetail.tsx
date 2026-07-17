@@ -78,6 +78,20 @@ export default function PersonDetail({
     setLoading(false)
   }
 
+  async function handleSaveLastName(lastName: string) {
+    await supabase.from('people').update({ last_name: lastName.trim() || null }).eq('id', personId)
+    loadData()
+  }
+
+  async function handleSaveDateField(reminderId: string | null, label: string, month: number, day: number) {
+    if (reminderId) {
+      await supabase.from('reminders').update({ month, day }).eq('id', reminderId)
+    } else {
+      await supabase.from('reminders').insert({ person_id: personId, label, month, day })
+    }
+    loadData()
+  }
+
   async function submitFact() {
     if (!newFact.trim()) return
     setSaving(true)
@@ -118,9 +132,21 @@ export default function PersonDetail({
 
       {!loading && (
         <div style={styles.fieldsGrid}>
-          <FieldCell label="Last name" value={person?.last_name ?? undefined} />
-          <FieldCell label="Birthday" value={birthday ? formatDate(birthday.month, birthday.day) : undefined} />
-          <FieldCell label="Anniversary" value={anniversary ? formatDate(anniversary.month, anniversary.day) : undefined} />
+          <TextFieldCell
+            label="Last name"
+            value={person?.last_name ?? ''}
+            onSave={handleSaveLastName}
+          />
+          <DateFieldCell
+            label="Birthday"
+            reminder={birthday}
+            onSave={(month, day) => handleSaveDateField(birthday?.id ?? null, 'Birthday', month, day)}
+          />
+          <DateFieldCell
+            label="Anniversary"
+            reminder={anniversary}
+            onSave={(month, day) => handleSaveDateField(anniversary?.id ?? null, 'Anniversary', month, day)}
+          />
           {otherDates.map((r) => (
             <FieldCell key={r.id} label={r.label} value={formatDate(r.month, r.day)} />
           ))}
@@ -194,14 +220,133 @@ export default function PersonDetail({
   )
 }
 
-// A single read-only labeled field. Shows the value when we have it, or a
-// subtle placeholder when it's missing, to prompt adding it via the chat.
+// A single read-only labeled field, for dates that aren't Birthday/Anniversary.
+// Shows the value we have; these come from the chat, not a click-to-edit form.
 function FieldCell({ label, value }: { label: string; value?: string }) {
   return (
     <div style={styles.cell}>
       <span style={styles.cellLabel}>{label}</span>
       <span style={value ? styles.cellValue : styles.cellValueEmpty}>{value || 'not on file'}</span>
     </div>
+  )
+}
+
+// A labeled text field (last name). Click the value — including the
+// "not on file" placeholder — to type in the correct info directly.
+function TextFieldCell({
+  label,
+  value,
+  onSave,
+}: {
+  label: string
+  value: string
+  onSave: (value: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+
+  function startEditing() {
+    setDraft(value)
+    setEditing(true)
+  }
+
+  function save(e: FormEvent) {
+    e.preventDefault()
+    onSave(draft.trim())
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <form onSubmit={save} style={styles.cell}>
+        <span style={styles.cellLabel}>{label}</span>
+        <input
+          autoFocus
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          style={styles.cellInput}
+        />
+      </form>
+    )
+  }
+
+  return (
+    <button type="button" onClick={startEditing} style={styles.cellButton}>
+      <span style={styles.cellLabel}>{label}</span>
+      <span style={value ? styles.cellValue : styles.cellValueEmpty}>{value || 'not on file'}</span>
+    </button>
+  )
+}
+
+// A labeled date field (birthday/anniversary). Click to add or edit the
+// month/day directly, without needing the chat.
+function DateFieldCell({
+  label,
+  reminder,
+  onSave,
+}: {
+  label: string
+  reminder: Reminder | null
+  onSave: (month: number, day: number) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [month, setMonth] = useState(reminder ? String(reminder.month) : '')
+  const [day, setDay] = useState(reminder ? String(reminder.day) : '')
+
+  function startEditing() {
+    setMonth(reminder ? String(reminder.month) : '')
+    setDay(reminder ? String(reminder.day) : '')
+    setEditing(true)
+  }
+
+  function save(e: FormEvent) {
+    e.preventDefault()
+    const m = parseInt(month, 10)
+    const d = parseInt(day, 10)
+    if (!m || !d) return
+    onSave(m, d)
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <form onSubmit={save} style={styles.cell}>
+        <span style={styles.cellLabel}>{label}</span>
+        <div style={{ display: 'flex', gap: '0.35rem' }}>
+          <input
+            autoFocus
+            type="number"
+            placeholder="Mo"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            min={1}
+            max={12}
+            style={styles.cellDateInput}
+          />
+          <input
+            type="number"
+            placeholder="Day"
+            value={day}
+            onChange={(e) => setDay(e.target.value)}
+            min={1}
+            max={31}
+            style={styles.cellDateInput}
+          />
+          <button type="submit" style={styles.cellSaveButton}>Save</button>
+        </div>
+      </form>
+    )
+  }
+
+  return (
+    <button type="button" onClick={startEditing} style={styles.cellButton}>
+      <span style={styles.cellLabel}>{label}</span>
+      <span style={reminder ? styles.cellValue : styles.cellValueEmpty}>
+        {reminder ? formatDate(reminder.month, reminder.day) : 'not on file'}
+      </span>
+    </button>
   )
 }
 
@@ -240,6 +385,29 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   cellValue: { fontSize: '1rem', color: '#2E2E2E' },
   cellValueEmpty: { fontSize: '0.95rem', color: '#B8B8B0', fontStyle: 'italic' },
+  cellButton: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.25rem',
+    padding: '0.5rem 0.65rem',
+    borderRadius: '8px',
+    border: '1px solid #E3E3E3',
+    backgroundColor: '#FAFAF8',
+    textAlign: 'left',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  cellInput: { fontSize: '1rem', padding: '0.2rem', borderRadius: '4px', border: '1px solid #CCC' },
+  cellDateInput: { width: '55px', fontSize: '0.95rem', padding: '0.2rem', borderRadius: '4px', border: '1px solid #CCC' },
+  cellSaveButton: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #2E4034',
+    backgroundColor: 'transparent',
+    color: '#2E4034',
+    cursor: 'pointer',
+  },
   affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' },
   affiliationRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
