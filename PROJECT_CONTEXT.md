@@ -294,6 +294,17 @@ moment_groups                    (join table, many-to-many)
 - **Tuning AI conversation quality** — the founder has repeatedly noted the AI could ask better/more thorough follow-up questions before wrapping up a conversation; called "good for MVP, but something to improve" more than once. This is an ongoing, never-fully-resolved thread, not a discrete task.
 - ~~Groups tagging for moments~~ — **done and confirmed 2026-07-15** (see Section 6). No longer deferred; moved here to note it's resolved, not tracked as a gap.
 - **Existing (pre-2026-07-15) moments and people are NOT retroactively grouped.** Group tagging only happens going forward, on new conversation turns. If the founder wants old moments (like the seeded "Air Force safety school" entry) tagged into a group, that has to be resurfaced/re-mentioned in a Home conversation — there's no batch/backfill tool for this.
+- **UI/UX feature backlog, requested 2026-07-16, not yet started.** Ordered easiest to hardest (see that conversation for full reasoning):
+  1. Refresh button next to a group's AI-generated description (re-calls `summarize-group`, result persists until refreshed again).
+  2. Hover-to-reveal trash/remove icon on person/event/group chips (e.g. removing someone mistakenly added to an event).
+  3. Cap group tiles at ~4 member names, then "+N more" instead of names stacking unevenly.
+  4. Search bar on the People page (client-side name filter).
+  5. Search bar on the Events page (client-side filter).
+  6. Search within a single group's members/events on `GroupDetail.tsx`.
+  7. A filter on People (criteria not yet decided — needs a quick decision on what to filter by, e.g. group membership or upcoming reminders).
+  8. Manual tags on events, with AI-suggested tags (similar pattern to existing group-tagging suggestions) — needs a schema change.
+  9. AI/"fuzzy" semantic search (e.g. typing "wedding" surfaces wedding-related events without an exact text match) — needs a new AI-backed search Edge Function, not a simple filter. Hardest item on the list.
+- **Edge Function test coverage is a known follow-up, not yet started.** The 2026-07-16 Vitest setup (see Section 3, Section 10) only covers frontend pure-logic helpers. The higher-risk untested code is the AI-classification logic in `converse`/`add-fact` — covering that would require mocking the Anthropic API and the Supabase client, a bigger project than the minimal setup done so far.
 
 ## 8. Key UX / Product Decisions (and the reasoning behind them)
 
