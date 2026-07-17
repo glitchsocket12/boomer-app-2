@@ -50,6 +50,8 @@ export default function PersonDetail({
   const [loading, setLoading] = useState(true)
   const [newFact, setNewFact] = useState('')
   const [saving, setSaving] = useState(false)
+  const [groupTagMessage, setGroupTagMessage] = useState<string | null>(null)
+  const [suggestedGroup, setSuggestedGroup] = useState<string | null>(null)
 
   useEffect(() => {
     loadData()
@@ -95,10 +97,15 @@ export default function PersonDetail({
   async function submitFact() {
     if (!newFact.trim()) return
     setSaving(true)
+    setGroupTagMessage(null)
+    setSuggestedGroup(null)
 
-    await supabase.functions.invoke('add-fact', {
+    const { data } = await supabase.functions.invoke('add-fact', {
       body: { personId, text: newFact.trim() },
     })
+
+    if (data?.groupTag) setGroupTagMessage(data.groupTag.name)
+    if (data?.suggestedGroup) setSuggestedGroup(data.suggestedGroup)
 
     setNewFact('')
     setSaving(false)
@@ -108,6 +115,35 @@ export default function PersonDetail({
   function handleAddFact(e: FormEvent) {
     e.preventDefault()
     submitFact()
+  }
+
+  async function confirmSuggestedGroup() {
+    if (!suggestedGroup) return
+    const groupName = suggestedGroup
+    setSuggestedGroup(null)
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const { data: existingGroups } = await supabase.from('groups').select('id, name')
+    const match = (existingGroups ?? []).find((g) => g.name.toLowerCase() === groupName.toLowerCase())
+
+    let groupId = match?.id ?? null
+    if (!groupId) {
+      const { data: newGroup } = await supabase
+        .from('groups')
+        .insert({ user_id: user?.id, name: groupName })
+        .select()
+        .single()
+      groupId = newGroup?.id ?? null
+    }
+    if (groupId) {
+      await supabase
+        .from('person_groups')
+        .upsert({ person_id: personId, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+      setGroupTagMessage(match?.name ?? groupName)
+      loadData()
+    }
   }
 
   const affiliatedEvents = new Map<string, { id: string; summary: string }>()
@@ -195,6 +231,24 @@ export default function PersonDetail({
           {saving ? '…' : 'Add'}
         </button>
       </form>
+
+      {groupTagMessage && (
+        <p style={styles.groupTagBanner}>✓ Also added {personName} to "{groupTagMessage}".</p>
+      )}
+
+      {suggestedGroup && (
+        <div style={styles.suggestBanner}>
+          <span>It sounds like {personName} might belong to a group called "{suggestedGroup}". Add them?</span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={confirmSuggestedGroup} style={styles.suggestYesButton}>
+              Yes, add
+            </button>
+            <button type="button" onClick={() => setSuggestedGroup(null)} style={styles.suggestNoButton}>
+              No thanks
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading && <p>Loading…</p>}
 
@@ -420,6 +474,39 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     backgroundColor: '#2E4034',
     color: '#FFF',
+    cursor: 'pointer',
+  },
+  groupTagBanner: { fontSize: '0.9rem', color: '#2E4034', marginTop: '-1rem', marginBottom: '1.5rem' },
+  suggestBanner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.6rem',
+    fontSize: '0.9rem',
+    color: '#5A4A20',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #E6D6AC',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+    marginTop: '-1rem',
+    marginBottom: '1.5rem',
+  },
+  suggestButtonRow: { display: 'flex', gap: '0.5rem' },
+  suggestYesButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
+  suggestNoButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: '1px solid #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
     cursor: 'pointer',
   },
   empty: { color: '#777' },
