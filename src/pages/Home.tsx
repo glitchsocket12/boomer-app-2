@@ -12,7 +12,7 @@ type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   people?: PersonRef[]
-  event?: EventRef
+  events?: EventRef[]
   groups?: GroupRef[]
 }
 
@@ -28,11 +28,23 @@ export default function Home({
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [thread])
+
+  useEffect(() => {
+    supabase.functions.invoke('suggest-prompts', {}).then(({ data }) => {
+      if (data?.suggestions?.length) setSuggestions(data.suggestions)
+    })
+  }, [])
+
+  function handleSuggestionClick(text: string) {
+    setSuggestions([])
+    setThread([{ role: 'assistant', content: text }])
+  }
 
   async function handleSend() {
     if (!input.trim() || sending) return
@@ -56,19 +68,18 @@ export default function Home({
       return
     }
 
-    let event: EventRef | undefined
-    if (data.momentId) {
-      const { data: moment } = await supabase
-        .from('moments')
-        .select('occasion, raw_description')
-        .eq('id', data.momentId)
-        .single()
-      if (moment) {
-        event = { id: data.momentId, summary: summarize(moment.occasion, moment.raw_description) }
-      }
-    }
+    // A single message can now describe several distinct events at once, so converse returns
+    // a list of moment IDs touched this turn rather than just one.
+    const events = (
+      await Promise.all(
+        ((data.momentIds ?? []) as string[]).map(async (id) => {
+          const { data: moment } = await supabase.from('moments').select('occasion, raw_description').eq('id', id).single()
+          return moment ? { id, summary: summarize(moment.occasion, moment.raw_description) } : null
+        })
+      )
+    ).filter((e): e is EventRef => e !== null)
 
-    setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [], event, groups: data.groups ?? [] }])
+    setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [], events, groups: data.groups ?? [] }])
   }
 
   return (
@@ -76,21 +87,34 @@ export default function Home({
       <h1 style={styles.heading}>Boomer</h1>
 
       {thread.length === 0 && (
-        <p style={styles.emptyState}>Ask about anyone or any moment, or just tell me what's on your mind.</p>
+        <>
+          <p style={styles.emptyState}>Ask about anyone or any moment, or just tell me what's on your mind.</p>
+          {suggestions.length > 0 && (
+            <div style={styles.suggestionList}>
+              {suggestions.map((s, i) => (
+                <button key={i} onClick={() => handleSuggestionClick(s)} style={styles.suggestionCard}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <div style={styles.thread}>
         {thread.map((m, i) => (
           <div key={i}>
             <div style={m.role === 'user' ? styles.userBubble : styles.assistantBubble}>{m.content}</div>
-            {((m.people && m.people.length > 0) || m.event || (m.groups && m.groups.length > 0)) && (
+            {((m.people && m.people.length > 0) || (m.events && m.events.length > 0) || (m.groups && m.groups.length > 0)) && (
               <div style={styles.peopleRow}>
                 {m.people?.map((p) => (
                   <button key={p.id} onClick={() => onSelectPerson(p)} style={styles.personChip}>
                     {p.name}
                   </button>
                 ))}
-                {m.event && <EventChip label={m.event.summary} onClick={() => onSelectEvent(m.event!)} />}
+                {m.events?.map((e) => (
+                  <EventChip key={e.id} label={e.summary} onClick={() => onSelectEvent(e)} />
+                ))}
                 {m.groups?.map((g) => (
                   <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
                 ))}
@@ -127,6 +151,19 @@ const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.5rem', textAlign: 'center' },
   emptyState: { color: '#777', textAlign: 'center', marginTop: '1rem' },
+  suggestionList: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1.25rem' },
+  suggestionCard: {
+    fontFamily: 'Georgia, serif',
+    fontSize: '1rem',
+    textAlign: 'left',
+    padding: '0.85rem 1rem',
+    borderRadius: '10px',
+    border: '1px solid #CFE0D6',
+    backgroundColor: '#F4F8F5',
+    color: '#2E4034',
+    cursor: 'pointer',
+    lineHeight: 1.4,
+  },
   thread: { flex: 1, display: 'flex', flexDirection: 'column', gap: '0.6rem', overflowY: 'auto', paddingBottom: '1rem' },
   userBubble: {
     alignSelf: 'flex-end',

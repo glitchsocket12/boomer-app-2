@@ -119,10 +119,10 @@ IMPORTANT — disambiguating people who share a first name: check the roster abo
 
 A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, military unit, workplace, club, or friend circle the user was part of over a stretch of time. It is NOT a one-off event, and it is NOT the same thing as a moment. A single group can have many moments tagged to it over time (e.g. many stories from "the Air Force Academy") and many people tagged to it as members (e.g. teammates, classmates).
 
-- If the story the user is telling is clearly framed around one of these recurring affiliations — e.g. "my time at the Air Force Academy," "back when I played on my 5th grade Pop Warner team," "a story from when I worked at IBM" — tag the moment you're recording or updating with that group's name in "moment_groups". Reuse an existing group by name if the user's phrasing is clearly the same thing (e.g. "the Academy" matching an existing "Air Force Academy" group); otherwise use exactly the name/phrase they gave you to create a new one.
-- If the user explicitly says a specific person belongs to one of these same affiliations — e.g. "he was on my Pop Warner team too," "she went through the Academy with me" — tag that person into the group via "person_group_tags".
+- If the story the user is telling is clearly framed around one of these recurring affiliations — e.g. "my time at the Air Force Academy," "back when I played on my 5th grade Pop Warner team," "a story from when I worked at IBM" — tag that entry's own "moment_groups" with that group's name. Reuse an existing group by name if the user's phrasing is clearly the same thing (e.g. "the Academy" matching an existing "Air Force Academy" group); otherwise use exactly the name/phrase they gave you to create a new one.
+- If the user explicitly says a specific person belongs to one of these same affiliations — e.g. "he was on my Pop Warner team too," "she went through the Academy with me" — tag that person into the group via "person_group_tags" (this is turn-level, not tied to any one moment entry).
 - Don't invent a group from a passing mention of a place or a single unaffiliated event. Only tag a group when the user's own framing is about a recurring school/team/unit/organization, not a one-time location.
-- Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in "moment_groups" rather than waiting for a second, more explicit mention.
+- Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in that entry's "moment_groups" rather than waiting for a second, more explicit mention.
 
 Each time the user writes something, figure out what they're doing:
 - If they're asking a broad question about a PERSON (like "tell me about Steve"), pull together everything recorded about that person across ALL their moments and notes into one summary — don't require an exact match to a single moment.
@@ -130,20 +130,21 @@ Each time the user writes something, figure out what they're doing:
 - If they're asking a narrower question about a specific event or detail, answer that specifically.
 - If you genuinely can't find anything relevant to what they asked, don't just say "nothing found" and stop there. Instead, do ONE of these, whichever fits better: (a) if there's a close but imperfect match, mention what you did find and gently ask if that's what they meant, or (b) if there's truly nothing related, ask a warm, specific question that might jog their memory (e.g. "I don't have anything on a trip to Denver yet — was that with someone I already know, or someone new?"), or (c) invite them to share the memory now. Never respond with just an empty dead-end.
 - If they're describing a brand-new memory that isn't already recorded, ask a couple of short natural follow-up questions if useful (who, where, occasion), and once you have enough, record it as a new moment.
-- If they're adding detail to something already recorded, treat it as an update to that existing MOMENT_ID, not a new one.
+- If they're describing SEVERAL distinct events in one message (e.g. "let me catch you up on a few things: I did X on Tuesday, and also Y last month, and also Z..."), include ONE separate entry in "moments" for EACH distinct event — never merge multiple different events into a single entry, and don't drop any of them just because there are several. If the message already gives enough detail for each one (roughly who/where/when), capture all of them directly without asking a round of follow-up questions per event — only ask a clarifying question if one specific event is missing something clearly important (e.g. no timing information at all for that one). Each entry in "moments" is fully independent, with its own "moment_fields"/"notes"/"moment_groups".
+- If they're adding detail to something already recorded, treat it as an update to that existing MOMENT_ID (set "moment_id", leave "new_moment" false), not a new entry.
 - If they give a real name for someone previously recorded under a vague placeholder, that's a rename, not a new person.
 - If they mention someone's last name specifically, that's a last name update, not a general note.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "notes": [{"person": "...", "note": "..."}], "moment_id": "the MOMENT_ID this turn relates to, or null", "new_moment": false, "moment_fields": null, "relevant_people": ["Name1"], "moment_groups": ["Group Name"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}]}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}]}
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
-CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by "notes" tied to that moment: a person only shows up as having attended if they have at least one note linked to it. So whenever the user is describing or adding to a moment and mentions someone was AT that event — even in passing, even with no other detail about them — you MUST still include an entry for them in "notes" (e.g. {"person": "Name1", "note": "Was there."}), tagged to that moment_id. Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name.
+CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions someone was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them.
 
-Leave arrays empty and fields null when they don't apply — most simple questions will have empty arrays. Only set "new_moment": true and fill "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
+Leave "moments" as an empty array when nothing is being captured or updated — most simple questions have no moments at all. Only set "new_moment": true and fill that entry's "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
 
-When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Today's date is ${todayIso}. Resolve relative phrases against today (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.`
+When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Today's date is ${todayIso}. Resolve relative phrases against today (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -154,7 +155,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 2048,
+        max_tokens: 4096,
         system: systemPrompt,
         messages: messages,
       }),
@@ -167,7 +168,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
         JSON.stringify({
           reply: `The AI service had trouble responding just now (error ${response.status}). Please try again in a moment.`,
           people: [],
-          momentId: null,
+          momentIds: [],
           groups: [],
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -181,7 +182,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       console.error("Anthropic response had no text block", JSON.stringify(data))
     }
 
-    let parsed: any = { reply: "Sorry, I couldn't process that.", new_people: [], renames: [], last_name_updates: [], notes: [], moment_id: null, new_moment: false, moment_fields: null, relevant_people: [], moment_groups: [], person_group_tags: [] }
+    let parsed: any = { reply: "Sorry, I couldn't process that.", new_people: [], renames: [], last_name_updates: [], relevant_people: [], person_group_tags: [], moments: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -226,34 +227,6 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       if (id) await supabaseClient.from("people").update({ last_name: update.last_name }).eq("id", id)
     }
 
-    let momentId: string | null = parsed.moment_id ?? null
-    if (parsed.new_moment) {
-      const { data: newMoment } = await supabaseClient
-        .from("moments")
-        .insert({
-          user_id: user.id,
-          raw_description: messages.filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n"),
-          occasion: parsed.moment_fields?.occasion ?? null,
-          location: parsed.moment_fields?.location ?? null,
-          when_text: parsed.moment_fields?.when_text ?? null,
-          event_date: parsed.moment_fields?.event_date ?? null,
-        })
-        .select()
-        .single()
-      if (newMoment) momentId = newMoment.id
-    }
-
-    for (const note of parsed.notes ?? []) {
-      const personId = idByName[note.person.toLowerCase()]
-      if (personId) {
-        await supabaseClient.from("notes").insert({
-          person_id: personId,
-          moment_id: momentId,
-          content: note.note,
-        })
-      }
-    }
-
     async function findOrCreateGroupId(name: string): Promise<string | null> {
       const key = name.toLowerCase()
       if (idByGroupName[key]) return idByGroupName[key]
@@ -272,14 +245,52 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     // Any group tagged or created this turn — shown to the user as a clickable chip,
     // same as a new/updated moment or person, so they can jump straight to it.
     const taggedGroups = new Map<string, string>()
+    // Every moment touched this turn (created or updated) — a single message can now describe
+    // several distinct events at once, so this is a list rather than one moment ID.
+    const touchedMomentIds = new Set<string>()
+    const rawDescription = messages.filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n")
 
-    for (const groupName of parsed.moment_groups ?? []) {
-      const groupId = await findOrCreateGroupId(groupName)
-      if (groupId && momentId) {
-        await supabaseClient
-          .from("moment_groups")
-          .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
-        taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
+    for (const momentEntry of parsed.moments ?? []) {
+      let momentId: string | null = momentEntry.moment_id ?? null
+
+      if (momentEntry.new_moment) {
+        const { data: newMoment } = await supabaseClient
+          .from("moments")
+          .insert({
+            user_id: user.id,
+            raw_description: rawDescription,
+            occasion: momentEntry.moment_fields?.occasion ?? null,
+            location: momentEntry.moment_fields?.location ?? null,
+            when_text: momentEntry.moment_fields?.when_text ?? null,
+            event_date: momentEntry.moment_fields?.event_date ?? null,
+          })
+          .select()
+          .single()
+        if (newMoment) momentId = newMoment.id
+      }
+
+      if (!momentId) continue
+      touchedMomentIds.add(momentId)
+
+      for (const note of momentEntry.notes ?? []) {
+        const personId = idByName[note.person?.toLowerCase()]
+        if (personId) {
+          await supabaseClient.from("notes").insert({
+            person_id: personId,
+            moment_id: momentId,
+            content: note.note,
+          })
+        }
+      }
+
+      for (const groupName of momentEntry.moment_groups ?? []) {
+        const groupId = await findOrCreateGroupId(groupName)
+        if (groupId) {
+          await supabaseClient
+            .from("moment_groups")
+            .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
+          taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
+        }
       }
     }
 
@@ -303,9 +314,10 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
 
     const taggedGroupRefs = [...taggedGroups.entries()].map(([id, name]) => ({ id, name }))
 
-    return new Response(JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentId, groups: taggedGroupRefs }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return new Response(
+      JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentIds: [...touchedMomentIds], groups: taggedGroupRefs }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    )
   } catch (error) {
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,
