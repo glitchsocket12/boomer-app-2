@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { GroupChip, EventChip } from '../components/Chips'
+import SearchBox from '../components/SearchBox'
 
 type GroupRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
@@ -29,6 +30,7 @@ export default function People({
   const [newName, setNewName] = useState('')
   const [newLastName, setNewLastName] = useState('')
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
 
   // Load the current user's people, along with which groups and events
   // they're tied to, when the page opens
@@ -69,6 +71,11 @@ export default function People({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
+  const filteredPeople = people.filter((person) => {
+    const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+    return fullName.toLowerCase().includes(search.trim().toLowerCase())
+  })
+
   return (
     <div style={styles.page}>
       <h1 style={styles.heading}>People</h1>
@@ -91,9 +98,16 @@ export default function People({
         <button type="submit" style={styles.button}>Add</button>
       </form>
 
+      {people.length > 0 && (
+        <SearchBox value={search} onChange={setSearch} placeholder="Search people…" />
+      )}
+
       <div style={styles.list}>
         {people.length === 0 && <p style={styles.empty}>No one added yet — add someone above.</p>}
-        {people.map((person) => (
+        {people.length > 0 && filteredPeople.length === 0 && (
+          <p style={styles.empty}>No one matches "{search}".</p>
+        )}
+        {filteredPeople.map((person) => (
           <PersonCard
             key={person.id}
             person={person}

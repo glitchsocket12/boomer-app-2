@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate, formatMonthYear } from '../lib/dates'
 import { PersonChip, GroupChip } from '../components/Chips'
+import SearchBox from '../components/SearchBox'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 
@@ -29,6 +30,7 @@ export default function Events({
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     loadMoments()
@@ -51,6 +53,33 @@ export default function Events({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
+  const decoratedMoments = moments.map((moment) => {
+    // Attendees can repeat across multiple notes for the same moment — dedupe by person id
+    const attendees = new Map<string, PersonRef>()
+    for (const n of moment.notes ?? []) {
+      if (n.people) attendees.set(n.people.id, n.people)
+    }
+
+    const summary = summarize(moment.occasion, moment.raw_description)
+    const groups = (moment.moment_groups ?? [])
+      .map((mg) => mg.groups)
+      .filter((g): g is { id: string; name: string } => g !== null)
+
+    return { moment, attendees, summary, groups }
+  })
+
+  const query = search.trim().toLowerCase()
+  const filteredMoments = decoratedMoments.filter(({ moment, attendees, summary, groups }) => {
+    if (!query) return true
+    const attendeeNames = Array.from(attendees.values()).map((p) => `${p.name} ${p.last_name ?? ''}`)
+    const groupNames = groups.map((g) => g.name)
+    const haystack = [moment.occasion, moment.location, summary, ...attendeeNames, ...groupNames]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(query)
+  })
+
   return (
     <div style={styles.page}>
       <h1 style={styles.heading}>Events</h1>
@@ -59,19 +88,16 @@ export default function Events({
         <p style={styles.empty}>No moments recorded yet — head to Home and tell me about something that happened.</p>
       )}
 
+      {moments.length > 0 && (
+        <SearchBox value={search} onChange={setSearch} placeholder="Search events…" />
+      )}
+
+      {moments.length > 0 && filteredMoments.length === 0 && (
+        <p style={styles.empty}>No events match "{search}".</p>
+      )}
+
       <div style={styles.list}>
-        {moments.map((moment) => {
-          // Attendees can repeat across multiple notes for the same moment — dedupe by person id
-          const attendees = new Map<string, PersonRef>()
-          for (const n of moment.notes ?? []) {
-            if (n.people) attendees.set(n.people.id, n.people)
-          }
-
-          const summary = summarize(moment.occasion, moment.raw_description)
-          const groups = (moment.moment_groups ?? [])
-            .map((mg) => mg.groups)
-            .filter((g): g is { id: string; name: string } => g !== null)
-
+        {filteredMoments.map(({ moment, attendees, summary, groups }) => {
           return (
             <div key={moment.id} style={styles.card}>
               <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>

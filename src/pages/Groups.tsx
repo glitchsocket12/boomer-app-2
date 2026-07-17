@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
+import SearchBox from '../components/SearchBox'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type MomentRef = { id: string; occasion: string | null; raw_description: string }
@@ -31,6 +32,7 @@ export default function Groups({
 }) {
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
   const requestedSummaries = useRef(new Set<string>())
 
   useEffect(() => {
@@ -67,6 +69,35 @@ export default function Groups({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
+  // "Members" is the explicit roster (person_groups) ONLY — this list page intentionally
+  // does NOT show event-only attendees or any add/remove affordance; that management
+  // (including the "also seen at this group's events" suggestions) only lives on a
+  // group's own detail page, not here, so a tile can't accidentally change membership
+  // with a stray click.
+  const decoratedGroups = groups.map((group) => {
+    const explicitMembers = (group.person_groups ?? [])
+      .map((pg) => pg.people)
+      .filter((p): p is PersonRef => p !== null)
+
+    const eventMap = new Map<string, { id: string; summary: string }>()
+    for (const mg of group.moment_groups ?? []) {
+      if (mg.moments) {
+        eventMap.set(mg.moments.id, { id: mg.moments.id, summary: summarize(mg.moments.occasion, mg.moments.raw_description) })
+      }
+    }
+    const events = [...eventMap.values()]
+
+    return { group, explicitMembers, events }
+  })
+
+  const query = search.trim().toLowerCase()
+  const filteredGroups = decoratedGroups.filter(({ group, explicitMembers }) => {
+    if (!query) return true
+    const memberNames = explicitMembers.map((p) => `${p.name} ${p.last_name ?? ''}`)
+    const haystack = [group.name, group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
+    return haystack.includes(query)
+  })
+
   return (
     <div style={styles.page}>
       <h1 style={styles.heading}>Groups</h1>
@@ -75,25 +106,17 @@ export default function Groups({
         <p style={styles.empty}>No groups yet — mention one on Home (e.g. "Mike is one of my Academy friends") and it'll show up here.</p>
       )}
 
-      <div style={styles.list}>
-        {groups.map((group) => {
-          // "Members" is the explicit roster (person_groups) ONLY — this list page intentionally
-          // does NOT show event-only attendees or any add/remove affordance; that management
-          // (including the "also seen at this group's events" suggestions) only lives on a
-          // group's own detail page, not here, so a tile can't accidentally change membership
-          // with a stray click.
-          const explicitMembers = (group.person_groups ?? [])
-            .map((pg) => pg.people)
-            .filter((p): p is PersonRef => p !== null)
-          const shownMembers = explicitMembers.slice(0, MEMBER_LIMIT)
+      {groups.length > 0 && (
+        <SearchBox value={search} onChange={setSearch} placeholder="Search groups…" />
+      )}
 
-          const eventMap = new Map<string, { id: string; summary: string }>()
-          for (const mg of group.moment_groups ?? []) {
-            if (mg.moments) {
-              eventMap.set(mg.moments.id, { id: mg.moments.id, summary: summarize(mg.moments.occasion, mg.moments.raw_description) })
-            }
-          }
-          const events = [...eventMap.values()]
+      {groups.length > 0 && filteredGroups.length === 0 && (
+        <p style={styles.empty}>No groups match "{search}".</p>
+      )}
+
+      <div style={styles.list}>
+        {filteredGroups.map(({ group, explicitMembers, events }) => {
+          const shownMembers = explicitMembers.slice(0, MEMBER_LIMIT)
           const shownEvents = events.slice(0, AFFILIATION_LIMIT)
 
           return (
