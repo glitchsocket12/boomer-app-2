@@ -135,6 +135,17 @@ export default function GroupDetail({
     await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
   }
 
+  // Same as handleDenySuggestion, but for every currently-shown suggestion at once — clicking
+  // through each one individually gets tedious once a group has more than a couple of shared
+  // events. Denying still doesn't block adding someone through the "Edit this group" chat later
+  // (that writes directly to person_groups, independent of dismissed_person_ids) — this list
+  // only ever suppresses the suggestion chip itself.
+  async function handleDenyAllSuggestions(people: PersonRef[]) {
+    const updated = [...new Set([...dismissedPersonIds, ...people.map((p) => p.id)])]
+    setDismissedPersonIds(updated)
+    await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
+  }
+
   async function loadMoments(silent = false) {
     if (!silent) setLoading(true)
     const { data } = await supabase
@@ -261,7 +272,14 @@ export default function GroupDetail({
 
       {eventOnlyAttendees.length > 0 && (
         <>
-          <p style={styles.eventOnlyLabel}>Also seen at this group's events — tap to add, or hover to dismiss</p>
+          <div style={styles.suggestionHeaderRow}>
+            <p style={styles.eventOnlyLabel}>Also seen at this group's events — tap to add, or hover to dismiss</p>
+            {eventOnlyAttendees.length > 1 && (
+              <button onClick={() => handleDenyAllSuggestions(eventOnlyAttendees)} style={styles.removeAllButton}>
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
           <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
             {eventOnlyAttendees.map((p) => (
               <SuggestionChip
@@ -489,6 +507,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   summary: { margin: 0, flex: 1, fontSize: '1rem', color: '#666', fontStyle: 'italic' },
   membersHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem 0' },
   eventOnlyLabel: { margin: '0.75rem 0 0.5rem 0', fontSize: '0.85rem', color: '#888', fontStyle: 'italic' },
+  suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
+  removeAllButton: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#B04A3B',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
   eventOnlyChip: {
     fontSize: '0.9rem',
     padding: '0.35rem 0.8rem',

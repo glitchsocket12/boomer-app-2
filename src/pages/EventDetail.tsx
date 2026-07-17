@@ -107,6 +107,18 @@ export default function EventDetail({
     await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
   }
 
+  // Same as handleDenySuggestion, but for every currently-shown suggestion at once — clicking
+  // through each one individually gets tedious for an event tagged to a big group. Denying still
+  // doesn't block adding someone through the "Remember something else?" chat later (that writes
+  // directly to notes, independent of dismissed_person_ids) — this list only ever suppresses the
+  // suggestion chip itself.
+  async function handleDenyAllSuggestions(people: PersonRef[]) {
+    if (!moment) return
+    const updated = [...new Set([...(moment.dismissed_person_ids ?? []), ...people.map((p) => p.id)])]
+    setMoment({ ...moment, dismissed_person_ids: updated })
+    await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
+  }
+
   async function handleSaveTitle(e: FormEvent) {
     e.preventDefault()
     if (!moment) return
@@ -257,7 +269,17 @@ export default function EventDetail({
 
       {suggestedAttendees.size > 0 && (
         <>
-          <h2 style={styles.subheading}>Also from the affiliated group?</h2>
+          <div style={styles.suggestionHeaderRow}>
+            <h2 style={{ ...styles.subheading, margin: 0 }}>Also from the affiliated group?</h2>
+            {suggestedAttendees.size > 1 && (
+              <button
+                onClick={() => handleDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
+                style={styles.removeAllButton}
+              >
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
           <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
           <div style={styles.chipRow}>
             {Array.from(suggestedAttendees.values()).map((p) => (
@@ -460,6 +482,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   detailKey: { fontWeight: 'bold', textTransform: 'capitalize' },
   subheading: { fontSize: '1.2rem', color: '#2E4034', margin: '1.5rem 0 0.5rem 0' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
+  suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
+  removeAllButton: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#B04A3B',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' },
   attendeeChip: {
     fontSize: '0.9rem',
