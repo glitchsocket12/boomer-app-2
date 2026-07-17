@@ -20,9 +20,10 @@ serve(async (req) => {
       { global: { headers: { Authorization: req.headers.get("Authorization")! } } }
     )
 
-    const [{ data: person }, { data: notes }] = await Promise.all([
+    const [{ data: person }, { data: notes }, { data: allPeople }] = await Promise.all([
       supabaseClient.from("people").select("name, last_name").eq("id", personId).single(),
       supabaseClient.from("notes").select("content").eq("person_id", personId).order("created_at", { ascending: true }),
+      supabaseClient.from("people").select("id, name, last_name"),
     ])
 
     const name = person?.name ?? "this person"
@@ -33,6 +34,24 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
+
+    // Same ambiguous-first-name-safe lookup used by add-fact/converse/update-moment, so a
+    // spouse's bare first name only resolves to a real profile link when it's unambiguous.
+    const nameById: Record<string, string> = {}
+    const idByName: Record<string, string> = {}
+    const ambiguousFirstNames = new Set<string>()
+    for (const p of allPeople ?? []) {
+      const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
+      nameById[p.id] = fullName
+      idByName[fullName.toLowerCase()] = p.id
+      const firstNameKey = p.name.toLowerCase()
+      if (idByName[firstNameKey] && idByName[firstNameKey] !== p.id) {
+        ambiguousFirstNames.add(firstNameKey)
+      } else {
+        idByName[firstNameKey] = p.id
+      }
+    }
+    for (const key of ambiguousFirstNames) delete idByName[key]
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -56,7 +75,8 @@ Only extract facts that are EXPLICITLY stated in the notes. Never infer, guess, 
 Do not use one-off event/gathering details (who attended a party, what was served, etc.) unless the text directly states a relationship fact. If a category isn't clearly stated anywhere in the notes, omit it entirely rather than guessing.
 
 Respond with ONLY a JSON object in this exact shape:
-{"facts": [{"category": "spouse" | "kids" | "location" | "education" | "other", "text": "short factual bullet, under 15 words, third person"}]}
+{"facts": [{"category": "spouse" | "kids" | "location" | "education" | "other", "text": "short factual bullet, under 15 words, third person", "person_name": "string or null"}]}
+"person_name" applies ONLY to the "spouse" category: the spouse's name exactly as given in the notes, or null if no name was given. Always set it to null for every other category.
 If nothing qualifies, respond {"facts": []}.`,
         messages: [{ role: "user", content: noteText }],
       }),
@@ -65,14 +85,25 @@ If nothing qualifies, respond {"facts": []}.`,
     const data = await response.json()
     const textBlock = data.content?.find((b: any) => b.type === "text")
 
-    let result: { facts: { category: string; text: string }[] } = { facts: [] }
+    let result: { facts: { category: string; text: string; person_name: string | null }[] } = { facts: [] }
     try {
       result = { ...result, ...JSON.parse((textBlock?.text ?? "").trim()) }
     } catch {
       // if parsing fails, just report no facts rather than showing garbage
     }
 
-    return new Response(JSON.stringify(result), {
+    const facts = (result.facts ?? []).map((f) => {
+      if (f.category !== "spouse" || !f.person_name) {
+        return { category: f.category, text: f.text }
+      }
+      const spouseId = idByName[f.person_name.toLowerCase()]
+      if (!spouseId) {
+        return { category: f.category, text: f.text }
+      }
+      return { category: f.category, text: f.text, personId: spouseId, personName: nameById[spouseId] }
+    })
+
+    return new Response(JSON.stringify({ facts }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   } catch (error) {

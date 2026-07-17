@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
-import { GroupChip, EventChip } from '../components/Chips'
+import { GroupChip, EventChip, PersonChip } from '../components/Chips'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import PhotoGallery from '../components/PhotoGallery'
@@ -20,7 +20,12 @@ type Reminder = { id: string; label: string; month: number; day: number }
 
 type PersonRow = { name: string; last_name: string | null; reminders: Reminder[] }
 
-type KeyFact = { category: 'spouse' | 'kids' | 'location' | 'education' | 'other'; text: string }
+type KeyFact = {
+  category: 'spouse' | 'kids' | 'location' | 'education' | 'other'
+  text: string
+  personId?: string
+  personName?: string
+}
 
 const AFFILIATION_LIMIT = 5
 
@@ -44,6 +49,7 @@ export default function PersonDetail({
   personName,
   onBack,
   backLabel,
+  onSelectPerson,
   onSelectGroup,
   onSelectEvent,
 }: {
@@ -51,6 +57,7 @@ export default function PersonDetail({
   personName: string
   onBack: () => void
   backLabel: string
+  onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
@@ -62,6 +69,7 @@ export default function PersonDetail({
   const [saving, setSaving] = useState(false)
   const [groupTagMessage, setGroupTagMessage] = useState<string | null>(null)
   const [suggestedGroup, setSuggestedGroup] = useState<string | null>(null)
+  const [spouseTagMessage, setSpouseTagMessage] = useState<string | null>(null)
   const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
   const [factsLoading, setFactsLoading] = useState(true)
 
@@ -126,6 +134,7 @@ export default function PersonDetail({
     setSaving(true)
     setGroupTagMessage(null)
     setSuggestedGroup(null)
+    setSpouseTagMessage(null)
 
     const { data } = await supabase.functions.invoke('add-fact', {
       body: { personId, text: newFact.trim() },
@@ -133,6 +142,7 @@ export default function PersonDetail({
 
     if (data?.groupTag) setGroupTagMessage(data.groupTag.name)
     if (data?.suggestedGroup) setSuggestedGroup(data.suggestedGroup)
+    if (data?.spouseTag) setSpouseTagMessage(data.spouseTag.name)
 
     setNewFact('')
     setSaving(false)
@@ -226,7 +236,14 @@ export default function PersonDetail({
           ) : (
             <ul style={styles.keyFactsList}>
               {keyFacts.map((f, i) => (
-                <li key={i} style={styles.keyFactsItem}>{f.text}</li>
+                <li key={i} style={styles.keyFactsItem}>
+                  <span>{f.text}</span>
+                  {f.personId && f.personName && (
+                    <span style={styles.keyFactsChip}>
+                      <PersonChip label={f.personName} onClick={() => onSelectPerson({ id: f.personId!, name: f.personName! })} />
+                    </span>
+                  )}
+                </li>
               ))}
             </ul>
           )}
@@ -299,6 +316,10 @@ export default function PersonDetail({
 
       {groupTagMessage && (
         <p style={styles.groupTagBanner}>✓ Also added {personName} to "{groupTagMessage}".</p>
+      )}
+
+      {spouseTagMessage && (
+        <p style={styles.groupTagBanner}>✓ Also updated {spouseTagMessage}'s profile to show they're married to {personName}.</p>
       )}
 
       {suggestedGroup && (
@@ -540,7 +561,8 @@ const styles: { [key: string]: React.CSSProperties } = {
   keyFactsHeading: { fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6B7A6E', fontWeight: 700 },
   keyFactsLoading: { margin: 0, fontSize: '0.9rem', color: '#999', fontStyle: 'italic' },
   keyFactsList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' },
-  keyFactsItem: { fontSize: '0.98rem', color: '#2E2E2E', lineHeight: 1.4 },
+  keyFactsItem: { fontSize: '0.98rem', color: '#2E2E2E', lineHeight: 1.4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' },
+  keyFactsChip: { display: 'inline-flex' },
   nudgeBox: {
     display: 'flex',
     flexDirection: 'column',
