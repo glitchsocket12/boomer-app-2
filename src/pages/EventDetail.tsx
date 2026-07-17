@@ -42,6 +42,7 @@ export default function EventDetail({
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleInput, setTitleInput] = useState('')
   const [savingTitle, setSavingTitle] = useState(false)
+  const [notesOpen, setNotesOpen] = useState(false)
 
   useEffect(() => {
     loadMoment()
@@ -112,6 +113,10 @@ export default function EventDetail({
 
   const details = moment.details && typeof moment.details === 'object' ? Object.entries(moment.details) : []
 
+  const mapsUrl = moment.location
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${moment.location}, CO`)}`
+    : null
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -150,8 +155,24 @@ export default function EventDetail({
         </div>
       )}
       <p style={styles.meta}>
-        {[moment.when_text, moment.location].filter(Boolean).join(' · ') ||
-          new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+        {moment.when_text || moment.location ? (
+          <>
+            {moment.when_text}
+            {moment.when_text && moment.location && ' · '}
+            {moment.location && (
+              <a
+                href={mapsUrl!}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={styles.locationLink}
+              >
+                {moment.location}
+              </a>
+            )}
+          </>
+        ) : (
+          new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
+        )}
       </p>
 
       {groups.length > 0 && (
@@ -192,18 +213,32 @@ export default function EventDetail({
 
       {moment.notes.length > 0 && (
         <>
-          <h2 style={styles.subheading}>Notes</h2>
-          <div style={styles.notesList}>
-            {moment.notes.map((note) => (
-              <div key={note.id} style={styles.noteCard}>
-                <p style={styles.noteContent}>{note.content}</p>
-                <p style={styles.noteMeta}>
-                  {note.people ? `${note.people.name}${note.people.last_name ? ` ${note.people.last_name}` : ''} · ` : ''}
-                  {new Date(note.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-                </p>
-              </div>
-            ))}
+          <div style={styles.notesHeaderRow}>
+            <h2 style={{ ...styles.subheading, margin: 0 }}>Notes</h2>
+            <button
+              type="button"
+              onClick={() => setNotesOpen((o) => !o)}
+              style={styles.notesToggle}
+            >
+              {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
+            </button>
           </div>
+          <p style={styles.notesHint}>
+            These are the individual details you shared for this memory — exactly what fed the summary above.
+          </p>
+          {notesOpen && (
+            <div style={styles.notesList}>
+              {moment.notes.map((note) => (
+                <div key={note.id} style={styles.noteCard}>
+                  <p style={styles.noteContent}>{note.content}</p>
+                  <p style={styles.noteMeta}>
+                    {note.people ? `${note.people.name}${note.people.last_name ? ` ${note.people.last_name}` : ''} · ` : ''}
+                    {new Date(note.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
 
@@ -215,7 +250,7 @@ export default function EventDetail({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 6rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
     border: 'none',
@@ -256,6 +291,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#888' },
+  locationLink: { color: '#1a56db', textDecoration: 'underline', cursor: 'pointer' },
+  notesHeaderRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', margin: '1.5rem 0 0.25rem 0' },
+  notesToggle: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  notesHint: { margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
   description: { fontSize: '1.05rem', color: '#2E2E2E', lineHeight: 1.6, marginBottom: '1.5rem' },
   detailsBox: {
     backgroundColor: '#FBF3E0',
