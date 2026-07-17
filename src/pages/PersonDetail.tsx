@@ -20,7 +20,16 @@ type Reminder = { id: string; label: string; month: number; day: number }
 
 type PersonRow = { name: string; last_name: string | null; reminders: Reminder[] }
 
+type KeyFact = { category: 'spouse' | 'kids' | 'location' | 'education' | 'other'; text: string }
+
 const AFFILIATION_LIMIT = 5
+
+const NUDGE_CATEGORIES: { category: 'spouse' | 'kids' | 'location' | 'education'; question: (name: string) => string }[] = [
+  { category: 'spouse', question: (name) => `Is ${name} married? If so, what's their spouse's name?` },
+  { category: 'kids', question: (name) => `Does ${name} have kids? What are their names?` },
+  { category: 'location', question: (name) => `Where does ${name} live?` },
+  { category: 'education', question: (name) => `Where did ${name} go to school?` },
+]
 
 const MONTH_NAMES = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -53,10 +62,27 @@ export default function PersonDetail({
   const [saving, setSaving] = useState(false)
   const [groupTagMessage, setGroupTagMessage] = useState<string | null>(null)
   const [suggestedGroup, setSuggestedGroup] = useState<string | null>(null)
+  const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
+  const [factsLoading, setFactsLoading] = useState(true)
 
   useEffect(() => {
     loadData()
   }, [personId])
+
+  useEffect(() => {
+    if (loading) return
+    if (notes.length === 0) {
+      setKeyFacts([])
+      setFactsLoading(false)
+      return
+    }
+    setFactsLoading(true)
+    supabase.functions
+      .invoke('person-facts', { body: { personId } })
+      .then(({ data }) => setKeyFacts((data?.facts as KeyFact[]) ?? []))
+      .finally(() => setFactsLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personId, loading, notes.length])
 
   async function loadData() {
     setLoading(true)
@@ -160,6 +186,8 @@ export default function PersonDetail({
   const fullName = person ? `${person.name}${person.last_name ? ` ${person.last_name}` : ''}` : personName
   const birthday = person?.reminders?.find((r) => r.label === 'Birthday') ?? null
   const anniversary = person?.reminders?.find((r) => r.label === 'Anniversary') ?? null
+  const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => f.category === c.category))
+  const showNudge = notes.length === 0 || missingFactCategories.length > 0
   const otherDates = person?.reminders?.filter((r) => r.label !== 'Birthday' && r.label !== 'Anniversary') ?? []
 
   return (
@@ -190,6 +218,21 @@ export default function PersonDetail({
         </div>
       )}
 
+      {!loading && (factsLoading || keyFacts.length > 0) && (
+        <div style={styles.keyFacts}>
+          <span style={styles.keyFactsHeading}>Key facts</span>
+          {factsLoading ? (
+            <p style={styles.keyFactsLoading}>Gathering what we know…</p>
+          ) : (
+            <ul style={styles.keyFactsList}>
+              {keyFacts.map((f, i) => (
+                <li key={i} style={styles.keyFactsItem}>{f.text}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {!loading && (groups.length > 0 || allEvents.length > 0) && (
         <div style={styles.affiliations}>
           {shownGroups.length > 0 && (
@@ -216,6 +259,21 @@ export default function PersonDetail({
       )}
 
       <PhotoGallery />
+
+      {!loading && !factsLoading && showNudge && (
+        <div style={styles.nudgeBox}>
+          <span style={styles.nudgeHeading}>Help us get to know {personName} better</span>
+          <ul style={styles.nudgeList}>
+            {notes.length === 0 ? (
+              <li style={styles.nudgeItem}>Tell us a memory about {personName} to get started.</li>
+            ) : (
+              missingFactCategories.map((c) => (
+                <li key={c.category} style={styles.nudgeItem}>{c.question(personName)}</li>
+              ))
+            )}
+          </ul>
+        </div>
+      )}
 
       <form onSubmit={handleAddFact} style={styles.addForm}>
         <AutoGrowTextarea
@@ -465,6 +523,33 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
   },
+  keyFacts: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.4rem',
+    backgroundColor: '#F4F6F3',
+    border: '1px solid #DDE3D8',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+    marginBottom: '1.5rem',
+  },
+  keyFactsHeading: { fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6B7A6E', fontWeight: 700 },
+  keyFactsLoading: { margin: 0, fontSize: '0.9rem', color: '#999', fontStyle: 'italic' },
+  keyFactsList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' },
+  keyFactsItem: { fontSize: '0.98rem', color: '#2E2E2E', lineHeight: 1.4 },
+  nudgeBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    backgroundColor: '#FAFAF8',
+    border: '1px dashed #C7C7BE',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+    marginBottom: '1rem',
+  },
+  nudgeHeading: { fontSize: '0.9rem', color: '#5A5A52', fontStyle: 'italic' },
+  nudgeList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' },
+  nudgeItem: { fontSize: '0.9rem', color: '#7A7A70' },
   affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' },
   affiliationRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
