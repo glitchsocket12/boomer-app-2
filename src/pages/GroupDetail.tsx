@@ -352,8 +352,11 @@ export default function GroupDetail({
 }
 
 // A member chip that reveals a trash icon on hover — hovering swaps its click action from
-// "go to profile" to "remove from this group," so the same control does either depending on
-// whether you're actively hovering it (mouse-only; on touch it just behaves like a normal chip).
+// Clicking the chip itself always goes to the person's profile — same as any other chip in the
+// app. Hovering reveals a small trash badge in the corner, a separate control (not a swap of the
+// main chip's content) that removes them from the group — same pattern as SuggestionChip's "×"
+// below, chosen specifically because the earlier version (swapping the chip's own click action
+// and content on hover) caused a resize-driven hover flicker.
 function MemberChip({
   person,
   onSelect,
@@ -367,30 +370,33 @@ function MemberChip({
   const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
 
   return (
-    <button
-      onClick={hovered ? onRemove : onSelect}
+    <div
+      style={styles.suggestionWrapper}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      aria-label={hovered ? `Remove ${label} from this group` : label}
-      style={{ ...styles.person, position: 'relative' }}
     >
-      {/* The label stays rendered (never swapped out) so the button's size never changes on
-          hover — swapping content for a smaller icon used to shrink the button out from under
-          the cursor, causing a hover/un-hover flicker loop. The icon is an absolutely-positioned
-          overlay instead, which doesn't affect layout. */}
-      <span style={{ opacity: hovered ? 0.3 : 1 }}>{label}</span>
+      <button onClick={onSelect} style={styles.person}>
+        {label}
+      </button>
       {hovered && (
-        <span style={styles.trashOverlay}>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Remove ${label} from this group`}
+          style={styles.denyBadge}
+        >
+          <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 6h18" />
             <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
             <path d="M10 11v6" />
             <path d="M14 11v6" />
           </svg>
-        </span>
+        </button>
       )}
-    </button>
+    </div>
   )
 }
 
@@ -445,14 +451,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
-  },
-  trashOverlay: {
-    position: 'absolute',
-    inset: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    pointerEvents: 'none',
   },
   suggestionWrapper: { position: 'relative', display: 'inline-block' },
   denyBadge: {
