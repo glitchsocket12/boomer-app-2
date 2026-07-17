@@ -47,13 +47,13 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 400,
-        system: `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: last name = ${person?.last_name ?? "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.
+        system: `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.
 
 Respond ONLY with a JSON object in this exact shape:
-{"type": "last_name_update" | "birthday_update" | "anniversary_update" | "note", "value": <see below>, "group_signal": null | {"group_name": "string", "confidence": "high" | "medium"}}
+{"type": "name_update" | "birthday_update" | "anniversary_update" | "note", "value": <see below>, "group_signal": null | {"group_name": "string", "confidence": "high" | "medium"}}
 
 "type"/"value" pairing:
-- Providing or correcting their LAST NAME: {"type": "last_name_update", "value": "TheLastName"}
+- Providing or correcting their NAME — first name, last name, or a full "First Last" spelling correction (e.g. "Their name is spelled Jonathan Smith", "Her last name is Peterson", "It's actually spelled Katherine, not Catherine"): {"type": "name_update", "value": {"first_name": "TheFirstName" or null, "last_name": "TheLastName" or null}}. Only include the part(s) actually being given/corrected — set the other to null. If the user states a full "First Last" name, include BOTH as the authoritative spelling of the whole name, even if one part already matches what's on file.
 - Providing or correcting their BIRTHDAY (month/day only, no year): {"type": "birthday_update", "value": {"month": 1-12, "day": 1-31}}
 - Providing or correcting their ANNIVERSARY date (month/day only, no year): {"type": "anniversary_update", "value": {"month": 1-12, "day": 1-31}}
 - Anything else (a plain fact, memory, or detail that doesn't fit the above): {"type": "note", "value": "the text, lightly cleaned up if needed, otherwise unchanged"}
@@ -81,8 +81,13 @@ Never set a group_signal for a single one-off event or a bare location mention.`
       // if parsing fails, just fall back to saving it as a plain note
     }
 
-    if (result.type === "last_name_update") {
-      await supabaseClient.from("people").update({ last_name: result.value }).eq("id", personId)
+    if (result.type === "name_update") {
+      const updates: { name?: string; last_name?: string } = {}
+      if (result.value?.first_name) updates.name = result.value.first_name
+      if (result.value?.last_name) updates.last_name = result.value.last_name
+      if (Object.keys(updates).length > 0) {
+        await supabaseClient.from("people").update(updates).eq("id", personId)
+      }
     } else if (result.type === "birthday_update" || result.type === "anniversary_update") {
       const label = result.type === "birthday_update" ? "Birthday" : "Anniversary"
       const existing = label === "Birthday" ? birthday : anniversary
