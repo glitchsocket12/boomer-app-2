@@ -49,8 +49,8 @@ export default function EventDetail({
     setEditingTitle(false)
   }, [eventId])
 
-  async function loadMoment() {
-    setLoading(true)
+  async function loadMoment(silent = false) {
+    if (!silent) setLoading(true)
     const { data } = await supabase
       .from('moments')
       .select(
@@ -61,7 +61,7 @@ export default function EventDetail({
 
     const loaded = (data as unknown as MomentDetail) ?? null
     setMoment(loaded)
-    setLoading(false)
+    if (!silent) setLoading(false)
 
     if (loaded && !loaded.summary) {
       generateSummary()
@@ -76,8 +76,10 @@ export default function EventDetail({
   }
 
   async function handleNoteSaved() {
+    // Silent refresh: this fires after every chat turn that changed something (not just when the
+    // conversation ends), so it must not flash the whole page to a "Loading…" state mid-conversation.
     await supabase.from('moments').update({ summary: null }).eq('id', eventId)
-    await loadMoment()
+    await loadMoment(true)
   }
 
   async function handleSaveTitle(e: FormEvent) {

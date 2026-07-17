@@ -25,70 +25,16 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
 
     setSending(false)
 
-    if (error || !data) {
+    if (error || !data?.reply) {
       setMessages([...newMessages, { role: 'assistant', content: "Sorry, something went wrong. Let's try again." }])
       return
     }
 
-    const textBlock = data.content?.find((b: any) => b.type === 'text')
-    const reply = textBlock?.text ?? ''
-
-    if (!reply.trim()) {
-      setMessages([...newMessages, { role: 'assistant', content: "Sorry, I didn't get a response there — please try again." }])
-      return
-    }
-
-    let parsed: { done: boolean; new_people: string[]; additional_notes: { person: string; note: string }[] } | null = null
-    try {
-      const start = reply.indexOf('{')
-      const end = reply.lastIndexOf('}')
-      const obj = JSON.parse(reply.slice(start, end + 1))
-      if (obj.done === true) parsed = obj
-    } catch {
-      // not a completion yet, just a follow-up question
-    }
-
-    if (parsed) {
-      await saveUpdates(parsed)
-      setDone(true)
-    } else {
-      setMessages([...newMessages, { role: 'assistant', content: reply }])
-    }
-  }
-
-  async function saveUpdates(parsed: { new_people: string[]; additional_notes: { person: string; note: string }[] }) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    const { data: existingPeople } = await supabase.from('people').select('id, name').eq('user_id', user?.id)
-    const nameToId: { [name: string]: string } = {}
-    for (const p of existingPeople ?? []) nameToId[p.name.toLowerCase()] = p.id
-
-    for (const name of parsed.new_people ?? []) {
-      const key = name.toLowerCase()
-      if (!nameToId[key]) {
-        const { data: newPerson } = await supabase
-          .from('people')
-          .insert({ user_id: user?.id, name })
-          .select()
-          .single()
-        if (newPerson) nameToId[key] = newPerson.id
-      }
-    }
-
-    for (const note of parsed.additional_notes ?? []) {
-      const personId = nameToId[note.person.toLowerCase()]
-      if (personId) {
-        await supabase.from('notes').insert({
-          person_id: personId,
-          moment_id: momentId,
-          content: note.note,
-        })
-      }
-    }
-
-    onSaved()
+    // The Edge Function already saved anything new to the database before responding,
+    // so nothing here is lost even if the user never replies to this message again.
+    setMessages([...newMessages, { role: 'assistant', content: data.reply }])
+    if (data.changed) onSaved()
+    if (data.done) setDone(true)
   }
 
   if (done) {
