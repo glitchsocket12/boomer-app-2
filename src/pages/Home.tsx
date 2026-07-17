@@ -29,6 +29,7 @@ export default function Home({
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -36,9 +37,12 @@ export default function Home({
   }, [thread])
 
   useEffect(() => {
-    supabase.functions.invoke('suggest-prompts', {}).then(({ data }) => {
-      if (data?.suggestions?.length) setSuggestions(data.suggestions)
-    })
+    supabase.functions
+      .invoke('suggest-prompts', {})
+      .then(({ data }) => {
+        if (data?.suggestions?.length) setSuggestions(data.suggestions)
+      })
+      .finally(() => setSuggestionsLoading(false))
   }, [])
 
   function handleSuggestionClick(text: string) {
@@ -89,7 +93,13 @@ export default function Home({
       {thread.length === 0 && (
         <>
           <p style={styles.emptyState}>Ask about anyone or any moment, or just tell me what's on your mind.</p>
-          {suggestions.length > 0 && (
+          {suggestionsLoading && (
+            <div style={styles.suggestionsLoadingRow}>
+              <span style={styles.spinner} />
+              Finding a few things to ask about — give it a second before tapping away…
+            </div>
+          )}
+          {!suggestionsLoading && suggestions.length > 0 && (
             <div style={styles.suggestionList}>
               {suggestions.map((s, i) => (
                 <button key={i} onClick={() => handleSuggestionClick(s)} style={styles.suggestionCard}>
@@ -151,6 +161,27 @@ const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.5rem', textAlign: 'center' },
   emptyState: { color: '#777', textAlign: 'center', marginTop: '1rem' },
+  suggestionsLoadingRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.6rem',
+    marginTop: '1.25rem',
+    padding: '0.85rem 1rem',
+    borderRadius: '10px',
+    border: '1px solid #E5E3DE',
+    color: '#777',
+    fontSize: '0.95rem',
+    lineHeight: 1.4,
+  },
+  spinner: {
+    flexShrink: 0,
+    width: '16px',
+    height: '16px',
+    borderRadius: '50%',
+    border: '2px solid #CFE0D6',
+    borderTopColor: '#2E4034',
+    animation: 'spin 0.8s linear infinite',
+  },
   suggestionList: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1.25rem' },
   suggestionCard: {
     fontFamily: 'Georgia, serif',

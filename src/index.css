@@ -2,3 +2,7 @@ body {
   margin: 0;
   background-color: #F7F5F2;
 }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
