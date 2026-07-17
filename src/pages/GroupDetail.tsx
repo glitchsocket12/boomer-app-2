@@ -45,6 +45,7 @@ export default function GroupDetail({
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [explicitMembers, setExplicitMembers] = useState<PersonRef[]>([])
+  const [dismissedPersonIds, setDismissedPersonIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState(groupName)
   const [editingName, setEditingName] = useState(false)
@@ -87,15 +88,21 @@ export default function GroupDetail({
   async function loadMembers() {
     const { data } = await supabase
       .from('groups')
-      .select('person_groups(people(id, name, last_name))')
+      .select('person_groups(people(id, name, last_name)), dismissed_person_ids')
       .eq('id', groupId)
       .single()
 
-    const explicit = ((data as unknown as { person_groups: { people: PersonRef | null }[] } | null)?.person_groups ?? [])
+    const loaded = data as unknown as {
+      person_groups: { people: PersonRef | null }[]
+      dismissed_person_ids: string[] | null
+    } | null
+
+    const explicit = (loaded?.person_groups ?? [])
       .map((pg) => pg.people)
       .filter((p): p is PersonRef => p !== null)
 
     setExplicitMembers(explicit)
+    setDismissedPersonIds(loaded?.dismissed_person_ids ?? [])
   }
 
   // Membership changed — the cached AI summary is now stale (same reasoning `update-group`
@@ -117,6 +124,15 @@ export default function GroupDetail({
     await supabase.from('person_groups').delete().eq('person_id', person.id).eq('group_id', groupId)
     loadMembers()
     invalidateSummary()
+  }
+
+  // "Denying" a suggested person just means "stop suggesting them for this group" — it's
+  // remembered on the group itself (not undoable from the UI), separate from actual membership,
+  // since this person was never a person_groups row to begin with.
+  async function handleDenySuggestion(person: PersonRef) {
+    const updated = [...dismissedPersonIds, person.id]
+    setDismissedPersonIds(updated)
+    await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
   }
 
   async function loadMoments(silent = false) {
@@ -175,10 +191,13 @@ export default function GroupDetail({
   // group; attendees of that event aren't members of every group it's tagged to). Attendees
   // who aren't explicit members are shown separately below, clearly labeled, not folded in.
   const explicitIds = new Set(explicitMembers.map((p) => p.id))
+  const dismissedIds = new Set(dismissedPersonIds)
   const eventOnlyAttendeesById = new Map<string, PersonRef>()
   for (const m of moments) {
     for (const n of m.notes ?? []) {
-      if (n.people && !explicitIds.has(n.people.id)) eventOnlyAttendeesById.set(n.people.id, n.people)
+      if (n.people && !explicitIds.has(n.people.id) && !dismissedIds.has(n.people.id)) {
+        eventOnlyAttendeesById.set(n.people.id, n.people)
+      }
     }
   }
   const eventOnlyAttendees = [...eventOnlyAttendeesById.values()]
@@ -242,16 +261,15 @@ export default function GroupDetail({
 
       {eventOnlyAttendees.length > 0 && (
         <>
-          <p style={styles.eventOnlyLabel}>Also seen at this group's events — tap to add as a member</p>
+          <p style={styles.eventOnlyLabel}>Also seen at this group's events — tap to add, or hover to dismiss</p>
           <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
             {eventOnlyAttendees.map((p) => (
-              <button
+              <SuggestionChip
                 key={p.id}
-                onClick={() => handleAddMember(p)}
-                style={styles.eventOnlyChip}
-              >
-                {`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-              </button>
+                person={p}
+                onApprove={() => handleAddMember(p)}
+                onDeny={() => handleDenySuggestion(p)}
+              />
             ))}
           </div>
         </>
@@ -354,20 +372,66 @@ function MemberChip({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       aria-label={hovered ? `Remove ${label} from this group` : label}
-      style={{ ...styles.person, opacity: hovered ? 0.55 : 1 }}
+      style={{ ...styles.person, position: 'relative' }}
     >
-      {hovered ? (
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 6h18" />
-          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-          <path d="M10 11v6" />
-          <path d="M14 11v6" />
-        </svg>
-      ) : (
-        label
+      {/* The label stays rendered (never swapped out) so the button's size never changes on
+          hover — swapping content for a smaller icon used to shrink the button out from under
+          the cursor, causing a hover/un-hover flicker loop. The icon is an absolutely-positioned
+          overlay instead, which doesn't affect layout. */}
+      <span style={{ opacity: hovered ? 0.3 : 1 }}>{label}</span>
+      {hovered && (
+        <span style={styles.trashOverlay}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18" />
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6" />
+            <path d="M14 11v6" />
+          </svg>
+        </span>
       )}
     </button>
+  )
+}
+
+// A suggested (event-only) attendee: the main chip approves them (adds to the group) on click,
+// same as before. Hovering reveals a small "×" badge in the corner — a separate control, not a
+// swap of the main chip's content — so denying doesn't resize anything and can't flicker the
+// way the member chip's icon-swap used to.
+function SuggestionChip({
+  person,
+  onApprove,
+  onDeny,
+}: {
+  person: PersonRef
+  onApprove: () => void
+  onDeny: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+
+  return (
+    <div
+      style={styles.suggestionWrapper}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button onClick={onApprove} style={styles.eventOnlyChip}>
+        {label}
+      </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDeny()
+          }}
+          aria-label={`Don't suggest ${label} for this group again`}
+          style={styles.denyBadge}
+        >
+          ×
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -381,6 +445,34 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
+  },
+  trashOverlay: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'none',
+  },
+  suggestionWrapper: { position: 'relative', display: 'inline-block' },
+  denyBadge: {
+    position: 'absolute',
+    top: '-8px',
+    right: '-8px',
+    width: '18px',
+    height: '18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    border: '1px solid #B04A3B',
+    backgroundColor: '#FFF',
+    color: '#B04A3B',
+    fontSize: '0.8rem',
+    lineHeight: 1,
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
   },
   page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
   backButton: {
