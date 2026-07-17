@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { PersonChip, GroupChip } from '../components/Chips'
+import { GroupChip } from '../components/Chips'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
 import PhotoGallery from '../components/PhotoGallery'
@@ -21,6 +21,7 @@ type MomentDetail = {
   created_at: string
   notes: NoteWithPerson[]
   moment_groups: { groups: GroupRef | null }[]
+  dismissed_person_ids: string[] | null
 }
 
 export default function EventDetail({
@@ -55,7 +56,7 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name))))'
+        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), dismissed_person_ids'
       )
       .eq('id', eventId)
       .single()
@@ -86,6 +87,24 @@ export default function EventDetail({
   async function handleAddAttendee(person: PersonRef) {
     await supabase.from('notes').insert({ person_id: person.id, moment_id: eventId, content: 'Was there.' })
     await handleNoteSaved()
+  }
+
+  // "Removing" someone from Who Was There is pure untagging, NOT deletion — attendance is just
+  // derived from a note's moment_id, so this un-links their note(s) from this moment (moment_id:
+  // null, the same "standalone fact" state notes.moment_id already supports) instead of deleting
+  // them. Any real content they wrote stays fully intact on the person's own profile.
+  async function handleRemoveAttendee(person: PersonRef) {
+    await supabase.from('notes').update({ moment_id: null }).eq('person_id', person.id).eq('moment_id', eventId)
+    await handleNoteSaved()
+  }
+
+  // Denying a suggestion just means "stop suggesting them for this event" — remembered on the
+  // moment itself, same reasoning/pattern as groups.dismissed_person_ids on GroupDetail.tsx.
+  async function handleDenySuggestion(person: PersonRef) {
+    if (!moment) return
+    const updated = [...(moment.dismissed_person_ids ?? []), person.id]
+    setMoment({ ...moment, dismissed_person_ids: updated })
+    await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
   }
 
   async function handleSaveTitle(e: FormEvent) {
@@ -119,10 +138,13 @@ export default function EventDetail({
     .map((mg) => mg.groups)
     .filter((g): g is GroupRef => g !== null)
 
+  const dismissedIds = new Set(moment.dismissed_person_ids ?? [])
   const suggestedAttendees = new Map<string, PersonRef>()
   for (const g of groups) {
     for (const pg of g.person_groups ?? []) {
-      if (pg.people && !attendees.has(pg.people.id)) suggestedAttendees.set(pg.people.id, pg.people)
+      if (pg.people && !attendees.has(pg.people.id) && !dismissedIds.has(pg.people.id)) {
+        suggestedAttendees.set(pg.people.id, pg.people)
+      }
     }
   }
 
@@ -219,12 +241,14 @@ export default function EventDetail({
       {attendees.size > 0 && (
         <>
           <h2 style={styles.subheading}>Who was there</h2>
+          <p style={styles.chatHint}>Tap a name for their profile, or hover to untag them from this event.</p>
           <div style={styles.chipRow}>
             {Array.from(attendees.values()).map((p) => (
-              <PersonChip
+              <AttendeeChip
                 key={p.id}
-                label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-                onClick={() => onSelectPerson(p)}
+                person={p}
+                onSelect={() => onSelectPerson(p)}
+                onRemove={() => handleRemoveAttendee(p)}
               />
             ))}
           </div>
@@ -234,16 +258,15 @@ export default function EventDetail({
       {suggestedAttendees.size > 0 && (
         <>
           <h2 style={styles.subheading}>Also from the affiliated group?</h2>
-          <p style={styles.chatHint}>Tap a name to add them to who was there.</p>
+          <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
           <div style={styles.chipRow}>
             {Array.from(suggestedAttendees.values()).map((p) => (
-              <button
+              <SuggestedAttendeeChip
                 key={p.id}
-                onClick={() => handleAddAttendee(p)}
-                style={styles.suggestChip}
-              >
-                + {p.name}{p.last_name ? ` ${p.last_name}` : ''}
-              </button>
+                person={p}
+                onApprove={() => handleAddAttendee(p)}
+                onDeny={() => handleDenySuggestion(p)}
+              />
             ))}
           </div>
         </>
@@ -283,6 +306,89 @@ export default function EventDetail({
       <h2 style={styles.subheading}>Remember something else?</h2>
       <p style={styles.chatHint}>Tell me anything more about this — who else was there, how it went, anything you'd want to look back on.</p>
       <UpdateMomentChat momentId={moment.id} onSaved={handleNoteSaved} />
+    </div>
+  )
+}
+
+const TRASH_ICON = (
+  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+  </svg>
+)
+
+// Clicking the chip always goes to the person's profile — same as any other chip in the app.
+// Hovering reveals a small trash badge in the corner (a separate control, not a swap of the
+// chip's own content/click behavior), matching GroupDetail.tsx's MemberChip pattern, which was
+// specifically chosen after an earlier hover-swap version caused a resize-driven flicker loop.
+function AttendeeChip({
+  person,
+  onSelect,
+  onRemove,
+}: {
+  person: PersonRef
+  onSelect: () => void
+  onRemove: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button onClick={onSelect} style={styles.attendeeChip}>
+        {label}
+      </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Untag ${label} from this event`}
+          style={styles.cornerBadge}
+        >
+          {TRASH_ICON}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// The main chip approves (adds them to Who Was There) on click, same as before. Hovering reveals
+// a small "×" badge in the corner — a separate control, so denying doesn't resize the main chip
+// and can't flicker, matching GroupDetail.tsx's SuggestionChip pattern.
+function SuggestedAttendeeChip({
+  person,
+  onApprove,
+  onDeny,
+}: {
+  person: PersonRef
+  onApprove: () => void
+  onDeny: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button onClick={onApprove} style={styles.suggestChip}>
+        + {label}
+      </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDeny()
+          }}
+          aria-label={`Don't suggest ${label} for this event again`}
+          style={styles.cornerBadge}
+        >
+          ×
+        </button>
+      )}
     </div>
   )
 }
@@ -355,6 +461,16 @@ const styles: { [key: string]: React.CSSProperties } = {
   subheading: { fontSize: '1.2rem', color: '#2E4034', margin: '1.5rem 0 0.5rem 0' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' },
+  attendeeChip: {
+    fontSize: '0.9rem',
+    padding: '0.35rem 0.8rem',
+    borderRadius: '999px',
+    border: '1px solid #2E4034',
+    backgroundColor: 'transparent',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
   suggestChip: {
     fontSize: '0.9rem',
     padding: '0.35rem 0.8rem',
@@ -364,6 +480,26 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
+  },
+  badgeWrapper: { position: 'relative', display: 'inline-block' },
+  cornerBadge: {
+    position: 'absolute',
+    top: '-8px',
+    right: '-8px',
+    width: '18px',
+    height: '18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    border: '1px solid #B04A3B',
+    backgroundColor: '#FFF',
+    color: '#B04A3B',
+    fontSize: '0.8rem',
+    lineHeight: 1,
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
   },
   notesList: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   noteCard: {
