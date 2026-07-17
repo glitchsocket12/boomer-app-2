@@ -1,21 +1,28 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { PersonChip } from '../components/Chips'
+import { summarize } from '../lib/summarize'
+import { PersonChip, EventChip } from '../components/Chips'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
+type MomentRef = { id: string; occasion: string | null; raw_description: string }
 
 type Group = {
   id: string
   name: string
   person_groups: { people: PersonRef | null }[]
+  moment_groups: { moments: (MomentRef & { notes: { people: PersonRef | null }[] }) | null }[]
 }
+
+const AFFILIATION_LIMIT = 4
 
 export default function Groups({
   onSelectPerson,
   onSelectGroup,
+  onSelectEvent,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
@@ -28,7 +35,9 @@ export default function Groups({
     setLoading(true)
     const { data } = await supabase
       .from('groups')
-      .select('id, name, person_groups(people(id, name, last_name))')
+      .select(
+        'id, name, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description, notes(people(id, name, last_name))))'
+      )
       .order('name')
 
     setGroups((data as unknown as Group[]) ?? [])
@@ -47,9 +56,27 @@ export default function Groups({
 
       <div style={styles.list}>
         {groups.map((group) => {
-          const members = (group.person_groups ?? [])
+          const explicitMembers = (group.person_groups ?? [])
             .map((pg) => pg.people)
             .filter((p): p is PersonRef => p !== null)
+
+          const storyMembers = (group.moment_groups ?? [])
+            .flatMap((mg) => mg.moments?.notes ?? [])
+            .map((n) => n.people)
+            .filter((p): p is PersonRef => p !== null)
+
+          const membersById = new Map<string, PersonRef>()
+          for (const p of [...explicitMembers, ...storyMembers]) membersById.set(p.id, p)
+          const members = [...membersById.values()]
+
+          const eventMap = new Map<string, { id: string; summary: string }>()
+          for (const mg of group.moment_groups ?? []) {
+            if (mg.moments) {
+              eventMap.set(mg.moments.id, { id: mg.moments.id, summary: summarize(mg.moments.occasion, mg.moments.raw_description) })
+            }
+          }
+          const events = [...eventMap.values()]
+          const shownEvents = events.slice(0, AFFILIATION_LIMIT)
 
           return (
             <div key={group.id} style={styles.card}>
@@ -64,6 +91,17 @@ export default function Groups({
                   {members.map((p) => (
                     <PersonChip key={p.id} label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`} onClick={() => onSelectPerson(p)} />
                   ))}
+                </div>
+              )}
+
+              {shownEvents.length > 0 && (
+                <div style={{ ...styles.chipRow, marginTop: '0.5rem' }}>
+                  {shownEvents.map((e) => (
+                    <EventChip key={e.id} label={e.summary} onClick={() => onSelectEvent(e)} />
+                  ))}
+                  {events.length > AFFILIATION_LIMIT && (
+                    <span style={styles.moreText}>+{events.length - AFFILIATION_LIMIT} more</span>
+                  )}
                 </div>
               )}
             </div>
@@ -97,5 +135,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'left',
     cursor: 'pointer',
   },
-  chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
+  chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
+  moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
 }
