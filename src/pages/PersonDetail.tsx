@@ -275,23 +275,27 @@ export default function PersonDetail({
         </div>
       )}
 
-      <form onSubmit={handleAddFact} style={styles.addForm}>
-        <AutoGrowTextarea
-          value={newFact}
-          onChange={setNewFact}
-          onEnter={submitFact}
-          placeholder={`Add a fact about ${personName}, e.g. "Married to Manuel, they share a house"`}
-          style={styles.addInput}
-          disabled={saving}
-        />
-        <VoiceInputButton
-          disabled={saving}
-          onTranscribed={(text) => setNewFact((prev) => (prev ? `${prev} ${text}` : text))}
-        />
-        <button type="submit" disabled={saving} style={styles.addButton}>
-          {saving ? '…' : 'Add'}
-        </button>
-      </form>
+      <div style={styles.stickyBarWrapper}>
+        <div style={styles.stickyBarInner}>
+          <form onSubmit={handleAddFact} style={styles.addForm}>
+            <AutoGrowTextarea
+              value={newFact}
+              onChange={setNewFact}
+              onEnter={submitFact}
+              placeholder={`Add a fact about ${personName}, e.g. "Married to Manuel, they share a house"`}
+              style={styles.addInput}
+              disabled={saving}
+            />
+            <VoiceInputButton
+              disabled={saving}
+              onTranscribed={(text) => setNewFact((prev) => (prev ? `${prev} ${text}` : text))}
+            />
+            <button type="submit" disabled={saving} style={styles.addButton}>
+              {saving ? '…' : 'Add'}
+            </button>
+          </form>
+        </div>
+      </div>
 
       {groupTagMessage && (
         <p style={styles.groupTagBanner}>✓ Also added {personName} to "{groupTagMessage}".</p>
@@ -466,7 +470,7 @@ function DateFieldCell({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
     border: 'none',
@@ -553,7 +557,19 @@ const styles: { [key: string]: React.CSSProperties } = {
   affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' },
   affiliationRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
-  addForm: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem', marginBottom: '2rem' },
+  stickyBarWrapper: {
+    position: 'fixed',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#F7F5F2',
+    borderTop: '1px solid #E2DFD6',
+    boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
+    padding: '0.6rem 0',
+    zIndex: 20,
+  },
+  stickyBarInner: { maxWidth: '600px', margin: '0 auto', padding: '0 1.5rem' },
+  addForm: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem' },
   addInput: { flex: 1, fontSize: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #CCC' },
   addButton: {
     fontSize: '1rem',
@@ -564,7 +580,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#FFF',
     cursor: 'pointer',
   },
-  groupTagBanner: { fontSize: '0.9rem', color: '#2E4034', marginTop: '-1rem', marginBottom: '1.5rem' },
+  groupTagBanner: { fontSize: '0.9rem', color: '#2E4034', marginBottom: '1.5rem' },
   suggestBanner: {
     display: 'flex',
     flexDirection: 'column',
@@ -575,7 +591,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: '1px solid #E6D6AC',
     borderRadius: '10px',
     padding: '0.85rem 1rem',
-    marginTop: '-1rem',
     marginBottom: '1.5rem',
   },
   suggestButtonRow: { display: 'flex', gap: '0.5rem' },

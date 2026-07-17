@@ -68,22 +68,26 @@ export default function UpdateGroupChat({
         </div>
       ))}
       {sending && <div style={styles.assistantBubble}>…</div>}
-      <div style={styles.inputRow}>
-        <AutoGrowTextarea
-          value={input}
-          onChange={setInput}
-          onEnter={sendMessage}
-          placeholder="Add someone, tag an event, rename it..."
-          style={styles.input}
-          disabled={sending}
-        />
-        <VoiceInputButton
-          disabled={sending}
-          onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
-        />
-        <button onClick={sendMessage} disabled={sending} style={styles.button}>
-          Send
-        </button>
+      <div style={styles.stickyBarWrapper}>
+        <div style={styles.stickyBarInner}>
+          <div style={styles.inputRow}>
+            <AutoGrowTextarea
+              value={input}
+              onChange={setInput}
+              onEnter={sendMessage}
+              placeholder="Add someone, tag an event, rename it..."
+              style={styles.input}
+              disabled={sending}
+            />
+            <VoiceInputButton
+              disabled={sending}
+              onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
+            />
+            <button onClick={sendMessage} disabled={sending} style={styles.button}>
+              Send
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -93,7 +97,19 @@ const styles: { [key: string]: React.CSSProperties } = {
   box: { marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   userBubble: { alignSelf: 'flex-end', backgroundColor: '#2E4034', color: '#FFF', padding: '0.5rem 0.85rem', borderRadius: '10px', maxWidth: '85%', fontSize: '0.95rem' },
   assistantBubble: { alignSelf: 'flex-start', backgroundColor: '#F1F1EE', color: '#222', padding: '0.5rem 0.85rem', borderRadius: '10px', maxWidth: '85%', fontSize: '0.95rem' },
-  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem', marginTop: '0.25rem' },
+  stickyBarWrapper: {
+    position: 'fixed',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#F7F5F2',
+    borderTop: '1px solid #E2DFD6',
+    boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
+    padding: '0.6rem 0',
+    zIndex: 20,
+  },
+  stickyBarInner: { maxWidth: '600px', margin: '0 auto', padding: '0 1.5rem' },
+  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem' },
   input: { flex: 1, fontSize: '0.95rem', padding: '0.5rem', borderRadius: '6px', border: '1px solid #CCC' },
   button: { fontSize: '0.95rem', padding: '0.5rem 0.9rem', borderRadius: '6px', border: 'none', backgroundColor: '#2E4034', color: '#FFF', cursor: 'pointer' },
   doneText: { marginTop: '0.75rem', fontSize: '0.95rem', color: '#2E4034' },

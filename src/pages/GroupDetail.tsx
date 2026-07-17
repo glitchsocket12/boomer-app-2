@@ -490,7 +490,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
   },
-  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 6rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
     border: 'none',
