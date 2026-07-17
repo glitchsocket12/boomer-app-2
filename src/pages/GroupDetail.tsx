@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import EditButton from '../components/EditButton'
@@ -15,6 +15,7 @@ type Moment = {
   when_text: string | null
   event_date: string | null
   raw_description: string
+  summary: string | null
   created_at: string
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: GroupRef | null }[]
@@ -50,6 +51,7 @@ export default function GroupDetail({
   const [nameInput, setNameInput] = useState(groupName)
   const [savingName, setSavingName] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
+  const requestedMomentSummaries = useRef(new Set<string>())
 
   useEffect(() => {
     loadMoments()
@@ -75,7 +77,7 @@ export default function GroupDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, event_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups!inner(group_id, groups(id, name))'
+        'id, occasion, location, when_text, event_date, raw_description, summary, created_at, notes(people(id, name, last_name)), moment_groups!inner(group_id, groups(id, name))'
       )
       .eq('moment_groups.group_id', groupId)
 
@@ -84,6 +86,20 @@ export default function GroupDetail({
     )
     setMoments(sorted)
     setLoading(false)
+
+    for (const m of sorted) {
+      if (!m.summary && !requestedMomentSummaries.current.has(m.id)) {
+        requestedMomentSummaries.current.add(m.id)
+        generateMomentSummary(m.id)
+      }
+    }
+  }
+
+  async function generateMomentSummary(momentId: string) {
+    const { data } = await supabase.functions.invoke('summarize-moment', { body: { momentId } })
+    if (data?.summary) {
+      setMoments((prev) => prev.map((m) => (m.id === momentId ? { ...m, summary: data.summary } : m)))
+    }
   }
 
   async function handleSaveName(e: FormEvent) {
@@ -177,7 +193,7 @@ export default function GroupDetail({
                 </div>
               )}
 
-              <p style={styles.description}>{moment.raw_description}</p>
+              <p style={styles.description}>{moment.summary || 'Putting this memory into words…'}</p>
 
               {attendees.size > 0 && (
                 <>

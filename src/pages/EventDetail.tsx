@@ -15,6 +15,7 @@ type MomentDetail = {
   location: string | null
   when_text: string | null
   raw_description: string
+  summary: string | null
   details: Record<string, string> | null
   created_at: string
   notes: NoteWithPerson[]
@@ -52,13 +53,30 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, raw_description, details, created_at, notes(id, content, created_at, people(id, name, last_name)), moment_groups(groups(id, name))'
+        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, people(id, name, last_name)), moment_groups(groups(id, name))'
       )
       .eq('id', eventId)
       .single()
 
-    setMoment((data as unknown as MomentDetail) ?? null)
+    const loaded = (data as unknown as MomentDetail) ?? null
+    setMoment(loaded)
     setLoading(false)
+
+    if (loaded && !loaded.summary) {
+      generateSummary()
+    }
+  }
+
+  async function generateSummary() {
+    const { data } = await supabase.functions.invoke('summarize-moment', { body: { momentId: eventId } })
+    if (data?.summary) {
+      setMoment((prev) => (prev ? { ...prev, summary: data.summary } : prev))
+    }
+  }
+
+  async function handleNoteSaved() {
+    await supabase.from('moments').update({ summary: null }).eq('id', eventId)
+    await loadMoment()
   }
 
   async function handleSaveTitle(e: FormEvent) {
@@ -144,7 +162,7 @@ export default function EventDetail({
         </div>
       )}
 
-      <p style={styles.description}>{moment.raw_description}</p>
+      <p style={styles.description}>{moment.summary || 'Putting this memory into words…'}</p>
 
       {details.length > 0 && (
         <div style={styles.detailsBox}>
@@ -191,7 +209,7 @@ export default function EventDetail({
 
       <h2 style={styles.subheading}>Remember something else?</h2>
       <p style={styles.chatHint}>Tell me anything more about this — who else was there, how it went, anything you'd want to look back on.</p>
-      <UpdateMomentChat momentId={moment.id} onSaved={loadMoment} />
+      <UpdateMomentChat momentId={moment.id} onSaved={handleNoteSaved} />
     </div>
   )
 }
