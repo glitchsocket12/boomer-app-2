@@ -26,7 +26,7 @@ type KeyFact = {
   relationshipLabel?: string
   personId?: string
   personName?: string
-  noteIds: string[]
+  noteIds?: string[]
 }
 
 const AFFILIATION_LIMIT = 5
@@ -423,10 +423,14 @@ function KeyFactItem({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
 
-  const sourceNotes = fact.noteIds.map((id) => notesById.get(id)).filter((n): n is Note => !!n)
+  // Defensive default: until person-facts is redeployed with this change (a separate manual
+  // step in this app, see PROJECT_CONTEXT.md), the live function won't return noteIds at all —
+  // treat that as "no source info" rather than crashing the whole profile page.
+  const noteIds = fact.noteIds ?? []
+  const sourceNotes = noteIds.map((id) => notesById.get(id)).filter((n): n is Note => !!n)
   const primaryNote = sourceNotes[0]
   const canEdit = sourceNotes.length === 1
-  const canDelete = sourceNotes.length > 0 && sourceNotes.length === fact.noteIds.length
+  const canDelete = sourceNotes.length > 0 && sourceNotes.length === noteIds.length
 
   function startEditing() {
     setDraft(primaryNote?.content ?? '')
@@ -510,7 +514,7 @@ function KeyFactItem({
           )}
           {canDelete && (
             <button
-              onClick={() => onDelete(fact.noteIds)}
+              onClick={() => onDelete(noteIds)}
               aria-label="Delete this fact"
               style={{ ...styles.keyFactBadge, ...styles.keyFactDeleteBadge }}
             >
