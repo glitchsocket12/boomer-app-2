@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
+import { eventSortDate, formatMonthYear } from '../lib/dates'
 import { PersonChip, GroupChip } from '../components/Chips'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
@@ -15,14 +16,6 @@ type Moment = {
   created_at: string
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: { id: string; name: string } | null }[]
-}
-
-function eventSortDate(moment: Pick<Moment, 'event_date' | 'created_at'>): Date {
-  return moment.event_date ? new Date(`${moment.event_date}T00:00:00`) : new Date(moment.created_at)
-}
-
-function formatMonthYear(moment: Pick<Moment, 'event_date' | 'created_at'>): string {
-  return eventSortDate(moment).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 }
 
 export default function Events({

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
+import { eventSortDate } from '../lib/dates'
 import EditButton from '../components/EditButton'
 import { PersonChip, GroupChip } from '../components/Chips'
 import UpdateGroupChat from '../components/UpdateGroupChat'
@@ -19,10 +20,6 @@ type Moment = {
   created_at: string
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: GroupRef | null }[]
-}
-
-function eventSortDate(moment: Pick<Moment, 'event_date' | 'created_at'>): Date {
-  return moment.event_date ? new Date(`${moment.event_date}T00:00:00`) : new Date(moment.created_at)
 }
 
 export default function GroupDetail({
