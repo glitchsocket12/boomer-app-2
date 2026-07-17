@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
@@ -9,6 +9,7 @@ type MomentRef = { id: string; occasion: string | null; raw_description: string 
 type Group = {
   id: string
   name: string
+  summary: string | null
   person_groups: { people: PersonRef | null }[]
   moment_groups: { moments: (MomentRef & { notes: { people: PersonRef | null }[] }) | null }[]
 }
@@ -26,6 +27,7 @@ export default function Groups({
 }) {
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
+  const requestedSummaries = useRef(new Set<string>())
 
   useEffect(() => {
     loadGroups()
@@ -36,12 +38,27 @@ export default function Groups({
     const { data } = await supabase
       .from('groups')
       .select(
-        'id, name, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description, notes(people(id, name, last_name))))'
+        'id, name, summary, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description, notes(people(id, name, last_name))))'
       )
       .order('name')
 
-    setGroups((data as unknown as Group[]) ?? [])
+    const loaded = (data as unknown as Group[]) ?? []
+    setGroups(loaded)
     setLoading(false)
+
+    for (const g of loaded) {
+      if (!g.summary && !requestedSummaries.current.has(g.id)) {
+        requestedSummaries.current.add(g.id)
+        generateSummary(g.id)
+      }
+    }
+  }
+
+  async function generateSummary(groupId: string) {
+    const { data } = await supabase.functions.invoke('summarize-group', { body: { groupId } })
+    if (data?.summary) {
+      setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, summary: data.summary } : g)))
+    }
   }
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
@@ -84,6 +101,8 @@ export default function Groups({
                 {group.name}
               </button>
 
+              <p style={styles.summary}>{group.summary || 'Figuring out what this group is about…'}</p>
+
               {members.length === 0 ? (
                 <p style={styles.empty}>No members yet.</p>
               ) : (
@@ -125,7 +144,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   titleButton: {
     display: 'block',
-    margin: '0 0 0.75rem 0',
+    margin: '0 0 0.25rem 0',
     padding: 0,
     fontSize: '1.3rem',
     fontFamily: 'Georgia, serif',
@@ -135,6 +154,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'left',
     cursor: 'pointer',
   },
+  summary: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#666', fontStyle: 'italic' },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
 }

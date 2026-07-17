@@ -48,13 +48,26 @@ export default function GroupDetail({
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState(groupName)
   const [savingName, setSavingName] = useState(false)
+  const [summary, setSummary] = useState<string | null>(null)
 
   useEffect(() => {
     loadMoments()
+    loadSummary()
     setName(groupName)
     setNameInput(groupName)
     setEditingName(false)
   }, [groupId])
+
+  async function loadSummary() {
+    setSummary(null)
+    const { data } = await supabase.from('groups').select('summary').eq('id', groupId).single()
+    if (data?.summary) {
+      setSummary(data.summary)
+    } else {
+      const { data: generated } = await supabase.functions.invoke('summarize-group', { body: { groupId } })
+      if (generated?.summary) setSummary(generated.summary)
+    }
+  }
 
   async function loadMoments() {
     setLoading(true)
@@ -125,6 +138,8 @@ export default function GroupDetail({
           <EditButton label="Rename group" onClick={() => setEditingName(true)} />
         </div>
       )}
+
+      <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
 
       {moments.length === 0 && (
         <p style={styles.empty}>No events tagged to this group yet — mention this affiliation on Home while telling a story and it'll show up here.</p>
@@ -197,8 +212,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
   },
   heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
-  headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.5rem', flexWrap: 'wrap' },
-  renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap' },
+  headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'wrap' },
+  renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' },
+  summary: { margin: '0 0 1.5rem 0', fontSize: '1rem', color: '#666', fontStyle: 'italic' },
   renameInput: {
     fontSize: '1.5rem',
     fontFamily: 'Georgia, serif',
