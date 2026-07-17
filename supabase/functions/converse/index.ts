@@ -168,6 +168,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
           reply: `The AI service had trouble responding just now (error ${response.status}). Please try again in a moment.`,
           people: [],
           momentId: null,
+          groups: [],
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
@@ -268,12 +269,17 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       return null
     }
 
+    // Any group tagged or created this turn — shown to the user as a clickable chip,
+    // same as a new/updated moment or person, so they can jump straight to it.
+    const taggedGroups = new Map<string, string>()
+
     for (const groupName of parsed.moment_groups ?? []) {
       const groupId = await findOrCreateGroupId(groupName)
       if (groupId && momentId) {
         await supabaseClient
           .from("moment_groups")
           .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
+        taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
       }
     }
 
@@ -284,6 +290,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
         await supabaseClient
           .from("person_groups")
           .upsert({ person_id: personId, group_id: groupId }, { onConflict: "person_id,group_id", ignoreDuplicates: true })
+        taggedGroups.set(groupId, groupNameById[groupId] ?? tag.group)
       }
     }
 
@@ -294,7 +301,9 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       })
       .filter(Boolean)
 
-    return new Response(JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentId }), {
+    const taggedGroupRefs = [...taggedGroups.entries()].map(([id, name]) => ({ id, name }))
+
+    return new Response(JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentId, groups: taggedGroupRefs }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   } catch (error) {

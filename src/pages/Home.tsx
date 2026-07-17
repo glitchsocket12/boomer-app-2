@@ -2,24 +2,28 @@ import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
-import { EventChip } from '../components/Chips'
+import { EventChip, GroupChip } from '../components/Chips'
 import { summarize } from '../lib/summarize'
 
 type PersonRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
+type GroupRef = { id: string; name: string }
 type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   people?: PersonRef[]
   event?: EventRef
+  groups?: GroupRef[]
 }
 
 export default function Home({
   onSelectPerson,
   onSelectEvent,
+  onSelectGroup,
 }: {
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
+  onSelectGroup: (group: GroupRef) => void
 }) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -64,7 +68,7 @@ export default function Home({
       }
     }
 
-    setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [], event }])
+    setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [], event, groups: data.groups ?? [] }])
   }
 
   return (
@@ -79,7 +83,7 @@ export default function Home({
         {thread.map((m, i) => (
           <div key={i}>
             <div style={m.role === 'user' ? styles.userBubble : styles.assistantBubble}>{m.content}</div>
-            {((m.people && m.people.length > 0) || m.event) && (
+            {((m.people && m.people.length > 0) || m.event || (m.groups && m.groups.length > 0)) && (
               <div style={styles.peopleRow}>
                 {m.people?.map((p) => (
                   <button key={p.id} onClick={() => onSelectPerson(p)} style={styles.personChip}>
@@ -87,6 +91,9 @@ export default function Home({
                   </button>
                 ))}
                 {m.event && <EventChip label={m.event.summary} onClick={() => onSelectEvent(m.event!)} />}
+                {m.groups?.map((g) => (
+                  <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                ))}
               </div>
             )}
           </div>
