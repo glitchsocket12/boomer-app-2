@@ -34,10 +34,7 @@ serve(async (req) => {
     ])
 
     const name = person?.name ?? "this person"
-    const validNoteIds = new Set((notes ?? []).map((n) => n.id))
-    // Tag each note with its own id so the model can tell us exactly which note(s) a fact came
-    // from — same [X_ID: ...] tagging technique search.ts/update-group already use for moments.
-    const noteText = (notes ?? []).map((n) => `[NOTE_ID: ${n.id}] ${n.content}`).join("\n")
+    const noteText = (notes ?? []).map((n) => n.content).join("\n")
 
     if (!noteText.trim()) {
       return new Response(JSON.stringify({ facts: [] }), {
@@ -78,8 +75,8 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 700,
-        system: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events, each prefixed with its own "[NOTE_ID: ...]" tag.
+        max_tokens: 1500,
+        system: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events.
 
 Only extract facts that are EXPLICITLY stated in the notes. Never infer, guess, or pad with generic filler. Focus specifically on these categories:
 - "spouse": their spouse or partner
@@ -94,16 +91,23 @@ Do not use one-off event/gathering details (who attended a party, what was serve
 
 Respond with ONLY a JSON object in this exact shape:
 {"facts": [
-  {"category": "location" | "education" | "other", "text": "short factual bullet, under 15 words, third person", "note_ids": ["..."]},
-  {"category": "spouse", "relationship_label": "a short lead-in phrase describing the relationship as stated, e.g. \\"Married to\\", \\"Engaged to\\", \\"Partner of\\" — or, if no name is given at all, a complete standalone phrase like \\"Married.\\"", "person_names": ["exactly as given — 0 or 1 names"], "note_ids": ["..."]},
-  {"category": "siblings" | "parents" | "kids", "person_names": ["exactly as given, one per person"], "text": "a fallback bullet ONLY when NO names at all are given, e.g. \\"Has two kids.\\" — omit/null when person_names has anything in it", "note_ids": ["..."]}
+  {"category": "location" | "education" | "other", "text": "short factual bullet, under 15 words, third person"},
+  {"category": "spouse", "relationship_label": "a short lead-in phrase describing the relationship as stated, e.g. \\"Married to\\", \\"Engaged to\\", \\"Partner of\\" — or, if no name is given at all, a complete standalone phrase like \\"Married.\\"", "person_names": ["exactly as given — 0 or 1 names"]},
+  {"category": "siblings" | "parents" | "kids", "person_names": ["exactly as given, one per person"], "text": "a fallback bullet ONLY when NO names at all are given, e.g. \\"Has two kids.\\" — omit/null when person_names has anything in it"}
 ]}
-"note_ids" must list the exact NOTE_ID value(s) (from the "[NOTE_ID: ...]" tags above) that this specific fact was drawn from — every note directly supporting it, and only those.
 Names must NEVER appear inside "relationship_label" or "text" — the app renders each name separately as a clickable link when possible, so repeating a name in those fields would show it twice.
 If nothing qualifies, respond {"facts": []}.`,
         messages: [{ role: "user", content: noteText }],
       }),
     })
+
+    if (!response.ok) {
+      const errorBody = await response.text()
+      console.error("person-facts: Anthropic API error", response.status, errorBody)
+      return new Response(JSON.stringify({ facts: [], error: "extraction_failed" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
 
     const data = await response.json()
     const textBlock = data.content?.find((b: any) => b.type === "text")
@@ -114,22 +118,21 @@ If nothing qualifies, respond {"facts": []}.`,
         text?: string
         relationship_label?: string
         person_names?: string[]
-        note_ids?: string[]
       }[]
     } = { facts: [] }
     try {
-      result = { ...result, ...JSON.parse((textBlock?.text ?? "").trim()) }
-    } catch {
-      // if parsing fails, just report no facts rather than showing garbage
+      const rawText = textBlock?.text ?? ""
+      const start = rawText.indexOf("{")
+      const end = rawText.lastIndexOf("}")
+      const jsonSlice = start !== -1 && end !== -1 ? rawText.slice(start, end + 1) : rawText
+      result = { ...result, ...JSON.parse(jsonSlice) }
+    } catch (parseError) {
+      console.error("person-facts: failed to parse AI reply as JSON", String(parseError), "raw text was:", textBlock?.text)
     }
 
     const facts = (result.facts ?? []).map((f) => {
-      // Never trust the model's note_ids blindly — drop anything that isn't a real note on this
-      // person, same "don't trust a required field" lesson as elsewhere in this app.
-      const noteIds = (f.note_ids ?? []).filter((id) => validNoteIds.has(id))
-
       if (!LINKED_CATEGORIES.has(f.category)) {
-        return { category: f.category, text: f.text, noteIds }
+        return { category: f.category, text: f.text }
       }
 
       const names = (f.person_names ?? []).filter(Boolean)
@@ -143,7 +146,7 @@ If nothing qualifies, respond {"facts": []}.`,
         // "Married to" (the overwhelmingly common case) rather than ever rendering a bare name
         // with no lead-in text.
         const relationshipLabel = f.relationship_label?.trim() || (people.length ? "Married to" : "Married.")
-        return { category: f.category, relationshipLabel, people, noteIds }
+        return { category: f.category, relationshipLabel, people }
       }
 
       return {
@@ -151,7 +154,6 @@ If nothing qualifies, respond {"facts": []}.`,
         relationshipLabel: DEFAULT_LABELS[f.category],
         people,
         text: people.length === 0 ? f.text : undefined,
-        noteIds,
       }
     })
 
