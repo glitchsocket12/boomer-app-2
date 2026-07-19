@@ -20,6 +20,8 @@ serve(async (req) => {
   }
 
   try {
+    const { refresh } = await req.json().catch(() => ({ refresh: false }))
+
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
@@ -36,13 +38,31 @@ serve(async (req) => {
       })
     }
 
+    const [{ data: cached }, { data: latestMoment }, { data: latestNote }] = await Promise.all([
+      supabaseClient.from("home_suggestions").select("suggestions, updated_at").eq("user_id", user.id).maybeSingle(),
+      supabaseClient.from("moments").select("created_at").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabaseClient.from("notes").select("created_at").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    ])
+
+    // Stale = something was recorded more recently than the cached suggestions were generated.
+    // Token-efficiency rule in CLAUDE.md: never re-call the API for content that hasn't changed —
+    // a plain Home visit should serve the DB cache, not regenerate every time.
+    const latestActivity = [latestMoment?.created_at, latestNote?.created_at].filter(Boolean).sort().pop()
+    const isStale = !cached || (!!latestActivity && latestActivity > cached.updated_at)
+
+    if (!refresh && cached && !isStale) {
+      return new Response(JSON.stringify({ suggestions: cached.suggestions, cached: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+
     const { data: moments } = await supabaseClient
       .from("moments")
       .select("occasion, location, when_text, created_at")
       .order("created_at", { ascending: false })
       .limit(25)
-    const { data: people } = await supabaseClient.from("people").select("name, last_name").limit(40)
-    const { data: groups } = await supabaseClient.from("groups").select("name").limit(20)
+    const { data: people } = await supabaseClient.from("people").select("name, last_name").order("id").limit(40)
+    const { data: groups } = await supabaseClient.from("groups").select("name").order("id").limit(20)
 
     if (!moments || moments.length === 0) {
       return new Response(JSON.stringify({ suggestions: FALLBACK_SUGGESTIONS }), {
@@ -82,7 +102,8 @@ Groups on file: ${groupNames || "(none yet)"}`
     if (!response.ok) {
       const errorBody = await response.text()
       console.error("Anthropic API error", response.status, errorBody)
-      return new Response(JSON.stringify({ suggestions: FALLBACK_SUGGESTIONS }), {
+      // Never blank out good suggestions because one regeneration failed — fall back to the cache.
+      return new Response(JSON.stringify({ suggestions: cached?.suggestions ?? FALLBACK_SUGGESTIONS }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
@@ -90,7 +111,7 @@ Groups on file: ${groupNames || "(none yet)"}`
     const data = await response.json()
     const textBlock = data.content?.find((b: any) => b.type === "text")
 
-    let suggestions: string[] = FALLBACK_SUGGESTIONS
+    let suggestions: string[] = cached?.suggestions ?? FALLBACK_SUGGESTIONS
     try {
       const rawText = textBlock?.text ?? ""
       const start = rawText.indexOf("[")
@@ -102,6 +123,12 @@ Groups on file: ${groupNames || "(none yet)"}`
     } catch (parseError) {
       console.error("Failed to parse suggestion list as JSON", String(parseError), "raw text was:", textBlock?.text)
     }
+
+    // Persist so future visits are served from the DB instead of re-calling the API.
+    const { error: saveError } = await supabaseClient
+      .from("home_suggestions")
+      .upsert({ user_id: user.id, suggestions, updated_at: new Date().toISOString() }, { onConflict: "user_id" })
+    if (saveError) console.error("suggest-prompts: failed to save home_suggestions cache", saveError.message)
 
     return new Response(JSON.stringify({ suggestions }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

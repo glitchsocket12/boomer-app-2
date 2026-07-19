@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import { EventChip, GroupChip } from '../components/Chips'
+import RefreshButton from '../components/RefreshButton'
 import { summarize } from '../lib/summarize'
 
 type PersonRef = { id: string; name: string }
@@ -57,13 +58,21 @@ export default function Home({
   }, [thread])
 
   useEffect(() => {
+    loadSuggestions(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Plain visits serve the DB-cached suggestions (no AI call unless new moments/notes were
+  // recorded since); regeneration only happens via the explicit refresh icon in that case.
+  function loadSuggestions(refresh: boolean) {
+    setSuggestionsLoading(true)
     supabase.functions
-      .invoke('suggest-prompts', {})
+      .invoke('suggest-prompts', { body: { refresh } })
       .then(({ data }) => {
         if (data?.suggestions?.length) setSuggestions(data.suggestions)
       })
       .finally(() => setSuggestionsLoading(false))
-  }, [])
+  }
 
   // Head-only count queries — cheap, no rows transferred, just the total for each table.
   useEffect(() => {
@@ -251,6 +260,10 @@ export default function Home({
           )}
           {!suggestionsLoading && suggestions.length > 0 && (
             <div style={styles.suggestionList}>
+              <span style={styles.suggestionsHeadingRow}>
+                <span style={styles.suggestionsHeading}>A few ideas</span>
+                <RefreshButton label="Refresh suggestions" refreshing={suggestionsLoading} onClick={() => loadSuggestions(true)} />
+              </span>
               {suggestions.map((s, i) => (
                 <button key={i} onClick={() => handleSuggestionClick(s)} style={styles.suggestionCard}>
                   {s}
@@ -412,6 +425,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     animation: 'spin 0.8s linear infinite',
   },
   suggestionList: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1.25rem' },
+  suggestionsHeadingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  suggestionsHeading: { fontSize: '0.85rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.03em' },
   suggestionCard: {
     fontFamily: 'Georgia, serif',
     fontSize: '1rem',
