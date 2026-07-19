@@ -6,6 +6,7 @@ import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import PhotoGallery from '../components/PhotoGallery'
 import RefreshButton from '../components/RefreshButton'
+import SearchBox from '../components/SearchBox'
 
 type Note = {
   id: string
@@ -29,6 +30,8 @@ type KeyFact = {
 }
 
 type RelationshipSuggestion = { parentId: string; parentName: string; childId: string; childName: string }
+
+type OtherPerson = { id: string; name: string; last_name: string | null }
 
 const AFFILIATION_LIMIT = 5
 
@@ -70,6 +73,13 @@ export default function PersonDetail({
   const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
   const [factsLoading, setFactsLoading] = useState(true)
   const [notesOpen, setNotesOpen] = useState(true)
+  const [deleteConfirming, setDeleteConfirming] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeSearch, setMergeSearch] = useState('')
+  const [otherPeople, setOtherPeople] = useState<OtherPerson[]>([])
+  const [mergeCandidate, setMergeCandidate] = useState<OtherPerson | null>(null)
 
   useEffect(() => {
     loadData()
@@ -224,6 +234,107 @@ export default function PersonDetail({
 
   function dismissRelationshipSuggestion(s: RelationshipSuggestion) {
     setRelationshipSuggestions((prev) => prev.filter((x) => x !== s))
+  }
+
+  // Permanently removes this person and everything tied only to them (notes, reminders,
+  // group memberships). Anyone else's notes that merely mention this person's name by text
+  // are left as-is — there's no way to "unmention" someone from prose, and pruning that text
+  // isn't this action's job. Any other profile's cached Key Facts pointing at this person's ID
+  // will stop resolving to a clickable button next time it's regenerated, same fail-safe-to-
+  // plain-text behavior as any other unresolved name.
+  async function handleDeleteProfile() {
+    setActionBusy(true)
+    setActionError(null)
+    const [notesRes, remindersRes, groupsRes, peopleRes] = await Promise.all([
+      supabase.from('notes').delete().eq('person_id', personId),
+      supabase.from('reminders').delete().eq('person_id', personId),
+      supabase.from('person_groups').delete().eq('person_id', personId),
+      supabase.from('people').delete().eq('id', personId),
+    ])
+    const error = notesRes.error || remindersRes.error || groupsRes.error || peopleRes.error
+    if (error) {
+      setActionError('Something went wrong deleting this profile — please try again.')
+      setActionBusy(false)
+      return
+    }
+    onBack()
+  }
+
+  async function openMerge() {
+    setMergeOpen(true)
+    setMergeCandidate(null)
+    setMergeSearch('')
+    if (otherPeople.length === 0) {
+      const { data } = await supabase.from('people').select('id, name, last_name').neq('id', personId).order('name')
+      setOtherPeople((data as OtherPerson[]) ?? [])
+    }
+  }
+
+  // Folds `duplicate` into THIS profile: every note and reminder moves over, group
+  // memberships are unioned (not duplicated), the duplicate's own name(s) are kept as a
+  // nickname here so a bare first-name mention in existing notes resolves unambiguously
+  // going forward, and the duplicate record itself is deleted. This profile's cached Key
+  // Facts are cleared so they regenerate from the newly-merged notes on next view.
+  async function handleMerge() {
+    if (!mergeCandidate) return
+    setActionBusy(true)
+    setActionError(null)
+    const duplicateId = mergeCandidate.id
+
+    const [dupPersonRes, primaryPersonRes, primaryRemindersRes, dupRemindersRes, dupGroupsRes] = await Promise.all([
+      supabase.from('people').select('name, last_name, nicknames').eq('id', duplicateId).single(),
+      supabase.from('people').select('nicknames').eq('id', personId).single(),
+      supabase.from('reminders').select('id, label').eq('person_id', personId),
+      supabase.from('reminders').select('id, label').eq('person_id', duplicateId),
+      supabase.from('person_groups').select('group_id').eq('person_id', duplicateId),
+    ])
+
+    if (dupPersonRes.error || primaryPersonRes.error) {
+      setActionError('Something went wrong merging these profiles — please try again.')
+      setActionBusy(false)
+      return
+    }
+
+    await supabase.from('notes').update({ person_id: personId }).eq('person_id', duplicateId)
+
+    const primaryLabels = new Set((primaryRemindersRes.data ?? []).map((r) => r.label))
+    for (const r of dupRemindersRes.data ?? []) {
+      if (primaryLabels.has(r.label)) {
+        await supabase.from('reminders').delete().eq('id', r.id)
+      } else {
+        await supabase.from('reminders').update({ person_id: personId }).eq('id', r.id)
+      }
+    }
+
+    for (const g of dupGroupsRes.data ?? []) {
+      await supabase
+        .from('person_groups')
+        .upsert({ person_id: personId, group_id: g.group_id }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+    }
+    await supabase.from('person_groups').delete().eq('person_id', duplicateId)
+
+    const dup = dupPersonRes.data
+    const dupNames = [
+      dup?.name,
+      dup?.last_name ? `${dup.name} ${dup.last_name}` : null,
+      ...(dup?.nicknames ?? '').split(',').map((n: string) => n.trim()),
+    ].filter((n): n is string => !!n)
+    const mergedNicknames = (primaryPersonRes.data?.nicknames ?? '').split(',').map((n: string) => n.trim()).filter(Boolean)
+    for (const n of dupNames) {
+      if (!mergedNicknames.some((m: string) => m.toLowerCase() === n.toLowerCase())) mergedNicknames.push(n)
+    }
+
+    await supabase
+      .from('people')
+      .update({ nicknames: mergedNicknames.join(', ') || null, key_facts: null })
+      .eq('id', personId)
+    await supabase.from('people').delete().eq('id', duplicateId)
+
+    setMergeOpen(false)
+    setMergeCandidate(null)
+    setActionBusy(false)
+    await loadData()
+    loadFacts(true)
   }
 
   const affiliatedEvents = new Map<string, { id: string; summary: string }>()
@@ -398,6 +509,103 @@ export default function PersonDetail({
             </div>
           )}
         </>
+      )}
+
+      {!loading && (
+        <div style={styles.dangerZone}>
+          <span style={styles.dangerHeading}>Profile</span>
+
+          {actionError && <p style={styles.factErrorBanner}>{actionError}</p>}
+
+          {!mergeOpen && !deleteConfirming && (
+            <div style={styles.dangerButtonRow}>
+              <button type="button" onClick={openMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                Merge with another profile…
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirming(true)}
+                style={styles.dangerDeleteButton}
+                disabled={actionBusy}
+              >
+                Delete this profile
+              </button>
+            </div>
+          )}
+
+          {deleteConfirming && (
+            <div style={styles.suggestBanner}>
+              <span>Delete {personName} permanently? This removes all of their notes and reminders. This can't be undone.</span>
+              <div style={styles.suggestButtonRow}>
+                <button type="button" onClick={handleDeleteProfile} style={styles.dangerDeleteButton} disabled={actionBusy}>
+                  {actionBusy ? 'Deleting…' : 'Yes, delete'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirming(false)}
+                  style={styles.suggestNoButton}
+                  disabled={actionBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mergeOpen && (
+            <div style={styles.suggestBanner}>
+              {!mergeCandidate ? (
+                <>
+                  <span>Search for the duplicate profile to merge into {personName}:</span>
+                  <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search people…" />
+                  <div style={styles.mergeResultsList}>
+                    {otherPeople
+                      .filter((p) => {
+                        const full = `${p.name}${p.last_name ? ` ${p.last_name}` : ''}`.toLowerCase()
+                        return mergeSearch.trim() ? full.includes(mergeSearch.trim().toLowerCase()) : false
+                      })
+                      .slice(0, 8)
+                      .map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setMergeCandidate(p)}
+                          style={styles.mergeResultButton}
+                        >
+                          {p.name}{p.last_name ? ` ${p.last_name}` : ''}
+                        </button>
+                      ))}
+                  </div>
+                  <div style={styles.suggestButtonRow}>
+                    <button type="button" onClick={() => setMergeOpen(false)} style={styles.suggestNoButton}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span>
+                    Merge "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}" into "{personName}"?
+                    All of their notes, reminders, and group memberships move here, then that profile is deleted. This can't be undone.
+                  </span>
+                  <div style={styles.suggestButtonRow}>
+                    <button type="button" onClick={handleMerge} style={styles.suggestYesButton} disabled={actionBusy}>
+                      {actionBusy ? 'Merging…' : 'Yes, merge'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMergeCandidate(null)}
+                      style={styles.suggestNoButton}
+                      disabled={actionBusy}
+                    >
+                      Back
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -691,5 +899,47 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: 'transparent',
     color: '#666',
     cursor: 'pointer',
+  },
+  dangerZone: {
+    marginTop: '2.5rem',
+    paddingTop: '1.25rem',
+    borderTop: '1px solid #E2DFD6',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+  },
+  dangerHeading: { fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6B7A6E', fontWeight: 700 },
+  dangerButtonRow: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' },
+  dangerSecondaryButton: {
+    fontSize: '0.85rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '6px',
+    border: '1px solid #999',
+    backgroundColor: 'transparent',
+    color: '#555',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  dangerDeleteButton: {
+    fontSize: '0.85rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '6px',
+    border: '1px solid #B04A3B',
+    backgroundColor: 'transparent',
+    color: '#B04A3B',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  mergeResultsList: { display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '220px', overflowY: 'auto' },
+  mergeResultButton: {
+    textAlign: 'left',
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #E6D6AC',
+    backgroundColor: '#FFF',
+    color: '#2E2E2E',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
   },
 }
