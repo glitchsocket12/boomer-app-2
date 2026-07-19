@@ -5,6 +5,11 @@ import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import { EventChip, GroupChip } from '../components/Chips'
 import RefreshButton from '../components/RefreshButton'
 import { summarize } from '../lib/summarize'
+import RelationshipSuggestionBanners, {
+  toStagedNewPersonSuggestions,
+  type RelationshipSuggestion,
+  type NewPersonSuggestion,
+} from '../components/RelationshipSuggestions'
 
 type PersonRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
@@ -51,6 +56,8 @@ export default function Home({
   const [stats, setStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
   const [recallAssists, setRecallAssists] = useState<number | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+  const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
+  const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -171,6 +178,13 @@ export default function Home({
     ).filter((e): e is EventRef => e !== null)
 
     setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [], events, groups: data.groups ?? [] }])
+
+    if (data.relationshipSuggestions?.length > 0) {
+      setRelationshipSuggestions((prev) => [...prev, ...data.relationshipSuggestions])
+    }
+    if (data.newPersonSuggestions?.length > 0) {
+      setNewPersonSuggestions((prev) => [...prev, ...toStagedNewPersonSuggestions(data.newPersonSuggestions)])
+    }
   }
 
   return (
@@ -298,6 +312,13 @@ export default function Home({
         {sending && <div style={styles.assistantBubble}>…</div>}
         <div ref={bottomRef} />
       </div>
+
+      <RelationshipSuggestionBanners
+        relationshipSuggestions={relationshipSuggestions}
+        setRelationshipSuggestions={setRelationshipSuggestions}
+        newPersonSuggestions={newPersonSuggestions}
+        setNewPersonSuggestions={setNewPersonSuggestions}
+      />
 
       <div style={styles.inputRow}>
         <AutoGrowTextarea

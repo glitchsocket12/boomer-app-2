@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { applyFamilySignals, familySignalPromptMultiSubject, FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT } from "../_shared/relationships.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -166,8 +167,10 @@ Each time the user writes something, figure out what they're doing:
 - If they mention someone's last name specifically, that's a last name update, not a general note.
 - If they mention a nickname or a name someone "goes by" (e.g. "she goes by Sammy", "everyone calls him Bob", "my friend Sam, who goes by Sammy"), that's a nickname update — capture it in "nickname_updates" so it becomes a real, searchable "goes by" name on their profile, in addition to however it naturally fits into "notes"/"reply". Only include nickname(s) that are newly stated, not ones already shown in the roster provided in this prompt.
 
+${familySignalPromptMultiSubject()}
+
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}]}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
@@ -244,7 +247,7 @@ ${peopleRoster || "(none yet)"}`
     // working (see CLAUDE.md's token/billing efficiency rule).
     console.log("converse usage", JSON.stringify(data.usage))
 
-    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [] }
+    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [], family_signals: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -267,6 +270,7 @@ ${peopleRoster || "(none yet)"}`
       if (existingId) {
         await supabaseClient.from("people").update({ name: rename.new_name }).eq("id", existingId)
         idByName[rename.new_name.toLowerCase()] = existingId
+        nameById[existingId] = rename.new_name
       }
     }
 
@@ -280,7 +284,10 @@ ${peopleRoster || "(none yet)"}`
           .insert({ user_id: user.id, name: first, last_name: lastName })
           .select()
           .single()
-        if (newPerson) idByName[key] = newPerson.id
+        if (newPerson) {
+          idByName[key] = newPerson.id
+          nameById[newPerson.id] = name.trim()
+        }
       }
     }
 
@@ -307,6 +314,15 @@ ${peopleRoster || "(none yet)"}`
         nicknamesById[id] = merged
       }
     }
+
+    // Applied after renames/new_people/nickname_updates so a relationship's subject or named
+    // relative can resolve even if this same turn just created or renamed them.
+    const familyResult = await applyFamilySignals(
+      supabaseClient,
+      Deno.env.get("ANTHROPIC_API_KEY") ?? "",
+      parsed.family_signals ?? [],
+      { idByName, nameById }
+    )
 
     async function findOrCreateGroupId(name: string): Promise<string | null> {
       const key = name.toLowerCase()
@@ -412,7 +428,15 @@ ${peopleRoster || "(none yet)"}`
     }
 
     return new Response(
-      JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentIds: [...touchedMomentIds], groups: taggedGroupRefs, _debugUsage: data.usage }),
+      JSON.stringify({
+        reply: parsed.reply,
+        people: relevantPeople,
+        momentIds: [...touchedMomentIds],
+        groups: taggedGroupRefs,
+        relationshipSuggestions: familyResult.relationshipSuggestions,
+        newPersonSuggestions: familyResult.newPersonSuggestions,
+        _debugUsage: data.usage,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
   } catch (error) {

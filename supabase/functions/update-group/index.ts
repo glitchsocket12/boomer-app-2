@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { applyFamilySignals, familySignalPromptMultiSubject, FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT } from "../_shared/relationships.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,6 +52,7 @@ serve(async (req) => {
     // different people sharing one would collide (see PROJECT_CONTEXT.md Section 9, the "two
     // Bobs" bug — same fix ported here from converse/update-moment).
     const idByName: Record<string, string> = {}
+    const nameById: Record<string, string> = {}
     const nicknamesById: Record<string, string[]> = {}
     const ambiguousKeys = new Set<string>()
     function claimKey(key: string, id: string) {
@@ -63,6 +65,7 @@ serve(async (req) => {
     }
     for (const p of allPeople ?? []) {
       const name = fullName(p)
+      nameById[p.id] = name
       idByName[name.toLowerCase()] = p.id
       claimKey(p.name.toLowerCase(), p.id)
       const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
@@ -115,8 +118,10 @@ IMPORTANT — disambiguating people who share a first name or nickname: if the u
 
 The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), tag/untag events, or mention a plain fact about a member that isn't a membership/event change (e.g. "oh, and Bob mentioned he's retiring this fall") — capture that as a note on that person's own profile via "notes" below, using their exact name from the roster provided in this prompt. Don't finish right away — first ask a short, natural follow-up like "Anything else you'd like to change?" so they have a chance to make more edits in one go. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 
+${familySignalPromptMultiSubject()}
+
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}]}
+{"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
 This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.`
 
@@ -173,6 +178,7 @@ All people already in the app (match against these before assuming someone is ne
       add_event_ids: [],
       remove_event_ids: [],
       notes: [],
+      family_signals: [],
     }
     let rawText = ""
     try {
@@ -211,6 +217,7 @@ All people already in the app (match against these before assuming someone is ne
         if (newPerson) {
           personId = newPerson.id
           idByName[key] = personId
+          nameById[personId] = name.trim()
         }
       }
       if (personId && !currentMemberIds.has(personId)) {
@@ -260,15 +267,32 @@ All people already in the app (match against these before assuming someone is ne
       }
     }
 
+    // Applied after add_people so a relationship's subject or named relative can resolve even
+    // if this same turn just added them as a member.
+    const familyResult = await applyFamilySignals(
+      supabaseClient,
+      Deno.env.get("ANTHROPIC_API_KEY") ?? "",
+      parsed.family_signals ?? [],
+      { idByName, nameById }
+    )
+
     if (changed) {
       // Membership/events changed — the cached AI summary is now stale, so clear and regenerate it.
       await supabaseClient.from("groups").update({ summary: null }).eq("id", groupId)
       await supabaseClient.functions.invoke("summarize-group", { body: { groupId } })
     }
 
-    return new Response(JSON.stringify({ reply: parsed.reply, done: parsed.done === true, changed, rename: appliedRename }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return new Response(
+      JSON.stringify({
+        reply: parsed.reply,
+        done: parsed.done === true,
+        changed,
+        rename: appliedRename,
+        relationshipSuggestions: familyResult.relationshipSuggestions,
+        newPersonSuggestions: familyResult.newPersonSuggestions,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    )
   } catch (error) {
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,

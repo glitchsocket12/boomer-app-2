@@ -7,6 +7,11 @@ import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import PhotoGallery from '../components/PhotoGallery'
 import RefreshButton from '../components/RefreshButton'
 import SearchBox from '../components/SearchBox'
+import RelationshipSuggestionBanners, {
+  toStagedNewPersonSuggestions,
+  type RelationshipSuggestion,
+  type NewPersonSuggestion,
+} from '../components/RelationshipSuggestions'
 
 type Note = {
   id: string
@@ -32,21 +37,6 @@ type KeyFact = {
   people?: LinkedPerson[]
 }
 
-type RelationshipSuggestion = { parentId: string; parentName: string; childId: string; childName: string }
-
-type NewPersonSuggestion = {
-  relationship: string
-  rawName: string
-  reciprocalNote: string
-  suggestionText: string
-  stage: 'confirm' | 'addAnyway'
-  // Present when the name loosely matched an existing person (e.g. a bare first name) —
-  // that match is a guess, not a fact, so it's offered as "is this the same person?"
-  // rather than being linked automatically.
-  candidateId?: string
-  candidateName?: string
-}
-
 type OtherPerson = { id: string; name: string; last_name: string | null }
 
 const AFFILIATION_LIMIT = 5
@@ -66,6 +56,7 @@ export default function PersonDetail({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  onMerged,
 }: {
   personId: string
   personName: string
@@ -74,6 +65,7 @@ export default function PersonDetail({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onMerged: (person: { id: string; name: string }) => void
 }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [groups, setGroups] = useState<GroupRef[]>([])
@@ -180,9 +172,7 @@ export default function PersonDetail({
       setRelationshipSuggestions(data.relationshipSuggestions)
     }
     if (data?.newPersonSuggestions?.length > 0) {
-      setNewPersonSuggestions(
-        data.newPersonSuggestions.map((s: Omit<NewPersonSuggestion, 'stage'>) => ({ ...s, stage: 'confirm' as const }))
-      )
+      setNewPersonSuggestions(toStagedNewPersonSuggestions(data.newPersonSuggestions))
     }
 
     setNewFact('')
@@ -240,77 +230,6 @@ export default function PersonDetail({
     }
   }
 
-  // Confirming a relationship suggestion writes exactly what add-fact would have written had
-  // the founder typed it directly — same deterministic reciprocal-note phrasing, just two notes
-  // this time (parent and child sides) since neither profile has the original fact in their own
-  // words yet. This is the ONLY place an inferred relationship ever gets saved; declining just
-  // clears the banner and writes nothing.
-  async function confirmRelationshipSuggestion(s: RelationshipSuggestion) {
-    setRelationshipSuggestions((prev) => prev.filter((x) => x !== s))
-    await supabase.from('notes').insert([
-      { person_id: s.parentId, moment_id: null, content: `Their child is ${s.childName}.` },
-      { person_id: s.childId, moment_id: null, content: `Their parent is ${s.parentName}.` },
-    ])
-    if (s.parentId === personId || s.childId === personId) {
-      await loadData()
-      loadFacts(true)
-    }
-  }
-
-  function dismissRelationshipSuggestion(s: RelationshipSuggestion) {
-    setRelationshipSuggestions((prev) => prev.filter((x) => x !== s))
-  }
-
-  // Confirming a "new relationship" suggestion is the ONLY place a brand-new person ever gets
-  // created from a relationship mention — declining just moves to a second, narrower question
-  // (see addNewPersonAnyway) instead of ever silently creating a profile.
-  async function confirmNewPersonSuggestion(s: NewPersonSuggestion) {
-    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    const [first, ...rest] = s.rawName.split(' ')
-    const lastName = rest.length > 0 ? rest.join(' ') : null
-    const { data: newPerson } = await supabase
-      .from('people')
-      .insert({ user_id: user?.id, name: first, last_name: lastName })
-      .select()
-      .single()
-    if (newPerson) {
-      await supabase.from('notes').insert({ person_id: newPerson.id, moment_id: null, content: s.reciprocalNote })
-    }
-  }
-
-  // Confirms the loose name match WAS the same already-known person — links the relationship
-  // to that existing profile instead of creating a new one. This is the only place that link
-  // gets written; until confirmed, a same-name match is just a guess, never assumed.
-  async function confirmSamePersonSuggestion(s: NewPersonSuggestion) {
-    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
-    if (!s.candidateId) return
-    await supabase.from('notes').insert({ person_id: s.candidateId, moment_id: null, content: s.reciprocalNote })
-  }
-
-  // Declining doesn't discard the mention — the original fact is already saved as a plain note
-  // on THIS person's profile (that happens unconditionally in submitFact). This just asks
-  // whether they still want a full contact for the other person, without asserting the relationship.
-  function declineNewPersonSuggestion(s: NewPersonSuggestion) {
-    setNewPersonSuggestions((prev) => prev.map((x) => (x === s ? { ...x, stage: 'addAnyway' } : x)))
-  }
-
-  async function addNewPersonAnyway(s: NewPersonSuggestion) {
-    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    const [first, ...rest] = s.rawName.split(' ')
-    const lastName = rest.length > 0 ? rest.join(' ') : null
-    await supabase.from('people').insert({ user_id: user?.id, name: first, last_name: lastName })
-  }
-
-  function dismissNewPersonSuggestion(s: NewPersonSuggestion) {
-    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
-  }
-
   // Permanently removes this person and everything tied only to them (notes, reminders,
   // group memberships). Anyone else's notes that merely mention this person's name by text
   // are left as-is — there's no way to "unmention" someone from prose, and pruning that text
@@ -345,46 +264,51 @@ export default function PersonDetail({
     }
   }
 
-  // Folds `duplicate` into THIS profile: every note and reminder moves over, group
-  // memberships are unioned (not duplicated), the duplicate's own name(s) are kept as a
-  // nickname here so a bare first-name mention in existing notes resolves unambiguously
-  // going forward, and the duplicate record itself is deleted. This profile's cached Key
-  // Facts are cleared so they regenerate from the newly-merged notes on next view.
+  // Folds THIS profile into `mergeCandidate` (the one picked from search) — the reverse of
+  // the old behavior. Users discover duplicates by clicking into the unwanted profile first,
+  // so the profile they're standing on is the one that should disappear; the one they search
+  // for and pick is the one they want to keep. Every note and reminder moves to the survivor,
+  // group memberships are unioned (not duplicated), this profile's own name(s) are kept as a
+  // nickname on the survivor so a bare first-name mention in existing notes resolves
+  // unambiguously going forward, and this record itself is deleted. The survivor's cached Key
+  // Facts are cleared so they regenerate from the newly-merged notes, and the caller
+  // navigates to the survivor since this profile no longer exists.
   async function handleMerge() {
     if (!mergeCandidate) return
     setActionBusy(true)
     setActionError(null)
-    const duplicateId = mergeCandidate.id
+    const survivorId = mergeCandidate.id
+    const duplicateId = personId
 
-    const [dupPersonRes, primaryPersonRes, primaryRemindersRes, dupRemindersRes, dupGroupsRes] = await Promise.all([
+    const [dupPersonRes, survivorPersonRes, survivorRemindersRes, dupRemindersRes, dupGroupsRes] = await Promise.all([
       supabase.from('people').select('name, last_name, nicknames').eq('id', duplicateId).single(),
-      supabase.from('people').select('nicknames').eq('id', personId).single(),
-      supabase.from('reminders').select('id, label').eq('person_id', personId),
+      supabase.from('people').select('nicknames').eq('id', survivorId).single(),
+      supabase.from('reminders').select('id, label').eq('person_id', survivorId),
       supabase.from('reminders').select('id, label').eq('person_id', duplicateId),
       supabase.from('person_groups').select('group_id').eq('person_id', duplicateId),
     ])
 
-    if (dupPersonRes.error || primaryPersonRes.error) {
+    if (dupPersonRes.error || survivorPersonRes.error) {
       setActionError('Something went wrong merging these profiles — please try again.')
       setActionBusy(false)
       return
     }
 
-    await supabase.from('notes').update({ person_id: personId }).eq('person_id', duplicateId)
+    await supabase.from('notes').update({ person_id: survivorId }).eq('person_id', duplicateId)
 
-    const primaryLabels = new Set((primaryRemindersRes.data ?? []).map((r) => r.label))
+    const survivorLabels = new Set((survivorRemindersRes.data ?? []).map((r) => r.label))
     for (const r of dupRemindersRes.data ?? []) {
-      if (primaryLabels.has(r.label)) {
+      if (survivorLabels.has(r.label)) {
         await supabase.from('reminders').delete().eq('id', r.id)
       } else {
-        await supabase.from('reminders').update({ person_id: personId }).eq('id', r.id)
+        await supabase.from('reminders').update({ person_id: survivorId }).eq('id', r.id)
       }
     }
 
     for (const g of dupGroupsRes.data ?? []) {
       await supabase
         .from('person_groups')
-        .upsert({ person_id: personId, group_id: g.group_id }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+        .upsert({ person_id: survivorId, group_id: g.group_id }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
     }
     await supabase.from('person_groups').delete().eq('person_id', duplicateId)
 
@@ -394,7 +318,7 @@ export default function PersonDetail({
       dup?.last_name ? `${dup.name} ${dup.last_name}` : null,
       ...(dup?.nicknames ?? '').split(',').map((n: string) => n.trim()),
     ].filter((n): n is string => !!n)
-    const mergedNicknames = (primaryPersonRes.data?.nicknames ?? '').split(',').map((n: string) => n.trim()).filter(Boolean)
+    const mergedNicknames = (survivorPersonRes.data?.nicknames ?? '').split(',').map((n: string) => n.trim()).filter(Boolean)
     for (const n of dupNames) {
       if (!mergedNicknames.some((m: string) => m.toLowerCase() === n.toLowerCase())) mergedNicknames.push(n)
     }
@@ -402,14 +326,16 @@ export default function PersonDetail({
     await supabase
       .from('people')
       .update({ nicknames: mergedNicknames.join(', ') || null, key_facts: null })
-      .eq('id', personId)
+      .eq('id', survivorId)
     await supabase.from('people').delete().eq('id', duplicateId)
 
     setMergeOpen(false)
     setMergeCandidate(null)
     setActionBusy(false)
-    await loadData()
-    loadFacts(true)
+    onMerged({
+      id: survivorId,
+      name: `${mergeCandidate.name}${mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}`,
+    })
   }
 
   const affiliatedEvents = new Map<string, { id: string; summary: string }>()
@@ -542,61 +468,16 @@ export default function PersonDetail({
         </div>
       )}
 
-      {relationshipSuggestions.map((s) => (
-        <div key={`${s.parentId}:${s.childId}`} style={styles.suggestBanner}>
-          <span>It looks like {s.parentName} might also be {s.childName}'s parent. Add this?</span>
-          <div style={styles.suggestButtonRow}>
-            <button type="button" onClick={() => confirmRelationshipSuggestion(s)} style={styles.suggestYesButton}>
-              Yes, add
-            </button>
-            <button type="button" onClick={() => dismissRelationshipSuggestion(s)} style={styles.suggestNoButton}>
-              No thanks
-            </button>
-          </div>
-        </div>
-      ))}
-
-      {newPersonSuggestions.map((s) =>
-        s.stage === 'confirm' && s.candidateId ? (
-          <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
-            <span>
-              New relationship suggestion: {s.suggestionText}. Is this the same person as {s.candidateName}, already in your contacts?
-            </span>
-            <div style={styles.suggestButtonRow}>
-              <button type="button" onClick={() => confirmSamePersonSuggestion(s)} style={styles.suggestYesButton}>
-                Yes, same person
-              </button>
-              <button type="button" onClick={() => declineNewPersonSuggestion(s)} style={styles.suggestNoButton}>
-                No, different person
-              </button>
-            </div>
-          </div>
-        ) : s.stage === 'confirm' ? (
-          <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
-            <span>New relationship suggestion: {s.suggestionText}. Add this?</span>
-            <div style={styles.suggestButtonRow}>
-              <button type="button" onClick={() => confirmNewPersonSuggestion(s)} style={styles.suggestYesButton}>
-                Yes, add
-              </button>
-              <button type="button" onClick={() => declineNewPersonSuggestion(s)} style={styles.suggestNoButton}>
-                No
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
-            <span>Add {s.rawName} as a new contact anyway, without confirming that relationship?</span>
-            <div style={styles.suggestButtonRow}>
-              <button type="button" onClick={() => addNewPersonAnyway(s)} style={styles.suggestYesButton}>
-                Add as contact
-              </button>
-              <button type="button" onClick={() => dismissNewPersonSuggestion(s)} style={styles.suggestNoButton}>
-                No, just a note
-              </button>
-            </div>
-          </div>
-        )
-      )}
+      <RelationshipSuggestionBanners
+        relationshipSuggestions={relationshipSuggestions}
+        setRelationshipSuggestions={setRelationshipSuggestions}
+        newPersonSuggestions={newPersonSuggestions}
+        setNewPersonSuggestions={setNewPersonSuggestions}
+        onApplied={() => {
+          loadData()
+          loadFacts(true)
+        }}
+      />
 
       {loading && <p>Loading…</p>}
 
@@ -638,7 +519,7 @@ export default function PersonDetail({
           {!mergeOpen && !deleteConfirming && (
             <div style={styles.dangerButtonRow}>
               <button type="button" onClick={openMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
-                Merge with another profile…
+                This is a duplicate — merge it away…
               </button>
               <button
                 type="button"
@@ -674,7 +555,7 @@ export default function PersonDetail({
             <div style={styles.suggestBanner}>
               {!mergeCandidate ? (
                 <>
-                  <span>Search for the duplicate profile to merge into {personName}:</span>
+                  <span>Search for the profile you want to keep. Everything on {personName} will move there, and this profile will be deleted:</span>
                   <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search people…" />
                   <div style={styles.mergeResultsList}>
                     {otherPeople
@@ -703,8 +584,9 @@ export default function PersonDetail({
               ) : (
                 <>
                   <span>
-                    Merge "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}" into "{personName}"?
-                    All of their notes, reminders, and group memberships move here, then that profile is deleted. This can't be undone.
+                    Merge "{personName}" into "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}"?
+                    All notes, reminders, and group memberships move to "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}",
+                    "{personName}" is deleted, and you'll be taken to the kept profile. This can't be undone.
                   </span>
                   <div style={styles.suggestButtonRow}>
                     <button type="button" onClick={handleMerge} style={styles.suggestYesButton} disabled={actionBusy}>

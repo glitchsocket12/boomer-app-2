@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import VoiceInputButton from './VoiceInputButton'
 import AutoGrowTextarea from './AutoGrowTextarea'
+import RelationshipSuggestionBanners, {
+  toStagedNewPersonSuggestions,
+  type RelationshipSuggestion,
+  type NewPersonSuggestion,
+} from './RelationshipSuggestions'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 
@@ -10,6 +15,8 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [done, setDone] = useState(false)
+  const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
+  const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -40,7 +47,23 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
     setMessages([...newMessages, { role: 'assistant', content: data.reply }])
     if (data.changed) onSaved()
     if (data.done) setDone(true)
+
+    if (data.relationshipSuggestions?.length > 0) {
+      setRelationshipSuggestions((prev) => [...prev, ...data.relationshipSuggestions])
+    }
+    if (data.newPersonSuggestions?.length > 0) {
+      setNewPersonSuggestions((prev) => [...prev, ...toStagedNewPersonSuggestions(data.newPersonSuggestions)])
+    }
   }
+
+  const suggestionBanners = (
+    <RelationshipSuggestionBanners
+      relationshipSuggestions={relationshipSuggestions}
+      setRelationshipSuggestions={setRelationshipSuggestions}
+      newPersonSuggestions={newPersonSuggestions}
+      setNewPersonSuggestions={setNewPersonSuggestions}
+    />
+  )
 
   if (done) {
     return (
@@ -55,6 +78,7 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
         >
           + Add another detail
         </button>
+        {suggestionBanners}
       </div>
     )
   }
@@ -72,6 +96,7 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
           <div ref={bottomRef} />
         </div>
       )}
+      {suggestionBanners}
       <div style={styles.inputRow}>
         <AutoGrowTextarea
           value={input}

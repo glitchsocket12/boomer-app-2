@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { applyFamilySignals, familySignalPromptMultiSubject, FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT } from "../_shared/relationships.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -123,8 +124,10 @@ IMPORTANT — a term the user uses might actually be the name of one of the OTHE
 
 When the user shares a new detail, don't finish right away — first ask a short, natural follow-up question like "Anything else you remember about this?" so they have a chance to add more. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 
+${familySignalPromptMultiSubject()}
+
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null}, "add_groups": ["Group Name"]}
+{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
 This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
@@ -160,6 +163,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       additional_notes: [],
       moment_field_updates: null,
       add_groups: [],
+      family_signals: [],
     }
 
     async function callModel(): Promise<{ parsed: any; ok: boolean; errorBody?: string }> {
@@ -240,9 +244,21 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
           .insert({ user_id: user.id, name: first, last_name: lastName })
           .select()
           .single()
-        if (newPerson) idByName[key] = newPerson.id
+        if (newPerson) {
+          idByName[key] = newPerson.id
+          nameById[newPerson.id] = name.trim()
+        }
       }
     }
+
+    // Applied after new_people so a relationship's subject or named relative can resolve even
+    // if this same turn just created them.
+    const familyResult = await applyFamilySignals(
+      supabaseClient,
+      Deno.env.get("ANTHROPIC_API_KEY") ?? "",
+      parsed.family_signals ?? [],
+      { idByName, nameById }
+    )
 
     let notesAdded = 0
     let notesFailed = 0
@@ -311,9 +327,16 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
         ? "That didn't save — mind trying again?"
         : parsed.reply
 
-    return new Response(JSON.stringify({ reply, done: parsed.done === true, changed }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return new Response(
+      JSON.stringify({
+        reply,
+        done: parsed.done === true,
+        changed,
+        relationshipSuggestions: familyResult.relationshipSuggestions,
+        newPersonSuggestions: familyResult.newPersonSuggestions,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    )
   } catch (error) {
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,
