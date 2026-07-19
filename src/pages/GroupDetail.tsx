@@ -50,6 +50,9 @@ export default function GroupDetail({
   const [moments, setMoments] = useState<Moment[]>([])
   const [explicitMembers, setExplicitMembers] = useState<PersonRef[]>([])
   const [dismissedPersonIds, setDismissedPersonIds] = useState<string[]>([])
+  const [confirmedAssociatedGroups, setConfirmedAssociatedGroups] = useState<GroupRef[]>([])
+  const [dismissedGroupIds, setDismissedGroupIds] = useState<string[]>([])
+  const [memberSharedGroups, setMemberSharedGroups] = useState<GroupRef[]>([])
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState(groupName)
   const [editingName, setEditingName] = useState(false)
@@ -68,6 +71,7 @@ export default function GroupDetail({
     loadMembers()
     loadSummary()
     loadGroupNotes()
+    loadAssociatedGroups()
     setName(groupName)
     setNameInput(groupName)
     setEditingName(false)
@@ -125,13 +129,14 @@ export default function GroupDetail({
   async function loadMembers() {
     const { data } = await supabase
       .from('groups')
-      .select('person_groups(people(id, name, last_name)), dismissed_person_ids')
+      .select('person_groups(people(id, name, last_name)), dismissed_person_ids, dismissed_group_ids')
       .eq('id', groupId)
       .single()
 
     const loaded = data as unknown as {
       person_groups: { people: PersonRef | null }[]
       dismissed_person_ids: string[] | null
+      dismissed_group_ids: string[] | null
     } | null
 
     const explicit = (loaded?.person_groups ?? [])
@@ -140,6 +145,79 @@ export default function GroupDetail({
 
     setExplicitMembers(explicit)
     setDismissedPersonIds(loaded?.dismissed_person_ids ?? [])
+    setDismissedGroupIds(loaded?.dismissed_group_ids ?? [])
+    loadMemberSharedGroups(explicit.map((p) => p.id))
+  }
+
+  // Candidate associated groups sourced from members: any OTHER group this group's own explicit
+  // members explicitly belong to. Combined at render time with the event-co-tagging candidates
+  // already derived from `moments` below, then filtered against confirmed/dismissed.
+  async function loadMemberSharedGroups(memberIds: string[]) {
+    if (memberIds.length === 0) {
+      setMemberSharedGroups([])
+      return
+    }
+    const { data } = await supabase
+      .from('person_groups')
+      .select('group_id, groups(id, name)')
+      .in('person_id', memberIds)
+      .neq('group_id', groupId)
+
+    const byId = new Map<string, GroupRef>()
+    for (const row of (data as unknown as { group_id: string; groups: GroupRef | null }[]) ?? []) {
+      if (row.groups) byId.set(row.groups.id, row.groups)
+    }
+    setMemberSharedGroups([...byId.values()])
+  }
+
+  // Confirmed associated groups live in `group_associations`, a symmetric join table keyed by an
+  // ordered pair (group_id_a < group_id_b, enforced client-side) so the same two groups can't be
+  // linked twice regardless of which group's page the link was approved from.
+  async function loadAssociatedGroups() {
+    const { data } = await supabase
+      .from('group_associations')
+      .select('group_id_a, group_id_b')
+      .or(`group_id_a.eq.${groupId},group_id_b.eq.${groupId}`)
+
+    const otherIds = ((data as { group_id_a: string; group_id_b: string }[]) ?? []).map((r) =>
+      r.group_id_a === groupId ? r.group_id_b : r.group_id_a
+    )
+
+    if (otherIds.length === 0) {
+      setConfirmedAssociatedGroups([])
+      return
+    }
+
+    const { data: groupsData } = await supabase.from('groups').select('id, name').in('id', otherIds)
+    setConfirmedAssociatedGroups((groupsData as GroupRef[]) ?? [])
+  }
+
+  async function handleApproveGroupSuggestion(group: GroupRef) {
+    const [a, b] = [groupId, group.id].sort()
+    await supabase
+      .from('group_associations')
+      .upsert({ group_id_a: a, group_id_b: b }, { onConflict: 'group_id_a,group_id_b', ignoreDuplicates: true })
+    loadAssociatedGroups()
+  }
+
+  async function handleRemoveAssociatedGroup(group: GroupRef) {
+    const [a, b] = [groupId, group.id].sort()
+    await supabase.from('group_associations').delete().eq('group_id_a', a).eq('group_id_b', b)
+    loadAssociatedGroups()
+  }
+
+  // Same "stop suggesting this, but don't touch anything already confirmed" reasoning as
+  // handleDenySuggestion above, just for groups instead of people.
+  async function handleDenyGroupSuggestion(group: GroupRef) {
+    const updated = [...dismissedGroupIds, group.id]
+    setDismissedGroupIds(updated)
+    await supabase.from('groups').update({ dismissed_group_ids: updated }).eq('id', groupId)
+  }
+
+  async function handleDenyAllGroupSuggestions(groups: GroupRef[]) {
+    const updated = [...new Set([...dismissedGroupIds, ...groups.map((g) => g.id)])]
+    setDismissedGroupIds(updated)
+    await supabase.from('groups').update({ dismissed_group_ids: updated }).eq('id', groupId)
   }
 
   // Membership changed — the cached AI summary is now stale (same reasoning `update-group`
@@ -265,19 +343,26 @@ export default function GroupDetail({
   const eventOnlyAttendees = sortByLastName([...eventOnlyAttendeesById.values()])
   const sortedExplicitMembers = sortByLastName(explicitMembers)
 
-  // A group's "associated groups" aren't a direct relationship — they're derived the same way
-  // EventDetail.tsx's "Affiliated Groups" works, just one hop further: any other group tagged
-  // to the same events as this one (e.g. a graduation event tagged to both "Air Force Academy"
-  // and "Cadet 4 A Dat" makes those two associated), reusing the moments already loaded above.
-  const associatedGroupsById = new Map<string, GroupRef>()
+  // Suggested associated groups combine two signals — any other group tagged to the same events
+  // as this one (event-based, reusing the moments already loaded above, same one-hop reasoning as
+  // EventDetail.tsx's "Affiliated Groups"), and any other group this group's own explicit members
+  // explicitly belong to (member-based, loaded in loadMemberSharedGroups). Either signal is enough
+  // to suggest — confirmed/dismissed groups are filtered out either way.
+  const confirmedGroupIds = new Set(confirmedAssociatedGroups.map((g) => g.id))
+  const dismissedGroupIdSet = new Set(dismissedGroupIds)
+  const suggestedGroupsById = new Map<string, GroupRef>()
   for (const m of moments) {
     for (const mg of m.moment_groups ?? []) {
-      if (mg.groups && mg.groups.id !== groupId) {
-        associatedGroupsById.set(mg.groups.id, mg.groups)
+      if (mg.groups && mg.groups.id !== groupId && !confirmedGroupIds.has(mg.groups.id) && !dismissedGroupIdSet.has(mg.groups.id)) {
+        suggestedGroupsById.set(mg.groups.id, mg.groups)
       }
     }
   }
-  const associatedGroups = [...associatedGroupsById.values()].sort((a, b) => a.name.localeCompare(b.name))
+  for (const g of memberSharedGroups) {
+    if (!confirmedGroupIds.has(g.id) && !dismissedGroupIdSet.has(g.id)) suggestedGroupsById.set(g.id, g)
+  }
+  const suggestedAssociatedGroups = [...suggestedGroupsById.values()].sort((a, b) => a.name.localeCompare(b.name))
+  const sortedConfirmedAssociatedGroups = [...confirmedAssociatedGroups].sort((a, b) => a.name.localeCompare(b.name))
 
   return (
     <div style={styles.page}>
@@ -318,17 +403,6 @@ export default function GroupDetail({
         <RefreshButton label="Refresh description" onClick={refreshSummary} refreshing={refreshingSummary} />
       </div>
 
-      {associatedGroups.length > 0 && (
-        <>
-          <h2 style={styles.membersHeading}>Associated Groups</h2>
-          <div style={styles.chipRow}>
-            {associatedGroups.map((g) => (
-              <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-            ))}
-          </div>
-        </>
-      )}
-
       <PhotoGallery />
 
       <h2 style={styles.membersHeading}>Who's in this group</h2>
@@ -364,6 +438,45 @@ export default function GroupDetail({
                 person={p}
                 onApprove={() => handleAddMember(p)}
                 onDeny={() => handleDenySuggestion(p)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      <h2 style={styles.membersHeading}>Associated Groups</h2>
+      {sortedConfirmedAssociatedGroups.length === 0 ? (
+        <p style={styles.empty}>No groups at this time.</p>
+      ) : (
+        <div style={styles.chipRow}>
+          {sortedConfirmedAssociatedGroups.map((g) => (
+            <AssociatedGroupChip
+              key={g.id}
+              group={g}
+              onSelect={() => onSelectGroup(g)}
+              onRemove={() => handleRemoveAssociatedGroup(g)}
+            />
+          ))}
+        </div>
+      )}
+
+      {suggestedAssociatedGroups.length > 0 && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <p style={styles.eventOnlyLabel}>Possible associated groups — tap to add, or hover to dismiss</p>
+            {suggestedAssociatedGroups.length > 1 && (
+              <button onClick={() => handleDenyAllGroupSuggestions(suggestedAssociatedGroups)} style={styles.removeAllButton}>
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
+          <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
+            {suggestedAssociatedGroups.map((g) => (
+              <GroupSuggestionChip
+                key={g.id}
+                group={g}
+                onApprove={() => handleApproveGroupSuggestion(g)}
+                onDeny={() => handleDenyGroupSuggestion(g)}
               />
             ))}
           </div>
@@ -645,6 +758,89 @@ function SuggestionChip({
             onDeny()
           }}
           aria-label={`Don't suggest ${label} for this group again`}
+          style={styles.denyBadge}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  )
+}
+
+// Confirmed associated group: clicking goes to that group's profile, same as any other chip.
+// Hovering reveals a trash badge that unlinks the association — same corner-badge pattern as
+// MemberChip above, reused here for groups instead of people.
+function AssociatedGroupChip({
+  group,
+  onSelect,
+  onRemove,
+}: {
+  group: GroupRef
+  onSelect: () => void
+  onRemove: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div
+      style={styles.suggestionWrapper}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button onClick={onSelect} style={styles.person}>
+        {group.name}
+      </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Remove ${group.name} as an associated group`}
+          style={styles.denyBadge}
+        >
+          <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18" />
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6" />
+            <path d="M14 11v6" />
+          </svg>
+        </button>
+      )}
+    </div>
+  )
+}
+
+// A suggested associated group: the main chip approves (confirms the association) on click, same
+// as SuggestionChip above. Hovering reveals a small "×" badge that dismisses the suggestion.
+function GroupSuggestionChip({
+  group,
+  onApprove,
+  onDeny,
+}: {
+  group: GroupRef
+  onApprove: () => void
+  onDeny: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div
+      style={styles.suggestionWrapper}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button onClick={onApprove} style={styles.eventOnlyChip}>
+        {group.name}
+      </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDeny()
+          }}
+          aria-label={`Don't suggest ${group.name} again`}
           style={styles.denyBadge}
         >
           ×
