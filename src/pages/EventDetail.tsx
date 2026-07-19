@@ -146,6 +146,25 @@ export default function EventDetail({
     if (n.people) attendees.set(n.people.id, n.people)
   }
 
+  // Notes created together from a single Home-page entry get identical content per tagged
+  // person (see converse/index.ts's per-attendee insert loop) — collapse those into one card
+  // listing everyone instead of repeating the same sentence once per person. Notes added
+  // separately (edits, follow-up chat) naturally won't share exact text, so they stay distinct.
+  const noteGroups: { key: string; content: string; created_at: string; people: PersonRef[] }[] = []
+  const noteGroupsByContent = new Map<string, (typeof noteGroups)[number]>()
+  for (const n of moment.notes ?? []) {
+    const key = n.content.trim()
+    let group = noteGroupsByContent.get(key)
+    if (!group) {
+      group = { key, content: n.content, created_at: n.created_at, people: [] }
+      noteGroupsByContent.set(key, group)
+      noteGroups.push(group)
+    }
+    if (n.people && !group.people.some((p) => p.id === n.people!.id)) {
+      group.people.push(n.people)
+    }
+  }
+
   const groups = (moment.moment_groups ?? [])
     .map((mg) => mg.groups)
     .filter((g): g is GroupRef => g !== null)
@@ -311,12 +330,14 @@ export default function EventDetail({
           </p>
           {notesOpen && (
             <div style={styles.notesList}>
-              {moment.notes.map((note) => (
-                <div key={note.id} style={styles.noteCard}>
-                  <p style={styles.noteContent}>{note.content}</p>
+              {noteGroups.map((group) => (
+                <div key={group.key} style={styles.noteCard}>
+                  <p style={styles.noteContent}>{group.content}</p>
                   <p style={styles.noteMeta}>
-                    {note.people ? `${note.people.name}${note.people.last_name ? ` ${note.people.last_name}` : ''} · ` : ''}
-                    {new Date(note.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                    {group.people.length > 0
+                      ? `${group.people.map((p) => `${p.name}${p.last_name ? ` ${p.last_name}` : ''}`).join(', ')} · `
+                      : ''}
+                    {new Date(group.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
                   </p>
                 </div>
               ))}
