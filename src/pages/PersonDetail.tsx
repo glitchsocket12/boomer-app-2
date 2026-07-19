@@ -31,6 +31,14 @@ type KeyFact = {
 
 type RelationshipSuggestion = { parentId: string; parentName: string; childId: string; childName: string }
 
+type NewPersonSuggestion = {
+  relationship: string
+  rawName: string
+  reciprocalNote: string
+  suggestionText: string
+  stage: 'confirm' | 'addAnyway'
+}
+
 type OtherPerson = { id: string; name: string; last_name: string | null }
 
 const AFFILIATION_LIMIT = 5
@@ -70,6 +78,7 @@ export default function PersonDetail({
   const [familyTagMessage, setFamilyTagMessage] = useState<string | null>(null)
   const [factError, setFactError] = useState<string | null>(null)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
+  const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
   const [factsLoading, setFactsLoading] = useState(true)
   const [notesOpen, setNotesOpen] = useState(true)
@@ -135,6 +144,7 @@ export default function PersonDetail({
     setSuggestedGroup(null)
     setFamilyTagMessage(null)
     setFactError(null)
+    setNewPersonSuggestions([])
 
     const { data, error } = await supabase.functions.invoke('add-fact', {
       body: { personId, text: newFact.trim() },
@@ -158,6 +168,11 @@ export default function PersonDetail({
     }
     if (data?.relationshipSuggestions?.length > 0) {
       setRelationshipSuggestions(data.relationshipSuggestions)
+    }
+    if (data?.newPersonSuggestions?.length > 0) {
+      setNewPersonSuggestions(
+        data.newPersonSuggestions.map((s: Omit<NewPersonSuggestion, 'stage'>) => ({ ...s, stage: 'confirm' as const }))
+      )
     }
 
     setNewFact('')
@@ -234,6 +249,47 @@ export default function PersonDetail({
 
   function dismissRelationshipSuggestion(s: RelationshipSuggestion) {
     setRelationshipSuggestions((prev) => prev.filter((x) => x !== s))
+  }
+
+  // Confirming a "new relationship" suggestion is the ONLY place a brand-new person ever gets
+  // created from a relationship mention — declining just moves to a second, narrower question
+  // (see addNewPersonAnyway) instead of ever silently creating a profile.
+  async function confirmNewPersonSuggestion(s: NewPersonSuggestion) {
+    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const [first, ...rest] = s.rawName.split(' ')
+    const lastName = rest.length > 0 ? rest.join(' ') : null
+    const { data: newPerson } = await supabase
+      .from('people')
+      .insert({ user_id: user?.id, name: first, last_name: lastName })
+      .select()
+      .single()
+    if (newPerson) {
+      await supabase.from('notes').insert({ person_id: newPerson.id, moment_id: null, content: s.reciprocalNote })
+    }
+  }
+
+  // Declining doesn't discard the mention — the original fact is already saved as a plain note
+  // on THIS person's profile (that happens unconditionally in submitFact). This just asks
+  // whether they still want a full contact for the other person, without asserting the relationship.
+  function declineNewPersonSuggestion(s: NewPersonSuggestion) {
+    setNewPersonSuggestions((prev) => prev.map((x) => (x === s ? { ...x, stage: 'addAnyway' } : x)))
+  }
+
+  async function addNewPersonAnyway(s: NewPersonSuggestion) {
+    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const [first, ...rest] = s.rawName.split(' ')
+    const lastName = rest.length > 0 ? rest.join(' ') : null
+    await supabase.from('people').insert({ user_id: user?.id, name: first, last_name: lastName })
+  }
+
+  function dismissNewPersonSuggestion(s: NewPersonSuggestion) {
+    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
   }
 
   // Permanently removes this person and everything tied only to them (notes, reminders,
@@ -480,6 +536,34 @@ export default function PersonDetail({
           </div>
         </div>
       ))}
+
+      {newPersonSuggestions.map((s) =>
+        s.stage === 'confirm' ? (
+          <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
+            <span>New relationship suggestion: {s.suggestionText}. Add this?</span>
+            <div style={styles.suggestButtonRow}>
+              <button type="button" onClick={() => confirmNewPersonSuggestion(s)} style={styles.suggestYesButton}>
+                Yes, add
+              </button>
+              <button type="button" onClick={() => declineNewPersonSuggestion(s)} style={styles.suggestNoButton}>
+                No
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
+            <span>Add {s.rawName} as a new contact anyway, without confirming that relationship?</span>
+            <div style={styles.suggestButtonRow}>
+              <button type="button" onClick={() => addNewPersonAnyway(s)} style={styles.suggestYesButton}>
+                Add as contact
+              </button>
+              <button type="button" onClick={() => dismissNewPersonSuggestion(s)} style={styles.suggestNoButton}>
+                No, just a note
+              </button>
+            </div>
+          </div>
+        )
+      )}
 
       {loading && <p>Loading…</p>}
 
