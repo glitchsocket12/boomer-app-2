@@ -128,7 +128,9 @@ export default function PersonDetail({
     const [notesRes, groupsRes, personRes] = await Promise.all([
       supabase
         .from('notes')
-        .select('id, content, created_at, moment_id, moments(id, occasion, raw_description), source, source_group_id, groups(id, name)')
+        .select(
+          'id, content, created_at, moment_id, moments(id, occasion, raw_description), source, source_group_id, groups:groups!notes_source_group_id_fkey(id, name)'
+        )
         .eq('person_id', personId)
         .order('created_at', { ascending: false }),
       supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
