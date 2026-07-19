@@ -19,11 +19,38 @@ type Crumb =
 
 const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
 
+// Where-you-are is plain React state, so a browser refresh used to reset to Home.
+// Persist it per browser tab (sessionStorage) so refreshing stays on the current page.
+const NAV_STORAGE_KEY = 'boomer-nav'
+
+function restoreNav(): { view: Tab; navStack: Crumb[] } {
+  const fallback = { view: 'home' as Tab, navStack: [] as Crumb[] }
+  try {
+    const raw = sessionStorage.getItem(NAV_STORAGE_KEY)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw)
+    if (!(parsed.view in TAB_LABELS)) return fallback
+    const stack = Array.isArray(parsed.navStack)
+      ? parsed.navStack.filter(
+          (c: Crumb) =>
+            c && ['person', 'group', 'event'].includes(c.type) && typeof c.id === 'string' && typeof c.label === 'string'
+        )
+      : []
+    return { view: parsed.view, navStack: stack }
+  } catch {
+    return fallback
+  }
+}
+
 export default function App() {
   const [session, setSession] = useState<any>(null)
   const [checkingSession, setCheckingSession] = useState(true)
-  const [view, setView] = useState<Tab>('home')
-  const [navStack, setNavStack] = useState<Crumb[]>([])
+  const [view, setView] = useState<Tab>(() => restoreNav().view)
+  const [navStack, setNavStack] = useState<Crumb[]>(() => restoreNav().navStack)
+
+  useEffect(() => {
+    sessionStorage.setItem(NAV_STORAGE_KEY, JSON.stringify({ view, navStack }))
+  }, [view, navStack])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {

@@ -19,7 +19,7 @@ serve(async (req) => {
   }
 
   try {
-    const { personId } = await req.json()
+    const { personId, refresh } = await req.json()
 
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -28,15 +28,28 @@ serve(async (req) => {
     )
 
     const [{ data: person }, { data: notes }, { data: allPeople }] = await Promise.all([
-      supabaseClient.from("people").select("name, last_name").eq("id", personId).single(),
+      supabaseClient.from("people").select("name, last_name, key_facts").eq("id", personId).single(),
       supabaseClient.from("notes").select("id, content").eq("person_id", personId).order("created_at", { ascending: true }),
       supabaseClient.from("people").select("id, name, last_name, nicknames"),
     ])
+
+    // Serve the cached facts unless the caller explicitly asks to regenerate (token-efficiency
+    // rule in CLAUDE.md: never re-call the API for content that hasn't changed).
+    const cachedFacts = person?.key_facts ?? null
+    if (!refresh && cachedFacts !== null) {
+      return new Response(JSON.stringify({ facts: cachedFacts, cached: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
 
     const name = person?.name ?? "this person"
     const noteText = (notes ?? []).map((n) => n.content).join("\n")
 
     if (!noteText.trim()) {
+      // No notes left — clear any stale cached facts so they don't reappear on a later visit.
+      if (cachedFacts !== null && cachedFacts.length > 0) {
+        await supabaseClient.from("people").update({ key_facts: [], key_facts_updated_at: new Date().toISOString() }).eq("id", personId)
+      }
       return new Response(JSON.stringify({ facts: [] }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
@@ -104,7 +117,8 @@ If nothing qualifies, respond {"facts": []}.`,
     if (!response.ok) {
       const errorBody = await response.text()
       console.error("person-facts: Anthropic API error", response.status, errorBody)
-      return new Response(JSON.stringify({ facts: [], error: "extraction_failed" }), {
+      // Never blank out good facts because one regeneration failed — fall back to the cache.
+      return new Response(JSON.stringify({ facts: cachedFacts ?? [], error: "extraction_failed" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
@@ -128,9 +142,37 @@ If nothing qualifies, respond {"facts": []}.`,
       result = { ...result, ...JSON.parse(jsonSlice) }
     } catch (parseError) {
       console.error("person-facts: failed to parse AI reply as JSON", String(parseError), "raw text was:", textBlock?.text)
+      // A garbled reply must not wipe previously-good facts — fall back to the cache.
+      return new Response(JSON.stringify({ facts: cachedFacts ?? [], error: "parse_failed" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
     }
 
-    const facts = (result.facts ?? []).map((f) => {
+    // The model sometimes emits the same linked category more than once (e.g. two siblings
+    // recorded in two separate notes come back as two "siblings" facts) — merge each of
+    // siblings/parents/kids into a single fact so the UI shows one row with all the buttons.
+    const MERGE_CATEGORIES = new Set(["siblings", "parents", "kids"])
+    const mergedByCategory: Record<string, { category: string; person_names: string[]; text?: string }> = {}
+    const rawFacts: typeof result.facts = []
+    for (const f of result.facts ?? []) {
+      if (!MERGE_CATEGORIES.has(f.category)) {
+        rawFacts.push(f)
+        continue
+      }
+      const existing = mergedByCategory[f.category]
+      if (!existing) {
+        mergedByCategory[f.category] = { category: f.category, person_names: [...(f.person_names ?? [])], text: f.text }
+        rawFacts.push(mergedByCategory[f.category])
+      } else {
+        for (const n of f.person_names ?? []) {
+          if (!existing.person_names.some((e) => e.toLowerCase() === n.toLowerCase())) existing.person_names.push(n)
+        }
+        // Once any names exist, drop the nameless fallback text ("Has two kids.")
+        if (existing.person_names.length > 0) existing.text = undefined
+      }
+    }
+
+    const facts = rawFacts.map((f) => {
       if (!LINKED_CATEGORIES.has(f.category)) {
         return { category: f.category, text: f.text }
       }
@@ -156,6 +198,13 @@ If nothing qualifies, respond {"facts": []}.`,
         text: people.length === 0 ? f.text : undefined,
       }
     })
+
+    // Persist so future visits are served from the DB instead of re-calling the API.
+    const { error: saveError } = await supabaseClient
+      .from("people")
+      .update({ key_facts: facts, key_facts_updated_at: new Date().toISOString() })
+      .eq("id", personId)
+    if (saveError) console.error("person-facts: failed to save key_facts cache", saveError.message)
 
     return new Response(JSON.stringify({ facts }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

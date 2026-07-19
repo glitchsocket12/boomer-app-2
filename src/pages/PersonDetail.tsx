@@ -5,6 +5,7 @@ import { GroupChip, EventChip, PersonChip } from '../components/Chips'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import PhotoGallery from '../components/PhotoGallery'
+import RefreshButton from '../components/RefreshButton'
 
 type Note = {
   id: string
@@ -80,13 +81,15 @@ export default function PersonDetail({
       setFactsLoading(false)
       return
     }
-    refreshFacts()
+    // Plain visits serve the DB-cached facts (no AI call); regeneration only happens via
+    // the explicit refresh icon or after the notes actually change.
+    loadFacts(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [personId, loading, notes.length])
+  }, [personId, loading])
 
-  async function refreshFacts() {
+  async function loadFacts(refresh: boolean) {
     setFactsLoading(true)
-    const { data } = await supabase.functions.invoke('person-facts', { body: { personId } })
+    const { data } = await supabase.functions.invoke('person-facts', { body: { personId, refresh } })
     setKeyFacts((data?.facts as KeyFact[]) ?? [])
     setFactsLoading(false)
   }
@@ -139,6 +142,7 @@ export default function PersonDetail({
     setNewFact('')
     setSaving(false)
     loadData()
+    loadFacts(true)
   }
 
   function handleAddFact(e: FormEvent) {
@@ -152,13 +156,13 @@ export default function PersonDetail({
   async function handleEditNote(noteId: string, newContent: string) {
     await supabase.from('notes').update({ content: newContent }).eq('id', noteId)
     await loadData()
-    refreshFacts()
+    loadFacts(true)
   }
 
   async function handleDeleteNote(noteId: string) {
     await supabase.from('notes').delete().eq('id', noteId)
     await loadData()
-    refreshFacts()
+    loadFacts(true)
   }
 
   async function confirmSuggestedGroup() {
@@ -203,7 +207,7 @@ export default function PersonDetail({
     ])
     if (s.parentId === personId || s.childId === personId) {
       await loadData()
-      refreshFacts()
+      loadFacts(true)
     }
   }
 
@@ -232,7 +236,10 @@ export default function PersonDetail({
 
       {!loading && (factsLoading || keyFacts.length > 0) && (
         <div style={styles.keyFacts}>
-          <span style={styles.keyFactsHeading}>Key facts</span>
+          <span style={styles.keyFactsHeadingRow}>
+            <span style={styles.keyFactsHeading}>Key facts</span>
+            <RefreshButton label="Refresh key facts" refreshing={factsLoading} onClick={() => loadFacts(true)} />
+          </span>
           {factsLoading ? (
             <p style={styles.keyFactsLoading}>Gathering what we know…</p>
           ) : (
@@ -523,6 +530,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.85rem 1rem',
     marginBottom: '1.5rem',
   },
+  keyFactsHeadingRow: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
   keyFactsHeading: { fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6B7A6E', fontWeight: 700 },
   keyFactsLoading: { margin: 0, fontSize: '0.9rem', color: '#999', fontStyle: 'italic' },
   keyFactsList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' },
