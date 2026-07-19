@@ -389,6 +389,48 @@ moment_groups                    (join table, many-to-many)
      - **Visual placeholder built 2026-07-17** (`src/components/PhotoGallery.tsx`) — a "Gallery" section with 4 static, decorative pastel tiles (a camera icon, no real images) now appears on `PersonDetail.tsx`, `EventDetail.tsx`, and `GroupDetail.tsx`, captioned "Preview of an upcoming feature — these are placeholders, not real photos yet." This is display-only, to demonstrate the layout/format to the founder: no upload, no storage, no Supabase Storage bucket, no metadata extraction. The actual upload/attach/tagging functionality above is still not built.
 - **Edge Function test coverage is a known follow-up, not yet started.** The 2026-07-16 Vitest setup (see Section 3, Section 10) only covers frontend pure-logic helpers. The higher-risk untested code is the AI-classification logic in `converse`/`add-fact` — covering that would require mocking the Anthropic API and the Supabase client, a bigger project than the minimal setup done so far.
 
+- **MASTER LIST — founder's full app-testing feedback, logged 2026-07-18.** This consolidates two long voice-note readings from the founder plus everything still open from the older backlog above (which it supersedes as the working priority list — unfinished items from that list appear here as items 27–30). Cross-session note: the sibling-transitive-linking and family-dynamic-variety asks previously logged "for next session" are items 24–25 here. Work order agreed with the founder: **bugs first, then quick wins, then bigger features.** A standing engineering rule was added to CLAUDE.md the same day (token/billing efficiency + prompt caching) that applies to *all* AI-calling work on this list.
+
+  **Bugs:**
+  1. Key Facts disappearing/not updating on person profiles (worse with <2 notes; likely intertwined with quick-win 12).
+  2. Refreshing the browser kicks the user back to the home page — should stay on the current page. (Likely same root cause as the known "Home conversation lost when switching tabs" gap in Section 10: no URL routing.)
+  3. Clicking a suggested prompt on Home doesn't auto-start the chat.
+  4. Notes from person-profile chats sometimes don't save.
+  5. Key Facts splits same-type facts across lines (two siblings from two notes = two "Siblings" rows) — should consolidate to one line with all person buttons.
+  6. Chat output sometimes misspells a person's name even when it tags the right person — should use profile spelling.
+  7. Person references in chat replies are inconsistently rendered — sometimes a clickable button, sometimes plain text. If a profile exists, always render the button, on every chat surface (home/person/event/group).
+
+  **Quick wins:**
+  8. Total contact count next to "People" heading.
+  9. Home dashboard stats: total people, events, groups, and notes/data points.
+  10. Event tiles sized consistently, matching group-tile formatting.
+  11. Reword suggested prompts ("Let me tell you a story about…", "Take a trip down memory lane about…").
+  12. **Key Facts caching** — generate once on first profile visit, persist, add a refresh icon; stop regenerating on every visit (founder explicitly flagged the token cost; also the first application of the new CLAUDE.md efficiency rule).
+  13. People sorting: date added, alphabetical A–Z/Z–A, relevance, and "timely" relevance (e.g. an upcoming reunion surfaces graduation-related people).
+
+  **Bigger features:**
+  14. Global search bar on every page — type-ahead across people, events, groups. (Decide whether this starts as simple text match or becomes the AI "fuzzy" semantic search from old backlog item 9 / item 30 below.)
+  15. **Relationship-aware smarts** (umbrella for ~6 founder asks): answer via family links ("Braden's dog" → spouse's profile note); resolve relative references ("add my parents" → look up the user's own profile); suggest a spouse's last name when blank; auto-suggest family links from note content ("Gavin had a baby" → link mom/dad/baby + notes on all three); background scanning for likely relationships; an approval log on Home where suggestions are approved/rejected.
+  16. Auto-notes from chat — when a chat mentions people, add a note to their profiles automatically (events already do this; extend everywhere).
+  17. Long story/voice-note handling — chat currently chokes on long stories; support a 1–2 minute recording parsed into all its facts.
+  18. Real-time voice transcription (words appear as you speak, Claude-Code-style).
+  19. Rules engine — user-defined rules (e.g. "members of group A + group B also belong to group C") plus group hierarchy structure/visualization.
+  20. Data visualizations — family tree; connection map of who knows whom.
+  21. Internet lookup to add context to answers.
+  22. Settings page — event-tile colors, suggestion sensitivity, chat tone (friendly vs matter-of-fact), a profile/library for the user themself, a **terminology library** (user teaches the app their vernacular in advance), and an About section.
+  23. **Security** — real hardening (encryption story, 2FA, access control), and an About-page security writeup that only claims what's actually true. Founder: "I don't want it to be bullshit." Requires an honest audit of current state first (note: Section 10's "nothing here has been production-hardened" is the starting reality).
+  24. Half-siblings/step-parents/adoptive relationships (family-dynamic variety) — needs the founder decision described in old-backlog item 11's follow-up before building.
+  25. Sibling-group transitive linking (the clique-completion half; reciprocal linking already built).
+  26. Ratings/feedback loop — thumbs-up/down on suggestions and chat replies, used to tune app behavior over time (expectation set with founder: this tunes the app's suggestions, it does not literally retrain the model).
+
+  **Carried over from the old backlog (still open):**
+  27. Photo gallery — the real upload/storage/tagging feature (placeholder tiles shipped 2026-07-17).
+  28. Manual + AI-suggested tags on events (schema change).
+  29. Search within a single group's members/events on `GroupDetail.tsx`; and a People filter (criteria still undecided — pairs with item 13).
+  30. AI/"fuzzy" semantic search (may merge into item 14).
+
+  **Parked (not scheduled unless the founder revives them):** automatic email reminders; weather metadata on events; iPhone Contacts integration; the ongoing "AI should ask better follow-up questions" thread (connects to item 17).
+
 ## 8. Key UX / Product Decisions (and the reasoning behind them)
 
 - **The founder's real end goal is an iPhone app, not just a web app** — surfaced 2026-07-16 while planning voice input. This doesn't retroactively change the "web app, not native" decision below (nothing about hosting/deployment changed), but it directly shaped the voice-input approach: the free browser Web Speech API's speech-recognition half isn't supported in iPhone Safari at all, so a paid cloud transcription service (OpenAI Whisper, via the new `transcribe` Edge Function) was used instead specifically so voice actually works on iPhone today, without ruling out wrapping this same web app natively later (e.g. with Capacitor) if/when that's pursued. Going fully native was explicitly considered and deferred as too big a detour for now — checked in with the founder first, who confirmed "cheaply/efficiently as possible" is fine for this MVP proof-of-concept stage.
