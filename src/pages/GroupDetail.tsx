@@ -54,6 +54,7 @@ export default function GroupDetail({
   const [confirmedAssociatedGroups, setConfirmedAssociatedGroups] = useState<GroupRef[]>([])
   const [dismissedGroupIds, setDismissedGroupIds] = useState<string[]>([])
   const [memberSharedGroups, setMemberSharedGroups] = useState<GroupRef[]>([])
+  const [associatedGroupMembers, setAssociatedGroupMembers] = useState<PersonRef[]>([])
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState(groupName)
   const [editingName, setEditingName] = useState(false)
@@ -190,11 +191,30 @@ export default function GroupDetail({
 
     if (otherIds.length === 0) {
       setConfirmedAssociatedGroups([])
+      setAssociatedGroupMembers([])
       return
     }
 
     const { data: groupsData } = await supabase.from('groups').select('id, name').in('id', otherIds)
     setConfirmedAssociatedGroups((groupsData as GroupRef[]) ?? [])
+    loadAssociatedGroupMembers(otherIds)
+  }
+
+  // Candidate members sourced from associated groups: anyone explicitly in a CONFIRMED associated
+  // group's own roster is worth suggesting here too — e.g. confirming "Air Force Academy" as
+  // associated with "Air Force" surfaces the Academy's members as suggested Air Force members.
+  // Symmetric, same as the association itself: it runs whichever group's page you're viewing.
+  async function loadAssociatedGroupMembers(associatedGroupIds: string[]) {
+    const { data } = await supabase
+      .from('person_groups')
+      .select('people(id, name, last_name)')
+      .in('group_id', associatedGroupIds)
+
+    const byId = new Map<string, PersonRef>()
+    for (const row of (data as unknown as { people: PersonRef | null }[]) ?? []) {
+      if (row.people) byId.set(row.people.id, row.people)
+    }
+    setAssociatedGroupMembers([...byId.values()])
   }
 
   async function handleApproveGroupSuggestion(group: GroupRef) {
@@ -352,17 +372,25 @@ export default function GroupDetail({
   // multiple groups, e.g. a wedding tagged to both "Wings of Blue" and the couple's family
   // group; attendees of that event aren't members of every group it's tagged to). Attendees
   // who aren't explicit members are shown separately below, clearly labeled, not folded in.
+  //
+  // Suggested members combine two signals — anyone who attended an event tagged to this group
+  // (event-based) and anyone who's an explicit member of a CONFIRMED associated group
+  // (association-based, from loadAssociatedGroupMembers). Same "either signal is enough to
+  // suggest" reasoning as the Associated Groups suggestions above.
   const explicitIds = new Set(explicitMembers.map((p) => p.id))
   const dismissedIds = new Set(dismissedPersonIds)
-  const eventOnlyAttendeesById = new Map<string, PersonRef>()
+  const suggestedMembersById = new Map<string, PersonRef>()
   for (const m of moments) {
     for (const n of m.notes ?? []) {
       if (n.people && !explicitIds.has(n.people.id) && !dismissedIds.has(n.people.id)) {
-        eventOnlyAttendeesById.set(n.people.id, n.people)
+        suggestedMembersById.set(n.people.id, n.people)
       }
     }
   }
-  const eventOnlyAttendees = sortByLastName([...eventOnlyAttendeesById.values()])
+  for (const p of associatedGroupMembers) {
+    if (!explicitIds.has(p.id) && !dismissedIds.has(p.id)) suggestedMembersById.set(p.id, p)
+  }
+  const suggestedMembers = sortByLastName([...suggestedMembersById.values()])
   const sortedExplicitMembers = sortByLastName(explicitMembers)
 
   // Suggested associated groups combine two signals — any other group tagged to the same events
@@ -448,18 +476,18 @@ export default function GroupDetail({
         </div>
       )}
 
-      {eventOnlyAttendees.length > 0 && (
+      {suggestedMembers.length > 0 && (
         <>
           <div style={styles.suggestionHeaderRow}>
-            <p style={styles.eventOnlyLabel}>Also seen at this group's events — tap to add, or hover to dismiss</p>
-            {eventOnlyAttendees.length > 1 && (
-              <button onClick={() => handleDenyAllSuggestions(eventOnlyAttendees)} style={styles.removeAllButton}>
+            <p style={styles.eventOnlyLabel}>Seen at this group's events, or in an associated group — tap to add, or hover to dismiss</p>
+            {suggestedMembers.length > 1 && (
+              <button onClick={() => handleDenyAllSuggestions(suggestedMembers)} style={styles.removeAllButton}>
                 × Remove all suggestions
               </button>
             )}
           </div>
           <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
-            {eventOnlyAttendees.map((p) => (
+            {suggestedMembers.map((p) => (
               <SuggestionChip
                 key={p.id}
                 person={p}
