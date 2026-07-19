@@ -10,6 +10,7 @@ import UpdateGroupChat from '../components/UpdateGroupChat'
 import PhotoGallery from '../components/PhotoGallery'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import SearchBox from '../components/SearchBox'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string }
@@ -65,6 +66,10 @@ export default function GroupDetail({
   const [notesOpen, setNotesOpen] = useState(true)
   const [newNote, setNewNote] = useState('')
   const [savingNote, setSavingNote] = useState(false)
+  const [showGroupPicker, setShowGroupPicker] = useState(false)
+  const [pickableGroups, setPickableGroups] = useState<GroupRef[]>([])
+  const [loadingPickableGroups, setLoadingPickableGroups] = useState(false)
+  const [groupPickerSearch, setGroupPickerSearch] = useState('')
 
   useEffect(() => {
     loadMoments()
@@ -204,6 +209,23 @@ export default function GroupDetail({
     const [a, b] = [groupId, group.id].sort()
     await supabase.from('group_associations').delete().eq('group_id_a', a).eq('group_id_b', b)
     loadAssociatedGroups()
+  }
+
+  // Manual "Associate a New Group" picker — lists every other group so the user can link one
+  // directly, independent of the event/member-based suggestion signals above. Reuses
+  // handleApproveGroupSuggestion for the actual write, so a manually-added group behaves
+  // identically to an approved suggestion (and disappears from this list once confirmed).
+  async function openGroupPicker() {
+    if (showGroupPicker) {
+      setShowGroupPicker(false)
+      return
+    }
+    setShowGroupPicker(true)
+    setGroupPickerSearch('')
+    setLoadingPickableGroups(true)
+    const { data } = await supabase.from('groups').select('id, name').neq('id', groupId).order('name')
+    setPickableGroups((data as GroupRef[]) ?? [])
+    setLoadingPickableGroups(false)
   }
 
   // Same "stop suggesting this, but don't touch anything already confirmed" reasoning as
@@ -364,6 +386,11 @@ export default function GroupDetail({
   const suggestedAssociatedGroups = [...suggestedGroupsById.values()].sort((a, b) => a.name.localeCompare(b.name))
   const sortedConfirmedAssociatedGroups = [...confirmedAssociatedGroups].sort((a, b) => a.name.localeCompare(b.name))
 
+  const groupPickerQuery = groupPickerSearch.trim().toLowerCase()
+  const filteredPickableGroups = pickableGroups.filter(
+    (g) => !confirmedGroupIds.has(g.id) && (!groupPickerQuery || g.name.toLowerCase().includes(groupPickerQuery))
+  )
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -444,7 +471,32 @@ export default function GroupDetail({
         </>
       )}
 
-      <h2 style={styles.membersHeading}>Associated Groups</h2>
+      <div style={styles.suggestionHeaderRow}>
+        <h2 style={styles.membersHeading}>Associated Groups</h2>
+        <button onClick={openGroupPicker} style={styles.addGroupButton}>
+          + Associate a New Group
+        </button>
+      </div>
+
+      {showGroupPicker && (
+        <div style={styles.groupPickerPanel}>
+          <SearchBox value={groupPickerSearch} onChange={setGroupPickerSearch} placeholder="Search groups…" />
+          {loadingPickableGroups ? (
+            <p style={styles.empty}>Loading…</p>
+          ) : filteredPickableGroups.length === 0 ? (
+            <p style={styles.empty}>
+              {groupPickerQuery ? `No groups match "${groupPickerSearch}".` : 'No other groups to associate yet.'}
+            </p>
+          ) : (
+            <div style={{ ...styles.chipRow, marginBottom: '0.5rem' }}>
+              {filteredPickableGroups.map((g) => (
+                <GroupChip key={g.id} label={g.name} onClick={() => handleApproveGroupSuggestion(g)} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {sortedConfirmedAssociatedGroups.length === 0 ? (
         <p style={styles.empty}>No groups at this time.</p>
       ) : (
@@ -787,9 +839,7 @@ function AssociatedGroupChip({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <button onClick={onSelect} style={styles.person}>
-        {group.name}
-      </button>
+      <GroupChip label={group.name} onClick={onSelect} />
       {hovered && (
         <button
           onClick={(e) => {
@@ -831,7 +881,8 @@ function GroupSuggestionChip({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <button onClick={onApprove} style={styles.eventOnlyChip}>
+      <button onClick={onApprove} style={styles.groupEventOnlyChip}>
+        <span style={styles.groupDot} />
         {group.name}
       </button>
       {hovered && (
@@ -918,6 +969,49 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
+  },
+  groupEventOnlyChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.45rem',
+    fontSize: '0.88rem',
+    fontWeight: 700,
+    padding: '0.35rem 0.85rem 0.35rem 0.7rem',
+    borderRadius: '8px',
+    border: '1px dashed #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    letterSpacing: '0.02em',
+  },
+  groupDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    backgroundColor: '#B08B2E',
+    flexShrink: 0,
+  },
+  addGroupButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.3rem',
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '8px',
+    border: '1px solid #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  groupPickerPanel: {
+    backgroundColor: '#FFF',
+    border: '1px solid #E0E0E0',
+    borderRadius: '10px',
+    padding: '0.85rem 0.85rem 0.25rem',
+    marginBottom: '1rem',
   },
   renameInput: {
     fontSize: '1.5rem',
