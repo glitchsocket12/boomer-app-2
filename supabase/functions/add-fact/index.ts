@@ -312,7 +312,14 @@ If a relationship is mentioned but no name is given at all (e.g. "she's married"
 
     const familyTags: { id: string; name: string }[] = []
     let relationshipSuggestions: { parentId: string; parentName: string; childId: string; childName: string }[] = []
-    const newPersonSuggestions: { relationship: string; rawName: string; reciprocalNote: string; suggestionText: string }[] = []
+    const newPersonSuggestions: {
+      relationship: string
+      rawName: string
+      reciprocalNote: string
+      suggestionText: string
+      candidateId?: string
+      candidateName?: string
+    }[] = []
 
     if (user) {
       for (const signal of result.family_signals ?? []) {
@@ -324,23 +331,32 @@ If a relationship is mentioned but no name is given at all (e.g. "she's married"
         for (const rawName of signal.person_names ?? []) {
           if (!rawName?.trim()) continue
           const key = rawName.trim().toLowerCase()
-          const targetId = idByName[key] ?? null
+          const matchedId = idByName[key] ?? null
+          // A match only counts as CONFIDENT when the name as typed is the person's full
+          // name on file — a bare first name (or nickname) matching someone who has a last
+          // name on record is still just a guess (e.g. "dating Olivia" matching an existing
+          // "Olivia Gillingham") and must be confirmed, not silently linked as fact.
+          const isConfidentMatch = matchedId !== null && nameById[matchedId].toLowerCase() === key
 
-          // No existing person matches this name — rather than silently creating a brand-new
-          // profile (the "surprise Olivia" bug), surface it as a suggestion the founder confirms
-          // on the profile page instead. Nothing is written for this name until they accept.
-          if (!targetId) {
+          // No confident match — either nobody matches this name at all, or it only loosely
+          // matches an existing person via a bare first name/nickname. Rather than silently
+          // creating a new profile OR silently linking to someone who might be a different
+          // person entirely (the "surprise Olivia" bug), surface it as a suggestion the founder
+          // confirms on the profile page. Nothing is written for this name until they accept.
+          if (!isConfidentMatch) {
             if (newPersonSuggestions.length < 6) {
               newPersonSuggestions.push({
                 relationship: signal.relationship,
                 rawName: rawName.trim(),
                 reciprocalNote: makeNote(personFullName),
                 suggestionText: forwardPhrase(personFullName, rawName.trim()),
+                ...(matchedId ? { candidateId: matchedId, candidateName: nameById[matchedId] } : {}),
               })
             }
             continue
           }
 
+          const targetId = matchedId as string
           const targetName = nameById[targetId]
 
           if (targetId === personId) continue

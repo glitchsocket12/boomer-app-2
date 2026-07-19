@@ -37,6 +37,11 @@ type NewPersonSuggestion = {
   reciprocalNote: string
   suggestionText: string
   stage: 'confirm' | 'addAnyway'
+  // Present when the name loosely matched an existing person (e.g. a bare first name) —
+  // that match is a guess, not a fact, so it's offered as "is this the same person?"
+  // rather than being linked automatically.
+  candidateId?: string
+  candidateName?: string
 }
 
 type OtherPerson = { id: string; name: string; last_name: string | null }
@@ -269,6 +274,15 @@ export default function PersonDetail({
     if (newPerson) {
       await supabase.from('notes').insert({ person_id: newPerson.id, moment_id: null, content: s.reciprocalNote })
     }
+  }
+
+  // Confirms the loose name match WAS the same already-known person — links the relationship
+  // to that existing profile instead of creating a new one. This is the only place that link
+  // gets written; until confirmed, a same-name match is just a guess, never assumed.
+  async function confirmSamePersonSuggestion(s: NewPersonSuggestion) {
+    setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
+    if (!s.candidateId) return
+    await supabase.from('notes').insert({ person_id: s.candidateId, moment_id: null, content: s.reciprocalNote })
   }
 
   // Declining doesn't discard the mention — the original fact is already saved as a plain note
@@ -538,7 +552,21 @@ export default function PersonDetail({
       ))}
 
       {newPersonSuggestions.map((s) =>
-        s.stage === 'confirm' ? (
+        s.stage === 'confirm' && s.candidateId ? (
+          <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
+            <span>
+              New relationship suggestion: {s.suggestionText}. Is this the same person as {s.candidateName}, already in your contacts?
+            </span>
+            <div style={styles.suggestButtonRow}>
+              <button type="button" onClick={() => confirmSamePersonSuggestion(s)} style={styles.suggestYesButton}>
+                Yes, same person
+              </button>
+              <button type="button" onClick={() => declineNewPersonSuggestion(s)} style={styles.suggestNoButton}>
+                No, different person
+              </button>
+            </div>
+          </div>
+        ) : s.stage === 'confirm' ? (
           <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
             <span>New relationship suggestion: {s.suggestionText}. Add this?</span>
             <div style={styles.suggestButtonRow}>
