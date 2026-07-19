@@ -89,7 +89,10 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1500,
-        system: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events.
+        // Unique per-personId (name baked in), so caching only helps across repeated
+        // regenerations for the SAME person — still cheap to include since this call already
+        // only runs on a cache miss (see the DB-cache check above).
+        system: [{ type: "text", text: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events.
 
 Only extract facts that are EXPLICITLY stated in the notes. Never infer, guess, or pad with generic filler. Focus specifically on these categories:
 - "spouse": their spouse or partner
@@ -109,7 +112,7 @@ Respond with ONLY a JSON object in this exact shape:
   {"category": "siblings" | "parents" | "kids", "person_names": ["exactly as given, one per person"], "text": "a fallback bullet ONLY when NO names at all are given, e.g. \\"Has two kids.\\" — omit/null when person_names has anything in it"}
 ]}
 Names must NEVER appear inside "relationship_label" or "text" — the app renders each name separately as a clickable link when possible, so repeating a name in those fields would show it twice.
-If nothing qualifies, respond {"facts": []}.`,
+If nothing qualifies, respond {"facts": []}.`, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: noteText }],
       }),
     })

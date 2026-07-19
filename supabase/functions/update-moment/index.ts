@@ -164,7 +164,9 @@ Leave any of these four keys null when the user didn't touch that field this tur
         body: JSON.stringify({
           model: "claude-sonnet-5",
           max_tokens: 1500,
-          system: systemPrompt,
+          // Stable between turns of the same conversation unless new data was just written —
+          // see the matching comment in converse/index.ts.
+          system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
           messages,
         }),
       })

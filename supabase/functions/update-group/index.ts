@@ -134,7 +134,9 @@ This is saved immediately after every single turn, so only include in "rename"/"
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1500,
-        system: systemPrompt,
+        // Stable between turns of the same conversation unless new data was just written —
+        // see the matching comment in converse/index.ts.
+        system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
         messages,
       }),
     })

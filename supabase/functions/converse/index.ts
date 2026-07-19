@@ -33,13 +33,28 @@ serve(async (req) => {
       )
     }
 
-    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
+    // Explicit .order() on every query below is load-bearing, not cosmetic: Postgres doesn't
+    // guarantee row order without one, so the exact same data can come back reshuffled between
+    // calls — which reshuffles this text and breaks the prompt-cache prefix match on every turn
+    // even when nothing changed (see the cache_control breakpoint below, and CLAUDE.md's
+    // "serialize deterministically" rule).
+    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames").order("id")
     const { data: moments } = await supabaseClient
       .from("moments")
       .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
-    const { data: groups } = await supabaseClient.from("groups").select("id, name")
-    const { data: personGroups } = await supabaseClient.from("person_groups").select("person_id, group_id")
-    const { data: momentGroups } = await supabaseClient.from("moment_groups").select("moment_id, group_id")
+      .order("id")
+      .order("created_at", { foreignTable: "notes" })
+    const { data: groups } = await supabaseClient.from("groups").select("id, name").order("id")
+    const { data: personGroups } = await supabaseClient
+      .from("person_groups")
+      .select("person_id, group_id")
+      .order("person_id")
+      .order("group_id")
+    const { data: momentGroups } = await supabaseClient
+      .from("moment_groups")
+      .select("moment_id, group_id")
+      .order("moment_id")
+      .order("group_id")
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
@@ -175,7 +190,12 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 4096,
-        system: systemPrompt,
+        // The system prompt (instructions + full roster/moments context) is identical between
+        // consecutive turns of the same conversation unless new data was just written — caching
+        // it turns turn 2+ into cheap/fast cache reads instead of reprocessing the whole archive
+        // every message (see CLAUDE.md's token/billing efficiency rule, which calls this function
+        // out by name as the prime candidate).
+        system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
         messages: messages,
       }),
     })
@@ -200,6 +220,12 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     if (!textBlock) {
       console.error("Anthropic response had no text block", JSON.stringify(data))
     }
+
+    // Cheap visibility into whether prompt caching is actually landing — check this in the
+    // Supabase function logs after two back-to-back messages in the same conversation; a nonzero
+    // cache_read_input_tokens on the second call confirms the cache_control breakpoint above is
+    // working (see CLAUDE.md's token/billing efficiency rule).
+    console.log("converse usage", JSON.stringify(data.usage))
 
     let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [] }
     let rawText = ""
@@ -369,7 +395,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     }
 
     return new Response(
-      JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentIds: [...touchedMomentIds], groups: taggedGroupRefs }),
+      JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentIds: [...touchedMomentIds], groups: taggedGroupRefs, _debugUsage: data.usage }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
   } catch (error) {

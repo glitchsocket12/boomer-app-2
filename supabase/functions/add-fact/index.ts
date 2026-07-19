@@ -178,17 +178,7 @@ serve(async (req) => {
       return suggestions
     }
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") ?? "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 500,
-        system: `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, nicknames/goes-by = ${person?.nicknames || "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.
+    const addFactSystemPrompt = `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, nicknames/goes-by = ${person?.nicknames || "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.
 
 Respond ONLY with a JSON object in this exact shape:
 {"type": "name_update" | "birthday_update" | "anniversary_update" | "note", "value": <see below>, "group_signal": null | {"group_name": "string", "confidence": "high" | "medium"}, "family_signals": [{"relationship": "spouse" | "sibling" | "parent" | "child" | "partner", "person_names": ["Name1"]}]}
@@ -211,7 +201,22 @@ Never set a group_signal for a single one-off event or a bare location mention.
 - "parent": the named person(s) are their mother/father (e.g. "Her parents are Steve and Amy", "Her mom is Amy Volin").
 - "child": the named person(s) are their son(s)/daughter(s) (e.g. "Her son is Mike", "Their kids are Sarah and Jake").
 - "partner": romantically involved with / dating / boyfriend or girlfriend of the named person, not (yet) married (e.g. "He's dating Olivia", "Her boyfriend is Marcus"). If they're described as married, use "spouse" instead.
-If a relationship is mentioned but no name is given at all (e.g. "she's married", "he has a brother"), don't add an entry for it. If nothing qualifies, use an empty array.`,
+If a relationship is mentioned but no name is given at all (e.g. "she's married", "he has a brother"), don't add an entry for it. If nothing qualifies, use an empty array.`
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") ?? "",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-5",
+        max_tokens: 500,
+        // This prompt is unique per-personId (name/birthday/nicknames baked in), so caching
+        // only helps across repeated calls for the SAME person, not across different profiles —
+        // still worth it since the instructions block is long.
+        system: [{ type: "text", text: addFactSystemPrompt, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: text }],
       }),
     })
