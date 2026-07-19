@@ -155,6 +155,8 @@ At the end of EVERY turn, respond with ONLY a JSON object in this exact shape an
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
+IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", "relevant_people", "notes", etc.), copy their spelling EXACTLY as it appears in the roster above, character for character — same capitalization, same spelling. Never respell, "correct," or reformat a name from the roster, even if it looks unusual. This is what makes their name in your reply clickable — a respelled name breaks that link.
+
 CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions someone was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them.
 
 Leave "moments" as an empty array when nothing is being captured or updated — most simple questions have no moments at all. Only set "new_moment": true and fill that entry's "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
@@ -288,7 +290,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       touchedMomentIds.add(momentId)
 
       for (const note of momentEntry.notes ?? []) {
-        const personId = idByName[note.person?.toLowerCase()]
+        const personId = idByName[note.person?.trim().toLowerCase()]
         if (personId) {
           await supabaseClient.from("notes").insert({
             person_id: personId,
@@ -310,7 +312,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     }
 
     for (const tag of parsed.person_group_tags ?? []) {
-      const personId = idByName[tag.person?.toLowerCase()]
+      const personId = idByName[tag.person?.trim().toLowerCase()]
       const groupId = tag.group ? await findOrCreateGroupId(tag.group) : null
       if (personId && groupId) {
         await supabaseClient
@@ -322,8 +324,10 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
 
     const relevantPeople = (parsed.relevant_people ?? [])
       .map((name: string) => {
-        const id = idByName[name.toLowerCase()]
-        return id ? { id, name } : null
+        const id = idByName[name.trim().toLowerCase()]
+        // Always render the canonical profile spelling on the button, never whatever the AI
+        // typed — guarantees the button is spelled correctly even if the reply prose isn't.
+        return id ? { id, name: nameById[id] } : null
       })
       .filter(Boolean)
 

@@ -78,8 +78,9 @@ serve(async (req) => {
       answer = parsed.answer ?? answer
       relevantPeople = (parsed.relevant_people ?? [])
         .map((name: string) => {
-          const id = idByName[name.toLowerCase()]
-          return id ? { id, name } : null
+          const id = idByName[name.trim().toLowerCase()]
+          // Canonical profile spelling on the button, not whatever the AI typed.
+          return id ? { id, name: nameById[id] } : null
         })
         .filter(Boolean)
       relevantMomentId = parsed.relevant_moment_id ?? null

@@ -45,6 +45,16 @@ serve(async (req) => {
       data: { user },
     } = await supabaseClient.auth.getUser()
 
+    if (!user) {
+      // Without a valid user, the notes/reminders inserts below silently fail under RLS with
+      // no error the caller ever sees — same stale-session bug converse had (see PROJECT_CONTEXT.md
+      // Section 9/10). Fail loudly instead of pretending the fact was saved.
+      return new Response(
+        JSON.stringify({ error: "not_authenticated", message: "Your session has expired — please log out and log back in, then try again." }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
     const { data: person } = await supabaseClient
       .from("people")
       .select("name, last_name, nicknames, reminders(id, label, month, day)")
@@ -242,7 +252,16 @@ If a relationship is mentioned but no name is given at all (e.g. "she's married"
         }
       }
     } else {
-      await supabaseClient.from("notes").insert({ person_id: personId, moment_id: null, content: result.value })
+      const { error: noteError } = await supabaseClient
+        .from("notes")
+        .insert({ person_id: personId, moment_id: null, content: result.value })
+      if (noteError) {
+        console.error("add-fact: failed to save note", noteError.message)
+        return new Response(
+          JSON.stringify({ error: "save_failed", message: "That didn't save — please try again." }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        )
+      }
     }
 
     let groupTag: { id: string; name: string } | null = null

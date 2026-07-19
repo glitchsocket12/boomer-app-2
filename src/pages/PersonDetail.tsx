@@ -65,6 +65,7 @@ export default function PersonDetail({
   const [groupTagMessage, setGroupTagMessage] = useState<string | null>(null)
   const [suggestedGroup, setSuggestedGroup] = useState<string | null>(null)
   const [familyTagMessage, setFamilyTagMessage] = useState<string | null>(null)
+  const [factError, setFactError] = useState<string | null>(null)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
   const [factsLoading, setFactsLoading] = useState(true)
@@ -123,10 +124,20 @@ export default function PersonDetail({
     setGroupTagMessage(null)
     setSuggestedGroup(null)
     setFamilyTagMessage(null)
+    setFactError(null)
 
-    const { data } = await supabase.functions.invoke('add-fact', {
+    const { data, error } = await supabase.functions.invoke('add-fact', {
       body: { personId, text: newFact.trim() },
     })
+
+    // add-fact now fails loudly (401 if the session expired, 500 if the note insert itself
+    // failed) instead of silently no-op'ing — surface that instead of pretending it saved,
+    // and keep the typed text so nothing the user wrote is lost.
+    if (error || data?.error) {
+      setFactError(data?.message ?? 'Something went wrong saving that — please try again.')
+      setSaving(false)
+      return
+    }
 
     if (data?.groupTag) setGroupTagMessage(data.groupTag.name)
     if (data?.suggestedGroup) setSuggestedGroup(data.suggestedGroup)
@@ -318,6 +329,10 @@ export default function PersonDetail({
           </form>
         </div>
       </div>
+
+      {factError && (
+        <p style={styles.factErrorBanner}>{factError}</p>
+      )}
 
       {groupTagMessage && (
         <p style={styles.groupTagBanner}>✓ Also added {personName} to "{groupTagMessage}".</p>
@@ -575,6 +590,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   groupTagBanner: { fontSize: '0.9rem', color: '#2E4034', marginBottom: '1.5rem' },
+  factErrorBanner: { fontSize: '0.9rem', color: '#A33', marginBottom: '1.5rem' },
   suggestBanner: {
     display: 'flex',
     flexDirection: 'column',

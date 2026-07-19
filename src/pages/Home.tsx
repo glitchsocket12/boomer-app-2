@@ -47,15 +47,24 @@ export default function Home({
 
   function handleSuggestionClick(text: string) {
     setSuggestions([])
-    setThread([{ role: 'assistant', content: text }])
+    sendMessage(text)
   }
 
-  async function handleSend() {
+  function handleSend() {
     if (!input.trim() || sending) return
-
-    const newThread: ChatMessage[] = [...thread, { role: 'user', content: input.trim() }]
-    setThread(newThread)
+    const text = input.trim()
     setInput('')
+    sendMessage(text)
+  }
+
+  // Shared by both the text-box Send button and a clicked suggestion card — a suggestion
+  // now actually starts the conversation (sent as the opening message) instead of just
+  // appearing as inert app text the user then has to reply to themselves.
+  async function sendMessage(text: string) {
+    if (sending) return
+
+    const newThread: ChatMessage[] = [...thread, { role: 'user', content: text }]
+    setThread(newThread)
     setSending(true)
 
     // Only send role + content to the AI — it doesn't need the "people" chip data
