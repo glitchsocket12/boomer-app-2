@@ -29,6 +29,15 @@ type Moment = {
   moment_groups: { groups: GroupRef | null }[]
 }
 
+// Explicit member chips collapse behind a "Show all" toggle past this count — roughly 3 lines
+// at this page's width, same reasoning as Groups.tsx's MEMBER_LIMIT but expandable in place
+// instead of linking out, since this already IS the group's own page.
+const MEMBER_LIST_LIMIT = 12
+// Suggested-member chips are capped to a batch at a time — a group associated with several large
+// groups can otherwise surface hundreds of candidates at once. Adding or dismissing one shrinks
+// the underlying suggestion pool, so the next candidate fills the batch in automatically.
+const MEMBER_SUGGESTION_LIMIT = 20
+
 export default function GroupDetail({
   groupId,
   groupName,
@@ -71,6 +80,7 @@ export default function GroupDetail({
   const [pickableGroups, setPickableGroups] = useState<GroupRef[]>([])
   const [loadingPickableGroups, setLoadingPickableGroups] = useState(false)
   const [groupPickerSearch, setGroupPickerSearch] = useState('')
+  const [membersExpanded, setMembersExpanded] = useState(false)
 
   useEffect(() => {
     loadMoments()
@@ -277,6 +287,20 @@ export default function GroupDetail({
     invalidateSummary()
   }
 
+  // Same idea as handleDenyAllSuggestions but confirming instead of dismissing — one upsert for
+  // every currently-visible suggestion chip rather than one round trip per person.
+  async function handleApproveAllSuggestions(people: PersonRef[]) {
+    if (people.length === 0) return
+    await supabase
+      .from('person_groups')
+      .upsert(
+        people.map((p) => ({ person_id: p.id, group_id: groupId })),
+        { onConflict: 'person_id,group_id', ignoreDuplicates: true }
+      )
+    loadMembers()
+    invalidateSummary()
+  }
+
   async function handleRemoveMember(person: PersonRef) {
     await supabase.from('person_groups').delete().eq('person_id', person.id).eq('group_id', groupId)
     loadMembers()
@@ -391,7 +415,9 @@ export default function GroupDetail({
     if (!explicitIds.has(p.id) && !dismissedIds.has(p.id)) suggestedMembersById.set(p.id, p)
   }
   const suggestedMembers = sortByLastName([...suggestedMembersById.values()])
+  const visibleSuggestedMembers = suggestedMembers.slice(0, MEMBER_SUGGESTION_LIMIT)
   const sortedExplicitMembers = sortByLastName(explicitMembers)
+  const visibleExplicitMembers = membersExpanded ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
 
   // Suggested associated groups combine two signals — any other group tagged to the same events
   // as this one (event-based, reusing the moments already loaded above, same one-hop reasoning as
@@ -460,34 +486,49 @@ export default function GroupDetail({
 
       <PhotoGallery />
 
-      <h2 style={styles.membersHeading}>Who's in this group</h2>
+      <h2 style={styles.membersHeading}>Who's in this group ({sortedExplicitMembers.length})</h2>
       {explicitMembers.length === 0 ? (
         <p style={styles.empty}>No members yet — add someone using the chat box below.</p>
       ) : (
-        <div style={styles.chipRow}>
-          {sortedExplicitMembers.map((p) => (
-            <MemberChip
-              key={p.id}
-              person={p}
-              onSelect={() => onSelectPerson(p)}
-              onRemove={() => handleRemoveMember(p)}
-            />
-          ))}
-        </div>
+        <>
+          <div style={styles.chipRow}>
+            {visibleExplicitMembers.map((p) => (
+              <MemberChip
+                key={p.id}
+                person={p}
+                onSelect={() => onSelectPerson(p)}
+                onRemove={() => handleRemoveMember(p)}
+              />
+            ))}
+          </div>
+          {sortedExplicitMembers.length > MEMBER_LIST_LIMIT && (
+            <button onClick={() => setMembersExpanded((e) => !e)} style={styles.showMoreButton}>
+              {membersExpanded ? '▾ Show fewer members' : `▸ Show all ${sortedExplicitMembers.length} members`}
+            </button>
+          )}
+        </>
       )}
 
       {suggestedMembers.length > 0 && (
         <>
           <div style={styles.suggestionHeaderRow}>
-            <p style={styles.eventOnlyLabel}>Seen at this group's events, or in an associated group — tap to add, or hover to dismiss</p>
-            {suggestedMembers.length > 1 && (
-              <button onClick={() => handleDenyAllSuggestions(suggestedMembers)} style={styles.removeAllButton}>
-                × Remove all suggestions
-              </button>
+            <p style={styles.eventOnlyLabel}>
+              Seen at this group's events, or in an associated group — tap to add, or hover to dismiss
+              {suggestedMembers.length > MEMBER_SUGGESTION_LIMIT && ` (${MEMBER_SUGGESTION_LIMIT} of ${suggestedMembers.length} shown)`}
+            </p>
+            {visibleSuggestedMembers.length > 1 && (
+              <div style={styles.suggestionActionRow}>
+                <button onClick={() => handleApproveAllSuggestions(visibleSuggestedMembers)} style={styles.addAllButton}>
+                  ✓ Add all suggestions
+                </button>
+                <button onClick={() => handleDenyAllSuggestions(visibleSuggestedMembers)} style={styles.removeAllButton}>
+                  × Remove all suggestions
+                </button>
+              </div>
             )}
           </div>
           <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
-            {suggestedMembers.map((p) => (
+            {visibleSuggestedMembers.map((p) => (
               <SuggestionChip
                 key={p.id}
                 person={p}
@@ -978,6 +1019,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   membersHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem 0' },
   eventOnlyLabel: { margin: '0.75rem 0 0.5rem 0', fontSize: '0.85rem', color: '#888', fontStyle: 'italic' },
   suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
+  suggestionActionRow: { display: 'flex', gap: '0.9rem', flexWrap: 'wrap' },
   removeAllButton: {
     fontSize: '0.85rem',
     background: 'none',
@@ -985,6 +1027,27 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#B04A3B',
     cursor: 'pointer',
     padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  addAllButton: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  showMoreButton: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    cursor: 'pointer',
+    padding: 0,
+    marginBottom: '1rem',
     fontFamily: 'Georgia, serif',
     whiteSpace: 'nowrap',
   },
