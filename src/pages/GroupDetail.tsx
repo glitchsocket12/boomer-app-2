@@ -2,14 +2,18 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
+import { sortByLastName } from '../lib/people'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import { PersonChip, GroupChip } from '../components/Chips'
 import UpdateGroupChat from '../components/UpdateGroupChat'
 import PhotoGallery from '../components/PhotoGallery'
+import VoiceInputButton from '../components/VoiceInputButton'
+import AutoGrowTextarea from '../components/AutoGrowTextarea'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string }
+type GroupNote = { id: string; content: string; created_at: string }
 
 type Moment = {
   id: string
@@ -54,15 +58,48 @@ export default function GroupDetail({
   const [summary, setSummary] = useState<string | null>(null)
   const [refreshingSummary, setRefreshingSummary] = useState(false)
   const requestedMomentSummaries = useRef(new Set<string>())
+  const [groupNotes, setGroupNotes] = useState<GroupNote[]>([])
+  const [notesOpen, setNotesOpen] = useState(true)
+  const [newNote, setNewNote] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
 
   useEffect(() => {
     loadMoments()
     loadMembers()
     loadSummary()
+    loadGroupNotes()
     setName(groupName)
     setNameInput(groupName)
     setEditingName(false)
   }, [groupId])
+
+  async function loadGroupNotes() {
+    const { data } = await supabase
+      .from('notes')
+      .select('id, content, created_at')
+      .eq('group_id', groupId)
+      .order('created_at', { ascending: false })
+    setGroupNotes((data as unknown as GroupNote[]) ?? [])
+  }
+
+  async function submitGroupNote() {
+    if (!newNote.trim()) return
+    setSavingNote(true)
+    await supabase.from('notes').insert({ group_id: groupId, person_id: null, content: newNote.trim() })
+    setNewNote('')
+    setSavingNote(false)
+    loadGroupNotes()
+  }
+
+  async function handleEditGroupNote(noteId: string, newContent: string) {
+    await supabase.from('notes').update({ content: newContent }).eq('id', noteId)
+    loadGroupNotes()
+  }
+
+  async function handleDeleteGroupNote(noteId: string) {
+    await supabase.from('notes').delete().eq('id', noteId)
+    loadGroupNotes()
+  }
 
   async function loadSummary() {
     setSummary(null)
@@ -148,12 +185,26 @@ export default function GroupDetail({
 
   async function loadMoments(silent = false) {
     if (!silent) setLoading(true)
+
+    // Two steps on purpose: filtering the top-level query with `.eq('moment_groups.group_id', ...)`
+    // also filters the EMBEDDED moment_groups array down to just this one group's row (a
+    // PostgREST quirk), which would silently break the Associated Groups derivation below —
+    // it needs every group each moment is tagged to, not just this one.
+    const { data: taggedRows } = await supabase.from('moment_groups').select('moment_id').eq('group_id', groupId)
+    const momentIds = (taggedRows ?? []).map((r) => r.moment_id)
+
+    if (momentIds.length === 0) {
+      setMoments([])
+      if (!silent) setLoading(false)
+      return
+    }
+
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, event_date, raw_description, summary, created_at, notes(people(id, name, last_name)), moment_groups!inner(group_id, groups(id, name))'
+        'id, occasion, location, when_text, event_date, raw_description, summary, created_at, notes(people(id, name, last_name)), moment_groups(group_id, groups(id, name))'
       )
-      .eq('moment_groups.group_id', groupId)
+      .in('id', momentIds)
 
     const sorted = ((data as unknown as Moment[]) ?? []).sort(
       (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
@@ -211,7 +262,22 @@ export default function GroupDetail({
       }
     }
   }
-  const eventOnlyAttendees = [...eventOnlyAttendeesById.values()]
+  const eventOnlyAttendees = sortByLastName([...eventOnlyAttendeesById.values()])
+  const sortedExplicitMembers = sortByLastName(explicitMembers)
+
+  // A group's "associated groups" aren't a direct relationship — they're derived the same way
+  // EventDetail.tsx's "Affiliated Groups" works, just one hop further: any other group tagged
+  // to the same events as this one (e.g. a graduation event tagged to both "Air Force Academy"
+  // and "Cadet 4 A Dat" makes those two associated), reusing the moments already loaded above.
+  const associatedGroupsById = new Map<string, GroupRef>()
+  for (const m of moments) {
+    for (const mg of m.moment_groups ?? []) {
+      if (mg.groups && mg.groups.id !== groupId) {
+        associatedGroupsById.set(mg.groups.id, mg.groups)
+      }
+    }
+  }
+  const associatedGroups = [...associatedGroupsById.values()].sort((a, b) => a.name.localeCompare(b.name))
 
   return (
     <div style={styles.page}>
@@ -252,6 +318,17 @@ export default function GroupDetail({
         <RefreshButton label="Refresh description" onClick={refreshSummary} refreshing={refreshingSummary} />
       </div>
 
+      {associatedGroups.length > 0 && (
+        <>
+          <h2 style={styles.membersHeading}>Associated Groups</h2>
+          <div style={styles.chipRow}>
+            {associatedGroups.map((g) => (
+              <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+            ))}
+          </div>
+        </>
+      )}
+
       <PhotoGallery />
 
       <h2 style={styles.membersHeading}>Who's in this group</h2>
@@ -259,7 +336,7 @@ export default function GroupDetail({
         <p style={styles.empty}>No members yet — add someone using the chat box below.</p>
       ) : (
         <div style={styles.chipRow}>
-          {explicitMembers.map((p) => (
+          {sortedExplicitMembers.map((p) => (
             <MemberChip
               key={p.id}
               person={p}
@@ -334,7 +411,7 @@ export default function GroupDetail({
                 <>
                   <p style={styles.chipLabel}>Who was there</p>
                   <div style={styles.chipRow}>
-                    {Array.from(attendees.values()).map((p) => (
+                    {sortByLastName(Array.from(attendees.values())).map((p) => (
                       <PersonChip
                         key={p.id}
                         label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
@@ -348,6 +425,52 @@ export default function GroupDetail({
           )
         })}
       </div>
+
+      <div style={styles.notesHeaderRow}>
+        <h2 style={styles.editHeading}>Notes</h2>
+        {groupNotes.length > 0 && (
+          <button type="button" onClick={() => setNotesOpen((o) => !o)} style={styles.notesToggle}>
+            {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
+          </button>
+        )}
+      </div>
+      <p style={styles.chatHint}>Free-form context about this group — no event needed.</p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          submitGroupNote()
+        }}
+        style={styles.addNoteForm}
+      >
+        <AutoGrowTextarea
+          value={newNote}
+          onChange={setNewNote}
+          onEnter={submitGroupNote}
+          placeholder={`Add a note about ${name}…`}
+          style={styles.addNoteInput}
+          disabled={savingNote}
+        />
+        <VoiceInputButton
+          disabled={savingNote}
+          onTranscribed={(text) => setNewNote((prev) => (prev ? `${prev} ${text}` : text))}
+        />
+        <button type="submit" disabled={savingNote || !newNote.trim()} style={styles.addNoteButton}>
+          {savingNote ? '…' : 'Add'}
+        </button>
+      </form>
+
+      {notesOpen && groupNotes.length > 0 && (
+        <div style={styles.notesList}>
+          {groupNotes.map((note) => (
+            <GroupNoteCard
+              key={note.id}
+              note={note}
+              onEdit={handleEditGroupNote}
+              onDelete={handleDeleteGroupNote}
+            />
+          ))}
+        </div>
+      )}
 
       <h2 style={styles.editHeading}>Edit this group</h2>
       <p style={styles.chatHint}>Add or remove someone, tag or untag an event, or rename it — just tell me what to change.</p>
@@ -363,8 +486,80 @@ export default function GroupDetail({
           loadMoments(true)
           loadMembers()
           loadSummary()
+          loadGroupNotes()
         }}
       />
+    </div>
+  )
+}
+
+// One free-standing group note. Same hover-reveals-edit/delete pattern as PersonDetail.tsx's
+// NoteCard, minus any source label — a group note is always native to this page, so there's
+// nothing else to attribute it to.
+function GroupNoteCard({
+  note,
+  onEdit,
+  onDelete,
+}: {
+  note: GroupNote
+  onEdit: (noteId: string, newContent: string) => void
+  onDelete: (noteId: string) => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  function startEditing() {
+    setDraft(note.content)
+    setEditing(true)
+  }
+
+  function commitEdit() {
+    if (draft.trim()) onEdit(note.id, draft.trim())
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div style={styles.card}>
+        <form onSubmit={(e) => { e.preventDefault(); commitEdit() }} style={styles.noteEditForm}>
+          <AutoGrowTextarea value={draft} onChange={setDraft} onEnter={commitEdit} style={styles.noteEditInput} />
+          <div style={styles.noteEditButtonRow}>
+            <button type="submit" style={styles.noteSaveButton}>Save</button>
+            <button type="button" onClick={() => setEditing(false)} style={styles.noteCancelButton}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
+  return (
+    <div style={styles.noteCardWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <div style={styles.card}>
+        <p style={styles.description}>{note.content}</p>
+        <p style={styles.meta}>
+          {new Date(note.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+        </p>
+      </div>
+      {hovered && (
+        <div style={styles.noteBadgeRow}>
+          <button onClick={startEditing} aria-label="Edit this note" style={styles.noteBadge}>
+            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </button>
+          <button onClick={() => onDelete(note.id)} aria-label="Delete this note" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
+            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18" />
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6" />
+              <path d="M14 11v6" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -490,7 +685,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
   },
-  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 6rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
     border: 'none',
@@ -581,4 +776,65 @@ const styles: { [key: string]: React.CSSProperties } = {
   chipLabel: { margin: '0 0 0.4rem 0', fontSize: '0.85rem', fontWeight: 'bold', color: '#2E4034' },
   editHeading: { fontSize: '1.2rem', color: '#2E4034', margin: '2rem 0 0.5rem 0' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
+  notesHeaderRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', margin: '2rem 0 0' },
+  notesToggle: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  addNoteForm: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem', marginBottom: '1rem' },
+  addNoteInput: { flex: 1, fontSize: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #CCC' },
+  addNoteButton: {
+    fontSize: '1rem',
+    padding: '0.6rem 1.1rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
+  notesList: { display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1rem' },
+  noteCardWrapper: { position: 'relative' },
+  noteBadgeRow: { position: 'absolute', top: '-6px', right: '-6px', display: 'flex', gap: '0.3rem' },
+  noteBadge: {
+    width: '20px',
+    height: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    border: '1px solid #999',
+    backgroundColor: '#FFF',
+    color: '#555',
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+  },
+  noteDeleteBadge: { borderColor: '#B04A3B', color: '#B04A3B' },
+  noteEditForm: { display: 'flex', flexDirection: 'column', gap: '0.4rem' },
+  noteEditInput: { fontSize: '0.95rem', padding: '0.5rem', borderRadius: '6px', border: '1px solid #CCC' },
+  noteEditButtonRow: { display: 'flex', gap: '0.5rem' },
+  noteSaveButton: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #2E4034',
+    backgroundColor: 'transparent',
+    color: '#2E4034',
+    cursor: 'pointer',
+  },
+  noteCancelButton: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #999',
+    backgroundColor: 'transparent',
+    color: '#666',
+    cursor: 'pointer',
+  },
 }

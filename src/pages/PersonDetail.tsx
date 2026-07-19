@@ -14,6 +14,9 @@ type Note = {
   created_at: string
   moment_id: string | null
   moments: { id: string; occasion: string | null; raw_description: string } | null
+  source: string | null
+  source_group_id: string | null
+  groups: { id: string; name: string } | null
 }
 
 type GroupRef = { id: string; name: string }
@@ -125,7 +128,7 @@ export default function PersonDetail({
     const [notesRes, groupsRes, personRes] = await Promise.all([
       supabase
         .from('notes')
-        .select('id, content, created_at, moment_id, moments(id, occasion, raw_description)')
+        .select('id, content, created_at, moment_id, moments(id, occasion, raw_description), source, source_group_id, groups(id, name)')
         .eq('person_id', personId)
         .order('created_at', { ascending: false }),
       supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
@@ -614,6 +617,7 @@ export default function PersonDetail({
                   key={note.id}
                   note={note}
                   onSelectEvent={onSelectEvent}
+                  onSelectGroup={onSelectGroup}
                   onEdit={handleEditNote}
                   onDelete={handleDeleteNote}
                 />
@@ -760,11 +764,13 @@ function KeyFactItem({
 function NoteCard({
   note,
   onSelectEvent,
+  onSelectGroup,
   onEdit,
   onDelete,
 }: {
   note: Note
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
   onEdit: (noteId: string, newContent: string) => void
   onDelete: (noteId: string) => void
 }) {
@@ -808,7 +814,7 @@ function NoteCard({
           <span style={styles.noteDate}>
             {new Date(note.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
           </span>
-          {note.moments && (
+          {note.moments ? (
             <button
               type="button"
               style={styles.noteSourceButton}
@@ -816,7 +822,17 @@ function NoteCard({
             >
               Added through: {summarize(note.moments.occasion, note.moments.raw_description)}
             </button>
-          )}
+          ) : note.groups ? (
+            <button
+              type="button"
+              style={styles.noteSourceButton}
+              onClick={() => onSelectGroup({ id: note.groups!.id, name: note.groups!.name })}
+            >
+              From: {note.groups.name}
+            </button>
+          ) : note.source === 'home' ? (
+            <span style={styles.noteSourceTag}>From Home</span>
+          ) : null}
         </div>
       </div>
 
@@ -973,6 +989,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#EAF1FA',
     color: '#2C5079',
     cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  noteSourceTag: {
+    fontSize: '0.75rem',
+    padding: '0.2rem 0.55rem',
+    borderRadius: '5px',
+    border: '1px solid #C7C7BE',
+    backgroundColor: '#F4F4F0',
+    color: '#777',
     fontFamily: 'Georgia, serif',
   },
   noteBadgeRow: { position: 'absolute', top: '-6px', right: '-6px', display: 'flex', gap: '0.3rem' },

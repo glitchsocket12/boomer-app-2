@@ -117,12 +117,12 @@ Some people in the list above have a nickname or "goes by" name shown in parenth
 
 IMPORTANT — disambiguating people who share a first name or nickname: if the user names someone who shares a first name or nickname with another recorded person, use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person they mean from context, ask instead of guessing.
 
-The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), or tag/untag events. Don't finish right away — first ask a short, natural follow-up like "Anything else you'd like to change?" so they have a chance to make more edits in one go. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
+The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), tag/untag events, or mention a plain fact about a member that isn't a membership/event change (e.g. "oh, and Bob mentioned he's retiring this fall") — capture that as a note on that person's own profile via "notes" below, using their exact name from the list above. Don't finish right away — first ask a short, natural follow-up like "Anything else you'd like to change?" so they have a chance to make more edits in one go. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list above"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"]}
+{"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list above"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the list above", "content": "the fact, written as a short standalone sentence"}]}
 
-This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids" whatever is newly given in the user's latest message — never repeat something already reflected in "Current members" or the tagged-events lists above.`
+This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in "Current members" or the tagged-events lists above.`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -159,6 +159,7 @@ This is saved immediately after every single turn, so only include in "rename"/"
       remove_people: [],
       add_event_ids: [],
       remove_event_ids: [],
+      notes: [],
     }
     let rawText = ""
     try {
@@ -231,6 +232,19 @@ This is saved immediately after every single turn, so only include in "rename"/"
       await supabaseClient.from("moment_groups").delete().eq("moment_id", momentId).eq("group_id", groupId)
       taggedMomentIds.delete(momentId)
       changed = true
+    }
+
+    for (const note of parsed.notes ?? []) {
+      const personId = idByName[note.person?.trim().toLowerCase()]
+      if (personId && note.content?.trim()) {
+        await supabaseClient.from("notes").insert({
+          person_id: personId,
+          moment_id: null,
+          content: note.content.trim(),
+          source_group_id: groupId,
+        })
+        changed = true
+      }
     }
 
     if (changed) {

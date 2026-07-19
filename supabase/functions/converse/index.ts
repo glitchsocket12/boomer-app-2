@@ -316,6 +316,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
             person_id: personId,
             moment_id: momentId,
             content: note.note,
+            source: "home",
           })
         }
       }

@@ -4,11 +4,14 @@ import { GroupChip } from '../components/Chips'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
 import PhotoGallery from '../components/PhotoGallery'
+import SearchBox from '../components/SearchBox'
 import { summarize } from '../lib/summarize'
+import { sortByLastName } from '../lib/people'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
-type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null }
+type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null; source: string | null }
+type OtherEvent = { id: string; occasion: string | null; raw_description: string }
 
 type MomentDetail = {
   id: string
@@ -45,10 +48,20 @@ export default function EventDetail({
   const [titleInput, setTitleInput] = useState('')
   const [savingTitle, setSavingTitle] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
+  const [deleteConfirming, setDeleteConfirming] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeSearch, setMergeSearch] = useState('')
+  const [otherEvents, setOtherEvents] = useState<OtherEvent[]>([])
+  const [mergeCandidate, setMergeCandidate] = useState<OtherEvent | null>(null)
 
   useEffect(() => {
     loadMoment()
     setEditingTitle(false)
+    setDeleteConfirming(false)
+    setMergeOpen(false)
+    setMergeCandidate(null)
   }, [eventId])
 
   async function loadMoment(silent = false) {
@@ -56,7 +69,7 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), dismissed_person_ids'
+        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), dismissed_person_ids'
       )
       .eq('id', eventId)
       .single()
@@ -138,6 +151,71 @@ export default function EventDetail({
     onRenamed?.(summarize(newOccasion, moment.raw_description))
   }
 
+  // Permanently removes this event and everything tied only to it (its notes, its group tags).
+  // Same reasoning as PersonDetail.tsx's handleDeleteProfile: a whole-event delete is a
+  // deliberate "throw this away" action, unlike untagging one attendee (which stays
+  // non-destructive by design — see handleRemoveAttendee above).
+  async function handleDeleteEvent() {
+    setActionBusy(true)
+    setActionError(null)
+    const [notesRes, groupsRes, momentRes] = await Promise.all([
+      supabase.from('notes').delete().eq('moment_id', eventId),
+      supabase.from('moment_groups').delete().eq('moment_id', eventId),
+      supabase.from('moments').delete().eq('id', eventId),
+    ])
+    const error = notesRes.error || groupsRes.error || momentRes.error
+    if (error) {
+      setActionError('Something went wrong deleting this event — please try again.')
+      setActionBusy(false)
+      return
+    }
+    onBack()
+  }
+
+  async function openMerge() {
+    setMergeOpen(true)
+    setMergeCandidate(null)
+    setMergeSearch('')
+    if (otherEvents.length === 0) {
+      const { data } = await supabase.from('moments').select('id, occasion, raw_description').neq('id', eventId)
+      setOtherEvents((data as OtherEvent[]) ?? [])
+    }
+  }
+
+  // Folds `duplicate` into THIS event: its notes and group tags all move over (group tags
+  // unioned, not duplicated), the duplicate event itself is deleted, and this event's cached
+  // summary is cleared so it regenerates incorporating the newly-merged notes — same shape as
+  // PersonDetail.tsx's handleMerge.
+  async function handleMergeEvent() {
+    if (!mergeCandidate || !moment) return
+    setActionBusy(true)
+    setActionError(null)
+    const duplicateId = mergeCandidate.id
+
+    const { error: notesError } = await supabase.from('notes').update({ moment_id: eventId }).eq('moment_id', duplicateId)
+    if (notesError) {
+      setActionError('Something went wrong merging these events — please try again.')
+      setActionBusy(false)
+      return
+    }
+
+    const { data: dupGroups } = await supabase.from('moment_groups').select('group_id').eq('moment_id', duplicateId)
+    for (const g of dupGroups ?? []) {
+      await supabase
+        .from('moment_groups')
+        .upsert({ moment_id: eventId, group_id: g.group_id }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+    }
+    await supabase.from('moment_groups').delete().eq('moment_id', duplicateId)
+    await supabase.from('moments').delete().eq('id', duplicateId)
+    await supabase.from('moments').update({ summary: null }).eq('id', eventId)
+
+    setMergeOpen(false)
+    setMergeCandidate(null)
+    setActionBusy(false)
+    await loadMoment()
+    generateSummary()
+  }
+
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
   if (!moment) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Couldn't find that event.</p>
 
@@ -150,13 +228,13 @@ export default function EventDetail({
   // person (see converse/index.ts's per-attendee insert loop) — collapse those into one card
   // listing everyone instead of repeating the same sentence once per person. Notes added
   // separately (edits, follow-up chat) naturally won't share exact text, so they stay distinct.
-  const noteGroups: { key: string; content: string; created_at: string; people: PersonRef[] }[] = []
+  const noteGroups: { key: string; content: string; created_at: string; source: string | null; people: PersonRef[] }[] = []
   const noteGroupsByContent = new Map<string, (typeof noteGroups)[number]>()
   for (const n of moment.notes ?? []) {
     const key = n.content.trim()
     let group = noteGroupsByContent.get(key)
     if (!group) {
-      group = { key, content: n.content, created_at: n.created_at, people: [] }
+      group = { key, content: n.content, created_at: n.created_at, source: n.source, people: [] }
       noteGroupsByContent.set(key, group)
       noteGroups.push(group)
     }
@@ -274,7 +352,7 @@ export default function EventDetail({
           <h2 style={styles.subheading}>Who was there</h2>
           <p style={styles.chatHint}>Tap a name for their profile, or hover to untag them from this event.</p>
           <div style={styles.chipRow}>
-            {Array.from(attendees.values()).map((p) => (
+            {sortByLastName(Array.from(attendees.values())).map((p) => (
               <AttendeeChip
                 key={p.id}
                 person={p}
@@ -301,7 +379,7 @@ export default function EventDetail({
           </div>
           <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
           <div style={styles.chipRow}>
-            {Array.from(suggestedAttendees.values()).map((p) => (
+            {sortByLastName(Array.from(suggestedAttendees.values())).map((p) => (
               <SuggestedAttendeeChip
                 key={p.id}
                 person={p}
@@ -333,12 +411,15 @@ export default function EventDetail({
               {noteGroups.map((group) => (
                 <div key={group.key} style={styles.noteCard}>
                   <p style={styles.noteContent}>{group.content}</p>
-                  <p style={styles.noteMeta}>
-                    {group.people.length > 0
-                      ? `${group.people.map((p) => `${p.name}${p.last_name ? ` ${p.last_name}` : ''}`).join(', ')} · `
-                      : ''}
-                    {new Date(group.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-                  </p>
+                  <div style={styles.noteMetaRow}>
+                    <span style={styles.noteMeta}>
+                      {group.people.length > 0
+                        ? `${group.people.map((p) => `${p.name}${p.last_name ? ` ${p.last_name}` : ''}`).join(', ')} · `
+                        : ''}
+                      {new Date(group.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                    </span>
+                    {group.source === 'home' && <span style={styles.noteSourceTag}>From Home</span>}
+                  </div>
                 </div>
               ))}
             </div>
@@ -349,6 +430,101 @@ export default function EventDetail({
       <h2 style={styles.subheading}>Remember something else?</h2>
       <p style={styles.chatHint}>Tell me anything more about this — who else was there, how it went, anything you'd want to look back on.</p>
       <UpdateMomentChat momentId={moment.id} onSaved={handleNoteSaved} />
+
+      <div style={styles.dangerZone}>
+        <span style={styles.dangerHeading}>Event</span>
+
+        {actionError && <p style={styles.factErrorBanner}>{actionError}</p>}
+
+        {!mergeOpen && !deleteConfirming && (
+          <div style={styles.dangerButtonRow}>
+            <button type="button" onClick={openMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+              Merge a duplicate event into this one…
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteConfirming(true)}
+              style={styles.dangerDeleteButton}
+              disabled={actionBusy}
+            >
+              Delete this event
+            </button>
+          </div>
+        )}
+
+        {deleteConfirming && (
+          <div style={styles.suggestBanner}>
+            <span>Delete this event permanently? This removes all of its notes. This can't be undone.</span>
+            <div style={styles.suggestButtonRow}>
+              <button type="button" onClick={handleDeleteEvent} style={styles.dangerDeleteButton} disabled={actionBusy}>
+                {actionBusy ? 'Deleting…' : 'Yes, delete'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirming(false)}
+                style={styles.suggestNoButton}
+                disabled={actionBusy}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {mergeOpen && (
+          <div style={styles.suggestBanner}>
+            {!mergeCandidate ? (
+              <>
+                <span>Search for the duplicate event to merge into this one:</span>
+                <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search events…" />
+                <div style={styles.mergeResultsList}>
+                  {otherEvents
+                    .filter((e) => {
+                      const label = summarize(e.occasion, e.raw_description).toLowerCase()
+                      return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
+                    })
+                    .slice(0, 8)
+                    .map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() => setMergeCandidate(e)}
+                        style={styles.mergeResultButton}
+                      >
+                        {summarize(e.occasion, e.raw_description)}
+                      </button>
+                    ))}
+                </div>
+                <div style={styles.suggestButtonRow}>
+                  <button type="button" onClick={() => setMergeOpen(false)} style={styles.suggestNoButton}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <span>
+                  Merge "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}" into this event?
+                  All of its notes and group tags move here, then that event is deleted. This can't be undone.
+                </span>
+                <div style={styles.suggestButtonRow}>
+                  <button type="button" onClick={handleMergeEvent} style={styles.suggestYesButton} disabled={actionBusy}>
+                    {actionBusy ? 'Merging…' : 'Yes, merge'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMergeCandidate(null)}
+                    style={styles.suggestNoButton}
+                    disabled={actionBusy}
+                  >
+                    Back
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -437,7 +613,7 @@ function SuggestedAttendeeChip({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 6rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
     border: 'none',
@@ -563,5 +739,89 @@ const styles: { [key: string]: React.CSSProperties } = {
     boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
   },
   noteContent: { margin: '0 0 0.5rem 0', fontSize: '1.05rem', color: '#2E2E2E', lineHeight: 1.5 },
+  noteMetaRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' },
   noteMeta: { margin: 0, fontSize: '0.85rem', color: '#999' },
+  noteSourceTag: {
+    fontSize: '0.75rem',
+    padding: '0.2rem 0.55rem',
+    borderRadius: '5px',
+    border: '1px solid #C7C7BE',
+    backgroundColor: '#F4F4F0',
+    color: '#777',
+    fontFamily: 'Georgia, serif',
+  },
+  factErrorBanner: { fontSize: '0.9rem', color: '#A33', marginBottom: '1.5rem' },
+  suggestBanner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.6rem',
+    fontSize: '0.9rem',
+    color: '#5A4A20',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #E6D6AC',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+    marginBottom: '1.5rem',
+  },
+  suggestButtonRow: { display: 'flex', gap: '0.5rem' },
+  suggestYesButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
+  suggestNoButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: '1px solid #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+  },
+  dangerZone: {
+    marginTop: '2.5rem',
+    paddingTop: '1.25rem',
+    borderTop: '1px solid #E2DFD6',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+  },
+  dangerHeading: { fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6B7A6E', fontWeight: 700 },
+  dangerButtonRow: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' },
+  dangerSecondaryButton: {
+    fontSize: '0.85rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '6px',
+    border: '1px solid #999',
+    backgroundColor: 'transparent',
+    color: '#555',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  dangerDeleteButton: {
+    fontSize: '0.85rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '6px',
+    border: '1px solid #B04A3B',
+    backgroundColor: 'transparent',
+    color: '#B04A3B',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  mergeResultsList: { display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '220px', overflowY: 'auto' },
+  mergeResultButton: {
+    textAlign: 'left',
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #E6D6AC',
+    backgroundColor: '#FFF',
+    color: '#2E2E2E',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
 }
