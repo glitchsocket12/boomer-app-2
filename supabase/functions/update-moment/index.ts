@@ -110,21 +110,16 @@ serve(async (req) => {
 
     const todayIso = new Date().toISOString().slice(0, 10)
 
-    const systemPrompt = `You are helping the user add more detail to a memory they already recorded in an app called Boomer. Today's date is ${todayIso}.
+    // Stable instructions ONLY — no interpolated data, so this exact string is byte-identical
+    // across every moment/user/turn and forms a widely-reusable prefix-cache breakpoint (see
+    // CLAUDE.md's token/billing efficiency rule and the matching comment in converse/index.ts).
+    const stableInstructions = `You are helping the user add more detail to a memory they already recorded in an app called Boomer.
 
-Here's what's already known about this moment: ${existingSummary}
+Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "new_people"/"additional_notes", and it will still resolve to the same person.
 
-Here is everyone already recorded, by full name where a last name is known: ${peopleRoster || "(none yet)"}
+IMPORTANT — disambiguating people who share a first name or nickname: check the roster provided in this prompt for any other recorded person with the same first name or nickname as whoever you're about to write into "new_people" or "additional_notes". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
-Here are the groups already on file: ${groupsRoster || "(none yet)"}
-
-Here are the OTHER events/moments already recorded in the app (not this one), by their name and roughly when they happened: ${otherEventsRoster || "(none yet)"}
-
-Some people in the roster above have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "new_people"/"additional_notes", and it will still resolve to the same person.
-
-IMPORTANT — disambiguating people who share a first name or nickname: check the roster above for any other recorded person with the same first name or nickname as whoever you're about to write into "new_people" or "additional_notes". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
-
-IMPORTANT — a term the user uses might actually be the name of one of the OTHER events listed above (e.g. a race, trip, or reunion with a distinctive name) rather than what it sounds like literally. Check the other-events roster before assuming a name refers to something else (a medical event, a place, etc). If it's genuinely ambiguous which one they mean — or whether they mean an event at all versus something else entirely — don't guess: ask a short, direct clarifying question in "reply" (e.g. "Just to make sure I've got this right — is 'the triple bypass' the bike race you did a few days ago, or something else?"), set "done": false, and leave the other fields empty for that turn. A clarifying question is still a completely ordinary reply — always wrap it in the same JSON shape as everything else.
+IMPORTANT — a term the user uses might actually be the name of one of the OTHER events listed in this prompt (e.g. a race, trip, or reunion with a distinctive name) rather than what it sounds like literally. Check the other-events roster before assuming a name refers to something else (a medical event, a place, etc). If it's genuinely ambiguous which one they mean — or whether they mean an event at all versus something else entirely — don't guess: ask a short, direct clarifying question in "reply" (e.g. "Just to make sure I've got this right — is 'the triple bypass' the bike race you did a few days ago, or something else?"), set "done": false, and leave the other fields empty for that turn. A clarifying question is still a completely ordinary reply — always wrap it in the same JSON shape as everything else.
 
 When the user shares a new detail, don't finish right away — first ask a short, natural follow-up question like "Anything else you remember about this?" so they have a chance to add more. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 
@@ -132,17 +127,31 @@ At the end of EVERY turn (not just the final one), respond with ONLY a JSON obje
 {"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null}, "add_groups": ["Group Name"]}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
-This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known above.
+This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
 
 CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "additional_notes": a person only shows up as having attended if they have at least one note tied to this moment. So whenever the user mentions someone was AT this event — even in passing, even with no other detail about them — you MUST still include an entry for them in "additional_notes" (e.g. {"person": "Name1", "note": "Was there."}) so they get linked. Do not just add them to "new_people" and stop — a person with no note attached will silently NOT appear as having attended, which is the whole point of recording them.
 
 "moment_field_updates" is for the moment's own top-level fields, not a person-specific fact. Use it when the user gives new or corrected info about the event itself:
 - "when_text": the user's own words describing timing (e.g. "fall of 2025"), only when they give timing info different from what's already known.
-- "event_date": your best-guess actual calendar date as "YYYY-MM-DD" matching whatever "when_text" you just set. Resolve relative phrases against today's date (${todayIso}). If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year, use the 1st of that month. If only a year, use January 1. Always give your single closest best guess rather than a range.
+- "event_date": your best-guess actual calendar date as "YYYY-MM-DD" matching whatever "when_text" you just set. Resolve relative phrases against today's date, given below. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year, use the 1st of that month. If only a year, use January 1. Always give your single closest best guess rather than a range.
 - "location" / "occasion": only set when the user is giving new or corrected info for that specific field.
 Leave any of these four keys null when the user didn't touch that field this turn.
 
-"add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Affiliated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster above if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail.`
+"add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Affiliated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster provided in this prompt if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail.`
+
+    // Per-request volatile data ONLY — today's date plus this moment's known fields and the
+    // full people/groups/events roster, which changes as soon as the user adds detail. Its own
+    // trailing block (own breakpoint) so a write between turns only invalidates this, not the
+    // much larger stable instructions above.
+    const dynamicContext = `Today's date is ${todayIso}.
+
+Here's what's already known about this moment: ${existingSummary}
+
+Here is everyone already recorded, by full name where a last name is known: ${peopleRoster || "(none yet)"}
+
+Here are the groups already on file: ${groupsRoster || "(none yet)"}
+
+Here are the OTHER events/moments already recorded in the app (not this one), by their name and roughly when they happened: ${otherEventsRoster || "(none yet)"}`
 
     const DEFAULT_PARSED = {
       reply: "Sorry, I didn't get a response there — please try again.",
@@ -164,9 +173,11 @@ Leave any of these four keys null when the user didn't touch that field this tur
         body: JSON.stringify({
           model: "claude-sonnet-5",
           max_tokens: 1500,
-          // Stable between turns of the same conversation unless new data was just written —
-          // see the matching comment in converse/index.ts.
-          system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+          // Two breakpoints — see the matching comment in converse/index.ts.
+          system: [
+            { type: "text", text: stableInstructions, cache_control: { type: "ephemeral" } },
+            { type: "text", text: dynamicContext, cache_control: { type: "ephemeral" } },
+          ],
           messages,
         }),
       })

@@ -130,22 +130,21 @@ serve(async (req) => {
     const todayString = new Date().toDateString()
     const todayIso = new Date().toISOString().slice(0, 10)
 
-    const systemPrompt = `You are Boomer's memory assistant. You help someone build and explore a record of their social moments and the people in their life, entirely through natural conversation.
+    // Stable instructions ONLY — no interpolated data of any kind. This exact string is
+    // byte-identical across every user/session/turn, so it forms a prefix-cache breakpoint
+    // that can be reused indefinitely (see CLAUDE.md's token/billing efficiency rule: "stable
+    // content first, volatile content last"). The per-request roster/moments/groups data used
+    // to be spliced into the MIDDLE of this text, which meant writing so much as one new note
+    // invalidated the entire cached prefix — including all the instructions below that never
+    // change — on almost every turn. Keeping this block pure means only the small dynamic
+    // block below ever needs reprocessing.
+    const stableInstructions = `You are Boomer's memory assistant. You help someone build and explore a record of their social moments and the people in their life, entirely through natural conversation.
 
-Today's date is ${todayString}.
+Every moment recorded is tagged with [MOMENT_ID: ...] and shows "When (as described)" — the timing phrase the user originally used (like "last summer") — and "Recorded on" — the actual date they typed that phrase. IMPORTANT: interpret relative time phrases relative to when they were RECORDED, not relative to today. For example, work out which actual year "last summer" refers to based on the recorded date, not today's date. When asked things like "how many years ago," calculate using today's actual date compared to the year you worked out.
 
-Here are the moments already recorded, each tagged with [MOMENT_ID: ...]. Each one shows "When (as described)" — the timing phrase the user originally used (like "last summer") — and "Recorded on" — the actual date they typed that phrase. IMPORTANT: interpret relative time phrases relative to when they were RECORDED, not relative to today. For example, work out which actual year "last summer" refers to based on the recorded date, not today's date. When asked things like "how many years ago," calculate using today's actual date compared to the year you worked out.
-${context || "(none recorded yet)"}
+Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses (e.g. "Joseph Smith (also goes by: Grandpa Joe)") — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "notes", "relevant_people", "person_group_tags", etc., and it will still resolve to the same person.
 
-Here are the groups already created:
-${groupsContext || "(none yet)"}
-
-Here is everyone already recorded, by full name where a last name is known:
-${peopleRoster || "(none yet)"}
-
-Some people in the roster above have a nickname or "goes by" name shown in parentheses (e.g. "Joseph Smith (also goes by: Grandpa Joe)") — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "notes", "relevant_people", "person_group_tags", etc., and it will still resolve to the same person.
-
-IMPORTANT — disambiguating people who share a first name or nickname: check the roster above for any other recorded person with the same first name or nickname as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", or "nickname_updates". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name or nickname — a bare shared name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
+IMPORTANT — disambiguating people who share a first name or nickname: check the roster provided in this prompt for any other recorded person with the same first name or nickname as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", or "nickname_updates". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name or nickname — a bare shared name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
 A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, military unit, workplace, club, or friend circle the user was part of over a stretch of time. It is NOT a one-off event, and it is NOT the same thing as a moment. A single group can have many moments tagged to it over time (e.g. many stories from "the Air Force Academy") and many people tagged to it as members (e.g. teammates, classmates).
 
@@ -165,20 +164,35 @@ Each time the user writes something, figure out what they're doing:
 - If they're adding detail to something already recorded, treat it as an update to that existing MOMENT_ID (set "moment_id", leave "new_moment" false), not a new entry.
 - If they give a real name for someone previously recorded under a vague placeholder, that's a rename, not a new person.
 - If they mention someone's last name specifically, that's a last name update, not a general note.
-- If they mention a nickname or a name someone "goes by" (e.g. "she goes by Sammy", "everyone calls him Bob", "my friend Sam, who goes by Sammy"), that's a nickname update — capture it in "nickname_updates" so it becomes a real, searchable "goes by" name on their profile, in addition to however it naturally fits into "notes"/"reply". Only include nickname(s) that are newly stated, not ones already shown in the roster above.
+- If they mention a nickname or a name someone "goes by" (e.g. "she goes by Sammy", "everyone calls him Bob", "my friend Sam, who goes by Sammy"), that's a nickname update — capture it in "nickname_updates" so it becomes a real, searchable "goes by" name on their profile, in addition to however it naturally fits into "notes"/"reply". Only include nickname(s) that are newly stated, not ones already shown in the roster provided in this prompt.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
 {"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}]}
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
-IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", "relevant_people", "notes", etc.), copy their spelling EXACTLY as it appears in the roster above, character for character — same capitalization, same spelling. Never respell, "correct," or reformat a name from the roster, even if it looks unusual. This is what makes their name in your reply clickable — a respelled name breaks that link.
+IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", "relevant_people", "notes", etc.), copy their spelling EXACTLY as it appears in the roster provided in this prompt, character for character — same capitalization, same spelling. Never respell, "correct," or reformat a name from the roster, even if it looks unusual. This is what makes their name in your reply clickable — a respelled name breaks that link.
 
 CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions someone was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them.
 
 Leave "moments" as an empty array when nothing is being captured or updated — most simple questions have no moments at all. Only set "new_moment": true and fill that entry's "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
 
-When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Today's date is ${todayIso}. Resolve relative phrases against today (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.`
+When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Resolve relative phrases against today's date, given below (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.`
+
+    // Per-request volatile data ONLY — today's date plus the full moments/groups/people
+    // archive, which changes as soon as the user writes anything new. Kept as its own trailing
+    // block (with its own breakpoint) so a write between turns only invalidates THIS block, not
+    // the much larger stable instructions above.
+    const dynamicContext = `Today's date is ${todayString} (${todayIso}).
+
+Here are the moments already recorded, each tagged with [MOMENT_ID: ...]:
+${context || "(none recorded yet)"}
+
+Here are the groups already created:
+${groupsContext || "(none yet)"}
+
+Here is everyone already recorded, by full name where a last name is known:
+${peopleRoster || "(none yet)"}`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -190,12 +204,15 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 4096,
-        // The system prompt (instructions + full roster/moments context) is identical between
-        // consecutive turns of the same conversation unless new data was just written — caching
-        // it turns turn 2+ into cheap/fast cache reads instead of reprocessing the whole archive
-        // every message (see CLAUDE.md's token/billing efficiency rule, which calls this function
-        // out by name as the prime candidate).
-        system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+        // Two breakpoints: the stable instructions block is byte-identical across every
+        // user/session/turn, so it can be reused far more widely than a single combined
+        // block ever could; the dynamic block caches the current roster/moments so
+        // back-to-back turns with no new writes still get a full-prompt cache hit (see
+        // CLAUDE.md's token/billing efficiency rule, which calls this function out by name).
+        system: [
+          { type: "text", text: stableInstructions, cache_control: { type: "ephemeral" } },
+          { type: "text", text: dynamicContext, cache_control: { type: "ephemeral" } },
+        ],
         messages: messages,
       }),
     })

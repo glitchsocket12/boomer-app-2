@@ -104,25 +104,34 @@ serve(async (req) => {
       })
       .join(", ")
 
-    const systemPrompt = `You are helping the user edit a group called "${group?.name ?? "Unknown"}" in an app called Boomer. Groups tag together people and events that share a recurring affiliation (a team, a school, a workplace, a family branch, etc.). A group's membership (who belongs to the group) is intentionally independent from which events are tagged to it — someone can be a member without having attended every, or any, tagged event.
+    // Stable instructions ONLY — no interpolated data, so this exact string is byte-identical
+    // across every group/user/turn and forms a widely-reusable prefix-cache breakpoint (see
+    // CLAUDE.md's token/billing efficiency rule and the matching comment in converse/index.ts).
+    const stableInstructions = `You are helping the user edit a group in an app called Boomer. Groups tag together people and events that share a recurring affiliation (a team, a school, a workplace, a family branch, etc.). A group's membership (who belongs to the group) is intentionally independent from which events are tagged to it — someone can be a member without having attended every, or any, tagged event.
+
+Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname, and it will still resolve to the same person.
+
+IMPORTANT — disambiguating people who share a first name or nickname: if the user names someone who shares a first name or nickname with another recorded person, use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person they mean from context, ask instead of guessing.
+
+The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), tag/untag events, or mention a plain fact about a member that isn't a membership/event change (e.g. "oh, and Bob mentioned he's retiring this fall") — capture that as a note on that person's own profile via "notes" below, using their exact name from the roster provided in this prompt. Don't finish right away — first ask a short, natural follow-up like "Anything else you'd like to change?" so they have a chance to make more edits in one go. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
+
+At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
+{"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}]}
+
+This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.`
+
+    // Per-request volatile data ONLY — this group's current members/events plus the full
+    // people/events roster, which changes as soon as the user edits the group. Its own
+    // trailing block (own breakpoint) so a write between turns only invalidates this, not
+    // the much larger stable instructions above.
+    const dynamicContext = `Group being edited: "${group?.name ?? "Unknown"}"
 
 Current members: ${currentMembers.size > 0 ? [...currentMembers].join(", ") : "(none recorded)"}
 Events already tagged to this group:
 ${taggedEvents || "(none)"}
 Other events NOT tagged to this group (reference these by their exact MOMENT_ID if the user wants to add one):
 ${otherEvents || "(none)"}
-All people already in the app (match against these before assuming someone is new): ${knownPeople || "(none)"}
-
-Some people in the list above have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname, and it will still resolve to the same person.
-
-IMPORTANT — disambiguating people who share a first name or nickname: if the user names someone who shares a first name or nickname with another recorded person, use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person they mean from context, ask instead of guessing.
-
-The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), tag/untag events, or mention a plain fact about a member that isn't a membership/event change (e.g. "oh, and Bob mentioned he's retiring this fall") — capture that as a note on that person's own profile via "notes" below, using their exact name from the list above. Don't finish right away — first ask a short, natural follow-up like "Anything else you'd like to change?" so they have a chance to make more edits in one go. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
-
-At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list above"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the list above", "content": "the fact, written as a short standalone sentence"}]}
-
-This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in "Current members" or the tagged-events lists above.`
+All people already in the app (match against these before assuming someone is new): ${knownPeople || "(none)"}`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -134,9 +143,11 @@ This is saved immediately after every single turn, so only include in "rename"/"
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1500,
-        // Stable between turns of the same conversation unless new data was just written —
-        // see the matching comment in converse/index.ts.
-        system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+        // Two breakpoints — see the matching comment in converse/index.ts.
+        system: [
+          { type: "text", text: stableInstructions, cache_control: { type: "ephemeral" } },
+          { type: "text", text: dynamicContext, cache_control: { type: "ephemeral" } },
+        ],
         messages,
       }),
     })
