@@ -30,6 +30,7 @@ export default function Home({
   const [sending, setSending] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
+  const [stats, setStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -43,6 +44,23 @@ export default function Home({
         if (data?.suggestions?.length) setSuggestions(data.suggestions)
       })
       .finally(() => setSuggestionsLoading(false))
+  }, [])
+
+  // Head-only count queries — cheap, no rows transferred, just the total for each table.
+  useEffect(() => {
+    Promise.all([
+      supabase.from('people').select('id', { count: 'exact', head: true }),
+      supabase.from('moments').select('id', { count: 'exact', head: true }),
+      supabase.from('groups').select('id', { count: 'exact', head: true }),
+      supabase.from('notes').select('id', { count: 'exact', head: true }),
+    ]).then(([people, events, groups, notes]) => {
+      setStats({
+        people: people.count ?? 0,
+        events: events.count ?? 0,
+        groups: groups.count ?? 0,
+        notes: notes.count ?? 0,
+      })
+    })
   }, [])
 
   function handleSuggestionClick(text: string) {
@@ -101,6 +119,26 @@ export default function Home({
 
       {thread.length === 0 && (
         <>
+          {stats && (stats.people > 0 || stats.events > 0 || stats.groups > 0 || stats.notes > 0) && (
+            <div style={styles.statsRow}>
+              <div style={styles.statTile}>
+                <div style={styles.statNumber}>{stats.people}</div>
+                <div style={styles.statLabel}>People</div>
+              </div>
+              <div style={styles.statTile}>
+                <div style={styles.statNumber}>{stats.events}</div>
+                <div style={styles.statLabel}>Events</div>
+              </div>
+              <div style={styles.statTile}>
+                <div style={styles.statNumber}>{stats.groups}</div>
+                <div style={styles.statLabel}>Groups</div>
+              </div>
+              <div style={styles.statTile}>
+                <div style={styles.statNumber}>{stats.notes}</div>
+                <div style={styles.statLabel}>Notes</div>
+              </div>
+            </div>
+          )}
           <p style={styles.emptyState}>Ask about anyone or any moment, or just tell me what's on your mind.</p>
           {suggestionsLoading && (
             <div style={styles.suggestionsLoadingRow}>
@@ -170,6 +208,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.5rem', textAlign: 'center' },
   emptyState: { color: '#777', textAlign: 'center', marginTop: '1rem' },
+  statsRow: { display: 'flex', gap: '0.75rem', marginTop: '1.25rem' },
+  statTile: {
+    flex: 1,
+    textAlign: 'center',
+    backgroundColor: '#F4F8F5',
+    border: '1px solid #CFE0D6',
+    borderRadius: '10px',
+    padding: '0.75rem 0.5rem',
+  },
+  statNumber: { fontSize: '1.5rem', color: '#2E4034', fontWeight: 'bold', lineHeight: 1.2 },
+  statLabel: { fontSize: '0.8rem', color: '#666', marginTop: '0.15rem' },
   suggestionsLoadingRow: {
     display: 'flex',
     alignItems: 'center',

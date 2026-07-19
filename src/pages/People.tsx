@@ -6,17 +6,63 @@ import SearchBox from '../components/SearchBox'
 
 type GroupRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
+type ReminderRef = { month: number; day: number }
 
 type Person = {
   id: string
   name: string
   last_name: string | null
   nicknames: string | null
+  created_at: string
   person_groups: { groups: GroupRef | null }[]
   notes: { moment_id: string | null; moments: { id: string; occasion: string | null; raw_description: string } | null }[]
+  reminders: ReminderRef[]
 }
 
 const AFFILIATION_LIMIT = 4
+
+type SortMode = 'name-asc' | 'name-desc' | 'date-added' | 'relevance' | 'timely'
+
+const SORT_LABELS: { value: SortMode; label: string }[] = [
+  { value: 'name-asc', label: 'Name (A–Z)' },
+  { value: 'name-desc', label: 'Name (Z–A)' },
+  { value: 'date-added', label: 'Recently added' },
+  { value: 'relevance', label: 'Most notes' },
+  { value: 'timely', label: 'Upcoming dates' },
+]
+
+// Next occurrence of a month/day reminder (birthday, anniversary) from today, wrapping
+// into next year once this year's date has already passed — used to surface people with
+// a birthday/anniversary coming up soonest under the "Upcoming dates" sort.
+function daysUntilNextOccurrence(month: number, day: number): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  let next = new Date(today.getFullYear(), month - 1, day)
+  if (next < today) next = new Date(today.getFullYear() + 1, month - 1, day)
+  return Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function nearestUpcomingDays(person: Person): number {
+  const days = (person.reminders ?? []).map((r) => daysUntilNextOccurrence(r.month, r.day))
+  return days.length > 0 ? Math.min(...days) : Infinity
+}
+
+function sortPeople(people: Person[], mode: SortMode): Person[] {
+  const sorted = [...people]
+  switch (mode) {
+    case 'name-desc':
+      return sorted.sort((a, b) => b.name.localeCompare(a.name))
+    case 'date-added':
+      return sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    case 'relevance':
+      return sorted.sort((a, b) => (b.notes?.length ?? 0) - (a.notes?.length ?? 0))
+    case 'timely':
+      return sorted.sort((a, b) => nearestUpcomingDays(a) - nearestUpcomingDays(b))
+    case 'name-asc':
+    default:
+      return sorted.sort((a, b) => a.name.localeCompare(b.name))
+  }
+}
 
 export default function People({
   onSelectPerson,
@@ -32,6 +78,7 @@ export default function People({
   const [newLastName, setNewLastName] = useState('')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [sortMode, setSortMode] = useState<SortMode>('name-asc')
 
   // Load the current user's people, along with which groups and events
   // they're tied to, when the page opens
@@ -44,7 +91,7 @@ export default function People({
     const { data, error } = await supabase
       .from('people')
       .select(
-        'id, name, last_name, nicknames, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description))'
+        'id, name, last_name, nicknames, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
       )
       .order('name')
 
@@ -72,15 +119,20 @@ export default function People({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
-  const filteredPeople = people.filter((person) => {
-    const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
-    const query = search.trim().toLowerCase()
-    return fullName.toLowerCase().includes(query) || (person.nicknames ?? '').toLowerCase().includes(query)
-  })
+  const filteredPeople = sortPeople(
+    people.filter((person) => {
+      const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+      const query = search.trim().toLowerCase()
+      return fullName.toLowerCase().includes(query) || (person.nicknames ?? '').toLowerCase().includes(query)
+    }),
+    sortMode
+  )
 
   return (
     <div style={styles.page}>
-      <h1 style={styles.heading}>People</h1>
+      <h1 style={styles.heading}>
+        People{people.length > 0 && <span style={styles.count}> ({people.length})</span>}
+      </h1>
 
       <form onSubmit={handleAddPerson} style={styles.addForm}>
         <input
@@ -101,7 +153,21 @@ export default function People({
       </form>
 
       {people.length > 0 && (
-        <SearchBox value={search} onChange={setSearch} placeholder="Search people…" />
+        <div style={styles.searchRow}>
+          <SearchBox value={search} onChange={setSearch} placeholder="Search people…" />
+          <select
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as SortMode)}
+            style={styles.sortSelect}
+            aria-label="Sort people"
+          >
+            {SORT_LABELS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                Sort: {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
       )}
 
       <div style={styles.list}>
@@ -191,7 +257,20 @@ function PersonCard({
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1.5rem' },
+  count: { fontSize: '1.2rem', color: '#888', fontWeight: 'normal' },
   addForm: { display: 'flex', gap: '0.75rem', marginBottom: '2rem' },
+  searchRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-start' },
+  sortSelect: {
+    flexShrink: 0,
+    fontSize: '1rem',
+    padding: '0.65rem 0.75rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    fontFamily: 'Georgia, serif',
+    backgroundColor: '#FFF',
+    color: '#2E2E2E',
+    marginBottom: '1.5rem',
+  },
   input: { flex: 1, fontSize: '1.1rem', padding: '0.65rem', borderRadius: '8px', border: '1px solid #CCC' },
   button: {
     fontSize: '1.1rem',

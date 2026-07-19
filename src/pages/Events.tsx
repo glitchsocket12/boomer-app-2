@@ -104,10 +104,12 @@ export default function Events({
                 {moment.occasion || 'Untitled moment'}
               </button>
               <p style={styles.meta}>
-                {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ')}
+                {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
               </p>
 
-              {attendees.size > 0 && (
+              {attendees.size === 0 ? (
+                <p style={styles.empty}>No one tagged yet.</p>
+              ) : (
                 <div style={styles.chipRow}>
                   {Array.from(attendees.values()).map((p) => (
                     <PersonChip
@@ -157,6 +159,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'left',
     cursor: 'pointer',
   },
-  meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#888' },
+  meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#666', fontStyle: 'italic' },
   chipRow: { display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' },
 }

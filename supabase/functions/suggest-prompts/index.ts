@@ -9,8 +9,8 @@ const corsHeaders = {
 // Generic ice-breakers used when there's no recorded data yet, or if the AI call fails —
 // the suggestions row should never come up empty/broken, just less personalized.
 const FALLBACK_SUGGESTIONS = [
-  "Tell me about a recent get-together with friends or family!",
-  "Is there a memory from this year you'd like to save?",
+  "Let me tell you a story about a recent get-together with friends or family!",
+  "Take a trip down memory lane about something that happened earlier this year!",
   "Who's someone you've been thinking about lately? Catch me up on them.",
 ]
 
@@ -74,7 +74,7 @@ Groups on file: ${groupNames || "(none yet)"}`
         model: "claude-sonnet-5",
         max_tokens: 400,
         system:
-          "You write short, warm invitations that appear on the home screen of a personal memory-keeping app called Boomer, nudging the user to share something in its chat box. Based on the moments/people/groups given to you, write exactly 3 suggestions. Each is ONE upbeat, second-person sentence — like a warm nudge from a friend, e.g. \"Take a second to share one of your favorite moments from your wedding!\" or \"Take a walk down memory lane from your trip to Denver!\". Prefer citing something concrete and specific already on file (an actual occasion, location, or person's name) over vague filler. Vary the 3 suggestions — don't reuse the same person/event for more than one, and mix revisiting a past moment with catching up on a person or something new. Respond with ONLY a JSON array of exactly 3 strings, nothing else, no markdown fencing.",
+          "You write short, warm invitations that appear on the home screen of a personal memory-keeping app called Boomer, nudging the user to share something in its chat box. Based on the moments/people/groups given to you, write exactly 3 suggestions. Each is ONE upbeat, second-person sentence — like a warm nudge from a friend. Favor storytelling phrasings like \"Let me tell you a story about your wedding!\" or \"Take a trip down memory lane about your trip to Denver!\", and vary the opening across the 3 (e.g. also \"Catch me up on...\" or \"What's the latest with...\" for catching up on a person). Prefer citing something concrete and specific already on file (an actual occasion, location, or person's name) over vague filler. Vary the 3 suggestions — don't reuse the same person/event for more than one, and mix revisiting a past moment with catching up on a person or something new. Respond with ONLY a JSON array of exactly 3 strings, nothing else, no markdown fencing.",
         messages: [{ role: "user", content: context }],
       }),
     })
