@@ -53,7 +53,7 @@ serve(async (req) => {
 
     const context = `Group name: ${group.name}
 Members: ${memberNames.size > 0 ? [...memberNames].join(", ") : "(none recorded)"}
-Events tagged to this group: ${events.length > 0 ? events.join("; ") : "(none recorded)"}`
+Events tagged to this group (descriptions may mention other people who were just at that one event, not necessarily group members): ${events.length > 0 ? events.join("; ") : "(none recorded)"}`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -66,7 +66,7 @@ Events tagged to this group: ${events.length > 0 ? events.join("; ") : "(none re
         model: "claude-sonnet-5",
         max_tokens: 100,
         system:
-          "You write a single, very short, high-level description of a group in a personal memory-keeping app called Boomer, based on its members and the events tagged to it. One sentence, no more than 20 words, plain factual tone, no preamble or quotation marks. If there isn't enough context to say anything specific, describe it generically from the name alone (e.g. \"A group called '<name>'.\"). Respond with ONLY the sentence.",
+          "You write a single, very short, high-level description of a group in a personal memory-keeping app called Boomer, based on its members and the events tagged to it. One sentence, no more than 20 words, plain factual tone, no preamble or quotation marks. CRITICAL: only the people listed under \"Members:\" are actual members of this group — never describe anyone else as a member, part of the group, or one of the group, even if their name appears in an event description (that only means they attended that one event, which can be tagged to a group without every attendee being a member of it). If there isn't enough context to say anything specific, describe it generically from the name alone (e.g. \"A group called '<name>'.\"). Respond with ONLY the sentence.",
         messages: [{ role: "user", content: context }],
       }),
     })

@@ -130,7 +130,7 @@ ${peopleRoster || "(none yet)"}
 
 Some people in the roster above have a nickname or "goes by" name shown in parentheses (e.g. "Joseph Smith (also goes by: Grandpa Joe)") — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "notes", "relevant_people", "person_group_tags", etc., and it will still resolve to the same person.
 
-IMPORTANT — disambiguating people who share a first name or nickname: check the roster above for any other recorded person with the same first name or nickname as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", or "last_name_updates". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name or nickname — a bare shared name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
+IMPORTANT — disambiguating people who share a first name or nickname: check the roster above for any other recorded person with the same first name or nickname as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", or "nickname_updates". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name or nickname — a bare shared name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
 A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, military unit, workplace, club, or friend circle the user was part of over a stretch of time. It is NOT a one-off event, and it is NOT the same thing as a moment. A single group can have many moments tagged to it over time (e.g. many stories from "the Air Force Academy") and many people tagged to it as members (e.g. teammates, classmates).
 
@@ -149,9 +149,10 @@ Each time the user writes something, figure out what they're doing:
 - If they're adding detail to something already recorded, treat it as an update to that existing MOMENT_ID (set "moment_id", leave "new_moment" false), not a new entry.
 - If they give a real name for someone previously recorded under a vague placeholder, that's a rename, not a new person.
 - If they mention someone's last name specifically, that's a last name update, not a general note.
+- If they mention a nickname or a name someone "goes by" (e.g. "she goes by Sammy", "everyone calls him Bob", "my friend Sam, who goes by Sammy"), that's a nickname update — capture it in "nickname_updates" so it becomes a real, searchable "goes by" name on their profile, in addition to however it naturally fits into "notes"/"reply". Only include nickname(s) that are newly stated, not ones already shown in the roster above.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}]}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}]}
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
@@ -199,7 +200,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       console.error("Anthropic response had no text block", JSON.stringify(data))
     }
 
-    let parsed: any = { reply: "Sorry, I couldn't process that.", new_people: [], renames: [], last_name_updates: [], relevant_people: [], person_group_tags: [], moments: [] }
+    let parsed: any = { reply: "Sorry, I couldn't process that.", new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -242,6 +243,25 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     for (const update of parsed.last_name_updates ?? []) {
       const id = idByName[update.person.toLowerCase()]
       if (id) await supabaseClient.from("people").update({ last_name: update.last_name }).eq("id", id)
+    }
+
+    for (const update of parsed.nickname_updates ?? []) {
+      const id = idByName[update.person?.trim().toLowerCase()]
+      const newNicknames = Array.isArray(update.nicknames) ? update.nicknames : []
+      if (!id || newNicknames.length === 0) continue
+      // Additive merge, same dedupe-by-lowercase behavior as add-fact's name_update handling —
+      // a nickname mentioned mid-conversation should land in the same searchable field a
+      // profile-page edit would, not just in the note text.
+      const existing = nicknamesById[id] ?? []
+      const merged = [...existing]
+      for (const nickname of newNicknames) {
+        const trimmed = String(nickname).trim()
+        if (trimmed && !merged.some((n) => n.toLowerCase() === trimmed.toLowerCase())) merged.push(trimmed)
+      }
+      if (merged.length > existing.length) {
+        await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
+        nicknamesById[id] = merged
+      }
     }
 
     async function findOrCreateGroupId(name: string): Promise<string | null> {
