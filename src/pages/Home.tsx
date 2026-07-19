@@ -16,14 +16,31 @@ type ChatMessage = {
   groups?: GroupRef[]
 }
 
+const DUNBAR_LIMIT = 150
+
+type LeaderboardEntry = { id: string; name: string; count: number }
+
+function initials(name: string): string {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+}
+
 export default function Home({
   onSelectPerson,
   onSelectEvent,
   onSelectGroup,
+  onSelectDunbar,
+  onSelectNudges,
 }: {
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
   onSelectGroup: (group: GroupRef) => void
+  onSelectDunbar: () => void
+  onSelectNudges: () => void
 }) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -31,6 +48,8 @@ export default function Home({
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const [stats, setStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
+  const [recallAssists, setRecallAssists] = useState<number | null>(null)
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -61,6 +80,38 @@ export default function Home({
         notes: notes.count ?? 0,
       })
     })
+  }, [])
+
+  // "Working as intended" stats: recall assists (matched lookups logged by `converse`, see
+  // supabase/functions/converse/index.ts) and the leaderboard (notes added per person), both
+  // scoped to the current calendar month.
+  useEffect(() => {
+    const now = new Date()
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+
+    supabase
+      .from('search_log')
+      .select('id', { count: 'exact', head: true })
+      .eq('matched', true)
+      .gte('created_at', startOfMonth)
+      .then(({ count }) => setRecallAssists(count ?? 0))
+
+    supabase
+      .from('notes')
+      .select('person_id, people(id, name, last_name)')
+      .not('person_id', 'is', null)
+      .gte('created_at', startOfMonth)
+      .then(({ data }) => {
+        const counts = new Map<string, LeaderboardEntry>()
+        for (const row of (data as unknown as { person_id: string; people: { id: string; name: string; last_name: string | null } | null }[]) ?? []) {
+          if (!row.people) continue
+          const fullName = row.people.last_name ? `${row.people.name} ${row.people.last_name}` : row.people.name
+          const existing = counts.get(row.person_id)
+          if (existing) existing.count += 1
+          else counts.set(row.person_id, { id: row.person_id, name: fullName, count: 1 })
+        }
+        setLeaderboard([...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3))
+      })
   }, [])
 
   function handleSuggestionClick(text: string) {
@@ -139,6 +190,58 @@ export default function Home({
               </div>
             </div>
           )}
+
+          {stats && stats.people > 0 && (
+            <div style={styles.signalsSection}>
+              <div style={styles.signalCardsRow}>
+                <button onClick={onSelectDunbar} style={styles.signalCard}>
+                  {stats.people > DUNBAR_LIMIT ? (
+                    <>
+                      <div style={styles.signalNumber}>{stats.people - DUNBAR_LIMIT}</div>
+                      <div style={styles.signalTitle}>People you'd have lost track of</div>
+                      <div style={styles.signalSubtext}>beyond the ~150 minds can track unaided</div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={styles.signalNumber}>{stats.people} of ~150</div>
+                      <div style={styles.signalTitle}>Relationships you're keeping track of</div>
+                      <div style={styles.signalSubtext}>most people can track about 150 unaided</div>
+                    </>
+                  )}
+                </button>
+                <div style={styles.signalCard}>
+                  <div style={styles.signalNumber}>{recallAssists ?? '—'}</div>
+                  <div style={styles.signalTitle}>Recall assists this month</div>
+                  <div style={styles.signalSubtext}>times a search surfaced a forgotten detail</div>
+                </div>
+              </div>
+
+              <div style={styles.leaderboardCard}>
+                <h3 style={styles.leaderboardTitle}>Most reinforced this month</h3>
+                <p style={styles.leaderboardSubtitle}>People you've added the most detail about recently</p>
+                {leaderboard.length > 0 ? (
+                  leaderboard.map((entry, i) => (
+                    <button
+                      key={entry.id}
+                      onClick={() => onSelectPerson({ id: entry.id, name: entry.name })}
+                      style={styles.leaderboardRow}
+                    >
+                      <span style={styles.leaderboardRank}>{i + 1}</span>
+                      <span style={styles.leaderboardAvatar}>{initials(entry.name)}</span>
+                      <span style={styles.leaderboardName}>{entry.name}</span>
+                      <span style={styles.leaderboardCount}>{entry.count} update{entry.count === 1 ? '' : 's'}</span>
+                    </button>
+                  ))
+                ) : (
+                  <p style={styles.leaderboardEmpty}>No updates yet this month — add a detail to someone's profile to start building this list.</p>
+                )}
+                <button onClick={onSelectNudges} style={styles.leaderboardFooter}>
+                  See who's due for an update →
+                </button>
+              </div>
+            </div>
+          )}
+
           <p style={styles.emptyState}>Ask about anyone or any moment, or just tell me what's on your mind.</p>
           {suggestionsLoading && (
             <div style={styles.suggestionsLoadingRow}>
@@ -219,6 +322,74 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   statNumber: { fontSize: '1.5rem', color: '#2E4034', fontWeight: 'bold', lineHeight: 1.2 },
   statLabel: { fontSize: '0.8rem', color: '#666', marginTop: '0.15rem' },
+  signalsSection: { marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' },
+  signalCardsRow: { display: 'flex', gap: '0.75rem' },
+  signalCard: {
+    flex: 1,
+    textAlign: 'left',
+    backgroundColor: '#FFF',
+    border: '1px solid #CFE0D6',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  signalNumber: { fontSize: '1.4rem', color: '#2E4034', fontWeight: 'bold', lineHeight: 1.2 },
+  signalTitle: { fontSize: '0.9rem', color: '#333', marginTop: '0.3rem', lineHeight: 1.3 },
+  signalSubtext: { fontSize: '0.78rem', color: '#888', marginTop: '0.2rem', lineHeight: 1.3 },
+  leaderboardCard: {
+    backgroundColor: '#FFF',
+    border: '1px solid #CFE0D6',
+    borderRadius: '10px',
+    padding: '1rem 1.1rem',
+  },
+  leaderboardTitle: { fontSize: '1rem', color: '#2E4034', margin: 0 },
+  leaderboardSubtitle: { fontSize: '0.82rem', color: '#888', margin: '0.2rem 0 0.85rem' },
+  leaderboardRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.7rem',
+    width: '100%',
+    padding: '0.4rem 0',
+    background: 'none',
+    border: 'none',
+    borderTop: '1px solid #F0EEE8',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    textAlign: 'left',
+  },
+  leaderboardRank: { fontSize: '0.85rem', color: '#AAA', width: '1rem', flexShrink: 0 },
+  leaderboardAvatar: {
+    flexShrink: 0,
+    width: '2rem',
+    height: '2rem',
+    borderRadius: '50%',
+    backgroundColor: '#F4F8F5',
+    border: '1px solid #CFE0D6',
+    color: '#2E4034',
+    fontSize: '0.75rem',
+    fontWeight: 'bold',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  leaderboardName: { flex: 1, fontSize: '0.95rem', color: '#222' },
+  leaderboardCount: { fontSize: '0.8rem', color: '#777' },
+  leaderboardEmpty: { fontSize: '0.88rem', color: '#888', lineHeight: 1.4, margin: '0.3rem 0 0.6rem' },
+  leaderboardFooter: {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    marginTop: '0.75rem',
+    paddingTop: '0.75rem',
+    background: 'none',
+    border: 'none',
+    borderTop: '1px solid #F0EEE8',
+    color: '#2E4034',
+    fontSize: '0.9rem',
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
+  },
   suggestionsLoadingRow: {
     display: 'flex',
     alignItems: 'center',

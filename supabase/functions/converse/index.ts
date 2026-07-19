@@ -144,6 +144,7 @@ Each time the user writes something, figure out what they're doing:
 - If they're asking about a GROUP (like "tell me about my Pop Warner team" or "who was at the Academy with me"), pull together the group's members and every moment tagged to it.
 - If they're asking a narrower question about a specific event or detail, answer that specifically.
 - If you genuinely can't find anything relevant to what they asked, don't just say "nothing found" and stop there. Instead, do ONE of these, whichever fits better: (a) if there's a close but imperfect match, mention what you did find and gently ask if that's what they meant, or (b) if there's truly nothing related, ask a warm, specific question that might jog their memory (e.g. "I don't have anything on a trip to Denver yet — was that with someone I already know, or someone new?"), or (c) invite them to share the memory now. Never respond with just an empty dead-end.
+- Classify whether THIS message (the latest user turn) was them trying to recall/look up something already recorded — a question like "tell me about Steve" or "who was at the reunion" — as opposed to sharing new information, correcting something, tagging a group, or idle chat. Set "is_lookup" to true only for genuine recall attempts. When "is_lookup" is true, also set "found_relevant_info" to true if your reply actually surfaced real existing detail that answers it, or false if you came up empty and fell back to (b) or (c) above. Leave "found_relevant_info" false when "is_lookup" is false.
 - If they're describing a brand-new memory that isn't already recorded, ask a couple of short natural follow-up questions if useful (who, where, occasion), and once you have enough, record it as a new moment.
 - If they're describing SEVERAL distinct events in one message (e.g. "let me catch you up on a few things: I did X on Tuesday, and also Y last month, and also Z..."), include ONE separate entry in "moments" for EACH distinct event — never merge multiple different events into a single entry, and don't drop any of them just because there are several. If the message already gives enough detail for each one (roughly who/where/when), capture all of them directly without asking a round of follow-up questions per event — only ask a clarifying question if one specific event is missing something clearly important (e.g. no timing information at all for that one). Each entry in "moments" is fully independent, with its own "moment_fields"/"notes"/"moment_groups".
 - If they're adding detail to something already recorded, treat it as an update to that existing MOMENT_ID (set "moment_id", leave "new_moment" false), not a new entry.
@@ -152,7 +153,7 @@ Each time the user writes something, figure out what they're doing:
 - If they mention a nickname or a name someone "goes by" (e.g. "she goes by Sammy", "everyone calls him Bob", "my friend Sam, who goes by Sammy"), that's a nickname update — capture it in "nickname_updates" so it becomes a real, searchable "goes by" name on their profile, in addition to however it naturally fits into "notes"/"reply". Only include nickname(s) that are newly stated, not ones already shown in the roster above.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}]}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}]}
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
@@ -200,7 +201,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       console.error("Anthropic response had no text block", JSON.stringify(data))
     }
 
-    let parsed: any = { reply: "Sorry, I couldn't process that.", new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [] }
+    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -353,6 +354,19 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
       .filter(Boolean)
 
     const taggedGroupRefs = [...taggedGroups.entries()].map(([id, name]) => ({ id, name }))
+
+    // Only log genuine recall attempts, not new captures/corrections/idle chat — powers the
+    // Home dashboard's "Recall assists this month" stat.
+    if (parsed.is_lookup) {
+      const latestUserMessage = [...messages].reverse().find((m: any) => m.role === "user")
+      if (latestUserMessage?.content) {
+        await supabaseClient.from("search_log").insert({
+          user_id: user.id,
+          query_text: latestUserMessage.content,
+          matched: !!parsed.found_relevant_info,
+        })
+      }
+    }
 
     return new Response(
       JSON.stringify({ reply: parsed.reply, people: relevantPeople, momentIds: [...touchedMomentIds], groups: taggedGroupRefs }),

@@ -8,6 +8,8 @@ import Groups from './pages/Groups'
 import GroupDetail from './pages/GroupDetail'
 import EventDetail from './pages/EventDetail'
 import PersonDetail from './pages/PersonDetail'
+import DunbarDetail from './pages/DunbarDetail'
+import DueForUpdate from './pages/DueForUpdate'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 
@@ -16,6 +18,8 @@ type Crumb =
   | { type: 'person'; id: string; label: string }
   | { type: 'group'; id: string; label: string }
   | { type: 'event'; id: string; label: string }
+  | { type: 'dunbar'; id: string; label: string }
+  | { type: 'nudges'; id: string; label: string }
 
 const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
 
@@ -33,7 +37,10 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
     const stack = Array.isArray(parsed.navStack)
       ? parsed.navStack.filter(
           (c: Crumb) =>
-            c && ['person', 'group', 'event'].includes(c.type) && typeof c.id === 'string' && typeof c.label === 'string'
+            c &&
+            ['person', 'group', 'event', 'dunbar', 'nudges'].includes(c.type) &&
+            typeof c.id === 'string' &&
+            typeof c.label === 'string'
         )
       : []
     return { view: parsed.view, navStack: stack }
@@ -145,6 +152,16 @@ export default function App() {
         onRenamed={renameCurrentCrumb}
       />
     )
+  } else if (current?.type === 'dunbar') {
+    content = <DunbarDetail onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'nudges') {
+    content = (
+      <DueForUpdate
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+      />
+    )
   } else {
     content = (
       <>
@@ -153,6 +170,8 @@ export default function App() {
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
             onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
+            onSelectDunbar={() => pushCrumb({ type: 'dunbar', id: 'dunbar', label: "Dunbar's number" })}
+            onSelectNudges={() => pushCrumb({ type: 'nudges', id: 'nudges', label: 'Due for an update' })}
           />
         )}
         {view === 'people' && (
