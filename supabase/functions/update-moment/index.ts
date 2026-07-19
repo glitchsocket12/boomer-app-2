@@ -48,6 +48,15 @@ serve(async (req) => {
       .from("moment_groups")
       .select("group_id")
       .eq("moment_id", momentId)
+    const { data: otherMoments } = await supabaseClient
+      .from("moments")
+      .select("occasion, when_text")
+      .neq("id", momentId)
+
+    const otherEventsRoster = (otherMoments ?? [])
+      .map((m: any) => (m.when_text ? `${m.occasion} (${m.when_text})` : m.occasion))
+      .filter(Boolean)
+      .join(", ")
 
     const groupNameById: Record<string, string> = {}
     const idByGroupName: Record<string, string> = {}
@@ -109,14 +118,19 @@ Here is everyone already recorded, by full name where a last name is known: ${pe
 
 Here are the groups already on file: ${groupsRoster || "(none yet)"}
 
+Here are the OTHER events/moments already recorded in the app (not this one), by their name and roughly when they happened: ${otherEventsRoster || "(none yet)"}
+
 Some people in the roster above have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "new_people"/"additional_notes", and it will still resolve to the same person.
 
 IMPORTANT — disambiguating people who share a first name or nickname: check the roster above for any other recorded person with the same first name or nickname as whoever you're about to write into "new_people" or "additional_notes". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
+IMPORTANT — a term the user uses might actually be the name of one of the OTHER events listed above (e.g. a race, trip, or reunion with a distinctive name) rather than what it sounds like literally. Check the other-events roster before assuming a name refers to something else (a medical event, a place, etc). If it's genuinely ambiguous which one they mean — or whether they mean an event at all versus something else entirely — don't guess: ask a short, direct clarifying question in "reply" (e.g. "Just to make sure I've got this right — is 'the triple bypass' the bike race you did a few days ago, or something else?"), set "done": false, and leave the other fields empty for that turn. A clarifying question is still a completely ordinary reply — always wrap it in the same JSON shape as everything else.
+
 When the user shares a new detail, don't finish right away — first ask a short, natural follow-up question like "Anything else you remember about this?" so they have a chance to add more. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
 
-At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
+At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
 {"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null}, "add_groups": ["Group Name"]}
+This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
 This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known above.
 
@@ -130,34 +144,7 @@ Leave any of these four keys null when the user didn't touch that field this tur
 
 "add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Affiliated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster above if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail.`
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") ?? "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 1500,
-        system: systemPrompt,
-        messages,
-      }),
-    })
-
-    if (!response.ok) {
-      const errorBody = await response.text()
-      console.error("Anthropic API error", response.status, errorBody)
-      return new Response(
-        JSON.stringify({ reply: "Sorry, I'm having trouble responding right now — please try again in a moment.", done: false, changed: false }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      )
-    }
-
-    const data = await response.json()
-    const textBlock = data.content?.find((b: any) => b.type === "text")
-
-    let parsed: any = {
+    const DEFAULT_PARSED = {
       reply: "Sorry, I didn't get a response there — please try again.",
       done: false,
       new_people: [],
@@ -165,18 +152,70 @@ Leave any of these four keys null when the user didn't touch that field this tur
       moment_field_updates: null,
       add_groups: [],
     }
-    let rawText = ""
-    try {
-      rawText = textBlock?.text ?? ""
-      const start = rawText.indexOf("{")
-      const end = rawText.lastIndexOf("}")
-      const jsonSlice = rawText.slice(start, end + 1)
-      parsed = { ...parsed, ...JSON.parse(jsonSlice) }
-    } catch (parseError) {
-      console.error("Failed to parse AI reply as JSON", String(parseError), "raw text was:", rawText)
-      const replyMatch = rawText.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
-      parsed.reply = replyMatch ? replyMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n") : parsed.reply
+
+    async function callModel(): Promise<{ parsed: any; ok: boolean; errorBody?: string }> {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": Deno.env.get("ANTHROPIC_API_KEY") ?? "",
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-5",
+          max_tokens: 1500,
+          system: systemPrompt,
+          messages,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorBody = await response.text()
+        return { parsed: DEFAULT_PARSED, ok: false, errorBody }
+      }
+
+      const data = await response.json()
+      const textBlock = data.content?.find((b: any) => b.type === "text")
+
+      let parsed: any = { ...DEFAULT_PARSED }
+      let rawText = ""
+      try {
+        rawText = textBlock?.text ?? ""
+        const start = rawText.indexOf("{")
+        const end = rawText.lastIndexOf("}")
+        const jsonSlice = rawText.slice(start, end + 1)
+        parsed = { ...parsed, ...JSON.parse(jsonSlice) }
+        return { parsed, ok: true }
+      } catch (parseError) {
+        console.error("Failed to parse AI reply as JSON", String(parseError), "raw text was:", rawText)
+        const replyMatch = rawText.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
+        if (replyMatch) {
+          parsed.reply = replyMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n")
+          return { parsed, ok: true }
+        }
+        // Couldn't recover even a reply string — the model didn't follow the JSON format at
+        // all (e.g. replied in plain prose). Signal failure so the caller can retry once
+        // rather than silently discarding whatever the user just said.
+        return { parsed: DEFAULT_PARSED, ok: false }
+      }
     }
+
+    let result = await callModel()
+    if (!result.ok) {
+      // One retry: this format failure is usually a one-off stochastic slip, and retrying
+      // costs far less than making the user retype what they just told us.
+      result = await callModel()
+    }
+
+    if (!result.ok) {
+      if (result.errorBody) console.error("Anthropic API error", result.errorBody)
+      return new Response(
+        JSON.stringify({ reply: "Sorry, I'm having trouble responding right now — please try again in a moment.", done: false, changed: false }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
+    }
+
+    const parsed = result.parsed
 
     for (const name of parsed.new_people ?? []) {
       const key = name.toLowerCase()
@@ -193,17 +232,24 @@ Leave any of these four keys null when the user didn't touch that field this tur
     }
 
     let notesAdded = 0
+    let notesFailed = 0
     for (const note of parsed.additional_notes ?? []) {
       const personId = idByName[note.person?.toLowerCase()]
       if (personId) {
-        await supabaseClient.from("notes").insert({
+        const { error: noteError } = await supabaseClient.from("notes").insert({
           person_id: personId,
           moment_id: momentId,
           content: note.note,
         })
-        notesAdded++
+        if (noteError) {
+          console.error("Failed to save note", noteError.message, JSON.stringify(note))
+          notesFailed++
+        } else {
+          notesAdded++
+        }
       } else {
         console.error("Could not resolve person for note, skipping", JSON.stringify(note), "known names:", Object.keys(idByName))
+        notesFailed++
       }
     }
 
@@ -245,7 +291,14 @@ Leave any of these four keys null when the user didn't touch that field this tur
 
     const changed = (parsed.new_people?.length ?? 0) > 0 || notesAdded > 0 || Object.keys(fieldUpdates).length > 0 || groupsTagged > 0
 
-    return new Response(JSON.stringify({ reply: parsed.reply, done: parsed.done === true, changed }), {
+    // If everything the user just said failed to save, don't tell them it's handled —
+    // the chat bubble is the only feedback they get.
+    const reply =
+      notesFailed > 0 && notesAdded === 0
+        ? "That didn't save — mind trying again?"
+        : parsed.reply
+
+    return new Response(JSON.stringify({ reply, done: parsed.done === true, changed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   } catch (error) {
