@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { applyFamilySignals, familySignalPromptMultiSubject, FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT } from "../_shared/relationships.ts"
+import {
+  applyFamilySignals,
+  familySignalPromptMultiSubject,
+  FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT,
+  inferLastNameFromSignals,
+} from "../_shared/relationships.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -54,6 +59,7 @@ serve(async (req) => {
     const idByName: Record<string, string> = {}
     const nameById: Record<string, string> = {}
     const nicknamesById: Record<string, string[]> = {}
+    const lastNameById: Record<string, string | null> = {}
     const ambiguousKeys = new Set<string>()
     function claimKey(key: string, id: string) {
       if (!key) return
@@ -67,6 +73,7 @@ serve(async (req) => {
       const name = fullName(p)
       nameById[p.id] = name
       idByName[name.toLowerCase()] = p.id
+      lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
       const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
@@ -208,7 +215,8 @@ All people already in the app (match against these before assuming someone is ne
       let personId = idByName[key]
       if (!personId) {
         const [first, ...rest] = name.trim().split(" ")
-        const lastName = rest.length > 0 ? rest.join(" ") : null
+        const lastName =
+          rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
         const { data: newPerson } = await supabaseClient
           .from("people")
           .insert({ user_id: user.id, name: first, last_name: lastName })
@@ -273,7 +281,7 @@ All people already in the app (match against these before assuming someone is ne
       supabaseClient,
       Deno.env.get("ANTHROPIC_API_KEY") ?? "",
       parsed.family_signals ?? [],
-      { idByName, nameById }
+      { idByName, nameById, lastNameById }
     )
 
     if (changed) {

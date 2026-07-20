@@ -23,6 +23,12 @@ export type NameIndex = {
   // own general name lookups.
   idByName: Record<string, string>
   nameById: Record<string, string>
+  // Optional: person id -> last name on file (or null/undefined if they don't have one yet).
+  // Used only to suggest a last name for a brand-new person created from a relationship mention
+  // (see the newPersonSuggestions branch below) — every caller of applyFamilySignals already
+  // fetches last_name for its roster query, so populating this is a one-line addition, not a new
+  // query. Optional on the type so a caller that hasn't been updated yet still type-checks.
+  lastNameById?: Record<string, string | null | undefined>
 }
 
 export type RelationshipSuggestion = { parentId: string; parentName: string; childId: string; childName: string }
@@ -34,6 +40,12 @@ export type NewPersonSuggestion = {
   suggestionText: string
   candidateId?: string
   candidateName?: string
+  // A last name to pre-fill when accepting this suggestion, offered when rawName was given as a
+  // bare first name — defaults to the SUBJECT's own last name (e.g. "Ale's wife is Molly" ->
+  // suggest "Brooks" if Ale is "Ale Brooks"), since a newly-named relative shares a household
+  // last name far more often than not. Only ever a pre-fill the founder sees and can overwrite
+  // before confirming (or correct afterward via chat) — never asserted as fact.
+  suggestedLastName?: string
 }
 
 export type FamilyApplyResult = {
@@ -133,6 +145,30 @@ export function buildSingleSubjectSignals(
 
 type MinimalSupabaseClient = {
   from: (table: string) => any
+}
+
+// converse/update-group/update-moment each also create a brand-new person directly (new_people /
+// add_people) whenever the model spots an unfamiliar name — a separate, silent mechanism from the
+// newPersonSuggestions banner above, and it runs BEFORE applyFamilySignals. Without this, a name
+// that's both "new" and named as someone's relative in the same message (e.g. "Josh Volin's
+// brother is Jared") gets created there first, with no last name, and applyFamilySignals then
+// finds it as an already-confident match — the suggestedLastName branch above never fires. Called
+// from each of those three creation sites with that same message's raw family_signals so the new
+// person gets the subject's last name at creation time too.
+export function inferLastNameFromSignals(
+  rawName: string,
+  familySignals: RawFamilySignal[],
+  index: NameIndex
+): string | null {
+  const key = rawName.trim().toLowerCase()
+  for (const signal of familySignals ?? []) {
+    if (!(signal.person_names ?? []).some((n) => n.trim().toLowerCase() === key)) continue
+    const subjectId = index.idByName[signal.subject?.trim().toLowerCase() ?? ""]
+    if (!subjectId) continue
+    const lastName = index.lastNameById?.[subjectId]
+    if (lastName) return lastName
+  }
+  return null
 }
 
 // Resolves a list of names to person ids via the given index, silently dropping any name that
@@ -260,12 +296,18 @@ export async function applyFamilySignals(
       // page. Nothing is written for this name until they accept.
       if (!isConfidentMatch) {
         if (newPersonSuggestions.length < 6) {
+          // Only suggest a last name when none was typed as part of the name itself — a rawName
+          // that already has multiple words (e.g. "Josh Volin") is the founder's own explicit
+          // spelling and shouldn't be second-guessed.
+          const hasOwnLastName = rawName.trim().split(/\s+/).length > 1
+          const subjectLastName = !hasOwnLastName ? index.lastNameById?.[subjectId] : null
           newPersonSuggestions.push({
             relationship: signal.relationship,
             rawName: rawName.trim(),
             reciprocalNote: makeNote(subjectName),
             suggestionText: forwardPhrase(subjectName, rawName.trim()),
             ...(matchedId ? { candidateId: matchedId, candidateName: index.nameById[matchedId] } : {}),
+            ...(subjectLastName ? { suggestedLastName: subjectLastName } : {}),
           })
         }
         continue

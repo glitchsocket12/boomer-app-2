@@ -41,6 +41,18 @@ type OtherPerson = { id: string; name: string; last_name: string | null }
 
 const AFFILIATION_LIMIT = 5
 
+// Mirrors the deterministic note phrasings RECIPROCAL_NOTE writes in
+// supabase/functions/_shared/relationships.ts — used only to retroactively spot a last-name
+// suggestion on a profile that was created with a bare first name (e.g. "Ale's wife is Molly").
+// Keep these patterns in sync if that module's phrasing ever changes.
+const RELATIONSHIP_NOTE_PATTERNS: RegExp[] = [
+  /^Married to (.+)\.$/i,
+  /^Their sibling is (.+)\.$/i,
+  /^Their child is (.+)\.$/i,
+  /^Their parent is (.+)\.$/i,
+  /^In a relationship with (.+)\.$/i,
+]
+
 const NUDGE_CATEGORIES: { category: 'spouse' | 'kids' | 'location' | 'education'; question: (name: string) => string }[] = [
   { category: 'spouse', question: (name) => `Is ${name} married? If so, what's their spouse's name?` },
   { category: 'kids', question: (name) => `Does ${name} have kids? What are their names?` },
@@ -89,10 +101,62 @@ export default function PersonDetail({
   const [mergeSearch, setMergeSearch] = useState('')
   const [otherPeople, setOtherPeople] = useState<OtherPerson[]>([])
   const [mergeCandidate, setMergeCandidate] = useState<OtherPerson | null>(null)
+  const [lastNameSuggestion, setLastNameSuggestion] = useState<{ lastName: string; sourceName: string } | null>(null)
 
   useEffect(() => {
+    setLastNameSuggestion(null)
     loadData()
   }, [personId])
+
+  useEffect(() => {
+    if (loading || person?.last_name) {
+      if (!loading) setLastNameSuggestion(null)
+      return
+    }
+    checkLastNameSuggestion()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personId, loading, notes, person?.last_name])
+
+  // Retroactive nudge for a profile that already exists with only a first name (e.g. created via
+  // a relationship suggestion before this last-name inference existed, or from before the other
+  // person had a last name on file themselves) — looks for one of this app's own deterministic
+  // relationship notes, resolves the named person, and offers their last name if they have one.
+  // Only ever a suggestion; confirming updates the record, declining just clears the banner.
+  async function checkLastNameSuggestion() {
+    let sourceRawName: string | null = null
+    for (const note of notes) {
+      for (const pattern of RELATIONSHIP_NOTE_PATTERNS) {
+        const match = note.content.trim().match(pattern)
+        if (match) {
+          sourceRawName = match[1].trim()
+          break
+        }
+      }
+      if (sourceRawName) break
+    }
+    if (!sourceRawName) return
+
+    const { data: candidates } = await supabase
+      .from('people')
+      .select('name, last_name')
+      .neq('id', personId)
+      .not('last_name', 'is', null)
+    const match = (candidates ?? []).find((p) => {
+      const full = `${p.name} ${p.last_name}`.trim()
+      return full.toLowerCase() === sourceRawName!.toLowerCase() || p.name.toLowerCase() === sourceRawName!.toLowerCase()
+    })
+    if (match?.last_name) {
+      setLastNameSuggestion({ lastName: match.last_name, sourceName: `${match.name} ${match.last_name}` })
+    }
+  }
+
+  async function confirmLastNameSuggestion() {
+    if (!lastNameSuggestion) return
+    await supabase.from('people').update({ last_name: lastNameSuggestion.lastName }).eq('id', personId)
+    setLastNameSuggestion(null)
+    loadData()
+    loadFacts(true)
+  }
 
   useEffect(() => {
     if (loading) return
@@ -462,6 +526,23 @@ export default function PersonDetail({
               Yes, add
             </button>
             <button type="button" onClick={() => setSuggestedGroup(null)} style={styles.suggestNoButton}>
+              No thanks
+            </button>
+          </div>
+        </div>
+      )}
+
+      {lastNameSuggestion && (
+        <div style={styles.suggestBanner}>
+          <span>
+            It looks like {personName} is connected to {lastNameSuggestion.sourceName}. Add "{lastNameSuggestion.lastName}" as{' '}
+            {personName}'s last name?
+          </span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={confirmLastNameSuggestion} style={styles.suggestYesButton}>
+              Yes, add
+            </button>
+            <button type="button" onClick={() => setLastNameSuggestion(null)} style={styles.suggestNoButton}>
               No thanks
             </button>
           </div>

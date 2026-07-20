@@ -18,6 +18,17 @@ export type NewPersonSuggestion = {
   // being linked automatically.
   candidateId?: string
   candidateName?: string
+  // Pre-filled last name (usually the subject's own) offered when rawName was just a bare first
+  // name — shown in the banner text and used when the founder confirms, but never asserted
+  // silently; still correctable afterward via chat like any other fact.
+  suggestedLastName?: string
+}
+
+// The name to actually save/display for a new-person suggestion — rawName as typed if it already
+// carries a last name, otherwise rawName plus the suggested one (if any).
+function proposedFullName(s: Pick<NewPersonSuggestion, 'rawName' | 'suggestedLastName'>): string {
+  const hasOwnLastName = s.rawName.trim().split(/\s+/).length > 1
+  return !hasOwnLastName && s.suggestedLastName ? `${s.rawName} ${s.suggestedLastName}` : s.rawName
 }
 
 // Raw suggestions as returned by an Edge Function (add-fact/converse/update-moment/update-group),
@@ -70,7 +81,7 @@ export default function RelationshipSuggestionBanners({
       data: { user },
     } = await supabase.auth.getUser()
     const [first, ...rest] = s.rawName.split(' ')
-    const lastName = rest.length > 0 ? rest.join(' ') : null
+    const lastName = rest.length > 0 ? rest.join(' ') : s.suggestedLastName ?? null
     const { data: newPerson } = await supabase
       .from('people')
       .insert({ user_id: user?.id, name: first, last_name: lastName })
@@ -105,7 +116,7 @@ export default function RelationshipSuggestionBanners({
       data: { user },
     } = await supabase.auth.getUser()
     const [first, ...rest] = s.rawName.split(' ')
-    const lastName = rest.length > 0 ? rest.join(' ') : null
+    const lastName = rest.length > 0 ? rest.join(' ') : s.suggestedLastName ?? null
     await supabase.from('people').insert({ user_id: user?.id, name: first, last_name: lastName })
     onApplied?.()
   }
@@ -149,7 +160,10 @@ export default function RelationshipSuggestionBanners({
           </div>
         ) : s.stage === 'confirm' ? (
           <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
-            <span>New relationship suggestion: {s.suggestionText}. Add this?</span>
+            <span>
+              New relationship suggestion: {s.suggestionText}. Add {proposedFullName(s)} as a new contact
+              {!s.rawName.includes(' ') && s.suggestedLastName ? ` (last name suggested to match)` : ''}?
+            </span>
             <div style={styles.suggestButtonRow}>
               <button type="button" onClick={() => confirmNewPersonSuggestion(s)} style={styles.suggestYesButton}>
                 Yes, add
@@ -161,7 +175,7 @@ export default function RelationshipSuggestionBanners({
           </div>
         ) : (
           <div key={`${s.relationship}:${s.rawName}`} style={styles.suggestBanner}>
-            <span>Add {s.rawName} as a new contact anyway, without confirming that relationship?</span>
+            <span>Add {proposedFullName(s)} as a new contact anyway, without confirming that relationship?</span>
             <div style={styles.suggestButtonRow}>
               <button type="button" onClick={() => addNewPersonAnyway(s)} style={styles.suggestYesButton}>
                 Add as contact

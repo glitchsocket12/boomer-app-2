@@ -57,6 +57,7 @@ serve(async (req) => {
     const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
+    const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — same
     // ambiguous-key guard used in converse/update-moment (see PROJECT_CONTEXT.md Section 9,
     // the "two Bobs" bug) so a relationship mention never misattaches to the wrong person.
@@ -73,6 +74,7 @@ serve(async (req) => {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
+      lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
       for (const nickname of (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)) {
         claimKey(nickname.toLowerCase(), p.id)
@@ -220,6 +222,7 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
       suggestionText: string
       candidateId?: string
       candidateName?: string
+      suggestedLastName?: string
     }[] = []
 
     if (user && (result.family_signals ?? []).length > 0) {
@@ -227,7 +230,7 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
         supabaseClient,
         Deno.env.get("ANTHROPIC_API_KEY") ?? "",
         buildSingleSubjectSignals(personFullName, result.family_signals ?? []),
-        { idByName, nameById }
+        { idByName, nameById, lastNameById }
       )
       familyTags = applied.familyTags
       relationshipSuggestions = applied.relationshipSuggestions

@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { applyFamilySignals, familySignalPromptMultiSubject, FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT } from "../_shared/relationships.ts"
+import {
+  applyFamilySignals,
+  familySignalPromptMultiSubject,
+  FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT,
+  inferLastNameFromSignals,
+} from "../_shared/relationships.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -74,6 +79,7 @@ serve(async (req) => {
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
     const nicknamesById: Record<string, string[]> = {}
+    const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — otherwise two
     // different people sharing one would collide and whichever loaded last would win every
     // lookup, silently misattaching a note to the wrong person (see PROJECT_CONTEXT.md Section 9,
@@ -91,6 +97,7 @@ serve(async (req) => {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
+      lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
       const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
@@ -238,7 +245,8 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       const key = name.toLowerCase()
       if (!idByName[key]) {
         const [first, ...rest] = name.trim().split(" ")
-        const lastName = rest.length > 0 ? rest.join(" ") : null
+        const lastName =
+          rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
         const { data: newPerson } = await supabaseClient
           .from("people")
           .insert({ user_id: user.id, name: first, last_name: lastName })
@@ -257,7 +265,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       supabaseClient,
       Deno.env.get("ANTHROPIC_API_KEY") ?? "",
       parsed.family_signals ?? [],
-      { idByName, nameById }
+      { idByName, nameById, lastNameById }
     )
 
     let notesAdded = 0
