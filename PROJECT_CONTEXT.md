@@ -56,8 +56,9 @@ src/
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   └── DueForUpdate.tsx       — people sorted oldest/no note first
 ├── components/
-│   ├── ErrorBoundary.tsx      — per-tab crash containment (raw message — not
-│   │                            end-user friendly yet)
+│   ├── ErrorBoundary.tsx      — per-tab crash containment; friendly fallback
+│   │                            (reload button, raw error tucked behind a
+│   │                            "Technical details" toggle)
 │   ├── UpdateMomentChat.tsx   — event "add detail" chat → `update-moment`
 │   ├── UpdateGroupChat.tsx    — group edit chat → `update-group`
 │   ├── VoiceInputButton.tsx   — mic → `transcribe`; renders null w/o MediaRecorder
@@ -174,7 +175,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 
-**Small known follow-ups:** align `person-facts`' category vocabulary with the shared 5-kind enum; nicknames stated via `update-moment`/`person-facts` paths aren't written (only lookup); `converse`'s new-moment capture doesn't resolve season phrases ("fall of 2025") to `event_date` (update-moment does); friendlier ErrorBoundary fallback; Edge Function test coverage (needs Anthropic/Supabase mocks); no retroactive group backfill for pre-2026-07-15 moments.
+**Small known follow-ups:** align `person-facts`' category vocabulary with the shared 5-kind enum; nicknames stated via `update-moment`/`person-facts` paths aren't written (only lookup); `converse`'s new-moment capture doesn't resolve season phrases ("fall of 2025") to `event_date` (update-moment does); Edge Function test coverage (needs Anthropic/Supabase mocks); no retroactive group backfill for pre-2026-07-15 moments.
 
 ## 9. Product & UX decisions (the standing "why")
 
@@ -200,7 +201,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 - ~~`search_log` table~~ — **confirmed live**: PostgREST returns 200 for `search_log`, `converse` returns 401 (deployed, not platform-not-found), and the production Home dashboard's "Recall assists this month" card shows a real nonzero count (4).
 - **Voice mic button**: backend confirmed working; still never click-tested inside the app UI post-fix.
 - Email confirmation must be re-enabled (with a proper redirect URL) before real users.
-- Not production-hardened generally: no 2FA/access-control story, minimal tests, raw error boundaries.
+- Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.
 
 ## 11. Rules for AI assistants working on this repo
