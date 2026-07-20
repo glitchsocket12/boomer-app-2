@@ -73,8 +73,9 @@ src/
 │   │                            raw_description has content), editable description,
 │   │                            who-was-there (hover-untag, non-destructive) +
 │   │                            search-and-add picker, suggested attendees from
-│   │                            group rosters, Affiliated Groups + search-and-add
-│   │                            picker, collapsed notes, maps link (+", CO"
+│   │                            group rosters, Affiliated Groups (hover-untag,
+│   │                            non-destructive) + search-and-add picker,
+│   │                            collapsed notes, maps link (+", CO"
 │   │                            hardcoded), rename, delete/merge, update chat
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
