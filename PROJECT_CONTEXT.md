@@ -34,6 +34,9 @@ src/
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
 │   │                            update" CTA, cached suggestion cards w/ refresh.
+│   │                            Chat input bar floats fixed to viewport bottom
+│   │                            (same stickyBarWrapper pattern as PersonDetail's
+│   │                            fact bar, 2026-07-20).
 │   ├── People.tsx             — list + search, sort dropdown, count; manual "add
 │   │                            person" (blank shell, no form, 2026-07-20 — matches
 │   │                            the Events/Groups add pattern) → lands on its profile
