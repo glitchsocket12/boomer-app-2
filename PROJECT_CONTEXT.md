@@ -168,6 +168,9 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 28. Manual + AI-suggested tags on events (schema change).
 29. Search within GroupDetail; People filter (criteria undecided).
 30. AI/"fuzzy" semantic search (likely merges into 14).
+31. **"Memory lane" curated media feed** — requested 2026-07-19. A scrollable, media-driven feed surfacing curated memories (vs. today's specific-lookup mode only); best outcome likely needs real event photos, so probably sequences after item 27 (photo gallery). Already named as a target query mode in §9's product philosophy, just not built yet.
+32. **User's own profile ("Me" page or a normal People entry)** — requested 2026-07-19. All events/groups should relate back to the user themself; founder undecided whether the user should live in the People list like a normal contact or get a dedicated "Me" page. Feeds directly into item 15's "resolve 'my parents'" need — this is the underlying concept item 15 was waiting on.
+33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 
@@ -190,8 +193,8 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 
 ## 10. Pending manual steps, open bugs, cleanup
 
-- **`summarize-group` member-conflation prompt fix** (don't call event attendees "members"): code-complete, needs redeploy + regenerate the Sam/Jordan test group summary to confirm.
-- **`person-facts` exact-match confidence fix**: code-complete, needs redeploy; after deploy, Gus Reynolds's cached Key Facts still shows stale "Dating: Olivia Gillingham" until refreshed.
+- ~~`summarize-group` member-conflation prompt fix~~ — **deployed 2026-07-19** (confirmed live: 401, not Supabase's not-found). Still worth regenerating the Sam/Jordan test group's summary (refresh button) to confirm it no longer calls Jordan a member.
+- ~~`person-facts` exact-match confidence fix~~ — **deployed 2026-07-19** (confirmed live: 401, not Supabase's not-found). Gus Reynolds's cached Key Facts will still show the stale "Dating: Olivia Gillingham" chip until his profile's Key Facts are refreshed (button, or edit/delete a note).
 - **Bad data cleanup (founder, in-app):** delete the wrong "Dating"/"In a relationship with" notes on Gus Reynolds's and Olivia Gillingham's profiles; delete test person "Zzztest CacheCheck" + test event "Coffee with Zzztest CacheCheck".
 - **`search_log` table**: run `supabase/migrations_manual/2026-07-19-search-log.sql` if not yet run (Recall-assists card reads 0 until then; verify with the PostgREST 200/400 check).
 - **Voice mic button**: backend confirmed working; still never click-tested inside the app UI post-fix.
