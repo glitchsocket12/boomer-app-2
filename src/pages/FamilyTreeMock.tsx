@@ -1,0 +1,132 @@
+// Static, read-only preview of a family tree generated from a group tagged "Family" —
+// placeholder data only. Members with a recorded relationship are placed in generation
+// tiers; members without one show up in an "unplaced" nudge instead of being silently
+// dropped, since filling that in is what actually improves the app's relationship data.
+
+function DirectChip({ label, highlight }: { label: string; highlight?: boolean }) {
+  return <span style={highlight ? styles.selfChip : styles.directChip}>{label}</span>
+}
+
+function ExtendedChip({ label }: { label: string }) {
+  return <span style={styles.extendedChip}>{label}</span>
+}
+
+export default function FamilyTreeMock({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
+  return (
+    <div style={styles.page}>
+      <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
+
+      <p style={styles.previewNote}>
+        Preview only — static mockup with placeholder names, not connected to your real data yet.
+      </p>
+
+      <p style={styles.groupContext}>Sample family · Family group · 7 members</p>
+
+      <div style={styles.tree}>
+        <div style={styles.tier}>
+          <div style={styles.tierLabel}>Grandparents</div>
+          <div style={styles.tierChips}>
+            <ExtendedChip label="Ruth" />
+          </div>
+        </div>
+        <div style={styles.connector} />
+        <div style={styles.tier}>
+          <div style={styles.tierLabel}>Parents</div>
+          <div style={styles.tierChips}>
+            <DirectChip label="Pat" />
+            <DirectChip label="Robin" />
+          </div>
+        </div>
+        <div style={styles.connector} />
+        <div style={styles.youTier}>
+          <div style={styles.tierLabel}>You and siblings</div>
+          <div style={styles.tierChips}>
+            <DirectChip label="You" highlight />
+            <DirectChip label="Casey" />
+          </div>
+        </div>
+      </div>
+
+      <div style={styles.unplacedSection}>
+        <div style={styles.unplacedTitle}>In the group, not placed yet</div>
+        <p style={styles.unplacedBody}>These are in Sample family but don't have a relationship recorded.</p>
+        <div style={styles.tierChips}>
+          <button style={styles.unplacedChip}>Kim → add relationship</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const styles: { [key: string]: React.CSSProperties } = {
+  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 3rem', fontFamily: 'Georgia, serif' },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    textDecoration: 'underline',
+    fontSize: '0.9rem',
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
+    padding: 0,
+    marginBottom: '1rem',
+  },
+  previewNote: {
+    fontSize: '0.85rem',
+    color: '#8A6A1F',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #B08B2E',
+    borderRadius: '8px',
+    padding: '0.6rem 0.9rem',
+    marginBottom: '1.5rem',
+  },
+  groupContext: { fontSize: '0.85rem', color: '#888', marginBottom: '1.5rem' },
+  tree: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
+  tier: { width: '100%', textAlign: 'center', padding: '0.4rem 0' },
+  youTier: {
+    width: '100%',
+    textAlign: 'center',
+    padding: '0.7rem',
+    border: '2px solid #6B4E9E',
+    borderRadius: '10px',
+    margin: '0.2rem 0',
+  },
+  tierLabel: { fontSize: '0.75rem', color: '#999', marginBottom: '0.5rem' },
+  tierChips: { display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' },
+  connector: { width: '1px', height: '16px', backgroundColor: '#CCC' },
+  directChip: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '999px',
+    border: '1px solid #2E4034',
+    color: '#2E4034',
+  },
+  extendedChip: {
+    fontSize: '0.8rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '999px',
+    border: '1px solid #DDD',
+    color: '#888',
+  },
+  selfChip: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '999px',
+    border: '1px solid #6B4E9E',
+    backgroundColor: '#6B4E9E',
+    color: '#fff',
+  },
+  unplacedSection: { marginTop: '1.5rem', borderTop: '1px solid #E4E4E4', paddingTop: '0.9rem' },
+  unplacedTitle: { fontSize: '0.85rem', color: '#555', marginBottom: '0.25rem' },
+  unplacedBody: { fontSize: '0.8rem', color: '#999', marginBottom: '0.5rem', lineHeight: 1.5 },
+  unplacedChip: {
+    fontSize: '0.8rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '999px',
+    border: '1px dashed #BBB',
+    color: '#666',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+}

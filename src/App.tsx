@@ -11,6 +11,7 @@ import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
 import CircleMock from './pages/CircleMock'
+import FamilyTreeMock from './pages/FamilyTreeMock'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 
@@ -22,6 +23,7 @@ type Crumb =
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
   | { type: 'circle'; id: string; label: string }
+  | { type: 'familyTree'; id: string; label: string }
 
 const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
 
@@ -40,7 +42,7 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
       ? parsed.navStack.filter(
           (c: Crumb) =>
             c &&
-            ['person', 'group', 'event', 'dunbar', 'nudges', 'circle'].includes(c.type) &&
+            ['person', 'group', 'event', 'dunbar', 'nudges', 'circle', 'familyTree'].includes(c.type) &&
             typeof c.id === 'string' &&
             typeof c.label === 'string'
         )
@@ -175,7 +177,17 @@ export default function App() {
       />
     )
   } else if (current?.type === 'circle') {
-    content = <CircleMock />
+    content = (
+      <CircleMock
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onOpenFamilyTree={() =>
+          pushCrumb({ type: 'familyTree', id: 'sample-family', label: 'Sample family tree (preview)' })
+        }
+      />
+    )
+  } else if (current?.type === 'familyTree') {
+    content = <FamilyTreeMock onBack={popCrumb} backLabel={parentLabel} />
   } else {
     content = (
       <>
@@ -225,7 +237,7 @@ export default function App() {
         </div>
         <div>
           <button
-            onClick={() => pushCrumb({ type: 'circle', id: 'circle', label: 'Your circle (preview)' })}
+            onClick={() => pushCrumb({ type: 'circle', id: 'circle', label: 'My page (preview)' })}
             style={{ marginRight: '0.5rem' }}
           >
             Preview

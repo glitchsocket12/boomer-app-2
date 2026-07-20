@@ -1,13 +1,9 @@
-// Static, read-only preview of the "Your circle" / "Family tree" concept — placeholder
-// data only, not wired to real people/relationships. Built to click through on a phone
-// for UX feedback before any of this becomes a real feature.
+// Static, read-only preview of "My page" — placeholder data only, not wired to real
+// people/relationships. Built to click through on a phone for UX feedback before any
+// of this becomes a real feature.
 
 function DirectChip({ label }: { label: string }) {
   return <span style={styles.directChip}>{label}</span>
-}
-
-function ExtendedChip({ label }: { label: string }) {
-  return <span style={styles.extendedChip}>{label}</span>
 }
 
 function AddChip({ label }: { label: string }) {
@@ -23,9 +19,19 @@ function CircleBox({ title, children }: { title: string; children: React.ReactNo
   )
 }
 
-export default function CircleMock() {
+export default function CircleMock({
+  onBack,
+  backLabel,
+  onOpenFamilyTree,
+}: {
+  onBack: () => void
+  backLabel: string
+  onOpenFamilyTree: () => void
+}) {
   return (
     <div style={styles.page}>
+      <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
+
       <p style={styles.previewNote}>
         Preview only — static mockup with placeholder names, not connected to your real data yet.
       </p>
@@ -57,40 +63,27 @@ export default function CircleMock() {
         </CircleBox>
       </div>
 
-      <h2 style={styles.sectionHeading}>Family tree</h2>
-      <div style={styles.tree}>
-        <div style={styles.tier}>
-          <div style={styles.tierLabel}>Grandparents</div>
-          <div style={styles.tierChips}>
-            <ExtendedChip label="Ruth" />
-            <AddChip label="Add" />
+      <h2 style={styles.sectionHeading}>Your groups</h2>
+      <div style={styles.groupList}>
+        <button onClick={onOpenFamilyTree} style={styles.familyGroupCard}>
+          <div>
+            <div style={styles.groupName}>Sample family</div>
+            <span style={styles.familyBadge}>Family</span>
           </div>
+          <span style={styles.treeLink}>Tree →</span>
+        </button>
+
+        <div style={styles.groupCard}>
+          <div style={styles.groupName}>Book club</div>
+          <span style={styles.groupBadge}>Friend group</span>
         </div>
-        <div style={styles.connector} />
-        <div style={styles.tier}>
-          <div style={styles.tierLabel}>Parents and their siblings</div>
-          <div style={styles.tierChips}>
-            <DirectChip label="Pat" />
-            <DirectChip label="Robin" />
-            <ExtendedChip label="Aunt Sam" />
-          </div>
+
+        <div style={styles.groupCard}>
+          <div style={styles.groupName}>Work team</div>
+          <span style={styles.groupBadge}>Team</span>
         </div>
-        <div style={styles.connector} />
-        <div style={styles.youTier}>
-          <div style={styles.tierLabel}>You and your generation</div>
-          <div style={styles.tierChips}>
-            <span style={styles.selfChip}>You</span>
-            <DirectChip label="Jordan" />
-            <DirectChip label="Casey" />
-          </div>
-        </div>
-        <div style={styles.connector} />
-        <div style={styles.tier}>
-          <div style={styles.tierLabel}>Kids and nieces/nephews</div>
-          <div style={styles.tierChips}>
-            <AddChip label="Add" />
-          </div>
-        </div>
+
+        <div style={styles.addGroupCard}>+ Add group</div>
       </div>
     </div>
   )
@@ -98,6 +91,17 @@ export default function CircleMock() {
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 3rem', fontFamily: 'Georgia, serif' },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    textDecoration: 'underline',
+    fontSize: '0.9rem',
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
+    padding: 0,
+    marginBottom: '1rem',
+  },
   previewNote: {
     fontSize: '0.85rem',
     color: '#8A6A1F',
@@ -155,13 +159,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: '1px solid #2E4034',
     color: '#2E4034',
   },
-  extendedChip: {
-    fontSize: '0.8rem',
-    padding: '0.3rem 0.7rem',
-    borderRadius: '999px',
-    border: '1px solid #DDD',
-    color: '#888',
-  },
   addChip: {
     fontSize: '0.8rem',
     padding: '0.3rem 0.7rem',
@@ -169,25 +166,54 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: '1px dashed #BBB',
     color: '#999',
   },
-  tree: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  tier: { width: '100%', textAlign: 'center', padding: '0.4rem 0' },
-  youTier: {
-    width: '100%',
-    textAlign: 'center',
-    padding: '0.7rem',
+  groupList: { display: 'flex', flexDirection: 'column', gap: '0.6rem' },
+  familyGroupCard: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     border: '2px solid #6B4E9E',
     borderRadius: '10px',
-    margin: '0.2rem 0',
+    padding: '0.7rem 0.9rem',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    width: '100%',
+    textAlign: 'left',
   },
-  tierLabel: { fontSize: '0.75rem', color: '#999', marginBottom: '0.5rem' },
-  tierChips: { display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' },
-  connector: { width: '1px', height: '16px', backgroundColor: '#CCC' },
-  selfChip: {
-    fontSize: '0.85rem',
-    padding: '0.3rem 0.7rem',
+  groupCard: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    border: '1px solid #E4E4E4',
+    borderRadius: '10px',
+    padding: '0.7rem 0.9rem',
+  },
+  groupName: { fontSize: '0.95rem', color: '#2E2E2E' },
+  familyBadge: {
+    fontSize: '0.7rem',
+    backgroundColor: '#EEEDFE',
+    color: '#3C3489',
     borderRadius: '999px',
-    border: '1px solid #6B4E9E',
-    backgroundColor: '#6B4E9E',
-    color: '#fff',
+    padding: '0.1rem 0.5rem',
+    display: 'inline-block',
+    marginTop: '0.25rem',
+  },
+  groupBadge: {
+    fontSize: '0.7rem',
+    backgroundColor: '#F2F2F2',
+    color: '#777',
+    borderRadius: '999px',
+    padding: '0.1rem 0.5rem',
+    display: 'inline-block',
+    marginTop: '0.25rem',
+  },
+  treeLink: { fontSize: '0.85rem', color: '#6B4E9E' },
+  addGroupCard: {
+    border: '1px dashed #BBB',
+    borderRadius: '10px',
+    padding: '0.7rem 0.9rem',
+    textAlign: 'center',
+    color: '#999',
+    fontSize: '0.9rem',
   },
 }
