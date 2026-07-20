@@ -85,15 +85,24 @@ src/
 │   │                             "Your groups" list. Reached via a "Preview" button
 │   │                             in the top bar. A group card tagged "Family" links
 │   │                             to FamilyTreeMock (2026-07-20)
-│   └── FamilyTreeMock.tsx      — READ-ONLY static preview of a family tree scoped to
-│                                 one group's members (placeholder data): generation
-│                                 tiers (grandparents/aunts-uncles → parents →
+│   └── FamilyTreeMock.tsx      — READ-ONLY static preview, REBUILT 2026-07-20 as a
+│                                 genealogy-style SVG tree (hand-placed coordinates,
+│                                 boxes joined by descent/marriage lines) replacing the
+│                                 earlier flat chip-row version. Generation tiers
+│                                 (grandparents/aunts-uncles → parents →
 │                                 self+spouse+siblings+cousins → kids+nieces-nephews),
-│                                 solid chip = direct relationship, outlined = inferred
-│                                 one hop further (spouse/in-law/cousin/niece-nephew),
-│                                 plus an "unplaced" section nudging you to add a
-│                                 relationship for group members who don't have one on
-│                                 file yet. Every tier has a "+" (2026-07-20)
+│                                 solid border = direct relationship, gray = inferred
+│                                 one hop further. Clicking a person with a "banked"
+│                                 dataset (`TREES` record, keyed by id — currently
+│                                 `sample-family` and `jordan`) re-centers the WHOLE
+│                                 tree on them via a new pushed `familyTree` crumb —
+│                                 demonstrates that a tree is a person's own
+│                                 relationship graph, not bounded by which group you
+│                                 opened it from. Verified 4 levels deep with working
+│                                 back nav at each step. Trade-off: the flat version's
+│                                 "+" add-picker is dropped here — precise connector
+│                                 coordinates don't reflow for free like a chip row
+│                                 does; not yet solved
 ├── components/
 │   ├── MockAddPicker.tsx      — type-and-select "add a person" affordance shared by
 │   │                            CircleMock/FamilyTreeMock, searches a small hardcoded
