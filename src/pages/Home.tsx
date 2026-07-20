@@ -320,29 +320,33 @@ export default function Home({
         setNewPersonSuggestions={setNewPersonSuggestions}
       />
 
-      <div style={styles.inputRow}>
-        <AutoGrowTextarea
-          value={input}
-          onChange={setInput}
-          onEnter={handleSend}
-          placeholder="Ask, share, or add a detail…"
-          style={styles.input}
-          disabled={sending}
-        />
-        <VoiceInputButton
-          disabled={sending}
-          onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
-        />
-        <button onClick={handleSend} disabled={sending} style={styles.button}>
-          Send
-        </button>
+      <div style={styles.stickyBarWrapper}>
+        <div style={styles.stickyBarInner}>
+          <div style={styles.inputRow}>
+            <AutoGrowTextarea
+              value={input}
+              onChange={setInput}
+              onEnter={handleSend}
+              placeholder="Ask, share, or add a detail…"
+              style={styles.input}
+              disabled={sending}
+            />
+            <VoiceInputButton
+              disabled={sending}
+              onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
+            />
+            <button onClick={handleSend} disabled={sending} style={styles.button}>
+              Send
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
+  page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.5rem', textAlign: 'center' },
   emptyState: { color: '#777', textAlign: 'center', marginTop: '1rem' },
   statsRow: { display: 'flex', gap: '0.75rem', marginTop: '1.25rem' },
@@ -488,7 +492,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
   },
-  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.75rem', marginTop: '1rem', borderTop: '1px solid #E5E3DE', paddingTop: '1rem' },
+  stickyBarWrapper: {
+    position: 'fixed',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#F7F5F2',
+    borderTop: '1px solid #E2DFD6',
+    boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
+    padding: '0.6rem 0',
+    zIndex: 20,
+  },
+  stickyBarInner: { maxWidth: '600px', margin: '0 auto', padding: '0 1.5rem' },
+  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.75rem' },
   input: { flex: 1, fontSize: '1.1rem', padding: '0.65rem', borderRadius: '8px', border: '1px solid #CCC' },
   button: {
     fontSize: '1.1rem',
