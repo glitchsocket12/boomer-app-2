@@ -79,10 +79,18 @@ src/
 │   │                            hardcoded), rename, delete/merge, update chat
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
-│   └── CircleMock.tsx         — READ-ONLY static preview (placeholder data, no
-│                                 Supabase calls) of a "Your circle" + "Family tree"
-│                                 concept for item 32; reached via a "Preview" button
-│                                 in the top bar, 2026-07-20
+│   ├── CircleMock.tsx          — READ-ONLY static "My page" preview (placeholder
+│   │                             data, no Supabase calls) for item 32: self header,
+│   │                             "Your circle" grid (spouse/kids/parents/siblings),
+│   │                             "Your groups" list. Reached via a "Preview" button
+│   │                             in the top bar. A group card tagged "Family" links
+│   │                             to FamilyTreeMock (2026-07-20)
+│   └── FamilyTreeMock.tsx      — READ-ONLY static preview of a family tree scoped to
+│                                 one group's members (placeholder data): generation
+│                                 tiers (grandparents → parents → self+siblings) built
+│                                 from the relationship graph, plus an "unplaced"
+│                                 section nudging you to add a relationship for group
+│                                 members who don't have one on file yet (2026-07-20)
 ├── components/
 │   ├── ErrorBoundary.tsx      — per-tab crash containment; friendly fallback
 │   │                            (reload button, raw error tucked behind a
@@ -200,9 +208,10 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 29. Search within GroupDetail; People filter (criteria undecided).
 30. AI/"fuzzy" semantic search (likely merges into 14).
 31. **"Memory lane" curated media feed** — requested 2026-07-19. A scrollable, media-driven feed surfacing curated memories (vs. today's specific-lookup mode only); best outcome likely needs real event photos, so probably sequences after item 27 (photo gallery). Already named as a target query mode in §9's product philosophy, just not built yet.
-32. **User's own profile ("Me" page or a normal People entry)** — requested 2026-07-19. All events/groups should relate back to the user themself; founder undecided whether the user should live in the People list like a normal contact or get a dedicated "Me" page. Feeds directly into item 15's "resolve 'my parents'" need — this is the underlying concept item 15 was waiting on. **Static UX preview shipped 2026-07-20** (`CircleMock.tsx`, placeholder data only) — "Your circle" grid (spouse/kids/parents/siblings) + a "Family tree" tiered view (grandparents → parents+siblings → self+generation → kids+nieces/nephews). Open decisions before this becomes real: (a) empty relationship categories shown as an invite-to-add vs. hidden until populated, (b) extended tiers (grandparents/aunts-uncles/etc.) inferred purely by walking the existing 5-kind relationship graph one hop further vs. also directly addable in the tree UI itself.
+32. **User's own profile ("Me" page or a normal People entry)** — requested 2026-07-19. All events/groups should relate back to the user themself; founder undecided whether the user should live in the People list like a normal contact or get a dedicated "Me" page. Feeds directly into item 15's "resolve 'my parents'" need — this is the underlying concept item 15 was waiting on. **Static UX preview shipped 2026-07-20** (`CircleMock.tsx` + `FamilyTreeMock.tsx`, placeholder data only) — "My page" = self header + "Your circle" grid + "Your groups" list; the family tree moved OUT of the profile page and into a per-group view, scoped to whichever group is tagged "Family" (depends on item 35). Founder's rationale: tying the tree to group membership (not blood-relationship inference) lets you decide who counts as family — chosen family, in-laws, a friend's family you're close with — and doubles as a relationship-data-collection tool: an "unplaced" group member with no relationship on file is a direct nudge to add one, which then improves "my mom/dad" resolution and reciprocal notes everywhere else in the app. Open decisions before this becomes real: (a) empty relationship categories on "Your circle" shown as an invite-to-add vs. hidden until populated, (b) whether a family tree can be built for a group you're NOT a member of (a close friend's family) — that variant has no "You" tier to anchor on.
 33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
 34. **Filterable "View" by event category on the Events page** — requested 2026-07-19. Founder's concern: as event volume grows, big events (weddings) get buried among day-to-day notes (a phone call), so a picklist of categories to narrow the list is needed. Categories would come from a learning/growing list derived from events actually added, not a fixed hardcoded set. Pairs with item 28 (manual + AI-suggested tags on events) — likely the same schema change powers both the tags and this filter view.
+35. **Group Types (Family/Team/School/Friend group/etc.)** — requested 2026-07-20. `groups` has no type/category field today. Needed as the tagging mechanism item 32's family-tree-per-group concept depends on; also independently useful for organizing/filtering the Groups page. Schema change: a `group_type` column + a small fixed picker in the UI.
 35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
