@@ -1,9 +1,12 @@
 // Static preview of a genealogy-style family tree with REAL reflow: positions are
-// computed from a relationship data model (branches: a couple + their kids, each tier
-// descending from a named person in the tier above), not hardcoded pixel coordinates.
-// Adding a person via "+" appends them to a branch and the whole tier -- and its
-// connector lines -- recompute. Placeholder data only, no Supabase calls. Clicking a
-// person with a "banked" dataset re-centers the tree on them (same as before).
+// computed from a relationship data model, not hardcoded pixel coordinates. Each
+// person (not each branch) carries their OWN optional parentName -- so a couple's two
+// partners can trace up to two entirely different branches in the tier above (paternal
+// vs maternal grandparents), instead of the whole couple sharing one lineage. A person
+// with no parentName (married in) simply gets no connector line up. Adding a person via
+// "+" appends them to a branch and the whole tier -- and its connector lines --
+// recompute. Placeholder data only, no Supabase calls. Clicking a person with a
+// "banked" dataset re-centers the tree on them.
 //
 // Known simplification: "+" always adds to a tier's FIRST branch. A tier with multiple
 // branches (e.g. Parents has both Pat/Robin's line and Aunt Sam's) has no UI yet to
@@ -13,8 +16,8 @@ import { useEffect, useState } from 'react'
 import MockAddPicker from '../components/MockAddPicker'
 
 type PersonKind = 'self' | 'direct' | 'extended'
-type Person = { name: string; kind: PersonKind; linkTo?: string }
-type Branch = { parentName?: string; union: { a: Person; b?: Person }; siblings: Person[] }
+type Person = { name: string; kind: PersonKind; linkTo?: string; parentName?: string }
+type Branch = { union: { a: Person; b?: Person }; siblings: Person[] }
 type TierDef = { label: string; branches: Branch[]; defaultParentName?: string }
 type TreeData = { title: string; context: string; tiers: TierDef[] }
 
@@ -25,24 +28,37 @@ const TREES: Record<string, TreeData> = {
     tiers: [
       {
         label: 'Grandparents',
-        branches: [{ union: { a: { name: 'Ruth', kind: 'extended' } }, siblings: [] }],
+        branches: [
+          { union: { a: { name: 'Ruth', kind: 'extended' } }, siblings: [] },
+          {
+            union: { a: { name: 'Elaine', kind: 'extended' }, b: { name: 'Frank Sr', kind: 'extended' } },
+            siblings: [],
+          },
+        ],
       },
       {
         label: 'Parents',
         branches: [
-          { parentName: 'Ruth', union: { a: { name: 'Pat', kind: 'direct' }, b: { name: 'Robin', kind: 'direct' } }, siblings: [] },
-          { parentName: 'Ruth', union: { a: { name: 'Aunt Sam', kind: 'extended' } }, siblings: [] },
+          {
+            union: {
+              a: { name: 'Pat', kind: 'direct', parentName: 'Ruth' },
+              b: { name: 'Robin', kind: 'direct', parentName: 'Elaine' },
+            },
+            siblings: [{ name: 'Aunt Sam', kind: 'extended', parentName: 'Ruth' }],
+          },
         ],
       },
       {
         label: 'You',
         branches: [
           {
-            parentName: 'Pat',
-            union: { a: { name: 'You', kind: 'self' }, b: { name: 'Jordan', kind: 'direct', linkTo: 'jordan' } },
-            siblings: [{ name: 'Casey', kind: 'direct' }],
+            union: {
+              a: { name: 'You', kind: 'self', parentName: 'Pat' },
+              b: { name: 'Jordan', kind: 'direct', linkTo: 'jordan' },
+            },
+            siblings: [{ name: 'Casey', kind: 'direct', parentName: 'Pat' }],
           },
-          { parentName: 'Aunt Sam', union: { a: { name: 'Riley', kind: 'extended' } }, siblings: [] },
+          { union: { a: { name: 'Riley', kind: 'extended', parentName: 'Aunt Sam' } }, siblings: [] },
         ],
       },
       { label: 'Kids', branches: [], defaultParentName: 'You' },
@@ -60,9 +76,11 @@ const TREES: Record<string, TreeData> = {
         label: "Jordan's generation",
         branches: [
           {
-            parentName: 'Diane',
-            union: { a: { name: 'Jordan', kind: 'self' }, b: { name: 'You', kind: 'direct', linkTo: 'sample-family' } },
-            siblings: [{ name: 'Sam', kind: 'direct' }],
+            union: {
+              a: { name: 'Jordan', kind: 'self', parentName: 'Diane' },
+              b: { name: 'You', kind: 'direct', linkTo: 'sample-family' },
+            },
+            siblings: [{ name: 'Sam', kind: 'direct', parentName: 'Diane' }],
           },
         ],
       },
@@ -89,7 +107,7 @@ function boxWidth(name: string) {
   return Math.max(80, Math.min(160, name.length * 8 + 28))
 }
 
-type Placed = { person: Person; x: number; w: number; branchIdx: number; isUnionMember: boolean }
+type Placed = { person: Person; x: number; w: number; branchIdx: number }
 
 function layoutTier(branches: Branch[]): { placed: Placed[]; totalWidth: number } {
   const placed: Placed[] = []
@@ -97,18 +115,18 @@ function layoutTier(branches: Branch[]): { placed: Placed[]; totalWidth: number 
   branches.forEach((branch, bi) => {
     if (bi > 0) x += BRANCH_GAP
     const aw = boxWidth(branch.union.a.name)
-    placed.push({ person: branch.union.a, x, w: aw, branchIdx: bi, isUnionMember: true })
+    placed.push({ person: branch.union.a, x, w: aw, branchIdx: bi })
     x += aw
     if (branch.union.b) {
       x += MARRIAGE_GAP
       const bw = boxWidth(branch.union.b.name)
-      placed.push({ person: branch.union.b, x, w: bw, branchIdx: bi, isUnionMember: true })
+      placed.push({ person: branch.union.b, x, w: bw, branchIdx: bi })
       x += bw
     }
     branch.siblings.forEach((sib) => {
       x += SLOT_GAP
       const sw = boxWidth(sib.name)
-      placed.push({ person: sib, x, w: sw, branchIdx: bi, isUnionMember: false })
+      placed.push({ person: sib, x, w: sw, branchIdx: bi })
       x += sw
     })
   })
@@ -147,10 +165,14 @@ export default function FamilyTreeMock({
       prev.map((tier, i) => {
         if (i !== tierIndex) return tier
         if (tier.branches.length === 0) {
-          return { ...tier, branches: [{ parentName: tier.defaultParentName, union: { a: { name, kind: 'direct' } }, siblings: [] }] }
+          return {
+            ...tier,
+            branches: [{ union: { a: { name, kind: 'direct', parentName: tier.defaultParentName } }, siblings: [] }],
+          }
         }
         const [first, ...rest] = tier.branches
-        return { ...tier, branches: [{ ...first, siblings: [...first.siblings, { name, kind: 'direct' }] }, ...rest] }
+        const newSibling: Person = { name, kind: 'direct', parentName: first.union.a.parentName }
+        return { ...tier, branches: [{ ...first, siblings: [...first.siblings, newSibling] }, ...rest] }
       })
     )
   }
@@ -182,7 +204,6 @@ export default function FamilyTreeMock({
           const yAbove = TIER_Y_START + TIER_Y_STEP * i
           const yBelow = TIER_Y_START + TIER_Y_STEP * (i + 1)
           const barY = yAbove + BOX_H + 46
-          const tierBelow = tiers[i + 1]
           const layoutAbove = layouts[i]
           const layoutBelow = layouts[i + 1]
           const startAbove = (CANVAS_W - layoutAbove.totalWidth) / 2
@@ -190,13 +211,10 @@ export default function FamilyTreeMock({
 
           const groups = new Map<string, number[]>()
           layoutBelow.placed.forEach((p) => {
-            const branch = tierBelow.branches[p.branchIdx]
-            if (!branch.parentName) return
-            const isBloodMember = p.isUnionMember ? p.person === branch.union.a : true
-            if (!isBloodMember) return
-            const arr = groups.get(branch.parentName) ?? []
+            if (!p.person.parentName) return
+            const arr = groups.get(p.person.parentName) ?? []
             arr.push(startBelow + p.x + p.w / 2)
-            groups.set(branch.parentName, arr)
+            groups.set(p.person.parentName, arr)
           })
 
           return (
@@ -239,8 +257,25 @@ export default function FamilyTreeMock({
             )
           }
 
+          const marriageLines = tier.branches
+            .map((branch) => {
+              if (!branch.union.b) return null
+              const aPlaced = layout.placed.find((p) => p.person === branch.union.a)
+              const bPlaced = layout.placed.find((p) => p.person === branch.union.b)
+              if (!aPlaced || !bPlaced) return null
+              return {
+                x1: startX + aPlaced.x + aPlaced.w,
+                x2: startX + bPlaced.x,
+                y: y + BOX_H / 2,
+              }
+            })
+            .filter((l): l is { x1: number; x2: number; y: number } => l !== null)
+
           return (
             <g key={tier.label}>
+              {marriageLines.map((l, li) => (
+                <line key={li} x1={l.x1} y1={l.y} x2={l.x2} y2={l.y} stroke="#CCC" strokeWidth={1} />
+              ))}
               {layout.placed.map((p) => {
                 const c = COLORS[p.person.kind]
                 const clickable = Boolean(p.person.linkTo)
