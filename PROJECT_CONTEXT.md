@@ -34,21 +34,35 @@ src/
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
 │   │                            update" CTA, cached suggestion cards w/ refresh.
-│   ├── People.tsx             — list + add person, search, sort dropdown, count
-│   │                            (add-person save now checks .error, was silent)
+│   ├── People.tsx             — list + search, sort dropdown, count; manual "add
+│   │                            person" (blank shell, no form, 2026-07-20 — matches
+│   │                            the Events/Groups add pattern) → lands on its profile
 │   ├── PersonDetail.tsx       — Key Facts (cached, clickable chips, fixed order),
 │   │                            missing-info nudges, notes (edit/delete/source
 │   │                            labels), fact bar → `add-fact` (the ONLY edit path
 │   │                            for name/nickname/birthday/anniversary — no form
-│   │                            fields), relationship-suggestion banners, last-name
-│   │                            nudge, delete/merge profile
+│   │                            fields; a fresh manually-created profile leans on
+│   │                            this same path to go from placeholder "New person"
+│   │                            to a real name, with placeholder-aware nudge/fact-bar
+│   │                            copy), relationship-suggestion banners, last-name
+│   │                            nudge, delete/merge profile. All name-display text
+│   │                            (nudges, banners, fact bar) now tracks the live
+│   │                            `person` state, not the stale navigation-time prop —
+│   │                            was silently frozen at whatever name you navigated
+│   │                            in with, invisible until a same-visit rename made it
+│   │                            obvious (2026-07-20)
 │   ├── Groups.tsx             — group tiles (summary, ≤5 member chips, event chips);
-│   │                            manual "add group" (name only) → lands on its detail page
-│   ├── GroupDetail.tsx        — summary + refresh, members (explicit only, sorted,
-│   │                            collapsible >12, hover-remove), suggestions (from
-│   │                            events + associated groups, capped 20, add/deny
-│   │                            all), Associated Groups (confirmed + suggested +
-│   │                            manual picker), notes section, edit chat, delete group
+│   │                            manual "add group" (blank shell, no form, 2026-07-20)
+│   │                            → lands on its detail page to rename via the pencil
+│   ├── GroupDetail.tsx        — summary + refresh (rename now invalidates the cached
+│   │                            summary too, not just membership changes — a manually-
+│   │                            created group's summary can otherwise stay generated
+│   │                            against the "New group" placeholder forever), members
+│   │                            (explicit only, sorted, collapsible >12, hover-remove),
+│   │                            suggestions (from events + associated groups, capped
+│   │                            20, add/deny all), Associated Groups (confirmed +
+│   │                            suggested + manual picker), notes section, edit chat,
+│   │                            delete group
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
 │   │                            created_at), "Month Year" format; manual "add event"
 │   │                            (blank shell, no form) → lands on its detail page
@@ -147,9 +161,9 @@ home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts
 
 - **Auth:** sign up / log in. Email confirmation DISABLED for testing — must re-enable before real users.
 - **Home:** continuous chat (answer/capture/update/correct/group-tag per turn, multiple events per message, never dead-ends — suggests close matches or asks); clickable person/event/group chips on replies with canonical spellings; cached suggestion cards (tap = starts a real conversation); dashboard (People/Events/Groups/Notes counts, Dunbar card → DunbarDetail, Recall-assists card, monthly leaderboard → DueForUpdate). Known gap: the chat thread lives in component state — switching tabs loses it.
-- **People:** add (first+last), search (incl. nicknames), 5 sort options, count in heading.
-- **Person profile:** Key Facts (cached, ordered Parents→Spouse→Siblings→Children, exact-match chips), missing-category nudges, notes with hover edit/delete + source labels ("Added through: {event}" / "From: {Group}" / "From Home"), fact bar (AI-classified, the only field-edit path), relationship + new-person + shared-parent + last-name suggestion banners, delete/merge profile (the SEARCHED-FOR record survives; merged-away names fold into nicknames).
-- **Groups:** created conversationally OR via manual "add group" button (name only, 2026-07-20 — recurring affiliations, school/team/unit/workplace/circle, never one-off events); tiles with summary + capped chips; detail page per §3; membership = explicit only; suggestions from event attendance + associated-group rosters; symmetric confirmed group associations; whole-group delete (2026-07-20, the safety net the manual button needed — groups have no dedupe-by-name check the way `converse` does).
+- **People:** manual "add person" is a no-form blank shell (2026-07-20, matches Events/Groups — was a first+last form before), search (incl. nicknames), 5 sort options, count in heading.
+- **Person profile:** Key Facts (cached, ordered Parents→Spouse→Siblings→Children, exact-match chips), missing-category nudges, notes with hover edit/delete + source labels ("Added through: {event}" / "From: {Group}" / "From Home"), fact bar (AI-classified, the only field-edit path — a fresh blank profile's placeholder name gets set through this same path, no separate name-edit control added), relationship + new-person + shared-parent + last-name suggestion banners, delete/merge profile (the SEARCHED-FOR record survives; merged-away names fold into nicknames).
+- **Groups:** created conversationally OR via manual "add group" (blank shell, no form, 2026-07-20 — recurring affiliations, school/team/unit/workplace/circle, never one-off events); tiles with summary + capped chips; detail page per §3; membership = explicit only; suggestions from event attendance + associated-group rosters; symmetric confirmed group associations; whole-group delete (2026-07-20, the safety net the manual button needed — groups have no dedupe-by-name check the way `converse` does).
 - **Events:** browsable, sorted by real-date guess; detail per §3; AI summary regenerates on new detail (only once there's a description to summarize); delete/merge (searched-for survives); group tagging + attendee tagging via chat OR direct search-and-add pickers on the event page (2026-07-20); manual "add event" button (2026-07-20) creates a blank shell and drops straight onto its detail page to build up from there — same "step by step" idea as manual "add person," extended to events/groups.
 - **Voice input** on every text box (record → Whisper → text dropped in for review, never auto-sends; no live captions — batch only). **Auto-grow textareas** everywhere.
 - **Cross-navigation:** any person/group/event mention anywhere is a chip → detail page, with breadcrumb trail; refresh restores location (sessionStorage).
@@ -250,3 +264,5 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - Fix classes of bugs, not instances: `converse`'s siblings (`update-moment`/`update-group`) have repeatedly harbored the same bug (JSON fences, max_tokens, silent errors, missing rosters) — when one function gets a reliability fix, check them all. Same for the two independent name-resolution paths (`relationships.ts` and `person-facts`).
 - **A confident match and a confirmed suggestion must write the exact same both-sides notes** — `relationships.ts`'s direct-write path did, but `RelationshipSuggestions.tsx`'s confirm handlers only ever wrote onto the newly linked/created person, never back onto the subject, until fixed 2026-07-20 (found via the Sucre-brothers inconsistent-siblings report: whichever profile the fact was typed on could end up with nothing). Any new relationship-suggestion type needs the same both-sides write, not just the "obvious" direction.
 - **A "does this note already exist" dedupe check must match the EXACT deterministic text, never a loose "mentions this name + a family-shaped keyword" heuristic** — the loose version (`relationships.ts`, fixed 2026-07-20) false-positived on the SUBJECT's own original sentence (e.g. "Her siblings are Clare, Bridget, and Patrick" already contains "Clare" + the word "siblings"), silently blocking the subject from ever getting their OWN reciprocal note while everyone else correctly got theirs pointing back at them — found via the Berzins-family report, where Caroline (the one person who'd actually typed the fact) was the one left incomplete, not her siblings.
+- **Display text derived from a navigation-time prop (breadcrumb label) goes stale the moment the underlying record is renamed mid-visit** — `PersonDetail.tsx` had every nudge/fact-bar/banner string keyed off the `personName` prop instead of the freshly-loaded `person` state, invisible until the manual "add person" flow (2026-07-20) made same-visit renames the common case instead of the rare one. Any page with an in-place rename control needs its own display text to track live state, not what it was called when you navigated in.
+- **A blank-shell record's cached AI summary can be generated against its placeholder name/content before it's ever filled in** — `GroupDetail.tsx`'s rename didn't invalidate the cached summary (only membership changes did), so a manually-created group (2026-07-20) could get summarized as "New group" and stay that way forever. Any manual-create-then-fill-in flow needs its rename/edit paths to invalidate the same caches the AI-driven paths already do.

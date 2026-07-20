@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { GroupChip, EventChip } from '../components/Chips'
@@ -74,8 +74,7 @@ export default function People({
   onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
   const [people, setPeople] = useState<Person[]>([])
-  const [newName, setNewName] = useState('')
-  const [newLastName, setNewLastName] = useState('')
+  const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -102,27 +101,31 @@ export default function People({
     setLoading(false)
   }
 
-  async function handleAddPerson(e: FormEvent) {
-    e.preventDefault()
-    if (!newName.trim()) return
-
+  // No form up front — matches "add an event": creates a blank shell immediately and drops
+  // the founder straight onto the new profile. There's no direct name-edit control on
+  // PersonDetail by design (names are set conversationally via the fact bar, same path used to
+  // rename AI-created placeholders like "Clare's mom"), so this placeholder name leans on that
+  // same rename mechanism rather than adding a new one.
+  async function handleAddPerson() {
+    setAdding(true)
     setAddError(null)
     const {
       data: { user },
     } = await supabase.auth.getUser()
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('people')
-      .insert({ name: newName.trim(), last_name: newLastName.trim() || null, user_id: user?.id })
+      .insert({ name: 'New person', last_name: null, user_id: user?.id })
+      .select()
+      .single()
 
-    if (error) {
-      setAddError("Couldn't save that person — please try again.")
+    setAdding(false)
+    if (error || !data) {
+      setAddError("Couldn't start a new profile — please try again.")
       return
     }
 
-    setNewName('')
-    setNewLastName('')
-    loadPeople()
+    onSelectPerson({ id: data.id, name: data.name })
   }
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
@@ -138,27 +141,14 @@ export default function People({
 
   return (
     <div style={styles.page}>
-      <h1 style={styles.heading}>
-        People{people.length > 0 && <span style={styles.count}> ({people.length})</span>}
-      </h1>
-
-      <form onSubmit={handleAddPerson} style={styles.addForm}>
-        <input
-          type="text"
-          placeholder="First name"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          style={styles.input}
-        />
-        <input
-          type="text"
-          placeholder="Last name (optional)"
-          value={newLastName}
-          onChange={(e) => setNewLastName(e.target.value)}
-          style={styles.input}
-        />
-        <button type="submit" style={styles.button}>Add</button>
-      </form>
+      <div style={styles.headingRow}>
+        <h1 style={styles.heading}>
+          People{people.length > 0 && <span style={styles.count}> ({people.length})</span>}
+        </h1>
+        <button type="button" onClick={handleAddPerson} style={styles.addButton} disabled={adding}>
+          {adding ? '…' : '+ Add Person'}
+        </button>
+      </div>
       {addError && <p style={styles.addErrorText}>{addError}</p>}
 
       {people.length > 0 && (
@@ -265,9 +255,20 @@ function PersonCard({
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
-  heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1.5rem' },
+  headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
   count: { fontSize: '1.2rem', color: '#888', fontWeight: 'normal' },
-  addForm: { display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' },
+  addButton: {
+    fontSize: '1rem',
+    padding: '0.6rem 1.1rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    fontFamily: 'Georgia, serif',
+  },
   addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1.25rem' },
   searchRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-start' },
   sortSelect: {
@@ -280,16 +281,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#FFF',
     color: '#2E2E2E',
     marginBottom: '1.5rem',
-  },
-  input: { flex: 1, fontSize: '1.1rem', padding: '0.65rem', borderRadius: '8px', border: '1px solid #CCC' },
-  button: {
-    fontSize: '1.1rem',
-    padding: '0.65rem 1.25rem',
-    borderRadius: '8px',
-    border: 'none',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
-    cursor: 'pointer',
   },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   empty: { color: '#777' },

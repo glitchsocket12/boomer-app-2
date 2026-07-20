@@ -391,6 +391,10 @@ export default function GroupDetail({
     setName(trimmed)
     setEditingName(false)
     onRenamed?.(trimmed)
+    // A manually-created group's cached summary can be generated against the placeholder name
+    // ("New group") before it's ever renamed — invalidate on every rename so it regenerates
+    // against the current name, same as any other underlying-data change.
+    invalidateSummary()
   }
 
   // Permanently removes this group and everything that ONLY makes sense tied to it — its

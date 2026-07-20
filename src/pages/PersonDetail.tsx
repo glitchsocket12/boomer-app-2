@@ -61,6 +61,14 @@ function sortKeyFacts(facts: KeyFact[]): KeyFact[] {
 
 const AFFILIATION_LIMIT = 5
 
+// Placeholder name a manually-created ("+ Add Person") profile starts with — matches
+// "Untitled moment"/"New group" being manual-shell placeholders elsewhere. There's no direct
+// name-edit control on this page by design (§9: names are set conversationally via the fact
+// bar, not form fields — the AI already handles this for chat-created placeholders like
+// "Clare's mom"), so a fresh profile leans on that same rename path. Used to swap in a
+// name-specific nudge instead of the generic one.
+const NEW_PERSON_PLACEHOLDER = 'New person'
+
 // Mirrors the deterministic note phrasings RECIPROCAL_NOTE writes in
 // supabase/functions/_shared/relationships.ts — used only to retroactively spot a last-name
 // suggestion on a profile that was created with a bare first name (e.g. "Ale's wife is Molly").
@@ -89,6 +97,7 @@ export default function PersonDetail({
   onSelectGroup,
   onSelectEvent,
   onMerged,
+  onRenamed,
 }: {
   personId: string
   personName: string
@@ -98,6 +107,7 @@ export default function PersonDetail({
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onMerged: (person: { id: string; name: string }) => void
+  onRenamed?: (newName: string) => void
 }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [groups, setGroups] = useState<GroupRef[]>([])
@@ -174,7 +184,8 @@ export default function PersonDetail({
     if (!lastNameSuggestion) return
     await supabase.from('people').update({ last_name: lastNameSuggestion.lastName }).eq('id', personId)
     setLastNameSuggestion(null)
-    loadData()
+    const updated = await loadData()
+    if (updated) onRenamed?.(`${updated.name}${updated.last_name ? ` ${updated.last_name}` : ''}`)
     loadFacts(true)
   }
 
@@ -218,9 +229,11 @@ export default function PersonDetail({
     const groupRows = (groupsRes.data as unknown as { groups: GroupRef | null }[]) ?? []
     setGroups(groupRows.map((r) => r.groups).filter((g): g is GroupRef => g !== null))
 
-    setPerson((personRes.data as unknown as PersonRow) ?? null)
+    const loadedPerson = (personRes.data as unknown as PersonRow) ?? null
+    setPerson(loadedPerson)
 
     setLoading(false)
+    return loadedPerson
   }
 
   async function submitFact() {
@@ -261,7 +274,11 @@ export default function PersonDetail({
 
     setNewFact('')
     setSaving(false)
-    loadData()
+    // add-fact can classify this as a name/nickname correction (the only way a person's name
+    // changes — see NEW_PERSON_PLACEHOLDER above), so refresh the breadcrumb label along with
+    // the page itself; harmless to call when the name didn't actually change.
+    const updated = await loadData()
+    if (updated) onRenamed?.(`${updated.name}${updated.last_name ? ` ${updated.last_name}` : ''}`)
     loadFacts(true)
   }
 
@@ -491,13 +508,17 @@ export default function PersonDetail({
 
       {!loading && !factsLoading && showNudge && (
         <div style={styles.nudgeBox}>
-          <span style={styles.nudgeHeading}>Help us get to know {personName} better</span>
+          <span style={styles.nudgeHeading}>Help us get to know {fullName} better</span>
           <ul style={styles.nudgeList}>
             {notes.length === 0 ? (
-              <li style={styles.nudgeItem}>Tell us a memory about {personName} to get started.</li>
+              <li style={styles.nudgeItem}>
+                {fullName === NEW_PERSON_PLACEHOLDER
+                  ? 'Start by telling us who this is — e.g. "This is Sarah Chen, my old college roommate."'
+                  : `Tell us a memory about ${fullName} to get started.`}
+              </li>
             ) : (
               missingFactCategories.map((c) => (
-                <li key={c.category} style={styles.nudgeItem}>{c.question(personName)}</li>
+                <li key={c.category} style={styles.nudgeItem}>{c.question(fullName)}</li>
               ))
             )}
           </ul>
@@ -511,7 +532,11 @@ export default function PersonDetail({
               value={newFact}
               onChange={setNewFact}
               onEnter={submitFact}
-              placeholder={`Add a fact about ${personName}, e.g. "Married to Manuel, they share a house"`}
+              placeholder={
+                fullName === NEW_PERSON_PLACEHOLDER
+                  ? 'Who is this? e.g. "This is Sarah Chen, my old college roommate"'
+                  : `Add a fact about ${fullName}, e.g. "Married to Manuel, they share a house"`
+              }
               style={styles.addInput}
               disabled={saving}
             />
@@ -531,7 +556,7 @@ export default function PersonDetail({
       )}
 
       {groupTagMessage && (
-        <p style={styles.groupTagBanner}>✓ Also added {personName} to "{groupTagMessage}".</p>
+        <p style={styles.groupTagBanner}>✓ Also added {fullName} to "{groupTagMessage}".</p>
       )}
 
       {familyTagMessage && (
@@ -540,7 +565,7 @@ export default function PersonDetail({
 
       {suggestedGroup && (
         <div style={styles.suggestBanner}>
-          <span>It sounds like {personName} might belong to a group called "{suggestedGroup}". Add them?</span>
+          <span>It sounds like {fullName} might belong to a group called "{suggestedGroup}". Add them?</span>
           <div style={styles.suggestButtonRow}>
             <button type="button" onClick={confirmSuggestedGroup} style={styles.suggestYesButton}>
               Yes, add
@@ -555,8 +580,8 @@ export default function PersonDetail({
       {lastNameSuggestion && (
         <div style={styles.suggestBanner}>
           <span>
-            It looks like {personName} is connected to {lastNameSuggestion.sourceName}. Add "{lastNameSuggestion.lastName}" as{' '}
-            {personName}'s last name?
+            It looks like {fullName} is connected to {lastNameSuggestion.sourceName}. Add "{lastNameSuggestion.lastName}" as{' '}
+            {fullName}'s last name?
           </span>
           <div style={styles.suggestButtonRow}>
             <button type="button" onClick={confirmLastNameSuggestion} style={styles.suggestYesButton}>
@@ -583,7 +608,7 @@ export default function PersonDetail({
       {loading && <p>Loading…</p>}
 
       {!loading && notes.length === 0 && (
-        <p style={styles.empty}>Nothing recorded yet — add a moment or a fact about {personName} to see it here.</p>
+        <p style={styles.empty}>Nothing recorded yet — add a moment or a fact about {fullName} to see it here.</p>
       )}
 
       {notes.length > 0 && (
@@ -635,7 +660,7 @@ export default function PersonDetail({
 
           {deleteConfirming && (
             <div style={styles.suggestBanner}>
-              <span>Delete {personName} permanently? This removes all of their notes and reminders. This can't be undone.</span>
+              <span>Delete {fullName} permanently? This removes all of their notes and reminders. This can't be undone.</span>
               <div style={styles.suggestButtonRow}>
                 <button type="button" onClick={handleDeleteProfile} style={styles.dangerDeleteButton} disabled={actionBusy}>
                   {actionBusy ? 'Deleting…' : 'Yes, delete'}
@@ -656,7 +681,7 @@ export default function PersonDetail({
             <div style={styles.suggestBanner}>
               {!mergeCandidate ? (
                 <>
-                  <span>Search for the profile you want to keep. Everything on {personName} will move there, and this profile will be deleted:</span>
+                  <span>Search for the profile you want to keep. Everything on {fullName} will move there, and this profile will be deleted:</span>
                   <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search people…" />
                   <div style={styles.mergeResultsList}>
                     {otherPeople
@@ -685,9 +710,9 @@ export default function PersonDetail({
               ) : (
                 <>
                   <span>
-                    Merge "{personName}" into "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}"?
+                    Merge "{fullName}" into "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}"?
                     All notes, reminders, and group memberships move to "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}",
-                    "{personName}" is deleted, and you'll be taken to the kept profile. This can't be undone.
+                    "{fullName}" is deleted, and you'll be taken to the kept profile. This can't be undone.
                   </span>
                   <div style={styles.suggestButtonRow}>
                     <button type="button" onClick={handleMerge} style={styles.suggestYesButton} disabled={actionBusy}>

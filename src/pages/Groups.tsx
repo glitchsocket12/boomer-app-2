@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
@@ -33,7 +33,6 @@ export default function Groups({
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [newGroupName, setNewGroupName] = useState('')
   const [addingGroup, setAddingGroup] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const requestedSummaries = useRef(new Set<string>())
@@ -70,15 +69,10 @@ export default function Groups({
     }
   }
 
-  // Manual creation, same idea as People.tsx's "add a person" box: just a name, a direct save,
-  // no AI involved. Lands straight on the new group's own page — same "build it up step by step"
-  // reasoning as the manual "add an event" flow — where members/notes/associations get filled in
-  // using the tools already built there.
-  async function handleAddGroup(e: FormEvent) {
-    e.preventDefault()
-    const trimmed = newGroupName.trim()
-    if (!trimmed) return
-
+  // No form up front — matches "add an event": creates a blank shell immediately and drops
+  // the founder straight onto the new group's own page, which already has a rename pencil to
+  // fix the placeholder name, plus the member/notes/associations tools to build it up from there.
+  async function handleAddGroup() {
     setAddingGroup(true)
     setAddError(null)
     const {
@@ -87,17 +81,16 @@ export default function Groups({
 
     const { data, error } = await supabase
       .from('groups')
-      .insert({ name: trimmed, user_id: user?.id })
+      .insert({ name: 'New group', user_id: user?.id })
       .select()
       .single()
 
     setAddingGroup(false)
     if (error || !data) {
-      setAddError("Couldn't save that group — please try again.")
+      setAddError("Couldn't start a new group — please try again.")
       return
     }
 
-    setNewGroupName('')
     onSelectGroup({ id: data.id, name: data.name })
   }
 
@@ -134,21 +127,12 @@ export default function Groups({
 
   return (
     <div style={styles.page}>
-      <h1 style={styles.heading}>Groups</h1>
-
-      <form onSubmit={handleAddGroup} style={styles.addForm}>
-        <input
-          type="text"
-          placeholder="New group name"
-          value={newGroupName}
-          onChange={(e) => setNewGroupName(e.target.value)}
-          style={styles.input}
-          disabled={addingGroup}
-        />
-        <button type="submit" style={styles.button} disabled={addingGroup || !newGroupName.trim()}>
-          {addingGroup ? '…' : 'Add'}
+      <div style={styles.headingRow}>
+        <h1 style={styles.heading}>Groups</h1>
+        <button type="button" onClick={handleAddGroup} style={styles.addButton} disabled={addingGroup}>
+          {addingGroup ? '…' : '+ Add Group'}
         </button>
-      </form>
+      </div>
       {addError && <p style={styles.addErrorText}>{addError}</p>}
 
       {groups.length === 0 && (
@@ -211,19 +195,20 @@ export default function Groups({
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
-  heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1.5rem' },
-  addForm: { display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' },
-  input: { flex: 1, fontSize: '1.1rem', padding: '0.65rem', borderRadius: '8px', border: '1px solid #CCC' },
-  button: {
-    fontSize: '1.1rem',
-    padding: '0.65rem 1.25rem',
+  headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
+  addButton: {
+    fontSize: '1rem',
+    padding: '0.6rem 1.1rem',
     borderRadius: '8px',
     border: 'none',
     backgroundColor: '#2E4034',
     color: '#FFF',
     cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    fontFamily: 'Georgia, serif',
   },
-  addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginTop: '-0.25rem', marginBottom: '1rem' },
+  addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1rem' },
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   card: {

@@ -134,6 +134,7 @@ export default function App() {
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onMerged={(p) => replaceCurrentCrumb({ type: 'person', id: p.id, label: p.name })}
+        onRenamed={renameCurrentCrumb}
       />
     )
   } else if (current?.type === 'group') {
