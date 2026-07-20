@@ -182,13 +182,12 @@ If nothing qualifies, respond {"facts": []}.`, cache_control: { type: "ephemeral
 
       const names = (f.person_names ?? []).filter(Boolean)
       const people = names.map((n) => {
+        // idByName already resolves nicknames/bare first names to a profile only when the
+        // match is unambiguous (ambiguous keys were deleted above) — the same resolution
+        // converse/update-group/update-moment trust to tag a note to a person, so a Key Fact
+        // chip can trust it too rather than requiring the note to repeat the person's full name.
         const id = idByName[n.toLowerCase()]
-        // Same discipline as add-fact's relationship-suggestion fix: only render a clickable
-        // link when the name as stated is a confident match (exactly the person's full name on
-        // file) — a bare first name matching someone with a last name on record is a guess, not
-        // a confirmed identity, and must never be asserted as a fact just by generating a chip.
-        const isConfident = !!id && nameById[id].toLowerCase() === n.toLowerCase()
-        return isConfident ? { name: nameById[id], personId: id } : { name: n }
+        return id ? { name: nameById[id], personId: id } : { name: n }
       })
 
       if (f.category === "spouse") {
