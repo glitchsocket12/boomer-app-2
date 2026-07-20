@@ -10,6 +10,7 @@ import EventDetail from './pages/EventDetail'
 import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
+import CircleMock from './pages/CircleMock'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 
@@ -20,6 +21,7 @@ type Crumb =
   | { type: 'event'; id: string; label: string }
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
+  | { type: 'circle'; id: string; label: string }
 
 const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
 
@@ -38,7 +40,7 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
       ? parsed.navStack.filter(
           (c: Crumb) =>
             c &&
-            ['person', 'group', 'event', 'dunbar', 'nudges'].includes(c.type) &&
+            ['person', 'group', 'event', 'dunbar', 'nudges', 'circle'].includes(c.type) &&
             typeof c.id === 'string' &&
             typeof c.label === 'string'
         )
@@ -172,6 +174,8 @@ export default function App() {
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
       />
     )
+  } else if (current?.type === 'circle') {
+    content = <CircleMock />
   } else {
     content = (
       <>
@@ -219,7 +223,15 @@ export default function App() {
           <button onClick={() => goToTab('events')} style={{ marginRight: '0.5rem' }}>Events</button>
           <button onClick={() => goToTab('groups')}>Groups</button>
         </div>
-        <button onClick={() => supabase.auth.signOut()}>Log out</button>
+        <div>
+          <button
+            onClick={() => pushCrumb({ type: 'circle', id: 'circle', label: 'Your circle (preview)' })}
+            style={{ marginRight: '0.5rem' }}
+          >
+            Preview
+          </button>
+          <button onClick={() => supabase.auth.signOut()}>Log out</button>
+        </div>
       </div>
 
       {breadcrumbItems && <Breadcrumb items={breadcrumbItems} />}
