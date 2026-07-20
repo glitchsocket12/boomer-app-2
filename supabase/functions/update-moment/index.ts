@@ -6,6 +6,7 @@ import {
   FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT,
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
+import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -195,7 +196,10 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
             { type: "text", text: momentContext, cache_control: { type: "ephemeral" } },
             { type: "text", text: todayContext },
           ],
-          messages,
+          // Own breakpoint on the last message — see _shared/promptCache.ts. This is the 4th and
+          // last available breakpoint (max 4 per request), so the whole growing conversation
+          // thread gets cached too, not just the archive tiers above.
+          messages: withMessageCacheBreakpoint(messages),
         }),
       })
 
