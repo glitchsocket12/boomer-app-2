@@ -42,16 +42,29 @@ export type FamilyApplyResult = {
   newPersonSuggestions: NewPersonSuggestion[]
 }
 
-// A single reciprocal note written on the OTHER person's profile, phrased as a true statement
-// about THEM — always resolvable without knowing which direction triggered it. The original
-// fact, in the user's own words, already lives on the subject's own profile; this is only ever
-// the other side.
+// A single note written on a profile, phrased as a true statement about THEM — always
+// resolvable without knowing which direction triggered it. Applied to the TARGET (the named
+// relative) using the subject's name, and ALSO to the SUBJECT (via INVERSE_RELATIONSHIP below)
+// using the target's name — see applyFamilySignals. Both sides get a note; nothing assumes the
+// fact already lives anywhere else, since not every caller (e.g. Home/event/group chat, when a
+// relationship is mentioned with no accompanying moment or fact-bar entry) has another path that
+// writes the subject's own side.
 export const RECIPROCAL_NOTE: Record<string, (name: string) => string> = {
   spouse: (name) => `Married to ${name}.`,
   sibling: (name) => `Their sibling is ${name}.`,
   parent: (name) => `Their child is ${name}.`, // target is the parent; subject is their child
   child: (name) => `Their parent is ${name}.`, // target is the child; subject is their parent
   partner: (name) => `In a relationship with ${name}.`,
+}
+
+// How a relationship reads from the OTHER side — used to phrase the note written back onto the
+// subject's own profile. spouse/sibling/partner are symmetric; parent/child invert.
+export const INVERSE_RELATIONSHIP: Record<string, RelationshipKind> = {
+  spouse: "spouse",
+  sibling: "sibling",
+  parent: "child",
+  child: "parent",
+  partner: "partner",
 }
 
 // Keyword used to detect an existing reciprocal note so re-saving the same fact doesn't pile up
@@ -263,7 +276,9 @@ export async function applyFamilySignals(
 
       if (targetId === subjectId) continue
 
-      // Avoid piling up duplicate reciprocal notes if the same fact gets added more than once.
+      // Avoid piling up duplicate notes if the same fact gets added more than once — checked
+      // independently on each side, since either side's note could already exist without the
+      // other (e.g. from before this function wrote both sides).
       const { data: targetNotes } = await supabaseClient.from("notes").select("content").eq("person_id", targetId)
       const alreadyNoted = (targetNotes ?? []).some(
         (n: any) => n.content.toLowerCase().includes(subjectName.toLowerCase()) && dedupeKeyword.test(n.content)
@@ -272,6 +287,23 @@ export async function applyFamilySignals(
         await supabaseClient.from("notes").insert({ person_id: targetId, moment_id: null, content: makeNote(subjectName) })
       }
       familyTags.push({ id: targetId, name: targetName })
+
+      // Write the matching note back onto the SUBJECT's own profile too, phrased from their side
+      // (e.g. subject="Jalen", relationship="spouse", target="Julia" writes "Married to Julia."
+      // onto Jalen — not just "Married to Jalen." onto Julia). Without this, a relationship
+      // mentioned with no accompanying moment/fact-bar entry for the subject (Home/event/group
+      // chat) left the subject's own profile with nothing at all, even though the other person's
+      // profile correctly reflected it — the exact "some share notes, some don't" bug.
+      const inverseKind = INVERSE_RELATIONSHIP[signal.relationship]
+      const subjectNoteFn = RECIPROCAL_NOTE[inverseKind]
+      const subjectDedupeKeyword = DEDUPE_KEYWORD[inverseKind]
+      const { data: subjectNotes } = await supabaseClient.from("notes").select("content").eq("person_id", subjectId)
+      const subjectAlreadyNoted = (subjectNotes ?? []).some(
+        (n: any) => n.content.toLowerCase().includes(targetName.toLowerCase()) && subjectDedupeKeyword.test(n.content)
+      )
+      if (!subjectAlreadyNoted) {
+        await supabaseClient.from("notes").insert({ person_id: subjectId, moment_id: null, content: subjectNoteFn(targetName) })
+      }
 
       // "Suggest, don't assert" shared-parent inference — only for the relationship kinds this
       // was scoped to (siblings directly, or a newly-stated parent checked against this person's
