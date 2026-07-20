@@ -35,23 +35,29 @@ src/
 │   │                            this month" card, top-3 leaderboard + "due for an
 │   │                            update" CTA, cached suggestion cards w/ refresh.
 │   ├── People.tsx             — list + add person, search, sort dropdown, count
+│   │                            (add-person save now checks .error, was silent)
 │   ├── PersonDetail.tsx       — Key Facts (cached, clickable chips, fixed order),
 │   │                            missing-info nudges, notes (edit/delete/source
 │   │                            labels), fact bar → `add-fact` (the ONLY edit path
 │   │                            for name/nickname/birthday/anniversary — no form
 │   │                            fields), relationship-suggestion banners, last-name
 │   │                            nudge, delete/merge profile
-│   ├── Groups.tsx             — group tiles (summary, ≤5 member chips, event chips)
+│   ├── Groups.tsx             — group tiles (summary, ≤5 member chips, event chips);
+│   │                            manual "add group" (name only) → lands on its detail page
 │   ├── GroupDetail.tsx        — summary + refresh, members (explicit only, sorted,
 │   │                            collapsible >12, hover-remove), suggestions (from
 │   │                            events + associated groups, capped 20, add/deny
 │   │                            all), Associated Groups (confirmed + suggested +
-│   │                            manual picker), notes section, edit chat
+│   │                            manual picker), notes section, edit chat, delete group
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
-│   │                            created_at), "Month Year" format
-│   ├── EventDetail.tsx        — AI summary, who-was-there (hover-untag,
-│   │                            non-destructive), attendee suggestions from group
-│   │                            rosters, collapsed notes, maps link (+", CO"
+│   │                            created_at), "Month Year" format; manual "add event"
+│   │                            (blank shell, no form) → lands on its detail page
+│   ├── EventDetail.tsx        — AI summary (gated: only auto-generates once
+│   │                            raw_description has content), editable description,
+│   │                            who-was-there (hover-untag, non-destructive) +
+│   │                            search-and-add picker, suggested attendees from
+│   │                            group rosters, Affiliated Groups + search-and-add
+│   │                            picker, collapsed notes, maps link (+", CO"
 │   │                            hardcoded), rename, delete/merge, update chat
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   └── DueForUpdate.tsx       — people sorted oldest/no note first
@@ -66,6 +72,8 @@ src/
 │   ├── PhotoGallery.tsx       — DISPLAY-ONLY placeholder tiles (no real photos)
 │   ├── RefreshButton.tsx      — spinning refresh icon
 │   ├── SearchBox.tsx          — client-side list filter
+│   ├── SearchAddPicker.tsx    — type-to-search + tap-to-add from a list (used for
+│   │                            EventDetail's attendee/group-tag pickers)
 │   ├── Chips.tsx              — PersonChip (green) / GroupChip (gold) / EventChip
 │   │                            (blue) — shared visual language everywhere
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)
@@ -140,8 +148,8 @@ home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts
 - **Home:** continuous chat (answer/capture/update/correct/group-tag per turn, multiple events per message, never dead-ends — suggests close matches or asks); clickable person/event/group chips on replies with canonical spellings; cached suggestion cards (tap = starts a real conversation); dashboard (People/Events/Groups/Notes counts, Dunbar card → DunbarDetail, Recall-assists card, monthly leaderboard → DueForUpdate). Known gap: the chat thread lives in component state — switching tabs loses it.
 - **People:** add (first+last), search (incl. nicknames), 5 sort options, count in heading.
 - **Person profile:** Key Facts (cached, ordered Parents→Spouse→Siblings→Children, exact-match chips), missing-category nudges, notes with hover edit/delete + source labels ("Added through: {event}" / "From: {Group}" / "From Home"), fact bar (AI-classified, the only field-edit path), relationship + new-person + shared-parent + last-name suggestion banners, delete/merge profile (the SEARCHED-FOR record survives; merged-away names fold into nicknames).
-- **Groups:** created conversationally only (recurring affiliations — school/team/unit/workplace/circle — never one-off events); tiles with summary + capped chips; detail page per §3; membership = explicit only; suggestions from event attendance + associated-group rosters; symmetric confirmed group associations.
-- **Events:** browsable, sorted by real-date guess; detail per §3; AI summary regenerates on new detail; delete/merge (searched-for survives); event-side group tagging via chat.
+- **Groups:** created conversationally OR via manual "add group" button (name only, 2026-07-20 — recurring affiliations, school/team/unit/workplace/circle, never one-off events); tiles with summary + capped chips; detail page per §3; membership = explicit only; suggestions from event attendance + associated-group rosters; symmetric confirmed group associations; whole-group delete (2026-07-20, the safety net the manual button needed — groups have no dedupe-by-name check the way `converse` does).
+- **Events:** browsable, sorted by real-date guess; detail per §3; AI summary regenerates on new detail (only once there's a description to summarize); delete/merge (searched-for survives); group tagging + attendee tagging via chat OR direct search-and-add pickers on the event page (2026-07-20); manual "add event" button (2026-07-20) creates a blank shell and drops straight onto its detail page to build up from there — same "step by step" idea as manual "add person," extended to events/groups.
 - **Voice input** on every text box (record → Whisper → text dropped in for review, never auto-sends; no live captions — batch only). **Auto-grow textareas** everywhere.
 - **Cross-navigation:** any person/group/event mention anywhere is a chip → detail page, with breadcrumb trail; refresh restores location (sessionStorage).
 - **Search boxes** on People/Events/Groups (client-side).
@@ -149,7 +157,7 @@ home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts
 
 ## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
 
-Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes); 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix, deployed and confirmed live — see §10).
+Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes. Also done: 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix, deployed and confirmed live — see §10); 36 (2026-07-20: manual "add an event" / "add a group" buttons, plus group delete — see §7).
 
 **Open — bigger features:**
 14. Global search bar on every page (decide: text match first vs. semantic — merges with 30).
@@ -172,8 +180,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 32. **User's own profile ("Me" page or a normal People entry)** — requested 2026-07-19. All events/groups should relate back to the user themself; founder undecided whether the user should live in the People list like a normal contact or get a dedicated "Me" page. Feeds directly into item 15's "resolve 'my parents'" need — this is the underlying concept item 15 was waiting on.
 33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
 34. **Filterable "View" by event category on the Events page** — requested 2026-07-19. Founder's concern: as event volume grows, big events (weddings) get buried among day-to-day notes (a phone call), so a picklist of categories to narrow the list is needed. Categories would come from a learning/growing list derived from events actually added, not a fixed hardcoded set. Pairs with item 28 (manual + AI-suggested tags on events) — likely the same schema change powers both the tags and this filter view.
-35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events.
-36. **Manual "add an event" / "add a group" buttons** — requested 2026-07-19, founder flagged as important. Same idea as the existing manual "add a person" button — lets the founder build up an event or group step by step through form-like entry, instead of relying on getting the whole thing right in one conversational pass.
+35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 

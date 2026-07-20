@@ -76,6 +76,7 @@ export default function People({
   const [people, setPeople] = useState<Person[]>([])
   const [newName, setNewName] = useState('')
   const [newLastName, setNewLastName] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>('name-asc')
@@ -105,13 +106,20 @@ export default function People({
     e.preventDefault()
     if (!newName.trim()) return
 
+    setAddError(null)
     const {
       data: { user },
     } = await supabase.auth.getUser()
 
-    await supabase
+    const { error } = await supabase
       .from('people')
       .insert({ name: newName.trim(), last_name: newLastName.trim() || null, user_id: user?.id })
+
+    if (error) {
+      setAddError("Couldn't save that person — please try again.")
+      return
+    }
+
     setNewName('')
     setNewLastName('')
     loadPeople()
@@ -151,6 +159,7 @@ export default function People({
         />
         <button type="submit" style={styles.button}>Add</button>
       </form>
+      {addError && <p style={styles.addErrorText}>{addError}</p>}
 
       {people.length > 0 && (
         <div style={styles.searchRow}>
@@ -258,7 +267,8 @@ const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1.5rem' },
   count: { fontSize: '1.2rem', color: '#888', fontWeight: 'normal' },
-  addForm: { display: 'flex', gap: '0.75rem', marginBottom: '2rem' },
+  addForm: { display: 'flex', gap: '0.75rem', marginBottom: '0.75rem' },
+  addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1.25rem' },
   searchRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-start' },
   sortSelect: {
     flexShrink: 0,

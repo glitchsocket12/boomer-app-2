@@ -31,6 +31,8 @@ export default function Events({
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   useEffect(() => {
     loadMoments()
@@ -49,6 +51,41 @@ export default function Events({
     )
     setMoments(sorted)
     setLoading(false)
+  }
+
+  // No form up front — this just creates a blank shell (matches "add a person" being an instant
+  // save, not a multi-step wizard) and drops the user straight onto the new event's own page,
+  // where title/description/attendees/groups all get filled in with the tools already built
+  // there. raw_description starts as '' rather than null (the column has never allowed null —
+  // converse always populates it from the chat transcript) and the event page itself knows not
+  // to waste an AI call summarizing an empty description (see EventDetail's gated generateSummary).
+  async function handleAddEvent() {
+    setCreating(true)
+    setCreateError(null)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    const { data, error } = await supabase
+      .from('moments')
+      .insert({
+        user_id: user?.id,
+        raw_description: '',
+        occasion: null,
+        location: null,
+        when_text: null,
+        event_date: null,
+      })
+      .select()
+      .single()
+
+    setCreating(false)
+    if (error || !data) {
+      setCreateError("Couldn't start a new event — please try again.")
+      return
+    }
+
+    onSelectEvent({ id: data.id, summary: 'Untitled moment' })
   }
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
@@ -82,10 +119,18 @@ export default function Events({
 
   return (
     <div style={styles.page}>
-      <h1 style={styles.heading}>Events</h1>
+      <div style={styles.headingRow}>
+        <h1 style={styles.heading}>Events</h1>
+        <button type="button" onClick={handleAddEvent} style={styles.addButton} disabled={creating}>
+          {creating ? '…' : '+ Add Event'}
+        </button>
+      </div>
+      {createError && <p style={styles.addErrorText}>{createError}</p>}
 
       {moments.length === 0 && (
-        <p style={styles.empty}>No moments recorded yet — head to Home and tell me about something that happened.</p>
+        <p style={styles.empty}>
+          No moments recorded yet — add one above, or head to Home and tell me about something that happened.
+        </p>
       )}
 
       {moments.length > 0 && (
@@ -138,7 +183,20 @@ export default function Events({
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
-  heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1.5rem' },
+  headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
+  addButton: {
+    fontSize: '1rem',
+    padding: '0.6rem 1.1rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    fontFamily: 'Georgia, serif',
+  },
+  addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1rem' },
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   card: {

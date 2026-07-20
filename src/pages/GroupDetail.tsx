@@ -81,6 +81,9 @@ export default function GroupDetail({
   const [loadingPickableGroups, setLoadingPickableGroups] = useState(false)
   const [groupPickerSearch, setGroupPickerSearch] = useState('')
   const [membersExpanded, setMembersExpanded] = useState(false)
+  const [deleteConfirming, setDeleteConfirming] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     loadMoments()
@@ -91,6 +94,7 @@ export default function GroupDetail({
     setName(groupName)
     setNameInput(groupName)
     setEditingName(false)
+    setDeleteConfirming(false)
   }, [groupId])
 
   async function loadGroupNotes() {
@@ -387,6 +391,39 @@ export default function GroupDetail({
     setName(trimmed)
     setEditingName(false)
     onRenamed?.(trimmed)
+  }
+
+  // Permanently removes this group and everything that ONLY makes sense tied to it — its
+  // explicit membership, its own free-standing notes, its event tags, its associations with
+  // other groups. Facts captured via this group's chat (notes.source_group_id) live on PEOPLE,
+  // not the group, so those are kept — just detached from an attribution that would otherwise
+  // point at a deleted row. Same reasoning/shape as EventDetail.tsx's handleDeleteEvent: a
+  // deliberate whole-record delete, the safety net a manually-created group needs since there's
+  // no automatic dedupe check on a typed-in name the way converse's findOrCreateGroupId has.
+  async function handleDeleteGroup() {
+    setActionBusy(true)
+    setActionError(null)
+    const results = await Promise.all([
+      supabase.from('notes').update({ source_group_id: null }).eq('source_group_id', groupId),
+      supabase.from('notes').delete().eq('group_id', groupId),
+      supabase.from('person_groups').delete().eq('group_id', groupId),
+      supabase.from('moment_groups').delete().eq('group_id', groupId),
+      supabase.from('group_associations').delete().or(`group_id_a.eq.${groupId},group_id_b.eq.${groupId}`),
+    ])
+    const dependentsError = results.find((r) => r.error)?.error
+    if (dependentsError) {
+      setActionError('Something went wrong deleting this group — please try again.')
+      setActionBusy(false)
+      return
+    }
+
+    const { error } = await supabase.from('groups').delete().eq('id', groupId)
+    if (error) {
+      setActionError('Something went wrong deleting this group — please try again.')
+      setActionBusy(false)
+      return
+    }
+    onBack()
   }
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
@@ -723,6 +760,42 @@ export default function GroupDetail({
           loadGroupNotes()
         }}
       />
+
+      <div style={styles.dangerZone}>
+        <span style={styles.dangerHeading}>Group</span>
+
+        {actionError && <p style={styles.actionErrorBanner}>{actionError}</p>}
+
+        {!deleteConfirming ? (
+          <div style={styles.dangerButtonRow}>
+            <button
+              type="button"
+              onClick={() => setDeleteConfirming(true)}
+              style={styles.dangerDeleteButton}
+              disabled={actionBusy}
+            >
+              Delete this group
+            </button>
+          </div>
+        ) : (
+          <div style={styles.suggestBanner}>
+            <span>Delete this group permanently? This removes its membership, notes, and event/group tags. This can't be undone.</span>
+            <div style={styles.suggestButtonRow}>
+              <button type="button" onClick={handleDeleteGroup} style={styles.dangerDeleteButton} disabled={actionBusy}>
+                {actionBusy ? 'Deleting…' : 'Yes, delete'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirming(false)}
+                style={styles.cancelButton}
+                disabled={actionBusy}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1218,4 +1291,37 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#666',
     cursor: 'pointer',
   },
+  dangerZone: {
+    marginTop: '2.5rem',
+    paddingTop: '1.25rem',
+    borderTop: '1px solid #E2DFD6',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+  },
+  dangerHeading: { fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6B7A6E', fontWeight: 700 },
+  dangerButtonRow: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' },
+  dangerDeleteButton: {
+    fontSize: '0.85rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '6px',
+    border: '1px solid #B04A3B',
+    backgroundColor: 'transparent',
+    color: '#B04A3B',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  actionErrorBanner: { fontSize: '0.9rem', color: '#A33', marginBottom: '0.5rem' },
+  suggestBanner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.6rem',
+    fontSize: '0.9rem',
+    color: '#5A4A20',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #E6D6AC',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+  },
+  suggestButtonRow: { display: 'flex', gap: '0.5rem' },
 }

@@ -5,6 +5,9 @@ import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
 import PhotoGallery from '../components/PhotoGallery'
 import SearchBox from '../components/SearchBox'
+import SearchAddPicker from '../components/SearchAddPicker'
+import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import VoiceInputButton from '../components/VoiceInputButton'
 import { summarize } from '../lib/summarize'
 import { sortByLastName } from '../lib/people'
 
@@ -57,14 +60,35 @@ export default function EventDetail({
   const [mergeSearch, setMergeSearch] = useState('')
   const [otherEvents, setOtherEvents] = useState<OtherEvent[]>([])
   const [mergeCandidate, setMergeCandidate] = useState<OtherEvent | null>(null)
+  const [editingDescription, setEditingDescription] = useState(false)
+  const [descriptionInput, setDescriptionInput] = useState('')
+  const [savingDescription, setSavingDescription] = useState(false)
+  const [allPeople, setAllPeople] = useState<PersonRef[]>([])
+  const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
 
   useEffect(() => {
     loadMoment()
+    loadPickerLists()
     setEditingTitle(false)
+    setEditingDescription(false)
     setDeleteConfirming(false)
     setMergeOpen(false)
     setMergeCandidate(null)
   }, [eventId])
+
+  // Full people/group rosters for the manual "add someone" / "tag a group" search boxes below —
+  // separate from the suggestion-sourced candidates elsewhere on this page, which only surface
+  // people/groups the app already has a signal for (shared group, affiliated tag). These lists
+  // are small (one account's own data), so an eager fetch per page view matches the pattern
+  // already used for the merge-event picker below.
+  async function loadPickerLists() {
+    const [peopleRes, groupsRes] = await Promise.all([
+      supabase.from('people').select('id, name, last_name').order('name'),
+      supabase.from('groups').select('id, name').order('name'),
+    ])
+    setAllPeople((peopleRes.data as PersonRef[]) ?? [])
+    setAllGroupsList((groupsRes.data as GroupRef[]) ?? [])
+  }
 
   async function loadMoment(silent = false) {
     if (!silent) setLoading(true)
@@ -80,7 +104,10 @@ export default function EventDetail({
     setMoment(loaded)
     if (!silent) setLoading(false)
 
-    if (loaded && !loaded.summary) {
+    // Only worth an AI call once there's actually something to summarize — a freshly-created
+    // blank shell (manual "Add Event") starts with an empty raw_description, and would otherwise
+    // burn a summary call on nothing every time its page loads.
+    if (loaded && !loaded.summary && loaded.raw_description.trim()) {
       generateSummary()
     }
   }
@@ -102,6 +129,36 @@ export default function EventDetail({
   async function handleAddAttendee(person: PersonRef) {
     await supabase.from('notes').insert({ person_id: person.id, moment_id: eventId, content: 'Was there.' })
     await handleNoteSaved()
+  }
+
+  async function handleTagGroup(groupId: string) {
+    await supabase
+      .from('moment_groups')
+      .upsert({ moment_id: eventId, group_id: groupId }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+    await loadMoment(true)
+  }
+
+  function startEditingDescription() {
+    setDescriptionInput(moment?.raw_description ?? '')
+    setEditingDescription(true)
+  }
+
+  // Direct edit of raw_description itself, not a chat turn — this is the "type it right into a
+  // box" path a manually-created event needs, since there's no chat transcript to build it from.
+  // Clearing the cached summary here (same as handleNoteSaved does for chat-added notes) lets it
+  // regenerate from the new text; the empty-description guard in loadMoment stops that from
+  // firing if the box gets saved blank.
+  async function handleSaveDescription() {
+    if (!moment) return
+    setSavingDescription(true)
+    const { error } = await supabase
+      .from('moments')
+      .update({ raw_description: descriptionInput.trim(), summary: null })
+      .eq('id', moment.id)
+    setSavingDescription(false)
+    if (error) return
+    setEditingDescription(false)
+    await loadMoment(true)
   }
 
   // "Removing" someone from Who Was There is pure untagging, NOT deletion — attendance is just
@@ -327,18 +384,63 @@ export default function EventDetail({
         )}
       </p>
 
+      <h2 style={styles.subheading}>Affiliated Groups</h2>
       {groups.length > 0 && (
-        <>
-          <h2 style={styles.subheading}>Affiliated Groups</h2>
-          <div style={styles.chipRow}>
-            {groups.map((g) => (
-              <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-            ))}
-          </div>
-        </>
+        <div style={styles.chipRow}>
+          {groups.map((g) => (
+            <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+          ))}
+        </div>
       )}
+      <SearchAddPicker
+        items={allGroupsList
+          .filter((g) => !groups.some((tagged) => tagged.id === g.id))
+          .map((g) => ({ id: g.id, label: g.name }))}
+        placeholder="Tag this event to a group…"
+        onSelect={(item) => handleTagGroup(item.id)}
+        emptyText="No groups match."
+      />
 
-      <p style={styles.description}>{moment.summary || 'Putting this memory into words…'}</p>
+      {editingDescription ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleSaveDescription()
+          }}
+          style={styles.descriptionEditForm}
+        >
+          <div style={styles.descriptionEditRow}>
+            <AutoGrowTextarea
+              value={descriptionInput}
+              onChange={setDescriptionInput}
+              onEnter={handleSaveDescription}
+              placeholder="What happened?"
+              style={styles.descriptionEditInput}
+              disabled={savingDescription}
+            />
+            <VoiceInputButton
+              disabled={savingDescription}
+              onTranscribed={(text) => setDescriptionInput((prev) => (prev ? `${prev} ${text}` : text))}
+            />
+          </div>
+          <div style={styles.suggestButtonRow}>
+            <button type="submit" disabled={savingDescription} style={styles.saveButton}>
+              {savingDescription ? '…' : 'Save'}
+            </button>
+            <button type="button" onClick={() => setEditingDescription(false)} style={styles.cancelButton} disabled={savingDescription}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div style={styles.descriptionRow}>
+          <p style={styles.description}>
+            {moment.summary ||
+              (moment.raw_description.trim() ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
+          </p>
+          <EditButton label="Edit description" onClick={startEditingDescription} />
+        </div>
+      )}
 
       {details.length > 0 && (
         <div style={styles.detailsBox}>
@@ -353,9 +455,9 @@ export default function EventDetail({
 
       <PhotoGallery />
 
+      <h2 style={styles.subheading}>Who was there</h2>
       {attendees.size > 0 && (
         <>
-          <h2 style={styles.subheading}>Who was there</h2>
           <p style={styles.chatHint}>Tap a name for their profile, or hover to untag them from this event.</p>
           <div style={styles.chipRow}>
             {sortByLastName(Array.from(attendees.values())).map((p) => (
@@ -369,6 +471,17 @@ export default function EventDetail({
           </div>
         </>
       )}
+      <SearchAddPicker
+        items={allPeople
+          .filter((p) => !attendees.has(p.id))
+          .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
+        placeholder="Search people to tag…"
+        onSelect={(item) => {
+          const person = allPeople.find((p) => p.id === item.id)
+          if (person) handleAddAttendee(person)
+        }}
+        emptyText="No one matches."
+      />
 
       {suggestedAttendees.size > 0 && (
         <>
@@ -673,7 +786,11 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   notesHint: { margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
-  description: { fontSize: '1.05rem', color: '#2E2E2E', lineHeight: 1.6, marginBottom: '1.5rem' },
+  description: { fontSize: '1.05rem', color: '#2E2E2E', lineHeight: 1.6, margin: 0, flex: 1 },
+  descriptionRow: { display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '1.5rem' },
+  descriptionEditForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.5rem' },
+  descriptionEditRow: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem' },
+  descriptionEditInput: { flex: 1, fontSize: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #CCC' },
   detailsBox: {
     backgroundColor: '#FBF3E0',
     border: '1px solid #E6D6AC',
