@@ -89,6 +89,13 @@ export default function App() {
     setNavStack((s) => s.slice(0, index + 1))
   }
 
+  // After a merge, the current crumb's id points at a now-deleted record — replace it in
+  // place with the surviving one so the breadcrumb and back button land somewhere real,
+  // instead of pushing a new crumb on top of a dead one.
+  function replaceCurrentCrumb(crumb: Crumb) {
+    setNavStack((s) => (s.length === 0 ? s : [...s.slice(0, -1), crumb]))
+  }
+
   function renameCurrentCrumb(newLabel: string) {
     setNavStack((s) => (s.length === 0 ? s : [...s.slice(0, -1), { ...s[s.length - 1], label: newLabel }]))
   }
@@ -126,6 +133,7 @@ export default function App() {
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+        onMerged={(p) => replaceCurrentCrumb({ type: 'person', id: p.id, label: p.name })}
       />
     )
   } else if (current?.type === 'group') {
@@ -150,6 +158,7 @@ export default function App() {
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onRenamed={renameCurrentCrumb}
+        onMerged={(e) => replaceCurrentCrumb({ type: 'event', id: e.id, label: e.summary })}
       />
     )
   } else if (current?.type === 'dunbar') {

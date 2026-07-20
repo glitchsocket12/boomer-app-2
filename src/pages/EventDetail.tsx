@@ -34,6 +34,7 @@ export default function EventDetail({
   onBack,
   backLabel,
   onRenamed,
+  onMerged,
 }: {
   eventId: string
   onSelectPerson: (person: { id: string; name: string }) => void
@@ -41,6 +42,7 @@ export default function EventDetail({
   onBack: () => void
   backLabel: string
   onRenamed?: (newSummary: string) => void
+  onMerged: (event: { id: string; summary: string }) => void
 }) {
   const [moment, setMoment] = useState<MomentDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -182,17 +184,22 @@ export default function EventDetail({
     }
   }
 
-  // Folds `duplicate` into THIS event: its notes and group tags all move over (group tags
-  // unioned, not duplicated), the duplicate event itself is deleted, and this event's cached
-  // summary is cleared so it regenerates incorporating the newly-merged notes — same shape as
-  // PersonDetail.tsx's handleMerge.
+  // Folds THIS event into `mergeCandidate` (the one picked from search) — the reverse of the
+  // old behavior. Users discover duplicates by clicking into the unwanted event first, so the
+  // event they're standing on is the one that should disappear; the one they search for and
+  // pick is the one they want to keep. Its notes and group tags all move over (group tags
+  // unioned, not duplicated), this event itself is deleted, and the survivor's cached summary
+  // is cleared so it regenerates incorporating the newly-merged notes — same shape as
+  // PersonDetail.tsx's handleMerge. The caller navigates to the survivor since this event no
+  // longer exists.
   async function handleMergeEvent() {
     if (!mergeCandidate || !moment) return
     setActionBusy(true)
     setActionError(null)
-    const duplicateId = mergeCandidate.id
+    const survivorId = mergeCandidate.id
+    const duplicateId = eventId
 
-    const { error: notesError } = await supabase.from('notes').update({ moment_id: eventId }).eq('moment_id', duplicateId)
+    const { error: notesError } = await supabase.from('notes').update({ moment_id: survivorId }).eq('moment_id', duplicateId)
     if (notesError) {
       setActionError('Something went wrong merging these events — please try again.')
       setActionBusy(false)
@@ -203,17 +210,16 @@ export default function EventDetail({
     for (const g of dupGroups ?? []) {
       await supabase
         .from('moment_groups')
-        .upsert({ moment_id: eventId, group_id: g.group_id }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+        .upsert({ moment_id: survivorId, group_id: g.group_id }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
     }
     await supabase.from('moment_groups').delete().eq('moment_id', duplicateId)
     await supabase.from('moments').delete().eq('id', duplicateId)
-    await supabase.from('moments').update({ summary: null }).eq('id', eventId)
+    await supabase.from('moments').update({ summary: null }).eq('id', survivorId)
 
     setMergeOpen(false)
     setMergeCandidate(null)
     setActionBusy(false)
-    await loadMoment()
-    generateSummary()
+    onMerged({ id: survivorId, summary: summarize(mergeCandidate.occasion, mergeCandidate.raw_description) })
   }
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
@@ -439,7 +445,7 @@ export default function EventDetail({
         {!mergeOpen && !deleteConfirming && (
           <div style={styles.dangerButtonRow}>
             <button type="button" onClick={openMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
-              Merge a duplicate event into this one…
+              This is a duplicate — merge it away…
             </button>
             <button
               type="button"
@@ -475,7 +481,7 @@ export default function EventDetail({
           <div style={styles.suggestBanner}>
             {!mergeCandidate ? (
               <>
-                <span>Search for the duplicate event to merge into this one:</span>
+                <span>Search for the event you want to keep. Everything here will move there, and this event will be deleted:</span>
                 <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search events…" />
                 <div style={styles.mergeResultsList}>
                   {otherEvents
@@ -504,8 +510,8 @@ export default function EventDetail({
             ) : (
               <>
                 <span>
-                  Merge "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}" into this event?
-                  All of its notes and group tags move here, then that event is deleted. This can't be undone.
+                  Merge this event into "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}"?
+                  All notes and group tags move there, this event is deleted, and you'll be taken to the kept event. This can't be undone.
                 </span>
                 <div style={styles.suggestButtonRow}>
                   <button type="button" onClick={handleMergeEvent} style={styles.suggestYesButton} disabled={actionBusy}>
