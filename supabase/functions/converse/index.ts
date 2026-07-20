@@ -189,20 +189,30 @@ Leave "moments" as an empty array when nothing is being captured or updated — 
 
 When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Resolve relative phrases against today's date, given below (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.`
 
-    // Per-request volatile data ONLY — today's date plus the full moments/groups/people
-    // archive, which changes as soon as the user writes anything new. Kept as its own trailing
-    // block (with its own breakpoint) so a write between turns only invalidates THIS block, not
-    // the much larger stable instructions above.
-    const dynamicContext = `Today's date is ${todayString} (${todayIso}).
-
-Here are the moments already recorded, each tagged with [MOMENT_ID: ...]:
-${context || "(none recorded yet)"}
-
-Here are the groups already created:
+    // Roster tier — people + groups, which change only when someone/some group is added or
+    // renamed, far less often than a new moment/note is recorded. Its own breakpoint, ordered
+    // BEFORE the moments tier below, so the common case (recording a new note about someone who's
+    // already in the app) doesn't bust it — only adding/renaming a person or group does. 1-hour
+    // TTL (not the 5-minute default): this tier is the one most likely to survive unchanged
+    // between separate chat sessions, and the default TTL would otherwise force a full-price
+    // rewrite of the whole roster just because the user paused to think (CLAUDE.md's token/
+    // billing efficiency rule).
+    const rosterContext = `Here are the groups already created:
 ${groupsContext || "(none yet)"}
 
 Here is everyone already recorded, by full name where a last name is known:
 ${peopleRoster || "(none yet)"}`
+
+    // Moments tier — changes on every new capture, the most frequent write in the app, so it's
+    // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier
+    // busts often enough that the cheaper write usually wins).
+    const momentsContext = `Here are the moments already recorded, each tagged with [MOMENT_ID: ...]:
+${context || "(none recorded yet)"}`
+
+    // Truly per-turn: changes once a day, and previously sat at the FRONT of one combined dynamic
+    // block, which invalidated the whole thing daily for no reason. Kept last and uncached — it's
+    // a few tokens, nothing to gain from a breakpoint here.
+    const todayContext = `Today's date is ${todayString} (${todayIso}).`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -214,14 +224,15 @@ ${peopleRoster || "(none yet)"}`
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 4096,
-        // Two breakpoints: the stable instructions block is byte-identical across every
-        // user/session/turn, so it can be reused far more widely than a single combined
-        // block ever could; the dynamic block caches the current roster/moments so
-        // back-to-back turns with no new writes still get a full-prompt cache hit (see
-        // CLAUDE.md's token/billing efficiency rule, which calls this function out by name).
+        // Four tiers ordered stable-to-volatile so a write only invalidates its own tier and
+        // everything after it, never what comes before: instructions (never changes) -> roster
+        // (rare writes) -> moments (frequent writes) -> today's date (uncached, see above). See
+        // CLAUDE.md's token/billing efficiency rule, which calls this function out by name.
         system: [
-          { type: "text", text: stableInstructions, cache_control: { type: "ephemeral" } },
-          { type: "text", text: dynamicContext, cache_control: { type: "ephemeral" } },
+          { type: "text", text: stableInstructions, cache_control: { type: "ephemeral", ttl: "1h" } },
+          { type: "text", text: rosterContext, cache_control: { type: "ephemeral", ttl: "1h" } },
+          { type: "text", text: momentsContext, cache_control: { type: "ephemeral" } },
+          { type: "text", text: todayContext },
         ],
         messages: messages,
       }),

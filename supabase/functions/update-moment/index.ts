@@ -149,19 +149,23 @@ Leave any of these four keys null when the user didn't touch that field this tur
 
 "add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Affiliated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster provided in this prompt if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail.`
 
-    // Per-request volatile data ONLY — today's date plus this moment's known fields and the
-    // full people/groups/events roster, which changes as soon as the user adds detail. Its own
-    // trailing block (own breakpoint) so a write between turns only invalidates this, not the
-    // much larger stable instructions above.
-    const dynamicContext = `Today's date is ${todayIso}.
-
-Here's what's already known about this moment: ${existingSummary}
-
-Here is everyone already recorded, by full name where a last name is known: ${peopleRoster || "(none yet)"}
+    // Roster tier — people/groups/other-events, which barely change while the user is mid-
+    // conversation adding detail to just this one moment. Its own breakpoint, ordered BEFORE this
+    // moment's own summary below, so an ordinary "add another detail" turn (which only updates
+    // this moment's own notes) doesn't bust it. 1-hour TTL — see the matching comment in
+    // converse/index.ts.
+    const rosterContext = `Here is everyone already recorded, by full name where a last name is known: ${peopleRoster || "(none yet)"}
 
 Here are the groups already on file: ${groupsRoster || "(none yet)"}
 
 Here are the OTHER events/moments already recorded in the app (not this one), by their name and roughly when they happened: ${otherEventsRoster || "(none yet)"}`
+
+    // This moment's own summary — changes on essentially every turn in this chat (that's the
+    // point of it), so kept on the default 5-minute cache rather than the pricier 1-hour write.
+    const momentContext = `Here's what's already known about this moment: ${existingSummary}`
+
+    // Truly per-turn, uncached — see the matching comment in converse/index.ts.
+    const todayContext = `Today's date is ${todayIso}.`
 
     const DEFAULT_PARSED = {
       reply: "Sorry, I didn't get a response there — please try again.",
@@ -184,10 +188,12 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
         body: JSON.stringify({
           model: "claude-sonnet-5",
           max_tokens: 1500,
-          // Two breakpoints — see the matching comment in converse/index.ts.
+          // Four tiers ordered stable-to-volatile — see the matching comment in converse/index.ts.
           system: [
-            { type: "text", text: stableInstructions, cache_control: { type: "ephemeral" } },
-            { type: "text", text: dynamicContext, cache_control: { type: "ephemeral" } },
+            { type: "text", text: stableInstructions, cache_control: { type: "ephemeral", ttl: "1h" } },
+            { type: "text", text: rosterContext, cache_control: { type: "ephemeral", ttl: "1h" } },
+            { type: "text", text: momentContext, cache_control: { type: "ephemeral" } },
+            { type: "text", text: todayContext },
           ],
           messages,
         }),

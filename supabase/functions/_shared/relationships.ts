@@ -248,6 +248,62 @@ async function extractRelationNames(
   }
 }
 
+// Request-scoped memo for getRelationNames below — a single applyFamilySignals call can compare
+// the same person against several others (e.g. the "parent" signal branch checks the subject
+// against up to 5 siblings in a row), and without this, the SUBJECT's own parent/sibling list got
+// re-derived from scratch — a fresh DB read plus a fresh Claude call — on every single comparison,
+// even though nothing about the subject changed between them. Keyed by "kind:personId" since the
+// same person can be asked about as both a "parent" query and a "sibling" query in one pass.
+type RelationExtractionCache = Map<string, Promise<string[]>>
+function makeRelationExtractionCache(): RelationExtractionCache {
+  return new Map()
+}
+
+const KEY_FACTS_CATEGORY: Record<"parent" | "sibling", string> = { parent: "parents", sibling: "siblings" }
+
+// The single chokepoint for "what does the model think personId's parents/siblings are" — used by
+// findSharedParentSuggestions and the "parent" signal branch below. Tries, in order: (1) the
+// in-request cache above, (2) the SAME category already extracted and cached on this person's own
+// profile (people.key_facts, written by person-facts — reusing it means this suggestion doesn't
+// pay for a fresh Claude call over notes that were already summarized once), (3) a live extraction
+// as the fallback for anyone whose Key Facts have never been generated. This whole function only
+// ever feeds a "suggest, don't assert" banner (see findSharedParentSuggestions below), so an
+// occasionally-stale Key Facts cache (only refreshed on a profile visit or manual refresh, not
+// proactively) is an acceptable trade for never asserting anything as fact.
+async function getRelationNames(
+  supabaseClient: MinimalSupabaseClient,
+  anthropicApiKey: string,
+  cache: RelationExtractionCache,
+  kind: "parent" | "sibling",
+  personId: string,
+  personName: string
+): Promise<string[]> {
+  const key = `${kind}:${personId}`
+  let pending = cache.get(key)
+  if (!pending) {
+    pending = resolveRelationNames(supabaseClient, anthropicApiKey, kind, personId, personName)
+    cache.set(key, pending)
+  }
+  return pending
+}
+
+async function resolveRelationNames(
+  supabaseClient: MinimalSupabaseClient,
+  anthropicApiKey: string,
+  kind: "parent" | "sibling",
+  personId: string,
+  personName: string
+): Promise<string[]> {
+  const { data: person } = await supabaseClient.from("people").select("key_facts").eq("id", personId).single()
+  const cachedFact = (person?.key_facts ?? []).find((f: any) => f.category === KEY_FACTS_CATEGORY[kind])
+  if (cachedFact) {
+    const names = (cachedFact.people ?? []).map((p: any) => p.name).filter(Boolean)
+    if (names.length > 0) return names
+  }
+  const notesText = await notesTextFor(supabaseClient, personId)
+  return extractRelationNames(anthropicApiKey, kind, personName, notesText)
+}
+
 // Compares two people who are (or are about to become) recorded as siblings and reports any
 // parent known for one but not the other — this is the "suggest, don't assert" half of
 // relationship inference: nothing is written here, just candidates for the user to confirm.
@@ -255,15 +311,15 @@ async function findSharedParentSuggestions(
   supabaseClient: MinimalSupabaseClient,
   anthropicApiKey: string,
   index: NameIndex,
+  cache: RelationExtractionCache,
   aId: string,
   aName: string,
   bId: string,
   bName: string
 ): Promise<RelationshipSuggestion[]> {
-  const [notesA, notesB] = await Promise.all([notesTextFor(supabaseClient, aId), notesTextFor(supabaseClient, bId)])
   const [namesA, namesB] = await Promise.all([
-    extractRelationNames(anthropicApiKey, "parent", aName, notesA),
-    extractRelationNames(anthropicApiKey, "parent", bName, notesB),
+    getRelationNames(supabaseClient, anthropicApiKey, cache, "parent", aId, aName),
+    getRelationNames(supabaseClient, anthropicApiKey, cache, "parent", bId, bName),
   ])
   const parentIdsA = new Set(resolveIds(index, namesA))
   const parentIdsB = new Set(resolveIds(index, namesB))
@@ -292,6 +348,8 @@ export async function applyFamilySignals(
   const familyTags: { id: string; name: string }[] = []
   let relationshipSuggestions: RelationshipSuggestion[] = []
   const newPersonSuggestions: NewPersonSuggestion[] = []
+  // Scoped to this one applyFamilySignals call — see getRelationNames above for why this exists.
+  const relationCache = makeRelationExtractionCache()
 
   for (const signal of rawSignals ?? []) {
     const subjectKey = signal.subject?.trim().toLowerCase()
@@ -415,13 +473,13 @@ export async function applyFamilySignals(
       // own already-known siblings). Nothing here writes anything; it only proposes candidates
       // the founder can confirm on the profile page.
       if (signal.relationship === "sibling" && relationshipSuggestions.length < 6) {
-        const found = await findSharedParentSuggestions(supabaseClient, anthropicApiKey, index, subjectId, subjectName, targetId, targetName)
+        const found = await findSharedParentSuggestions(supabaseClient, anthropicApiKey, index, relationCache, subjectId, subjectName, targetId, targetName)
         relationshipSuggestions.push(...found)
       } else if (signal.relationship === "parent" && relationshipSuggestions.length < 6) {
-        const siblingNames = await extractRelationNames(anthropicApiKey, "sibling", subjectName, await notesTextFor(supabaseClient, subjectId))
+        const siblingNames = await getRelationNames(supabaseClient, anthropicApiKey, relationCache, "sibling", subjectId, subjectName)
         const siblingIds = resolveIds(index, siblingNames).filter((id) => id !== subjectId && id !== targetId)
         for (const sId of siblingIds.slice(0, 5)) {
-          const found = await findSharedParentSuggestions(supabaseClient, anthropicApiKey, index, subjectId, subjectName, sId, index.nameById[sId])
+          const found = await findSharedParentSuggestions(supabaseClient, anthropicApiKey, index, relationCache, subjectId, subjectName, sId, index.nameById[sId])
           relationshipSuggestions.push(...found)
           if (relationshipSuggestions.length >= 6) break
         }

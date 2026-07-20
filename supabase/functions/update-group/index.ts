@@ -132,18 +132,22 @@ At the end of EVERY turn (not just the final one), respond with ONLY a JSON obje
 
 This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.`
 
-    // Per-request volatile data ONLY — this group's current members/events plus the full
-    // people/events roster, which changes as soon as the user edits the group. Its own
-    // trailing block (own breakpoint) so a write between turns only invalidates this, not
-    // the much larger stable instructions above.
-    const dynamicContext = `Group being edited: "${group?.name ?? "Unknown"}"
+    // People roster — changes only when someone new is added/renamed elsewhere in the app, much
+    // less often than this group's own membership/events change while the user is actively
+    // editing it. Its own breakpoint, ordered first. 1-hour TTL — see the matching comment in
+    // converse/index.ts.
+    const peopleContext = `All people already in the app (match against these before assuming someone is new): ${knownPeople || "(none)"}`
+
+    // This group's own editable state — changes on essentially every turn in this chat (renaming,
+    // adding/removing members, tagging events IS the point of this chat), so kept on the default
+    // 5-minute cache rather than the pricier 1-hour write.
+    const groupStateContext = `Group being edited: "${group?.name ?? "Unknown"}"
 
 Current members: ${currentMembers.size > 0 ? [...currentMembers].join(", ") : "(none recorded)"}
 Events already tagged to this group:
 ${taggedEvents || "(none)"}
 Other events NOT tagged to this group (reference these by their exact MOMENT_ID if the user wants to add one):
-${otherEvents || "(none)"}
-All people already in the app (match against these before assuming someone is new): ${knownPeople || "(none)"}`
+${otherEvents || "(none)"}`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -155,10 +159,11 @@ All people already in the app (match against these before assuming someone is ne
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1500,
-        // Two breakpoints — see the matching comment in converse/index.ts.
+        // Three tiers ordered stable-to-volatile — see the matching comment in converse/index.ts.
         system: [
-          { type: "text", text: stableInstructions, cache_control: { type: "ephemeral" } },
-          { type: "text", text: dynamicContext, cache_control: { type: "ephemeral" } },
+          { type: "text", text: stableInstructions, cache_control: { type: "ephemeral", ttl: "1h" } },
+          { type: "text", text: peopleContext, cache_control: { type: "ephemeral", ttl: "1h" } },
+          { type: "text", text: groupStateContext, cache_control: { type: "ephemeral" } },
         ],
         messages,
       }),
