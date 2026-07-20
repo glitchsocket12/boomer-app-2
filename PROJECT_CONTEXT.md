@@ -27,7 +27,9 @@ src/
 │   ├── supabase.ts            — shared client (reads VITE_* env)
 │   ├── dates.ts               — eventSortDate/formatMonthYear (tested)
 │   ├── summarize.ts           — short title helper (tested)
-│   └── people.ts              — sortByLastName
+│   ├── people.ts              — sortByLastName
+│   └── groupTypes.ts          — GROUP_TYPES fixed list (Family/Friend group/School/
+│                                Team/Work), shared by Groups.tsx + GroupDetail.tsx
 ├── pages/
 │   ├── Login.tsx              — combined sign up / log in
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
@@ -54,10 +56,14 @@ src/
 │   │                            was silently frozen at whatever name you navigated
 │   │                            in with, invisible until a same-visit rename made it
 │   │                            obvious (2026-07-20)
-│   ├── Groups.tsx             — group tiles (summary, ≤5 member chips, event chips);
-│   │                            manual "add group" (blank shell, no form, 2026-07-20)
-│   │                            → lands on its detail page to rename via the pencil
-│   ├── GroupDetail.tsx        — summary + refresh (rename now invalidates the cached
+│   ├── Groups.tsx             — group tiles (summary, ≤5 member chips, event chips,
+│   │                            type badge); manual "add group" (blank shell, no
+│   │                            form, 2026-07-20) → lands on its detail page to
+│   │                            rename via the pencil; type filter dropdown
+│   │                            (All/No type/Family/Friend group/School/Team/Work,
+│   │                            2026-07-20)
+│   ├── GroupDetail.tsx        — group type picker (fixed 5-option dropdown, nullable,
+│   │                            writes on change, 2026-07-20), summary + refresh (rename now invalidates the cached
 │   │                            summary too, not just membership changes — a manually-
 │   │                            created group's summary can otherwise stay generated
 │   │                            against the "New group" placeholder forever), members
@@ -184,8 +190,9 @@ notes         id, person_id? , moment_id?, group_id? (CHECK: person_id OR group_
               (groups!notes_source_group_id_fkey) or PostgREST errors (PGRST201).
 reminders     id, person_id, label ("Birthday"/"Anniversary"), month, day
               — no year, no automatic sending exists.
-groups        id, user_id, name, summary? (AI cache), dismissed_person_ids jsonb [],
-              dismissed_group_ids jsonb [], created_at
+groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
+              group/School/Team/Work, nullable, fixed picker, CHECK-constrained),
+              dismissed_person_ids jsonb [], dismissed_group_ids jsonb [], created_at
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
@@ -204,7 +211,7 @@ home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts
 - **Home:** continuous chat (answer/capture/update/correct/group-tag per turn, multiple events per message, never dead-ends — suggests close matches or asks); clickable person/event/group chips on replies with canonical spellings; cached suggestion cards (tap = starts a real conversation); dashboard (People/Events/Groups/Notes counts — People/Events/Groups tiles clickable → jump to that tab, 2026-07-20; Notes tile has no page to link to, Dunbar card → DunbarDetail, Recall-assists card, monthly leaderboard → DueForUpdate). Known gap: the chat thread lives in component state — switching tabs loses it.
 - **People:** manual "add person" is a no-form blank shell (2026-07-20, matches Events/Groups — was a first+last form before), search (incl. nicknames), 5 sort options, count in heading.
 - **Person profile:** Key Facts (cached, ordered Parents→Spouse→Siblings→Children, exact-match chips), missing-category nudges, notes with hover edit/delete + source labels ("Added through: {event}" / "From: {Group}" / "From Home"), fact bar (AI-classified, the only field-edit path — a fresh blank profile's placeholder name gets set through this same path, no separate name-edit control added), relationship + new-person + shared-parent + last-name suggestion banners, delete/merge profile (the SEARCHED-FOR record survives; merged-away names fold into nicknames).
-- **Groups:** created conversationally OR via manual "add group" (blank shell, no form, 2026-07-20 — recurring affiliations, school/team/unit/workplace/circle, never one-off events); tiles with summary + capped chips; detail page per §3; membership = explicit only; suggestions from event attendance + associated-group rosters; symmetric confirmed group associations; whole-group delete (2026-07-20, the safety net the manual button needed — groups have no dedupe-by-name check the way `converse` does).
+- **Groups:** created conversationally OR via manual "add group" (blank shell, no form, 2026-07-20 — recurring affiliations, school/team/unit/workplace/circle, never one-off events); tiles with summary + capped chips; detail page per §3; membership = explicit only; suggestions from event attendance + associated-group rosters; symmetric confirmed group associations; whole-group delete (2026-07-20, the safety net the manual button needed — groups have no dedupe-by-name check the way `converse` does); **Group Types** (2026-07-20): fixed picker (Family/Friend group/School/Team/Work) on GroupDetail, nullable — sets `group_type` instantly, no save button; Groups page has a type filter dropdown + a badge on typed tiles.
 - **Events:** browsable, sorted by real-date guess; detail per §3; AI summary regenerates on new detail (only once there's a description to summarize); delete/merge (searched-for survives); group tagging + attendee tagging via chat OR direct search-and-add pickers on the event page (2026-07-20); manual "add event" button (2026-07-20) creates a blank shell and drops straight onto its detail page to build up from there — same "step by step" idea as manual "add person," extended to events/groups.
 - **Voice input** on every text box (record → Whisper → text dropped in for review, never auto-sends; no live captions — batch only). **Auto-grow textareas** everywhere.
 - **Cross-navigation:** any person/group/event mention anywhere is a chip → detail page, with breadcrumb trail; refresh restores location (sessionStorage).
@@ -213,7 +220,7 @@ home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts
 
 ## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
 
-Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes. Also done: 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix, deployed and confirmed live — see §10); 36 (2026-07-20: manual "add an event" / "add a group" buttons, plus group delete — see §7).
+Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes. Also done: 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix, deployed and confirmed live — see §10); 36 (2026-07-20: manual "add an event" / "add a group" buttons, plus group delete — see §7); 35/Group Types (2026-07-20: `group_type` column + fixed picker on GroupDetail + filter/badge on Groups — see §7).
 
 **Open — bigger features:**
 14. Global search bar on every page (decide: text match first vs. semantic — merges with 30).
@@ -236,7 +243,6 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 32. **User's own profile ("Me" page or a normal People entry)** — requested 2026-07-19. All events/groups should relate back to the user themself; founder undecided whether the user should live in the People list like a normal contact or get a dedicated "Me" page. Feeds directly into item 15's "resolve 'my parents'" need — this is the underlying concept item 15 was waiting on. **Static UX preview shipped 2026-07-20** (`CircleMock.tsx` + `FamilyTreeMock.tsx`, placeholder data only) — "My page" = self header + "Your circle" grid + "Your groups" list; the family tree moved OUT of the profile page and into a per-group view, scoped to whichever group is tagged "Family" (depends on item 35). Founder's rationale: tying the tree to group membership (not blood-relationship inference) lets you decide who counts as family — chosen family, in-laws, a friend's family you're close with — and doubles as a relationship-data-collection tool: an "unplaced" group member with no relationship on file is a direct nudge to add one, which then improves "my mom/dad" resolution and reciprocal notes everywhere else in the app. Open decisions before this becomes real: (a) empty relationship categories on "Your circle" shown as an invite-to-add vs. hidden until populated, (b) whether a family tree can be built for a group you're NOT a member of (a close friend's family) — that variant has no "You" tier to anchor on. **Architecture decision confirmed by founder 2026-07-20:** build a real `relationships` table as shared source of truth — the family tree, `person-facts` Key Facts linking, reciprocal notes (`_shared/relationships.ts`), and "my mom/dad" resolution should all read/write through it, not stay siloed per-feature the way relationship data is inferred today (notes text + `key_facts` JSON, no queryable structured graph). Real build handed off to a separate session — see item 15/33 for the features this unblocks.
 33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
 34. **Filterable "View" by event category on the Events page** — requested 2026-07-19. Founder's concern: as event volume grows, big events (weddings) get buried among day-to-day notes (a phone call), so a picklist of categories to narrow the list is needed. Categories would come from a learning/growing list derived from events actually added, not a fixed hardcoded set. Pairs with item 28 (manual + AI-suggested tags on events) — likely the same schema change powers both the tags and this filter view.
-35. **Group Types (Family/Team/School/Friend group/etc.)** — requested 2026-07-20. `groups` has no type/category field today. Needed as the tagging mechanism item 32's family-tree-per-group concept depends on; also independently useful for organizing/filtering the Groups page. Schema change: a `group_type` column + a small fixed picker in the UI.
 35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).

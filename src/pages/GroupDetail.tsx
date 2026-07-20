@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
+import { GROUP_TYPES } from '../lib/groupTypes'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import { PersonChip, GroupChip } from '../components/Chips'
@@ -67,6 +68,8 @@ export default function GroupDetail({
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState(groupName)
   const [editingName, setEditingName] = useState(false)
+  const [groupType, setGroupType] = useState<string | null>(null)
+  const [savingType, setSavingType] = useState(false)
   const [nameInput, setNameInput] = useState(groupName)
   const [savingName, setSavingName] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
@@ -149,7 +152,7 @@ export default function GroupDetail({
   async function loadMembers() {
     const { data } = await supabase
       .from('groups')
-      .select('person_groups(people(id, name, last_name)), dismissed_person_ids, dismissed_group_ids')
+      .select('person_groups(people(id, name, last_name)), dismissed_person_ids, dismissed_group_ids, group_type')
       .eq('id', groupId)
       .single()
 
@@ -157,6 +160,7 @@ export default function GroupDetail({
       person_groups: { people: PersonRef | null }[]
       dismissed_person_ids: string[] | null
       dismissed_group_ids: string[] | null
+      group_type: string | null
     } | null
 
     const explicit = (loaded?.person_groups ?? [])
@@ -166,7 +170,16 @@ export default function GroupDetail({
     setExplicitMembers(explicit)
     setDismissedPersonIds(loaded?.dismissed_person_ids ?? [])
     setDismissedGroupIds(loaded?.dismissed_group_ids ?? [])
+    setGroupType(loaded?.group_type ?? null)
     loadMemberSharedGroups(explicit.map((p) => p.id))
+  }
+
+  async function handleChangeType(value: string) {
+    const newType = value || null
+    setSavingType(true)
+    const { error } = await supabase.from('groups').update({ group_type: newType }).eq('id', groupId)
+    setSavingType(false)
+    if (!error) setGroupType(newType)
   }
 
   // Candidate associated groups sourced from members: any OTHER group this group's own explicit
@@ -519,6 +532,21 @@ export default function GroupDetail({
           <EditButton label="Rename group" onClick={() => setEditingName(true)} />
         </div>
       )}
+
+      <select
+        value={groupType ?? ''}
+        onChange={(e) => handleChangeType(e.target.value)}
+        disabled={savingType}
+        style={styles.typeSelect}
+        aria-label="Group type"
+      >
+        <option value="">No type set</option>
+        {GROUP_TYPES.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
 
       <div style={styles.summaryRow}>
         <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
@@ -1091,6 +1119,16 @@ const styles: { [key: string]: React.CSSProperties } = {
   heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
   headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'wrap' },
   renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' },
+  typeSelect: {
+    fontSize: '0.85rem',
+    padding: '0.35rem 0.6rem',
+    borderRadius: '6px',
+    border: '1px solid #CCC',
+    fontFamily: 'Georgia, serif',
+    backgroundColor: '#FFF',
+    color: '#666',
+    marginBottom: '0.75rem',
+  },
   summaryRow: { display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '1.5rem' },
   summary: { margin: 0, flex: 1, fontSize: '1rem', color: '#666', fontStyle: 'italic' },
   membersHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem 0' },

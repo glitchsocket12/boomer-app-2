@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
+import { GROUP_TYPES } from '../lib/groupTypes'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type MomentRef = { id: string; occasion: string | null; raw_description: string }
@@ -11,6 +12,7 @@ type Group = {
   id: string
   name: string
   summary: string | null
+  group_type: string | null
   person_groups: { people: PersonRef | null }[]
   moment_groups: { moments: MomentRef | null }[]
 }
@@ -33,6 +35,7 @@ export default function Groups({
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState('all')
   const [addingGroup, setAddingGroup] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const requestedSummaries = useRef(new Set<string>())
@@ -46,7 +49,7 @@ export default function Groups({
     const { data } = await supabase
       .from('groups')
       .select(
-        'id, name, summary, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description))'
+        'id, name, summary, group_type, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description))'
       )
       .order('name')
 
@@ -119,6 +122,8 @@ export default function Groups({
 
   const query = search.trim().toLowerCase()
   const filteredGroups = decoratedGroups.filter(({ group, explicitMembers }) => {
+    if (typeFilter === 'untyped' && group.group_type) return false
+    if (typeFilter !== 'all' && typeFilter !== 'untyped' && group.group_type !== typeFilter) return false
     if (!query) return true
     const memberNames = explicitMembers.map((p) => `${p.name} ${p.last_name ?? ''}`)
     const haystack = [group.name, group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
@@ -142,11 +147,29 @@ export default function Groups({
       )}
 
       {groups.length > 0 && (
-        <SearchBox value={search} onChange={setSearch} placeholder="Search groups…" />
+        <div style={styles.searchRow}>
+          <SearchBox value={search} onChange={setSearch} placeholder="Search groups…" />
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            style={styles.typeFilterSelect}
+            aria-label="Filter by group type"
+          >
+            <option value="all">All types</option>
+            <option value="untyped">No type set</option>
+            {GROUP_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
       )}
 
       {groups.length > 0 && filteredGroups.length === 0 && (
-        <p style={styles.empty}>No groups match "{search}".</p>
+        <p style={styles.empty}>
+          {query ? `No groups match "${search}".` : 'No groups have this type yet.'}
+        </p>
       )}
 
       <div style={styles.list}>
@@ -156,9 +179,12 @@ export default function Groups({
 
           return (
             <div key={group.id} style={styles.card}>
-              <button onClick={() => onSelectGroup(group)} style={styles.titleButton}>
-                {group.name}
-              </button>
+              <div style={styles.titleRow}>
+                <button onClick={() => onSelectGroup(group)} style={styles.titleButton}>
+                  {group.name}
+                </button>
+                {group.group_type && <span style={styles.typeBadge}>{group.group_type}</span>}
+              </div>
 
               <p style={styles.summary}>{group.summary || 'Figuring out what this group is about…'}</p>
 
@@ -209,6 +235,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
   },
   addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1rem' },
+  searchRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-start', marginBottom: '1.5rem' },
+  typeFilterSelect: {
+    flexShrink: 0,
+    fontSize: '1rem',
+    padding: '0.65rem 0.75rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    fontFamily: 'Georgia, serif',
+    backgroundColor: '#FFF',
+    color: '#2E2E2E',
+  },
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   card: {
@@ -217,9 +254,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '1.25rem',
     boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
   },
+  titleRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' },
   titleButton: {
     display: 'block',
-    margin: '0 0 0.25rem 0',
+    margin: 0,
     padding: 0,
     fontSize: '1.3rem',
     fontFamily: 'Georgia, serif',
@@ -228,6 +266,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     textAlign: 'left',
     cursor: 'pointer',
+  },
+  typeBadge: {
+    fontSize: '0.7rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+    color: '#8A6A1F',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #E6D6AC',
+    borderRadius: '999px',
+    padding: '0.15rem 0.55rem',
   },
   summary: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#666', fontStyle: 'italic' },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
