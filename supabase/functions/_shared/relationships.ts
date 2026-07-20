@@ -107,7 +107,9 @@ const CATEGORY_DESCRIPTIONS = `- "spouse": married to / the spouse, husband, wif
 - "sibling": the named person(s) are their brother(s)/sister(s) (e.g. "Her brothers are Danny and Josh Volin").
 - "parent": the named person(s) are their mother/father (e.g. "Her parents are Steve and Amy", "Her mom is Amy Volin").
 - "child": the named person(s) are their son(s)/daughter(s) (e.g. "Her son is Mike", "Their kids are Sarah and Jake").
-- "partner": romantically involved with / dating / boyfriend or girlfriend of the named person, not (yet) married (e.g. "He's dating Olivia", "Her boyfriend is Marcus"). If they're described as married, use "spouse" instead.`
+- "partner": romantically involved with / dating / boyfriend or girlfriend of the named person, not (yet) married (e.g. "He's dating Olivia", "Her boyfriend is Marcus"). If they're described as married, use "spouse" instead.
+
+When multiple people are named together and only the LAST one has a surname (e.g. "Amy and Steve Volin", "her parents Amy and Steve Volin"), that surname belongs to all of them — write each full name out in "person_names" (e.g. ["Amy Volin", "Steve Volin"]), not just the one it's printed next to. This matters because a married couple is almost always described this way, not as "Amy Volin and Steve Volin".`
 
 // For callers scoped to one fixed, already-known subject (add-fact's profile fact bar, where
 // every fact is about the profile being viewed). Produces the JSON field description plus the
