@@ -182,6 +182,7 @@ export default function App() {
             onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
             onSelectDunbar={() => pushCrumb({ type: 'dunbar', id: 'dunbar', label: "Dunbar's number" })}
             onSelectNudges={() => pushCrumb({ type: 'nudges', id: 'nudges', label: 'Due for an update' })}
+            onNavigateTab={goToTab}
           />
         )}
         {view === 'people' && (

@@ -41,12 +41,14 @@ export default function Home({
   onSelectGroup,
   onSelectDunbar,
   onSelectNudges,
+  onNavigateTab,
 }: {
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
   onSelectGroup: (group: GroupRef) => void
   onSelectDunbar: () => void
   onSelectNudges: () => void
+  onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
 }) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -195,18 +197,18 @@ export default function Home({
         <>
           {stats && (stats.people > 0 || stats.events > 0 || stats.groups > 0 || stats.notes > 0) && (
             <div style={styles.statsRow}>
-              <div style={styles.statTile}>
+              <button onClick={() => onNavigateTab('people')} style={{ ...styles.statTile, cursor: 'pointer' }}>
                 <div style={styles.statNumber}>{stats.people}</div>
                 <div style={styles.statLabel}>People</div>
-              </div>
-              <div style={styles.statTile}>
+              </button>
+              <button onClick={() => onNavigateTab('events')} style={{ ...styles.statTile, cursor: 'pointer' }}>
                 <div style={styles.statNumber}>{stats.events}</div>
                 <div style={styles.statLabel}>Events</div>
-              </div>
-              <div style={styles.statTile}>
+              </button>
+              <button onClick={() => onNavigateTab('groups')} style={{ ...styles.statTile, cursor: 'pointer' }}>
                 <div style={styles.statNumber}>{stats.groups}</div>
                 <div style={styles.statLabel}>Groups</div>
-              </div>
+              </button>
               <div style={styles.statTile}>
                 <div style={styles.statNumber}>{stats.notes}</div>
                 <div style={styles.statLabel}>Notes</div>
@@ -357,6 +359,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: '1px solid #CFE0D6',
     borderRadius: '10px',
     padding: '0.75rem 0.5rem',
+    fontFamily: 'Georgia, serif',
   },
   statNumber: { fontSize: '1.5rem', color: '#2E4034', fontWeight: 'bold', lineHeight: 1.2 },
   statLabel: { fontSize: '0.8rem', color: '#666', marginTop: '0.15rem' },
