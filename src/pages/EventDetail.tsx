@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { GroupChip } from '../components/Chips'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
 import PhotoGallery from '../components/PhotoGallery'
@@ -135,6 +134,13 @@ export default function EventDetail({
     await supabase
       .from('moment_groups')
       .upsert({ moment_id: eventId, group_id: groupId }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+    await loadMoment(true)
+  }
+
+  // "Untagging" is pure detachment from moment_groups, not deletion — same non-destructive
+  // reasoning as handleRemoveAttendee above. The group itself and its own roster are untouched.
+  async function handleUntagGroup(groupId: string) {
+    await supabase.from('moment_groups').delete().eq('moment_id', eventId).eq('group_id', groupId)
     await loadMoment(true)
   }
 
@@ -386,11 +392,19 @@ export default function EventDetail({
 
       <h2 style={styles.subheading}>Affiliated Groups</h2>
       {groups.length > 0 && (
-        <div style={styles.chipRow}>
-          {groups.map((g) => (
-            <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-          ))}
-        </div>
+        <>
+          <p style={styles.chatHint}>Tap a group for its profile, or hover to untag it from this event.</p>
+          <div style={styles.chipRow}>
+            {groups.map((g) => (
+              <AffiliatedGroupChip
+                key={g.id}
+                group={g}
+                onSelect={() => onSelectGroup(g)}
+                onRemove={() => handleUntagGroup(g.id)}
+              />
+            ))}
+          </div>
+        </>
       )}
       <SearchAddPicker
         items={allGroupsList
@@ -695,6 +709,42 @@ function AttendeeChip({
   )
 }
 
+// Clicking goes to the group's profile, same as any other chip. Hovering reveals a trash badge
+// that untags the group from this event — same corner-badge pattern as AttendeeChip above,
+// reused here for groups instead of people (matching GroupDetail.tsx's AssociatedGroupChip).
+function AffiliatedGroupChip({
+  group,
+  onSelect,
+  onRemove,
+}: {
+  group: GroupRef
+  onSelect: () => void
+  onRemove: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button onClick={onSelect} style={styles.groupChip}>
+        <span style={styles.groupDot} />
+        {group.name}
+      </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Untag ${group.name} from this event`}
+          style={styles.cornerBadge}
+        >
+          {TRASH_ICON}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // The main chip approves (adds them to Who Was There) on click, same as before. Hovering reveals
 // a small "×" badge in the corner — a separate control, so denying doesn't resize the main chip
 // and can't flicker, matching GroupDetail.tsx's SuggestionChip pattern.
@@ -833,6 +883,28 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
+  },
+  groupChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.45rem',
+    fontSize: '0.88rem',
+    fontWeight: 700,
+    padding: '0.35rem 0.85rem 0.35rem 0.7rem',
+    borderRadius: '8px',
+    border: '1px solid #B08B2E',
+    backgroundColor: '#FBF3E0',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    letterSpacing: '0.02em',
+  },
+  groupDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    backgroundColor: '#B08B2E',
+    flexShrink: 0,
   },
   badgeWrapper: { position: 'relative', display: 'inline-block' },
   cornerBadge: {
