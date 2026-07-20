@@ -86,20 +86,22 @@ src/
 │   │                             in the top bar. A group card tagged "Family" links
 │   │                             to FamilyTreeMock (2026-07-20)
 │   └── FamilyTreeMock.tsx      — READ-ONLY static preview: genealogy-style SVG tree
-│                                 (boxes joined by descent/marriage lines), REBUILT
-│                                 AGAIN 2026-07-20 to compute layout from a relationship
-│                                 data model instead of hand-placed coordinates. Each
-│                                 tier is a list of "branches" (`{parentName, union:
-│                                 {a,b?}, siblings}` — `union.a` is always the blood
-│                                 descendant of `parentName`, `union.b` married in and
-│                                 excluded from the connector line up). Box x-positions,
-│                                 marriage-line pairing, and connector bars are all
-│                                 DERIVED at render time — "+" (brought back this
-│                                 iteration) appends a person and everything reflows,
-│                                 verified live (added a 2nd grandparent + a sibling,
-│                                 confirmed re-centering, correct bar grouping, branch
-│                                 independence). Clicking a person with a "banked"
-│                                 dataset (`TREES` record — `sample-family`, `jordan`)
+│                                 (boxes joined by descent/marriage lines), layout
+│                                 DERIVED at render time from a relationship data model
+│                                 (branches: `{union:{a,b?}, siblings}`), not hand-placed
+│                                 coordinates. `parentName` lives on each PERSON, not
+│                                 each branch (fixed 2026-07-20) — so a couple's two
+│                                 partners can trace up to two DIFFERENT branches above
+│                                 them (paternal vs maternal grandparents both shown,
+│                                 each independently routed), instead of a couple being
+│                                 forced to share one lineage. A person with no
+│                                 parentName (married in) gets no connector line up.
+│                                 "+" appends a person and everything reflows —
+│                                 verified live repeatedly (2nd grandparent, a sibling,
+│                                 dual-lineage routing, marriage lines on all 3 couples
+│                                 after a rewrite briefly dropped them — caught before
+│                                 shipping). Clicking a person with a "banked" dataset
+│                                 (`TREES` record — `sample-family`, `jordan`)
 │                                 re-centers the WHOLE tree on them via a new pushed
 │                                 `familyTree` crumb — a tree is a person's own
 │                                 relationship graph, not bounded by which group you
