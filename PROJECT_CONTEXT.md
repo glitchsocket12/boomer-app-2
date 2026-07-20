@@ -85,24 +85,30 @@ src/
 │   │                             "Your groups" list. Reached via a "Preview" button
 │   │                             in the top bar. A group card tagged "Family" links
 │   │                             to FamilyTreeMock (2026-07-20)
-│   └── FamilyTreeMock.tsx      — READ-ONLY static preview, REBUILT 2026-07-20 as a
-│                                 genealogy-style SVG tree (hand-placed coordinates,
-│                                 boxes joined by descent/marriage lines) replacing the
-│                                 earlier flat chip-row version. Generation tiers
-│                                 (grandparents/aunts-uncles → parents →
-│                                 self+spouse+siblings+cousins → kids+nieces-nephews),
-│                                 solid border = direct relationship, gray = inferred
-│                                 one hop further. Clicking a person with a "banked"
-│                                 dataset (`TREES` record, keyed by id — currently
-│                                 `sample-family` and `jordan`) re-centers the WHOLE
-│                                 tree on them via a new pushed `familyTree` crumb —
-│                                 demonstrates that a tree is a person's own
+│   └── FamilyTreeMock.tsx      — READ-ONLY static preview: genealogy-style SVG tree
+│                                 (boxes joined by descent/marriage lines), REBUILT
+│                                 AGAIN 2026-07-20 to compute layout from a relationship
+│                                 data model instead of hand-placed coordinates. Each
+│                                 tier is a list of "branches" (`{parentName, union:
+│                                 {a,b?}, siblings}` — `union.a` is always the blood
+│                                 descendant of `parentName`, `union.b` married in and
+│                                 excluded from the connector line up). Box x-positions,
+│                                 marriage-line pairing, and connector bars are all
+│                                 DERIVED at render time — "+" (brought back this
+│                                 iteration) appends a person and everything reflows,
+│                                 verified live (added a 2nd grandparent + a sibling,
+│                                 confirmed re-centering, correct bar grouping, branch
+│                                 independence). Clicking a person with a "banked"
+│                                 dataset (`TREES` record — `sample-family`, `jordan`)
+│                                 re-centers the WHOLE tree on them via a new pushed
+│                                 `familyTree` crumb — a tree is a person's own
 │                                 relationship graph, not bounded by which group you
-│                                 opened it from. Verified 4 levels deep with working
-│                                 back nav at each step. Trade-off: the flat version's
-│                                 "+" add-picker is dropped here — precise connector
-│                                 coordinates don't reflow for free like a chip row
-│                                 does; not yet solved
+│                                 opened it from. Known gap: "+" always targets a
+│                                 tier's first branch — no UI yet to pick which branch
+│                                 when a tier has more than one (e.g. Parents has both
+│                                 Pat/Robin's line and Aunt Sam's). Local component
+│                                 state only — edits reset on navigating to another
+│                                 tree, nothing persisted
 ├── components/
 │   ├── MockAddPicker.tsx      — type-and-select "add a person" affordance shared by
 │   │                            CircleMock/FamilyTreeMock, searches a small hardcoded
