@@ -87,11 +87,19 @@ src/
 │   │                             to FamilyTreeMock (2026-07-20)
 │   └── FamilyTreeMock.tsx      — READ-ONLY static preview of a family tree scoped to
 │                                 one group's members (placeholder data): generation
-│                                 tiers (grandparents → parents → self+siblings) built
-│                                 from the relationship graph, plus an "unplaced"
-│                                 section nudging you to add a relationship for group
-│                                 members who don't have one on file yet (2026-07-20)
+│                                 tiers (grandparents/aunts-uncles → parents →
+│                                 self+spouse+siblings+cousins → kids+nieces-nephews),
+│                                 solid chip = direct relationship, outlined = inferred
+│                                 one hop further (spouse/in-law/cousin/niece-nephew),
+│                                 plus an "unplaced" section nudging you to add a
+│                                 relationship for group members who don't have one on
+│                                 file yet. Every tier has a "+" (2026-07-20)
 ├── components/
+│   ├── MockAddPicker.tsx      — type-and-select "add a person" affordance shared by
+│   │                            CircleMock/FamilyTreeMock, searches a small hardcoded
+│   │                            roster (no Supabase) — mirrors the real
+│   │                            search-and-add pattern closely enough to test the
+│   │                            interaction (2026-07-20)
 │   ├── ErrorBoundary.tsx      — per-tab crash containment; friendly fallback
 │   │                            (reload button, raw error tucked behind a
 │   │                            "Technical details" toggle)
