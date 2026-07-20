@@ -2,19 +2,25 @@
 // people/relationships. Built to click through on a phone for UX feedback before any
 // of this becomes a real feature.
 
+import { useState } from 'react'
+import MockAddPicker from '../components/MockAddPicker'
+
 function DirectChip({ label }: { label: string }) {
   return <span style={styles.directChip}>{label}</span>
 }
 
-function AddChip({ label }: { label: string }) {
-  return <span style={styles.addChip}>+ {label}</span>
-}
-
-function CircleBox({ title, children }: { title: string; children: React.ReactNode }) {
+function CircleBox({ title, baseNames }: { title: string; baseNames: string[] }) {
+  const [added, setAdded] = useState<string[]>([])
+  const allNames = [...baseNames, ...added]
   return (
     <div style={styles.box}>
       <div style={styles.boxTitle}>{title}</div>
-      <div style={styles.boxChips}>{children}</div>
+      <div style={styles.boxChips}>
+        {allNames.map((name) => (
+          <DirectChip key={name} label={name} />
+        ))}
+        <MockAddPicker excluded={allNames} onAdd={(name) => setAdded((a) => [...a, name])} />
+      </div>
     </div>
   )
 }
@@ -48,19 +54,10 @@ export default function CircleMock({
 
       <h2 style={styles.sectionHeading}>Your circle</h2>
       <div style={styles.grid}>
-        <CircleBox title="Spouse">
-          <DirectChip label="Jordan" />
-        </CircleBox>
-        <CircleBox title="Kids">
-          <AddChip label="Add" />
-        </CircleBox>
-        <CircleBox title="Parents">
-          <DirectChip label="Pat" />
-          <DirectChip label="Robin" />
-        </CircleBox>
-        <CircleBox title="Siblings">
-          <DirectChip label="Casey" />
-        </CircleBox>
+        <CircleBox title="Spouse" baseNames={['Jordan']} />
+        <CircleBox title="Kids" baseNames={[]} />
+        <CircleBox title="Parents" baseNames={['Pat', 'Robin']} />
+        <CircleBox title="Siblings" baseNames={['Casey']} />
       </div>
 
       <h2 style={styles.sectionHeading}>Your groups</h2>
@@ -158,13 +155,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: '999px',
     border: '1px solid #2E4034',
     color: '#2E4034',
-  },
-  addChip: {
-    fontSize: '0.8rem',
-    padding: '0.3rem 0.7rem',
-    borderRadius: '999px',
-    border: '1px dashed #BBB',
-    color: '#999',
   },
   groupList: { display: 'flex', flexDirection: 'column', gap: '0.6rem' },
   familyGroupCard: {

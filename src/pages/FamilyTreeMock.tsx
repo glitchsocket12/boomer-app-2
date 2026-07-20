@@ -1,7 +1,13 @@
 // Static, read-only preview of a family tree generated from a group tagged "Family" —
-// placeholder data only. Members with a recorded relationship are placed in generation
-// tiers; members without one show up in an "unplaced" nudge instead of being silently
-// dropped, since filling that in is what actually improves the app's relationship data.
+// placeholder data only. People are placed by generation, walked outward from you
+// through the app's existing relationship links: solid chips are relationships you
+// told the app about directly (parent, sibling, spouse, child); outlined chips are
+// inferred one hop further out (a parent's sibling = aunt/uncle, a sibling's child =
+// niece/nephew, a spouse's family = in-laws). The "+" on every tier opens the same
+// type-and-select add pattern used elsewhere in the app.
+
+import { useState } from 'react'
+import MockAddPicker from '../components/MockAddPicker'
 
 function DirectChip({ label, highlight }: { label: string; highlight?: boolean }) {
   return <span style={highlight ? styles.selfChip : styles.directChip}>{label}</span>
@@ -9,6 +15,44 @@ function DirectChip({ label, highlight }: { label: string; highlight?: boolean }
 
 function ExtendedChip({ label }: { label: string }) {
   return <span style={styles.extendedChip}>{label}</span>
+}
+
+function Tier({
+  label,
+  baseNames,
+  extendedNames = [],
+  highlight,
+  self,
+}: {
+  label: string
+  baseNames: string[]
+  extendedNames?: string[]
+  highlight?: boolean
+  self?: string
+}) {
+  const [added, setAdded] = useState<string[]>([])
+  const allNames = [...(self ? [self] : []), ...baseNames, ...extendedNames, ...added]
+
+  const body = (
+    <>
+      <div style={styles.tierLabel}>{label}</div>
+      <div style={styles.tierChips}>
+        {self && <DirectChip label={self} highlight />}
+        {baseNames.map((name) => (
+          <DirectChip key={name} label={name} />
+        ))}
+        {extendedNames.map((name) => (
+          <ExtendedChip key={name} label={name} />
+        ))}
+        {added.map((name) => (
+          <DirectChip key={name} label={name} />
+        ))}
+        <MockAddPicker excluded={allNames} onAdd={(name) => setAdded((a) => [...a, name])} />
+      </div>
+    </>
+  )
+
+  return highlight ? <div style={styles.youTier}>{body}</div> : <div style={styles.tier}>{body}</div>
 }
 
 export default function FamilyTreeMock({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
@@ -23,28 +67,19 @@ export default function FamilyTreeMock({ onBack, backLabel }: { onBack: () => vo
       <p style={styles.groupContext}>Sample family · Family group · 7 members</p>
 
       <div style={styles.tree}>
-        <div style={styles.tier}>
-          <div style={styles.tierLabel}>Grandparents</div>
-          <div style={styles.tierChips}>
-            <ExtendedChip label="Ruth" />
-          </div>
-        </div>
+        <Tier label="Grandparents" baseNames={['Ruth']} />
         <div style={styles.connector} />
-        <div style={styles.tier}>
-          <div style={styles.tierLabel}>Parents</div>
-          <div style={styles.tierChips}>
-            <DirectChip label="Pat" />
-            <DirectChip label="Robin" />
-          </div>
-        </div>
+        <Tier label="Parents, aunts and uncles" baseNames={['Pat', 'Robin']} extendedNames={['Aunt Sam']} />
         <div style={styles.connector} />
-        <div style={styles.youTier}>
-          <div style={styles.tierLabel}>You and siblings</div>
-          <div style={styles.tierChips}>
-            <DirectChip label="You" highlight />
-            <DirectChip label="Casey" />
-          </div>
-        </div>
+        <Tier
+          label="You, your generation"
+          self="You"
+          baseNames={['Casey']}
+          extendedNames={['Jordan (spouse)', 'Riley (cousin)']}
+          highlight
+        />
+        <div style={styles.connector} />
+        <Tier label="Kids, nieces and nephews" baseNames={[]} />
       </div>
 
       <div style={styles.unplacedSection}>
@@ -92,7 +127,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     margin: '0.2rem 0',
   },
   tierLabel: { fontSize: '0.75rem', color: '#999', marginBottom: '0.5rem' },
-  tierChips: { display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' },
+  tierChips: { display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center', alignItems: 'center' },
   connector: { width: '1px', height: '16px', backgroundColor: '#CCC' },
   directChip: {
     fontSize: '0.85rem',
