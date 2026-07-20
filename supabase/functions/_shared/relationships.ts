@@ -95,17 +95,6 @@ export const INVERSE_RELATIONSHIP: Record<string, RelationshipKind> = {
   partner: "partner",
 }
 
-// Keyword used to detect an existing reciprocal note so re-saving the same fact doesn't pile up
-// duplicates — matches both this module's own deterministic phrasing and anything the user might
-// have typed by hand in similar words.
-export const DEDUPE_KEYWORD: Record<string, RegExp> = {
-  spouse: /married|spouse/i,
-  sibling: /sibling|brother|sister/i,
-  parent: /\bchild\b|\bson\b|\bdaughter\b/i,
-  child: /\bparent\b|\bmother\b|\bfather\b/i,
-  partner: /dating|partner|boyfriend|girlfriend/i,
-}
-
 // Phrased from the KNOWN person's side (the subject) — used only for the "new relationship
 // suggestion" banner text when the named person doesn't exist yet, since at that point there's
 // no "other side" profile to phrase the reciprocal note onto.
@@ -206,21 +195,19 @@ async function notesTextFor(supabaseClient: MinimalSupabaseClient, personId: str
   return (data ?? []).map((n: any) => n.content).join("\n")
 }
 
-// Writes noteText onto personId unless a note already there mentions otherName in a way that
-// matches dedupeKeyword — the "don't pile up duplicates" check every direct relationship write in
-// this file needs, factored out once so every pairwise write (subject<->target, and now
-// target<->target for co-named siblings) applies it identically.
-async function writeNoteIfMissing(
-  supabaseClient: MinimalSupabaseClient,
-  personId: string,
-  otherName: string,
-  noteText: string,
-  dedupeKeyword: RegExp
-): Promise<void> {
+// Writes noteText onto personId unless that EXACT note is already there — the "don't pile up
+// duplicates" check every direct relationship write in this file needs, factored out once so
+// every pairwise write (subject<->target, and target<->target for co-named siblings) applies it
+// identically. Deliberately an exact-text match, not a loose "mentions this name + a family-ish
+// keyword" heuristic — the loose version used to false-positive on the SUBJECT's own original
+// sentence (e.g. Caroline's own "Her siblings are Clare, Bridget, and Patrick" already mentions
+// "Clare" and the word "siblings", so it satisfied the old check and silently blocked Caroline
+// from ever getting her OWN "Their sibling is Clare Sucre." note — every other sibling got their
+// note pointing back at her, but she never got hers pointing at them). An exact match only ever
+// matches a PRIOR run of this same deterministic write, which is the only case worth deduping.
+async function writeNoteIfMissing(supabaseClient: MinimalSupabaseClient, personId: string, noteText: string): Promise<void> {
   const { data: existing } = await supabaseClient.from("notes").select("content").eq("person_id", personId)
-  const alreadyNoted = (existing ?? []).some(
-    (n: any) => n.content.toLowerCase().includes(otherName.toLowerCase()) && dedupeKeyword.test(n.content)
-  )
+  const alreadyNoted = (existing ?? []).some((n: any) => n.content.trim().toLowerCase() === noteText.trim().toLowerCase())
   if (!alreadyNoted) {
     await supabaseClient.from("notes").insert({ person_id: personId, moment_id: null, content: noteText })
   }
@@ -313,7 +300,6 @@ export async function applyFamilySignals(
     const subjectName = index.nameById[subjectId]
 
     const makeNote = RECIPROCAL_NOTE[signal.relationship]
-    const dedupeKeyword = DEDUPE_KEYWORD[signal.relationship]
     const forwardPhrase = FORWARD_PHRASE[signal.relationship]
     if (!makeNote) continue
 
@@ -409,7 +395,7 @@ export async function applyFamilySignals(
       if (signal.relationship === "sibling") {
         familyTags.push({ id: targetId, name: targetName })
       } else {
-        await writeNoteIfMissing(supabaseClient, targetId, subjectName, makeNote(subjectName), dedupeKeyword)
+        await writeNoteIfMissing(supabaseClient, targetId, makeNote(subjectName))
         familyTags.push({ id: targetId, name: targetName })
 
         // Write the matching note back onto the SUBJECT's own profile too, phrased from their
@@ -421,8 +407,7 @@ export async function applyFamilySignals(
         // notes, some don't" bug.
         const inverseKind = INVERSE_RELATIONSHIP[signal.relationship]
         const subjectNoteFn = RECIPROCAL_NOTE[inverseKind]
-        const subjectDedupeKeyword = DEDUPE_KEYWORD[inverseKind]
-        await writeNoteIfMissing(supabaseClient, subjectId, targetName, subjectNoteFn(targetName), subjectDedupeKeyword)
+        await writeNoteIfMissing(supabaseClient, subjectId, subjectNoteFn(targetName))
       }
 
       // "Suggest, don't assert" shared-parent inference — only for the relationship kinds this
@@ -451,8 +436,8 @@ export async function applyFamilySignals(
       for (let j = i + 1; j < confidentPeers.length; j++) {
         const a = confidentPeers[i]
         const b = confidentPeers[j]
-        await writeNoteIfMissing(supabaseClient, a.id, b.name, RECIPROCAL_NOTE.sibling(b.name), DEDUPE_KEYWORD.sibling)
-        await writeNoteIfMissing(supabaseClient, b.id, a.name, RECIPROCAL_NOTE.sibling(a.name), DEDUPE_KEYWORD.sibling)
+        await writeNoteIfMissing(supabaseClient, a.id, RECIPROCAL_NOTE.sibling(b.name))
+        await writeNoteIfMissing(supabaseClient, b.id, RECIPROCAL_NOTE.sibling(a.name))
       }
     }
   }
