@@ -39,6 +39,26 @@ type KeyFact = {
 
 type OtherPerson = { id: string; name: string; last_name: string | null }
 
+// Fixed display order so Key Facts read the same way on every profile, regardless of
+// the order the AI extracted them in. Categories not listed here keep their relative order,
+// appended after the relationship facts.
+const KEY_FACT_CATEGORY_ORDER: Partial<Record<KeyFact['category'], number>> = {
+  parents: 0,
+  spouse: 1,
+  siblings: 2,
+  kids: 3,
+}
+function sortKeyFacts(facts: KeyFact[]): KeyFact[] {
+  return facts
+    .map((fact, index) => ({ fact, index }))
+    .sort((a, b) => {
+      const orderA = KEY_FACT_CATEGORY_ORDER[a.fact.category] ?? Number.MAX_SAFE_INTEGER
+      const orderB = KEY_FACT_CATEGORY_ORDER[b.fact.category] ?? Number.MAX_SAFE_INTEGER
+      return orderA !== orderB ? orderA - orderB : a.index - b.index
+    })
+    .map(({ fact }) => fact)
+}
+
 const AFFILIATION_LIMIT = 5
 
 // Mirrors the deterministic note phrasings RECIPROCAL_NOTE writes in
@@ -174,7 +194,7 @@ export default function PersonDetail({
   async function loadFacts(refresh: boolean) {
     setFactsLoading(true)
     const { data } = await supabase.functions.invoke('person-facts', { body: { personId, refresh } })
-    setKeyFacts((data?.facts as KeyFact[]) ?? [])
+    setKeyFacts(sortKeyFacts((data?.facts as KeyFact[]) ?? []))
     setFactsLoading(false)
   }
 
