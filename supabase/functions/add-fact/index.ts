@@ -32,7 +32,7 @@ serve(async (req) => {
 
     if (!user) {
       // Without a valid user, the notes/reminders inserts below silently fail under RLS with
-      // no error the caller ever sees — same stale-session bug converse had (see PROJECT_CONTEXT.md
+      // no error the caller ever sees — same stale-session bug converse had (see PROJECT_HISTORY.md
       // Section 9/10). Fail loudly instead of pretending the fact was saved.
       return new Response(
         JSON.stringify({ error: "not_authenticated", message: "Your session has expired — please log out and log back in, then try again." }),
@@ -59,7 +59,7 @@ serve(async (req) => {
     const idByName: Record<string, string> = {}
     const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — same
-    // ambiguous-key guard used in converse/update-moment (see PROJECT_CONTEXT.md Section 9,
+    // ambiguous-key guard used in converse/update-moment (see PROJECT_HISTORY.md Section 9,
     // the "two Bobs" bug) so a relationship mention never misattaches to the wrong person.
     const ambiguousKeys = new Set<string>()
     function claimKey(key: string, id: string) {

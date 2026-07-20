@@ -1,5 +1,5 @@
 // Preview-only placeholder for the future photo gallery feature (see
-// PROJECT_CONTEXT.md Section 7, item 10). No real photos, upload, storage,
+// PROJECT_CONTEXT.md Section 8, backlog item 27). No real photos, upload, storage,
 // or syncing here on purpose — this just demonstrates where/how a gallery
 // would appear on a person/event/group page.
 const PLACEHOLDER_COLORS = ['#DCE8DE', '#F6E8C8', '#E8D9D0', '#D9E2EC', '#EBDCEB', '#E4E9D6']

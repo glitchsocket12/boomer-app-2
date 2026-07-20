@@ -54,7 +54,7 @@ serve(async (req) => {
       p.last_name ? `${p.name} ${p.last_name}` : p.name
 
     // A bare first name or nickname only maps to a person if that key is unique — otherwise two
-    // different people sharing one would collide (see PROJECT_CONTEXT.md Section 9, the "two
+    // different people sharing one would collide (see PROJECT_HISTORY.md Section 9, the "two
     // Bobs" bug — same fix ported here from converse/update-moment).
     const idByName: Record<string, string> = {}
     const nameById: Record<string, string> = {}

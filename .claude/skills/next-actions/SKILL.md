@@ -10,8 +10,9 @@ Figure out what remains to be built on Boomer and hand the founder a short, prio
 ## Steps
 
 1. Read `PROJECT_CONTEXT.md`, focusing on:
-   - Section 7 ("Features Currently In Progress / Explicitly Deferred"), especially the **MASTER LIST** subsection (bugs / quick wins / bigger features / carried-over / parked).
-   - Section 10 ("Known Limitations / Things NOT Yet Done") for anything code-complete but not yet live (pending manual SQL/redeploy steps) — these are cheap wins since the code is already written.
+   - Section 8 ("Backlog — MASTER LIST"): open bigger features, parked items, and small known follow-ups.
+   - Section 10 ("Pending manual steps, open bugs, cleanup") for anything code-complete but not yet live (pending manual SQL/redeploy steps) — these are cheap wins since the code is already written.
+   (Full historical narratives live in `PROJECT_HISTORY.md` — don't read that file for this; the current doc is enough.)
 2. Build a mental model of what's actually open:
    - Skip anything struck through (`~~like this~~`) or marked "done"/"fixed"/"deployed and confirmed" — it's finished.
    - Treat "code-complete but NOT yet live" items as highest priority, cheapest wins — no new code needed, just a manual deploy/SQL step the founder has to run (or `npx supabase functions deploy ...` if a token is available this session).

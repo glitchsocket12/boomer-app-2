@@ -82,7 +82,7 @@ serve(async (req) => {
     const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — otherwise two
     // different people sharing one would collide and whichever loaded last would win every
-    // lookup, silently misattaching a note to the wrong person (see PROJECT_CONTEXT.md Section 9,
+    // lookup, silently misattaching a note to the wrong person (see PROJECT_HISTORY.md Section 9,
     // the "two Bobs" bug — same fix ported here from converse/index.ts).
     const ambiguousKeys = new Set<string>()
     function claimKey(key: string, id: string) {
