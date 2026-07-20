@@ -248,12 +248,6 @@ ${peopleRoster || "(none yet)"}`
       console.error("Anthropic response had no text block", JSON.stringify(data))
     }
 
-    // Cheap visibility into whether prompt caching is actually landing — check this in the
-    // Supabase function logs after two back-to-back messages in the same conversation; a nonzero
-    // cache_read_input_tokens on the second call confirms the cache_control breakpoint above is
-    // working (see CLAUDE.md's token/billing efficiency rule).
-    console.log("converse usage", JSON.stringify(data.usage))
-
     let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [], family_signals: [] }
     let rawText = ""
     try {
@@ -268,7 +262,15 @@ ${peopleRoster || "(none yet)"}`
       // The JSON was likely truncated mid-generation (hit max_tokens) — pull just the "reply" text
       // out with a regex so the user sees a normal sentence instead of a raw JSON fragment.
       const replyMatch = rawText.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
-      parsed.reply = replyMatch ? replyMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n") : parsed.reply
+      if (replyMatch) {
+        parsed.reply = replyMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n")
+      } else if (rawText.trim()) {
+        // No JSON envelope at all — the model sometimes just answers in plain prose despite the
+        // instruction. That prose is usually a perfectly good, correct answer; showing a generic
+        // "couldn't process that" apology instead of it is strictly worse than showing the raw
+        // text, so use it as-is rather than discarding a real response the user already got.
+        parsed.reply = rawText.trim()
+      }
     }
 
     for (const rename of parsed.renames ?? []) {
@@ -443,7 +445,6 @@ ${peopleRoster || "(none yet)"}`
         groups: taggedGroupRefs,
         relationshipSuggestions: familyResult.relationshipSuggestions,
         newPersonSuggestions: familyResult.newPersonSuggestions,
-        _debugUsage: data.usage,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )
