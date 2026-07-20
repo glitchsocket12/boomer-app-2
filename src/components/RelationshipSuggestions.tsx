@@ -22,6 +22,84 @@ export type NewPersonSuggestion = {
   // name — shown in the banner text and used when the founder confirms, but never asserted
   // silently; still correctable afterward via chat like any other fact.
   suggestedLastName?: string
+  // Who this relationship was originally typed about — confirming must write a note back onto
+  // THEIR profile too (see writeSubjectSideNote below), not just onto the newly linked/created
+  // person, or the subject's own profile silently ends up with nothing.
+  subjectId: string
+  subjectName: string
+  // Only set for relationship === 'sibling' when 2+ people were named as siblings in the same
+  // signal (e.g. "Manuel's brothers are Ale and Fede") — see linkCoSiblings below.
+  coSiblings?: { id?: string; name: string }[]
+}
+
+// Mirrors supabase/functions/_shared/relationships.ts's RECIPROCAL_NOTE/INVERSE_RELATIONSHIP —
+// duplicated here (that module is Deno-only, not importable across the Vite/frontend boundary)
+// so confirming a suggestion can phrase the note written back onto the subject's own profile,
+// exactly like a confident match already does automatically. Keep in sync if the backend's
+// phrasing or relationship vocabulary ever changes.
+const RECIPROCAL_NOTE: Record<string, (name: string) => string> = {
+  spouse: (name) => `Married to ${name}.`,
+  sibling: (name) => `Their sibling is ${name}.`,
+  parent: (name) => `Their child is ${name}.`,
+  child: (name) => `Their parent is ${name}.`,
+  partner: (name) => `In a relationship with ${name}.`,
+}
+const INVERSE_RELATIONSHIP: Record<string, string> = {
+  spouse: 'spouse',
+  sibling: 'sibling',
+  parent: 'child',
+  child: 'parent',
+  partner: 'partner',
+}
+
+// The other half of what a confident match already does (see relationships.ts's own
+// applyFamilySignals): write the reciprocal note back onto the SUBJECT's own profile, phrased
+// from their side. Without this, confirming a suggestion only ever updated the named person's
+// profile — the one the fact was originally typed on stayed blank, which is exactly the
+// inconsistent-siblings bug (one side links back, the other never does).
+async function writeSubjectSideNote(s: NewPersonSuggestion, targetFullName: string) {
+  // subjectId is only absent if this suggestion came from an Edge Function still running the
+  // pre-fix version (deploy lag between this frontend build and the next manual Supabase
+  // redeploy) — skip rather than insert a note with no person_id.
+  if (!s.subjectId) return
+  const noteFn = RECIPROCAL_NOTE[INVERSE_RELATIONSHIP[s.relationship]]
+  if (!noteFn) return
+  await supabase.from('notes').insert({ person_id: s.subjectId, moment_id: null, content: noteFn(targetFullName) })
+}
+
+// Siblings named together in one sentence are siblings of EACH OTHER too, not just of the
+// subject (e.g. "Manuel's brothers are Ale and Fede" should connect Ale and Fede, not only each
+// of them to Manuel) — same certainty as the subject link itself, not a separate guess. A peer
+// already resolved server-side carries its id and links immediately. One still unresolved carries
+// a best-guess full name (rawName plus the same last-name guess suggestedLastName uses) instead of
+// a bare first name — looked up here by EXACT full-name match only, same "auto-link only on
+// name-as-typed == full name on file" rule as everywhere else in this app (a bare-name/uniqueness
+// match would risk linking to some unrelated same-first-name person, the exact Gus/Olivia
+// mistake). This only succeeds once the other co-sibling's own suggestion has already been
+// confirmed with that same predicted name — so whichever of two ambiguous suggestions gets
+// confirmed SECOND is the one that completes the link; confirming neither, or confirming with a
+// different name than guessed, safely leaves it unlinked rather than guessing wrong.
+async function linkCoSiblings(s: NewPersonSuggestion, resolvedId: string, resolvedFullName: string) {
+  for (const peer of s.coSiblings ?? []) {
+    let peerId = peer.id
+    let peerFullName = peer.name
+    if (!peerId) {
+      const [firstName] = peer.name.trim().split(/\s+/)
+      const { data: candidates } = await supabase.from('people').select('id, name, last_name').ilike('name', firstName)
+      const exact = (candidates ?? []).filter((c) => {
+        const full = c.last_name ? `${c.name} ${c.last_name}` : c.name
+        return full.toLowerCase() === peer.name.trim().toLowerCase()
+      })
+      if (exact.length !== 1) continue
+      peerId = exact[0].id
+      peerFullName = exact[0].last_name ? `${exact[0].name} ${exact[0].last_name}` : exact[0].name
+    }
+    if (!peerId || peerId === resolvedId) continue
+    await supabase.from('notes').insert([
+      { person_id: resolvedId, moment_id: null, content: `Their sibling is ${peerFullName}.` },
+      { person_id: peerId, moment_id: null, content: `Their sibling is ${resolvedFullName}.` },
+    ])
+  }
 }
 
 // The name to actually save/display for a new-person suggestion — rawName as typed if it already
@@ -89,6 +167,12 @@ export default function RelationshipSuggestionBanners({
       .single()
     if (newPerson) {
       await supabase.from('notes').insert({ person_id: newPerson.id, moment_id: null, content: s.reciprocalNote })
+      const newPersonFullName = lastName ? `${first} ${lastName}` : first
+      // Write the other half of the relationship (see writeSubjectSideNote above) and, for
+      // siblings named together, connect the new person to any other named sibling too — without
+      // these, only the brand-new profile ever reflected this fact, never the subject's own.
+      await writeSubjectSideNote(s, newPersonFullName)
+      await linkCoSiblings(s, newPerson.id, newPersonFullName)
     }
     onApplied?.()
   }
@@ -100,6 +184,9 @@ export default function RelationshipSuggestionBanners({
     setNewPersonSuggestions((prev) => prev.filter((x) => x !== s))
     if (!s.candidateId) return
     await supabase.from('notes').insert({ person_id: s.candidateId, moment_id: null, content: s.reciprocalNote })
+    const candidateFullName = s.candidateName ?? s.rawName
+    await writeSubjectSideNote(s, candidateFullName)
+    await linkCoSiblings(s, s.candidateId, candidateFullName)
     onApplied?.()
   }
 

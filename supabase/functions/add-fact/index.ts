@@ -223,6 +223,9 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
       candidateId?: string
       candidateName?: string
       suggestedLastName?: string
+      subjectId: string
+      subjectName: string
+      coSiblings?: { id?: string; name: string }[]
     }[] = []
 
     if (user && (result.family_signals ?? []).length > 0) {

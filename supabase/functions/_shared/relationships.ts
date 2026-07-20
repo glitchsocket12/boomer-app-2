@@ -46,6 +46,22 @@ export type NewPersonSuggestion = {
   // last name far more often than not. Only ever a pre-fill the founder sees and can overwrite
   // before confirming (or correct afterward via chat) — never asserted as fact.
   suggestedLastName?: string
+  // Who this relationship was originally typed about — confirming this suggestion must write a
+  // note back onto THEIR profile too (phrased from their side), not just onto the newly
+  // linked/created person. Without this the subject's own profile silently ends up with nothing,
+  // even though the other person's profile correctly reflects the relationship (the exact "some
+  // share notes, some don't" bug applyFamilySignals's own confident-match branch already guards
+  // against below — this is the same guard for the suggestion-confirm path).
+  subjectId: string
+  subjectName: string
+  // Only ever set for relationship === "sibling" when 2+ people were named as siblings in the
+  // SAME signal (e.g. "Manuel's brothers are Ale and Fede") — everyone named together like that
+  // is siblings of each OTHER too, not just of the subject, with the same certainty as the
+  // subject link itself (not a separate guess). A peer already confidently resolved this same
+  // pass carries its id so confirming links it immediately; one that's still just a raw name
+  // (also unresolved right now) carries only its name, so the confirm step can look it up fresh —
+  // whichever of the two suggestions gets confirmed SECOND is the one that completes the link.
+  coSiblings?: { id?: string; name: string }[]
 }
 
 export type FamilyApplyResult = {
@@ -190,6 +206,26 @@ async function notesTextFor(supabaseClient: MinimalSupabaseClient, personId: str
   return (data ?? []).map((n: any) => n.content).join("\n")
 }
 
+// Writes noteText onto personId unless a note already there mentions otherName in a way that
+// matches dedupeKeyword — the "don't pile up duplicates" check every direct relationship write in
+// this file needs, factored out once so every pairwise write (subject<->target, and now
+// target<->target for co-named siblings) applies it identically.
+async function writeNoteIfMissing(
+  supabaseClient: MinimalSupabaseClient,
+  personId: string,
+  otherName: string,
+  noteText: string,
+  dedupeKeyword: RegExp
+): Promise<void> {
+  const { data: existing } = await supabaseClient.from("notes").select("content").eq("person_id", personId)
+  const alreadyNoted = (existing ?? []).some(
+    (n: any) => n.content.toLowerCase().includes(otherName.toLowerCase()) && dedupeKeyword.test(n.content)
+  )
+  if (!alreadyNoted) {
+    await supabaseClient.from("notes").insert({ person_id: personId, moment_id: null, content: noteText })
+  }
+}
+
 // A small, separate AI call scoped to ONE person's own notes — used only to figure out whether
 // the model already knows that person's parents/siblings, so the "shared parents" suggestion
 // below can compare two people's notes without trusting a symbolic parser.
@@ -281,15 +317,40 @@ export async function applyFamilySignals(
     const forwardPhrase = FORWARD_PHRASE[signal.relationship]
     if (!makeNote) continue
 
-    for (const rawName of signal.person_names ?? []) {
-      if (!rawName?.trim()) continue
-      const key = rawName.trim().toLowerCase()
-      const matchedId = index.idByName[key] ?? null
-      // A match only counts as CONFIDENT when the name as typed is the person's full name on
-      // file — a bare first name (or nickname) matching someone who has a last name on record is
-      // still just a guess (e.g. "dating Olivia" matching an existing "Olivia Gillingham") and
-      // must be confirmed, not silently linked as fact.
-      const isConfidentMatch = matchedId !== null && index.nameById[matchedId].toLowerCase() === key
+    // Resolve every named person once up front — for siblings, each one needs to know about the
+    // OTHER named siblings from this same signal, not just about the subject (see confidentPeers
+    // below), so this can't be done name-by-name in a single pass like the other relationship
+    // kinds still are.
+    const resolved = (signal.person_names ?? [])
+      .filter((n) => n?.trim())
+      .map((rawName) => {
+        const key = rawName.trim().toLowerCase()
+        const matchedId = index.idByName[key] ?? null
+        // A match only counts as CONFIDENT when the name as typed is the person's full name on
+        // file — a bare first name (or nickname) matching someone who has a last name on record
+        // is still just a guess (e.g. "dating Olivia" matching an existing "Olivia Gillingham")
+        // and must be confirmed, not silently linked as fact.
+        const confident = matchedId !== null && index.nameById[matchedId].toLowerCase() === key
+        return { rawName: rawName.trim(), matchedId, confident }
+      })
+
+    // Everyone already safely known to be in this sibling group this pass — the subject plus
+    // every confidently-matched name, deduped by id (a stray duplicate/typo'd entry must never
+    // produce a self-pairing below). Siblings named together (e.g. "Manuel's brothers are Ale and
+    // Fede") are siblings of each OTHER too, with the same certainty as the subject link itself —
+    // not a separate guess — so this set gets a full pairwise write below, not just subject-vs-each.
+    const confidentPeers: { id: string; name: string }[] = []
+    if (signal.relationship === "sibling") {
+      const seenIds = new Set<string>()
+      for (const p of [{ id: subjectId, name: subjectName }, ...resolved.filter((r) => r.confident).map((r) => ({ id: r.matchedId as string, name: index.nameById[r.matchedId as string] }))]) {
+        if (seenIds.has(p.id)) continue
+        seenIds.add(p.id)
+        confidentPeers.push(p)
+      }
+    }
+
+    for (const r of resolved) {
+      const { rawName, matchedId, confident: isConfidentMatch } = r
 
       // No confident match — either nobody matches this name at all, or it only loosely matches
       // an existing person via a bare first name/nickname. Rather than silently creating a new
@@ -301,15 +362,36 @@ export async function applyFamilySignals(
           // Only suggest a last name when none was typed as part of the name itself — a rawName
           // that already has multiple words (e.g. "Josh Volin") is the founder's own explicit
           // spelling and shouldn't be second-guessed.
-          const hasOwnLastName = rawName.trim().split(/\s+/).length > 1
+          const hasOwnLastName = rawName.split(/\s+/).length > 1
           const subjectLastName = !hasOwnLastName ? index.lastNameById?.[subjectId] : null
+          // Other people named as siblings in this SAME signal (excluding the subject, who's
+          // already covered by subjectId/subjectName above, and this name itself) — see the
+          // coSiblings field comment on NewPersonSuggestion for how these get linked once resolved.
+          // A peer still unresolved gets the SAME last-name guess as suggestedLastName above (not
+          // just its bare rawName) so the confirm step can look it up by exact full name later —
+          // matching this app's hard "auto-link only on exact-full-name-on-file" rule (never a
+          // bare-name guess) even for this opportunistic, best-effort second link.
+          const coSiblings =
+            signal.relationship === "sibling"
+              ? resolved
+                  .filter((other) => other !== r && !(other.confident && other.matchedId === subjectId))
+                  .map((other) => {
+                    if (other.confident && other.matchedId) return { id: other.matchedId, name: index.nameById[other.matchedId] }
+                    const otherHasOwnLastName = other.rawName.split(/\s+/).length > 1
+                    const otherLastNameGuess = !otherHasOwnLastName ? index.lastNameById?.[subjectId] : null
+                    return { name: otherLastNameGuess ? `${other.rawName} ${otherLastNameGuess}` : other.rawName }
+                  })
+              : []
           newPersonSuggestions.push({
             relationship: signal.relationship,
-            rawName: rawName.trim(),
+            rawName,
             reciprocalNote: makeNote(subjectName),
-            suggestionText: forwardPhrase(subjectName, rawName.trim()),
+            suggestionText: forwardPhrase(subjectName, rawName),
+            subjectId,
+            subjectName,
             ...(matchedId ? { candidateId: matchedId, candidateName: index.nameById[matchedId] } : {}),
             ...(subjectLastName ? { suggestedLastName: subjectLastName } : {}),
+            ...(coSiblings.length > 0 ? { coSiblings } : {}),
           })
         }
         continue
@@ -320,33 +402,27 @@ export async function applyFamilySignals(
 
       if (targetId === subjectId) continue
 
-      // Avoid piling up duplicate notes if the same fact gets added more than once — checked
-      // independently on each side, since either side's note could already exist without the
-      // other (e.g. from before this function wrote both sides).
-      const { data: targetNotes } = await supabaseClient.from("notes").select("content").eq("person_id", targetId)
-      const alreadyNoted = (targetNotes ?? []).some(
-        (n: any) => n.content.toLowerCase().includes(subjectName.toLowerCase()) && dedupeKeyword.test(n.content)
-      )
-      if (!alreadyNoted) {
-        await supabaseClient.from("notes").insert({ person_id: targetId, moment_id: null, content: makeNote(subjectName) })
-      }
-      familyTags.push({ id: targetId, name: targetName })
+      // Siblings get their subject<->target note written in the pairwise pass below (alongside
+      // every other confident pair from this signal) instead of here, so the two code paths can't
+      // drift apart. Every other relationship kind still only ever has one target, so it's
+      // written directly, right here, as before.
+      if (signal.relationship === "sibling") {
+        familyTags.push({ id: targetId, name: targetName })
+      } else {
+        await writeNoteIfMissing(supabaseClient, targetId, subjectName, makeNote(subjectName), dedupeKeyword)
+        familyTags.push({ id: targetId, name: targetName })
 
-      // Write the matching note back onto the SUBJECT's own profile too, phrased from their side
-      // (e.g. subject="Jalen", relationship="spouse", target="Julia" writes "Married to Julia."
-      // onto Jalen — not just "Married to Jalen." onto Julia). Without this, a relationship
-      // mentioned with no accompanying moment/fact-bar entry for the subject (Home/event/group
-      // chat) left the subject's own profile with nothing at all, even though the other person's
-      // profile correctly reflected it — the exact "some share notes, some don't" bug.
-      const inverseKind = INVERSE_RELATIONSHIP[signal.relationship]
-      const subjectNoteFn = RECIPROCAL_NOTE[inverseKind]
-      const subjectDedupeKeyword = DEDUPE_KEYWORD[inverseKind]
-      const { data: subjectNotes } = await supabaseClient.from("notes").select("content").eq("person_id", subjectId)
-      const subjectAlreadyNoted = (subjectNotes ?? []).some(
-        (n: any) => n.content.toLowerCase().includes(targetName.toLowerCase()) && subjectDedupeKeyword.test(n.content)
-      )
-      if (!subjectAlreadyNoted) {
-        await supabaseClient.from("notes").insert({ person_id: subjectId, moment_id: null, content: subjectNoteFn(targetName) })
+        // Write the matching note back onto the SUBJECT's own profile too, phrased from their
+        // side (e.g. subject="Jalen", relationship="spouse", target="Julia" writes "Married to
+        // Julia." onto Jalen — not just "Married to Jalen." onto Julia). Without this, a
+        // relationship mentioned with no accompanying moment/fact-bar entry for the subject
+        // (Home/event/group chat) left the subject's own profile with nothing at all, even
+        // though the other person's profile correctly reflected it — the exact "some share
+        // notes, some don't" bug.
+        const inverseKind = INVERSE_RELATIONSHIP[signal.relationship]
+        const subjectNoteFn = RECIPROCAL_NOTE[inverseKind]
+        const subjectDedupeKeyword = DEDUPE_KEYWORD[inverseKind]
+        await writeNoteIfMissing(supabaseClient, subjectId, targetName, subjectNoteFn(targetName), subjectDedupeKeyword)
       }
 
       // "Suggest, don't assert" shared-parent inference — only for the relationship kinds this
@@ -364,6 +440,19 @@ export async function applyFamilySignals(
           relationshipSuggestions.push(...found)
           if (relationshipSuggestions.length >= 6) break
         }
+      }
+    }
+
+    // Pairwise sibling writes among everyone confidently known this pass (subject included) —
+    // covers both subject<->target (as before the loop above deferred it here) and target<->
+    // target (the actual fix: siblings named together, e.g. Ale and Fede as Manuel's brothers,
+    // now link to EACH OTHER too, not just to Manuel). Same dedupe-checked write either way.
+    for (let i = 0; i < confidentPeers.length; i++) {
+      for (let j = i + 1; j < confidentPeers.length; j++) {
+        const a = confidentPeers[i]
+        const b = confidentPeers[j]
+        await writeNoteIfMissing(supabaseClient, a.id, b.name, RECIPROCAL_NOTE.sibling(b.name), DEDUPE_KEYWORD.sibling)
+        await writeNoteIfMissing(supabaseClient, b.id, a.name, RECIPROCAL_NOTE.sibling(a.name), DEDUPE_KEYWORD.sibling)
       }
     }
   }

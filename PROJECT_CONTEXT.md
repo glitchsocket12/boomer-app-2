@@ -89,7 +89,7 @@ src/
 | `suggest-prompts` | 3 suggestion cards for Home → cached in `home_suggestions` table; regenerates only when data is newer than cache or on manual refresh. |
 | `transcribe` | Whisper speech-to-text. |
 
-**Shared module** `_shared/relationships.ts`: the 5 relationship kinds (spouse/sibling/parent/child/partner), reciprocal notes written on BOTH sides (`INVERSE_RELATIONSHIP` map, per-side dedupe), confident-match = name-as-typed exactly equals full name on file (else a suggest-don't-assert banner), shared-parent inference suggestions, last-name inference for people created from relationship mentions (`inferLastNameFromSignals`, also called by the direct `new_people`/`add_people` creation paths). Used by `converse`/`add-fact`/`update-moment`/`update-group` so relationship behavior is identical at all four entry points. `chat` and `search` functions were deleted 2026-07-19 (superseded by `converse`).
+**Shared module** `_shared/relationships.ts`: the 5 relationship kinds (spouse/sibling/parent/child/partner), reciprocal notes written on BOTH sides (`INVERSE_RELATIONSHIP` map, per-side dedupe — incl. when a suggestion banner is confirmed, not just an immediate confident match, fixed 2026-07-20, see §10), confident-match = name-as-typed exactly equals full name on file (else a suggest-don't-assert banner), siblings named together in one signal now also link to EACH OTHER not just to the subject (direct write when confident, exact-full-name lookup at confirm-time otherwise — 2026-07-20), shared-parent inference suggestions, last-name inference for people created from relationship mentions (`inferLastNameFromSignals`, also called by the direct `new_people`/`add_people` creation paths). Used by `converse`/`add-fact`/`update-moment`/`update-group` so relationship behavior is identical at all four entry points. `chat` and `search` functions were deleted 2026-07-19 (superseded by `converse`).
 
 ## 5. AI cost & caching architecture (see CLAUDE.md rule 3 — non-negotiable)
 
@@ -149,7 +149,7 @@ home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts
 
 ## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
 
-Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes).
+Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes); 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix — see §10 for pending redeploy).
 
 **Open — bigger features:**
 14. Global search bar on every page (decide: text match first vs. semantic — merges with 30).
@@ -163,7 +163,6 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 22. Settings page: tile colors, suggestion sensitivity, chat tone, user's own profile/library, terminology library, About.
 23. **Security hardening** + honest About-page writeup ("I don't want it to be bullshit") — start from §10's reality, audit first.
 24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both).
-25. Sibling-group transitive linking (clique completion via suggestions; reciprocal pair-linking already works).
 26. Ratings/thumbs feedback loop (tunes suggestions; does not retrain the model).
 27. Photo gallery for real (upload/Supabase Storage/tagging; placeholder shipped). True camera-roll sync needs the native iPhone app.
 28. Manual + AI-suggested tags on events (schema change).
@@ -184,7 +183,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 - Web/PWA now, not native; email over push (scope); one shared People concept under everything.
 - **Talk, don't fill out forms:** groups, corrections, dates, names — all set conversationally via AI classification (the fact bar), not form fields. The only manual edit controls: Event/Group rename pencils, note edit/delete, merge/delete.
 - **Flexible data over rigid structure** (jsonb `details`, free-text `when_text`): great for AI-driven recall, deliberately bad for structured reporting — don't "clean up" without asking. `event_date` was an explicit founder-approved exception (AI resolves "last week" to a real date for sorting only).
-- **Never silently assert an inference.** Relationship links, new people from mentions, shared parents, last names — all "suggest, don't assert" banners unless the match is exact-full-name confident. Key Facts never infer or pad.
+- **Never silently assert an inference.** Relationship links, new people from mentions, shared parents, last names — all "suggest, don't assert" banners unless the match is exact-full-name confident. Key Facts never infer or pad. Exception (founder decision 2026-07-20): siblings named together in the same statement link directly to each other, no suggestion banner — same certainty as the stated pair, not a separate guess.
 - **Placeholder people get renamed, not duplicated** ("Clare's mom" → real name = rename). One placeholder per distinct individual.
 - Broad questions synthesize everything; never dead-end a miss.
 - Membership ≠ attendance: `person_groups` is the only membership truth; attendees of a group's events are suggestions.
@@ -202,6 +201,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 - ~~Julia Lacy's "Wyatt" Key Fact showing as text, not a button~~ — **fixed 2026-07-19, no code change.** Her note said "Wyatt" (first name only); Jalen's said "Wyatt Lacy". `person-facts`'s exact-full-name-match rule (§10 above) correctly declined to link the bare first name — same rule, working as intended. Fixed by editing Julia's note to say "Wyatt Lacy" and letting Key Facts regenerate. (A same-session attempt to loosen the matching rule instead was caught and reverted before staying live long — see PROJECT_HISTORY for why that rule must not be loosened.)
 - ~~`search_log` table~~ — **confirmed live**: PostgREST returns 200 for `search_log`, `converse` returns 401 (deployed, not platform-not-found), and the production Home dashboard's "Recall assists this month" card shows a real nonzero count (4).
 - **Voice mic button**: backend confirmed working; still never click-tested inside the app UI post-fix.
+- **Sibling-linking fix needs redeploy**: `add-fact`, `converse`, `update-group`, `update-moment` all bundle `_shared/relationships.ts`, which changed 2026-07-20 (see §4) — none of the 4 pick up the fix until each is individually redeployed (`npx supabase functions deploy <name>` with a fresh founder token, or dashboard paste x4). Build passes; not yet click-testable live for that reason. The Ale/Fede/Manuel Sucre test data itself was already hand-patched live (fact bar, exact full names) so it displays correctly today regardless of redeploy timing.
 - Email confirmation must be re-enabled (with a proper redirect URL) before real users.
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.
@@ -235,3 +235,4 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done: 31–36 (2026-0
 - A Key Facts name with no chip = the name didn't uniquely resolve (dupe person or ambiguous name in the source note) — that's the signal, not a rendering bug.
 - Before loosening any name-matching/confidence check, grep PROJECT_HISTORY for why it was added first — `person-facts`'s exact-full-name-match rule looks overly strict in isolation but exists specifically to stop a real false-positive (Gus/Olivia, 2026-07-19); "unambiguous in the roster" ≠ "confirmed identity," since the named person may not be in the system at all.
 - Fix classes of bugs, not instances: `converse`'s siblings (`update-moment`/`update-group`) have repeatedly harbored the same bug (JSON fences, max_tokens, silent errors, missing rosters) — when one function gets a reliability fix, check them all. Same for the two independent name-resolution paths (`relationships.ts` and `person-facts`).
+- **A confident match and a confirmed suggestion must write the exact same both-sides notes** — `relationships.ts`'s direct-write path did, but `RelationshipSuggestions.tsx`'s confirm handlers only ever wrote onto the newly linked/created person, never back onto the subject, until fixed 2026-07-20 (found via the Sucre-brothers inconsistent-siblings report: whichever profile the fact was typed on could end up with nothing). Any new relationship-suggestion type needs the same both-sides write, not just the "obvious" direction.
