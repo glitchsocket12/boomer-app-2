@@ -187,7 +187,14 @@ export default function App() {
       />
     )
   } else if (current?.type === 'familyTree') {
-    content = <FamilyTreeMock onBack={popCrumb} backLabel={parentLabel} />
+    content = (
+      <FamilyTreeMock
+        treeId={current.id}
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectTree={(id, label) => pushCrumb({ type: 'familyTree', id, label })}
+      />
+    )
   } else {
     content = (
       <>
