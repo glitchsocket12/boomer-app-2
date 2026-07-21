@@ -40,12 +40,12 @@ function layoutTier(branches: TreeBranch[]): { placed: Placed[]; totalWidth: num
     const aw = boxWidth(branch.union.a.name)
     placed.push({ person: branch.union.a, x, w: aw })
     x += aw
-    if (branch.union.b) {
+    branch.union.spouses.forEach((spouse) => {
       x += MARRIAGE_GAP
-      const bw = boxWidth(branch.union.b.name)
-      placed.push({ person: branch.union.b, x, w: bw })
-      x += bw
-    }
+      const sw = boxWidth(spouse.name)
+      placed.push({ person: spouse, x, w: sw })
+      x += sw
+    })
     branch.siblings.forEach((sib) => {
       x += SLOT_GAP
       const sw = boxWidth(sib.name)
@@ -95,31 +95,17 @@ export default function FamilyTree({
     setLoading(false)
   }
 
-  async function addToTier(tierIndex: number, existing?: { id: string; label: string }, newName?: string) {
+  // Explicit add slots rather than one-per-tier: a person can have more than one parent, so
+  // "add a grandparent" needs one slot PER parent (which side is this grandparent on?) instead of
+  // silently always attaching to whichever parent happens to be listed first.
+  async function addRelationship(
+    category: CircleCategory,
+    subjectId: string,
+    subjectName: string,
+    existing?: { id: string; label: string },
+    newName?: string
+  ) {
     if (!data) return
-    const tier = data.tiers[tierIndex]
-    let category: CircleCategory
-    let subjectId: string
-    let subjectName: string
-
-    if (tier.label === 'Kids' || tier.label === 'Parents') {
-      category = tier.label === 'Kids' ? 'kids' : 'parents'
-      subjectId = data.rootId
-      subjectName = data.rootName
-    } else if (tier.label === 'Grandparents') {
-      const parentsTier = data.tiers.find((t) => t.label === 'Parents')
-      const anchor = parentsTier?.branches[0]?.union.a
-      if (!anchor) return
-      category = 'parents'
-      subjectId = anchor.id
-      subjectName = anchor.name
-    } else {
-      // The root's own generation tier — "+" here adds a sibling of the root.
-      category = 'siblings'
-      subjectId = data.rootId
-      subjectName = data.rootName
-    }
-
     if (existing) {
       await linkRelationship(userId, category, subjectId, subjectName, existing.id, existing.label)
     } else if (newName?.trim()) {
@@ -143,7 +129,23 @@ export default function FamilyTree({
   const { tiers } = data
   const layouts = tiers.map((tier) => layoutTier(tier.branches))
   const height = TIER_Y_START + TIER_Y_STEP * (tiers.length - 1) + BOX_H + 40
-  const allShownIds = tiers.flatMap((t) => t.branches.flatMap((b) => [b.union.a.id, ...(b.union.b ? [b.union.b.id] : []), ...b.siblings.map((s) => s.id)]))
+  const allShownIds = tiers.flatMap((t) => t.branches.flatMap((b) => [b.union.a.id, ...b.union.spouses.map((s) => s.id), ...b.siblings.map((s) => s.id)]))
+
+  const parentsTier = tiers.find((t) => t.label === 'Parents')
+  const parentsList = parentsTier ? parentsTier.branches.flatMap((b) => [b.union.a, ...b.union.spouses]) : []
+  const addSlots: { key: string; label: string; category: CircleCategory; subjectId: string; subjectName: string }[] = [
+    ...parentsList.map((p) => ({
+      key: `grandparent-${p.id}`,
+      label: `Grandparent (${p.name}'s side)`,
+      category: 'parents' as CircleCategory,
+      subjectId: p.id,
+      subjectName: p.name,
+    })),
+    { key: 'parent', label: 'Parent', category: 'parents', subjectId: data.rootId, subjectName: data.rootName },
+    { key: 'spouse', label: 'Spouse', category: 'spouse', subjectId: data.rootId, subjectName: data.rootName },
+    { key: 'sibling', label: 'Sibling', category: 'siblings', subjectId: data.rootId, subjectName: data.rootName },
+    { key: 'child', label: 'Child', category: 'kids', subjectId: data.rootId, subjectName: data.rootName },
+  ]
 
   return (
     <div style={styles.page}>
@@ -206,27 +208,32 @@ export default function FamilyTree({
           const startX = (CANVAS_W - layout.totalWidth) / 2
 
           if (tier.branches.length === 0) {
-            const w = boxWidth('Add child')
+            const emptyLabel = tier.label === 'Kids' ? 'Add child' : tier.label === 'Grandparents' ? 'Add grandparent' : 'Add parent'
+            const w = boxWidth(emptyLabel)
             const x = CANVAS_W / 2 - w / 2
             return (
               <g key={tier.label + i}>
                 <rect x={x} y={y} width={w} height={BOX_H} rx={6} fill="none" stroke="#BBB" strokeWidth={1} strokeDasharray="4 3" />
                 <text x={x + w / 2} y={y + 27} textAnchor="middle" fontSize="12" fill="#999" fontFamily="Georgia, serif">
-                  Add child
+                  {emptyLabel}
                 </text>
               </g>
             )
           }
 
-          const marriageLines = tier.branches
-            .map((branch) => {
-              if (!branch.union.b) return null
-              const aPlaced = layout.placed.find((p) => p.person === branch.union.a)
-              const bPlaced = layout.placed.find((p) => p.person === branch.union.b)
-              if (!aPlaced || !bPlaced) return null
-              return { x1: startX + aPlaced.x + aPlaced.w, x2: startX + bPlaced.x, y: y + BOX_H / 2 }
-            })
-            .filter((l): l is { x1: number; x2: number; y: number } => l !== null)
+          // One line per adjacent pair in the a -> spouse1 -> spouse2 chain, since spouses are
+          // laid out left-to-right in that order — reads as a chain when there's more than one.
+          const marriageLines = tier.branches.flatMap((branch) => {
+            const chain = [branch.union.a, ...branch.union.spouses]
+            const lines: { x1: number; x2: number; y: number }[] = []
+            for (let k = 0; k < chain.length - 1; k++) {
+              const leftPlaced = layout.placed.find((p) => p.person === chain[k])
+              const rightPlaced = layout.placed.find((p) => p.person === chain[k + 1])
+              if (!leftPlaced || !rightPlaced) continue
+              lines.push({ x1: startX + leftPlaced.x + leftPlaced.w, x2: startX + rightPlaced.x, y: y + BOX_H / 2 })
+            }
+            return lines
+          })
 
           return (
             <g key={tier.label + i}>
@@ -257,14 +264,14 @@ export default function FamilyTree({
       </svg>
 
       <div style={styles.addRow}>
-        {tiers.map((tier, i) => (
-          <div key={tier.label + i} style={styles.addItem}>
-            <span style={styles.addLabel}>{tier.label}:</span>
+        {addSlots.map((slot) => (
+          <div key={slot.key} style={styles.addItem}>
+            <span style={styles.addLabel}>{slot.label}:</span>
             <RelationshipAddPicker
               people={allPeople}
               excludeIds={allShownIds}
-              onSelectExisting={(p) => addToTier(i, p)}
-              onCreateNew={(name) => addToTier(i, undefined, name)}
+              onSelectExisting={(p) => addRelationship(slot.category, slot.subjectId, slot.subjectName, p)}
+              onCreateNew={(name) => addRelationship(slot.category, slot.subjectId, slot.subjectName, undefined, name)}
             />
           </div>
         ))}

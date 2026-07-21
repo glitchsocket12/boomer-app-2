@@ -7,7 +7,7 @@ import { supabase } from './supabase'
 
 export type TreePersonKind = 'self' | 'direct' | 'extended'
 export type TreePerson = { id: string; name: string; kind: TreePersonKind; parentId?: string }
-export type TreeBranch = { union: { a: TreePerson; b?: TreePerson }; siblings: TreePerson[] }
+export type TreeBranch = { union: { a: TreePerson; spouses: TreePerson[] }; siblings: TreePerson[] }
 export type TreeTier = { label: string; branches: TreeBranch[]; defaultParentId?: string }
 export type TreeData = { rootId: string; rootName: string; tiers: TreeTier[] }
 
@@ -27,9 +27,11 @@ function push(map: Map<string, string[]>, key: string, value: string) {
 }
 
 async function loadGraph(): Promise<Graph> {
+  // Ordered by created_at so which parent/spouse ends up "first" (primaryParentId, the tree's
+  // connector-line anchor) is stable across reloads instead of depending on unspecified row order.
   const [{ data: people }, { data: rels }] = await Promise.all([
     supabase.from('people').select('id, name, last_name, is_self'),
-    supabase.from('relationships').select('person_a_id, person_b_id, kind'),
+    supabase.from('relationships').select('person_a_id, person_b_id, kind').order('created_at'),
   ])
 
   const nameById = new Map<string, string>()
@@ -67,7 +69,8 @@ function primaryParentId(g: Graph, personId: string): string | undefined {
 }
 
 // Groups a flat list of ids into branches: spouses/partners within the same list pair up into one
-// union, everyone else gets their own single-person union.
+// union (ALL of them, not just the first — someone can have more than one spouse/partner on file),
+// everyone else gets their own single-person union.
 function groupIntoBranches(
   g: Graph,
   ids: string[],
@@ -79,14 +82,13 @@ function groupIntoBranches(
   for (const id of ids) {
     if (seen.has(id)) continue
     seen.add(id)
-    const spouseId = (g.spousesOf.get(id) ?? []).find((sid) => ids.includes(sid) && !seen.has(sid))
     const a = node(g, id, kind, parentIdFn(id))
-    let b: TreePerson | undefined
-    if (spouseId) {
-      seen.add(spouseId)
-      b = node(g, spouseId, kind, parentIdFn(spouseId))
-    }
-    branches.push({ union: { a, b }, siblings: [] })
+    const spouseIds = (g.spousesOf.get(id) ?? []).filter((sid) => ids.includes(sid) && !seen.has(sid))
+    const spouses = spouseIds.map((sid) => {
+      seen.add(sid)
+      return node(g, sid, kind, parentIdFn(sid))
+    })
+    branches.push({ union: { a, spouses }, siblings: [] })
   }
   return branches
 }
@@ -104,17 +106,19 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
 
   // --- Root's own generation tier ---
   const rootNode: TreePerson = { id: rootId, name: rootName, kind: isSelfRoot ? 'self' : 'direct', parentId: rootAnchor }
-  const spouseNode: TreePerson | undefined = rootSpouses[0] ? node(g, rootSpouses[0], 'direct', undefined) : undefined
+  // Show every spouse/partner on file, not just the first — remarriage/widowed-and-remarried
+  // shouldn't silently drop a spouse from the tree.
+  const spouseNodes: TreePerson[] = rootSpouses.map((id) => node(g, id, 'direct', undefined))
   const siblingNodes: TreePerson[] = rootSiblings.map((id) => node(g, id, 'direct', rootAnchor))
 
-  const rootGenBranches: TreeBranch[] = [{ union: { a: rootNode, b: spouseNode }, siblings: siblingNodes }]
+  const rootGenBranches: TreeBranch[] = [{ union: { a: rootNode, spouses: spouseNodes }, siblings: siblingNodes }]
 
   // --- Parents tier: root's own parents, grouped into couples, with their siblings
   // (aunts/uncles) riding along in the same branch, and those siblings' kids (cousins) slotted
   // into the root's generation tier as their own extended branches.
   const parentBranches = groupIntoBranches(g, rootParents, 'direct', (id) => primaryParentId(g, id))
   for (const branch of parentBranches) {
-    const branchIds = [branch.union.a.id, ...(branch.union.b ? [branch.union.b.id] : [])]
+    const branchIds = [branch.union.a.id, ...branch.union.spouses.map((s) => s.id)]
     for (const parentId of branchIds) {
       const parentAnchor = primaryParentId(g, parentId)
       const auntsUncles = (g.siblingsOf.get(parentId) ?? []).filter((id) => !branchIds.includes(id))
@@ -123,7 +127,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
         branch.siblings.push(node(g, auId, 'extended', parentAnchor))
         for (const cousinId of g.childrenOf.get(auId) ?? []) {
           if (rootGenBranches.some((b) => b.union.a.id === cousinId)) continue
-          rootGenBranches.push({ union: { a: node(g, cousinId, 'extended', auId) }, siblings: [] })
+          rootGenBranches.push({ union: { a: node(g, cousinId, 'extended', auId), spouses: [] }, siblings: [] })
         }
       }
     }
@@ -140,13 +144,16 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
 
   // --- Kids tier ---
   const kidsBranches: TreeBranch[] = rootChildren.map((id) => ({
-    union: { a: node(g, id, 'direct', rootId) },
+    union: { a: node(g, id, 'direct', rootId), spouses: [] },
     siblings: [],
   }))
 
+  // Parents/Kids tiers always render (even at zero) so there's always a "+" to add the first one —
+  // same as Kids always did. Grandparents only renders once there's at least one parent to anchor
+  // it on (no parent on file yet means there's nothing to add a grandparent "through").
   const tiers: TreeTier[] = []
-  if (grandparentBranches.length > 0) tiers.push({ label: 'Grandparents', branches: grandparentBranches })
-  if (parentBranches.length > 0) tiers.push({ label: 'Parents', branches: parentBranches, defaultParentId: rootId })
+  if (rootParents.length > 0) tiers.push({ label: 'Grandparents', branches: grandparentBranches })
+  tiers.push({ label: 'Parents', branches: parentBranches, defaultParentId: rootId })
   tiers.push({ label: isSelfRoot ? 'You' : rootName, branches: rootGenBranches, defaultParentId: rootId })
   tiers.push({ label: 'Kids', branches: kidsBranches, defaultParentId: rootId })
 
