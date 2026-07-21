@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { getRelationshipsForPerson } from "../_shared/relationshipsTable.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -206,6 +207,36 @@ If nothing qualifies, respond {"facts": []}.`, cache_control: { type: "ephemeral
         text: people.length === 0 ? f.text : undefined,
       }
     })
+
+    // Cross-reference the structured relationships table (2026-07-20) so linking isn't solely
+    // dependent on the AI's own exact-full-name text matching over this person's notes — a
+    // relationship written through ANY of the 4 entry points (converse/add-fact/update-moment/
+    // update-group) now resolves to a chip here too, even when this person's own notes never
+    // happened to spell the other person's full name. Additive only: never removes/overrides an
+    // AI-extracted fact, just fills in any linked person the table already confidently knows about.
+    const relTable = await getRelationshipsForPerson(supabaseClient, personId)
+    const RELATIONSHIP_CATEGORY_IDS: Record<string, string[]> = {
+      spouse: [...relTable.spouseIds, ...relTable.partnerIds],
+      siblings: relTable.siblingIds,
+      parents: relTable.parentIds,
+      kids: relTable.childIds,
+    }
+    for (const category of Object.keys(RELATIONSHIP_CATEGORY_IDS)) {
+      const extraIds = RELATIONSHIP_CATEGORY_IDS[category].filter((id) => nameById[id])
+      if (extraIds.length === 0) continue
+      let fact = facts.find((f: any) => f.category === category) as any
+      if (!fact) {
+        fact = { category, relationshipLabel: category === "spouse" ? "Married to" : DEFAULT_LABELS[category], people: [] }
+        facts.push(fact)
+      }
+      const existingIds = new Set((fact.people ?? []).map((p: any) => p.personId).filter(Boolean))
+      for (const id of extraIds) {
+        if (existingIds.has(id)) continue
+        fact.people = [...(fact.people ?? []), { name: nameById[id], personId: id }]
+        existingIds.add(id)
+      }
+      fact.text = undefined
+    }
 
     // Persist so future visits are served from the DB instead of re-calling the API.
     const { error: saveError } = await supabaseClient

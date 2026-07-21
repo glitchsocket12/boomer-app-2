@@ -93,6 +93,7 @@ export default function People({
       .select(
         'id, name, last_name, nicknames, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
       )
+      .eq('is_self', false)
       .order('name')
 
     if (!error && data) {

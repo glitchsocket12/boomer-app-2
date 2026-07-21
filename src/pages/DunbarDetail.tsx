@@ -19,6 +19,7 @@ export default function DunbarDetail({ onBack, backLabel }: { onBack: () => void
     supabase
       .from('people')
       .select('id', { count: 'exact', head: true })
+      .eq('is_self', false)
       .then(({ count }) => setTotalPeople(count ?? 0))
   }, [])
 

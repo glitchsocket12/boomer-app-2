@@ -31,7 +31,7 @@ export default function DueForUpdate({
 
   useEffect(() => {
     Promise.all([
-      supabase.from('people').select('id, name, last_name'),
+      supabase.from('people').select('id, name, last_name').eq('is_self', false),
       supabase.from('notes').select('person_id, created_at').not('person_id', 'is', null),
     ]).then(([{ data: people }, { data: notes }]) => {
       const lastByPerson = new Map<string, string>()

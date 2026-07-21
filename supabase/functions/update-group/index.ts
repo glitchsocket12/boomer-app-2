@@ -7,6 +7,7 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
+import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,7 +49,7 @@ serve(async (req) => {
       .eq("id", groupId)
       .single()
 
-    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
+    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name, nicknames, is_self")
     const { data: allMoments } = await supabaseClient.from("moments").select("id, occasion, raw_description")
 
     const fullName = (p: { name: string; last_name: string | null }) =>
@@ -137,7 +138,10 @@ This is saved immediately after every single turn, so only include in "rename"/"
     // less often than this group's own membership/events change while the user is actively
     // editing it. Its own breakpoint, ordered first. 1-hour TTL — see the matching comment in
     // converse/index.ts.
-    const peopleContext = `All people already in the app (match against these before assuming someone is new): ${knownPeople || "(none)"}`
+    const selfInfo = findSelfPerson(allPeople, nameById)
+    const selfInstruction = await buildSelfInstruction(supabaseClient, selfInfo, nameById)
+
+    const peopleContext = `All people already in the app (match against these before assuming someone is new): ${knownPeople || "(none)"}${selfInstruction}`
 
     // This group's own editable state — changes on essentially every turn in this chat (renaming,
     // adding/removing members, tagging events IS the point of this chat), so kept on the default
@@ -290,7 +294,8 @@ ${otherEvents || "(none)"}`
       supabaseClient,
       Deno.env.get("ANTHROPIC_API_KEY") ?? "",
       parsed.family_signals ?? [],
-      { idByName, nameById, lastNameById }
+      { idByName, nameById, lastNameById },
+      user.id
     )
 
     if (changed) {

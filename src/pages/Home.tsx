@@ -86,7 +86,7 @@ export default function Home({
   // Head-only count queries — cheap, no rows transferred, just the total for each table.
   useEffect(() => {
     Promise.all([
-      supabase.from('people').select('id', { count: 'exact', head: true }),
+      supabase.from('people').select('id', { count: 'exact', head: true }).eq('is_self', false),
       supabase.from('moments').select('id', { count: 'exact', head: true }),
       supabase.from('groups').select('id', { count: 'exact', head: true }),
       supabase.from('notes').select('id', { count: 'exact', head: true }),

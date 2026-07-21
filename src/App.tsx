@@ -10,8 +10,8 @@ import EventDetail from './pages/EventDetail'
 import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
-import CircleMock from './pages/CircleMock'
-import FamilyTreeMock from './pages/FamilyTreeMock'
+import Circle from './pages/Circle'
+import FamilyTree from './pages/FamilyTree'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 
@@ -178,18 +178,18 @@ export default function App() {
     )
   } else if (current?.type === 'circle') {
     content = (
-      <CircleMock
+      <Circle
         onBack={popCrumb}
         backLabel={parentLabel}
-        onOpenFamilyTree={() =>
-          pushCrumb({ type: 'familyTree', id: 'sample-family', label: 'Sample family tree (preview)' })
-        }
+        onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+        onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
+        onOpenFamilyTree={(personId, label) => pushCrumb({ type: 'familyTree', id: personId, label })}
       />
     )
   } else if (current?.type === 'familyTree') {
     content = (
-      <FamilyTreeMock
-        treeId={current.id}
+      <FamilyTree
+        personId={current.id}
         onBack={popCrumb}
         backLabel={parentLabel}
         onSelectTree={(id, label) => pushCrumb({ type: 'familyTree', id, label })}
@@ -244,10 +244,10 @@ export default function App() {
         </div>
         <div>
           <button
-            onClick={() => pushCrumb({ type: 'circle', id: 'circle', label: 'My page (preview)' })}
+            onClick={() => pushCrumb({ type: 'circle', id: 'circle', label: 'My page' })}
             style={{ marginRight: '0.5rem' }}
           >
-            Preview
+            My page
           </button>
           <button onClick={() => supabase.auth.signOut()}>Log out</button>
         </div>

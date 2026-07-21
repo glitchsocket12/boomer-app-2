@@ -6,6 +6,8 @@
 // relationship mentioned anywhere else silently became an untyped note with no reciprocal write
 // and no suggestion.
 
+import { upsertRelationship } from "./relationshipsTable.ts"
+
 export type RelationshipKind = "spouse" | "sibling" | "parent" | "child" | "partner"
 
 export type RawFamilySignal = {
@@ -343,7 +345,8 @@ export async function applyFamilySignals(
   supabaseClient: MinimalSupabaseClient,
   anthropicApiKey: string,
   rawSignals: RawFamilySignal[],
-  index: NameIndex
+  index: NameIndex,
+  userId?: string | null
 ): Promise<FamilyApplyResult> {
   const familyTags: { id: string; name: string }[] = []
   let relationshipSuggestions: RelationshipSuggestion[] = []
@@ -466,6 +469,19 @@ export async function applyFamilySignals(
         const inverseKind = INVERSE_RELATIONSHIP[signal.relationship]
         const subjectNoteFn = RECIPROCAL_NOTE[inverseKind]
         await writeNoteIfMissing(supabaseClient, subjectId, subjectNoteFn(targetName))
+
+        // Dual-write the same fact into the structured relationships table (2026-07-20) so the
+        // family tree, person-facts' Key Facts linking, and "my mom/dad" resolution all see it
+        // too, not just the note text. "parent"/"child" are directional in the table (there's no
+        // stored "child" kind — it's the reverse lookup of a "parent" row); spouse/partner are
+        // symmetric.
+        if (signal.relationship === "parent") {
+          await upsertRelationship(supabaseClient, userId, targetId, subjectId, "parent")
+        } else if (signal.relationship === "child") {
+          await upsertRelationship(supabaseClient, userId, subjectId, targetId, "parent")
+        } else if (signal.relationship === "spouse" || signal.relationship === "partner") {
+          await upsertRelationship(supabaseClient, userId, subjectId, targetId, signal.relationship)
+        }
       }
 
       // "Suggest, don't assert" shared-parent inference — only for the relationship kinds this
@@ -496,6 +512,7 @@ export async function applyFamilySignals(
         const b = confidentPeers[j]
         await writeNoteIfMissing(supabaseClient, a.id, RECIPROCAL_NOTE.sibling(b.name))
         await writeNoteIfMissing(supabaseClient, b.id, RECIPROCAL_NOTE.sibling(a.name))
+        await upsertRelationship(supabaseClient, userId, a.id, b.id, "sibling")
       }
     }
   }

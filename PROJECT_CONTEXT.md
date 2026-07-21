@@ -28,8 +28,17 @@ src/
 │   ├── dates.ts               — eventSortDate/formatMonthYear (tested)
 │   ├── summarize.ts           — short title helper (tested)
 │   ├── people.ts              — sortByLastName
-│   └── groupTypes.ts          — GROUP_TYPES fixed list (Family/Friend group/School/
-│                                Team/Work), shared by Groups.tsx + GroupDetail.tsx
+│   ├── groupTypes.ts          — GROUP_TYPES fixed list (Family/Friend group/School/
+│   │                            Team/Work), shared by Groups.tsx + GroupDetail.tsx
+│   ├── relationshipsTable.ts  — browser-side upsertRelationship/getRelationshipsForPerson
+│   │                            against the `relationships` table (mirrors the Deno copy in
+│   │                            supabase/functions/_shared/)
+│   ├── writeRelationship.ts   — linkRelationship/createAndLinkRelationship: the shared "+"
+│   │                            write path (relationships table row + both-sides reciprocal
+│   │                            note) used by Circle.tsx and FamilyTree.tsx
+│   └── familyTree.ts          — buildFamilyTree(personId): walks the relationships table
+│                                (one full-table fetch, then in-memory graph walk) into the
+│                                tiers/branches FamilyTree.tsx renders
 ├── pages/
 │   ├── Login.tsx              — combined sign up / log in
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
@@ -85,44 +94,46 @@ src/
 │   │                            hardcoded), rename, delete/merge, update chat
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
-│   ├── CircleMock.tsx          — READ-ONLY static "My page" preview (placeholder
-│   │                             data, no Supabase calls) for item 32: self header,
-│   │                             "Your circle" grid (spouse/kids/parents/siblings),
-│   │                             "Your groups" list. Reached via a "Preview" button
-│   │                             in the top bar. A group card tagged "Family" links
-│   │                             to FamilyTreeMock (2026-07-20)
-│   └── FamilyTreeMock.tsx      — READ-ONLY static preview: genealogy-style SVG tree
-│                                 (boxes joined by descent/marriage lines), layout
-│                                 DERIVED at render time from a relationship data model
-│                                 (branches: `{union:{a,b?}, siblings}`), not hand-placed
-│                                 coordinates. `parentName` lives on each PERSON, not
-│                                 each branch (fixed 2026-07-20) — so a couple's two
-│                                 partners can trace up to two DIFFERENT branches above
-│                                 them (paternal vs maternal grandparents both shown,
-│                                 each independently routed), instead of a couple being
-│                                 forced to share one lineage. A person with no
-│                                 parentName (married in) gets no connector line up.
-│                                 "+" appends a person and everything reflows —
-│                                 verified live repeatedly (2nd grandparent, a sibling,
-│                                 dual-lineage routing, marriage lines on all 3 couples
-│                                 after a rewrite briefly dropped them — caught before
-│                                 shipping). Clicking a person with a "banked" dataset
-│                                 (`TREES` record — `sample-family`, `jordan`)
-│                                 re-centers the WHOLE tree on them via a new pushed
-│                                 `familyTree` crumb — a tree is a person's own
+│   ├── Circle.tsx              — "My page" (item 32, REAL as of 2026-07-20, replaced
+│   │                             CircleMock.tsx): self header (name, birthday/
+│   │                             anniversary, "Edit your profile →" into PersonDetail),
+│   │                             "Your circle" grid (spouse/kids/parents/siblings) read
+│   │                             from the `relationships` table, "+" per box writes
+│   │                             through writeRelationship.ts. "Your groups" lists the
+│   │                             self person's groups; a Family-typed one shows
+│   │                             "Tree →" into FamilyTree.tsx centered on the self
+│   │                             person. No self profile yet → onboarding: search
+│   │                             existing people to flag `is_self`, or create a blank
+│   │                             one (lands on its PersonDetail to name it). Reached
+│   │                             via "My page" in the top bar
+│   └── FamilyTree.tsx          — real family tree (item 32/15, REPLACED
+│                                 FamilyTreeMock.tsx 2026-07-20): SAME validated layout/
+│                                 reflow algorithm (branches: `{union:{a,b?}, siblings}`,
+│                                 each PERSON carries their own `parentId` so a couple's
+│                                 two partners can trace to two different branches above
+│                                 — paternal vs maternal grandparents both shown), now
+│                                 fed by buildFamilyTree() (src/lib/familyTree.ts)
+│                                 walking the real `relationships` table instead of
+│                                 hand-authored fixtures. Works for ANY person_id —
+│                                 clicking any name re-centers the whole tree on them via
+│                                 a fresh query (a family tree is a person's own
 │                                 relationship graph, not bounded by which group you
-│                                 opened it from. Known gap: "+" always targets a
+│                                 opened it from), verified live with disposable test
+│                                 people (deleted after). Grandparents tier also pulls in
+│                                 parents' siblings (aunts/uncles, riding in the same
+│                                 branch) and their kids (cousins, shown as extended in
+│                                 the root's own tier). "+" writes a real relationship
+│                                 fact (relationships table row + both-sides reciprocal
+│                                 note) and reloads the tree from the server. Known gap
+│                                 carried over from the mock: "+" always targets a
 │                                 tier's first branch — no UI yet to pick which branch
-│                                 when a tier has more than one (e.g. Parents has both
-│                                 Pat/Robin's line and Aunt Sam's). Local component
-│                                 state only — edits reset on navigating to another
-│                                 tree, nothing persisted
+│                                 when a tier has more than one
 ├── components/
-│   ├── MockAddPicker.tsx      — type-and-select "add a person" affordance shared by
-│   │                            CircleMock/FamilyTreeMock, searches a small hardcoded
-│   │                            roster (no Supabase) — mirrors the real
-│   │                            search-and-add pattern closely enough to test the
-│   │                            interaction (2026-07-20)
+│   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
+│   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
+│   │                              search everyone on file, or type a name that matches no
+│   │                              one to create a brand-new person, both wired through
+│   │                              writeRelationship.ts
 │   ├── ErrorBoundary.tsx      — per-tab crash containment; friendly fallback
 │   │                            (reload button, raw error tucked behind a
 │   │                            "Technical details" toggle)
@@ -148,17 +159,19 @@ src/
 
 | Function | Purpose |
 |---|---|
-| `converse` | **The main unified brain** (Home). Per turn decides: answer question / capture new moment(s — `moments` array, multiple per turn supported) / update moment / rename placeholder / name+nickname corrections / create+tag groups / relationship signals / logs recall attempts to `search_log`. Quirk: model occasionally replies in prose instead of the JSON envelope — falls back to showing that prose as the reply. |
-| `add-fact` | Classifies fact-bar text: name/nickname update, birthday/anniversary (upserts `reminders`), or plain note. Group inference (`group_signal`, high=auto/medium=ask). Relationship handling via `_shared/relationships.ts`. |
-| `update-moment` | Event chat. Saves per turn (not on "done"), has full people+events rosters, `moment_field_updates` (when/where/title), `add_groups`, relationship signals. |
-| `update-group` | Group chat: rename, members, tag/untag events, member facts (tagged `source_group_id`), relationship signals. Saves per turn. |
-| `person-facts` | Extracts Key Facts from a person's notes — explicitly stated only, never inferred. Cached in `people.key_facts`; `{refresh: true}` regenerates. Failure paths return cached facts, never wipe. Linked categories (spouse/siblings/parents/kids) resolve to person chips only on exact-full-name match. Has its OWN category vocabulary (not the shared 5-kind enum — known mismatch, read-only so harmless). |
+| `converse` | **The main unified brain** (Home). Per turn decides: answer question / capture new moment(s — `moments` array, multiple per turn supported) / update moment / rename placeholder / name+nickname corrections / create+tag groups / relationship signals / logs recall attempts to `search_log`. Knows the self person (`is_self`) and their known relationships (`_shared/selfContext.ts`) so "my mom"/"my parents" resolve without a named subject (2026-07-20). Quirk: model occasionally replies in prose instead of the JSON envelope — falls back to showing that prose as the reply. |
+| `add-fact` | Classifies fact-bar text: name/nickname update, birthday/anniversary (upserts `reminders`), or plain note. Group inference (`group_signal`, high=auto/medium=ask). Relationship handling via `_shared/relationships.ts`. A fact typed on the self profile's own page already resolves "my X" correctly with no special-casing (the subject is always whichever profile is being viewed). |
+| `update-moment` | Event chat. Saves per turn (not on "done"), has full people+events rosters, `moment_field_updates` (when/where/title), `add_groups`, relationship signals, self-person "my X" resolution (2026-07-20). |
+| `update-group` | Group chat: rename, members, tag/untag events, member facts (tagged `source_group_id`), relationship signals, self-person "my X" resolution (2026-07-20). Saves per turn. |
+| `person-facts` | Extracts Key Facts from a person's notes — explicitly stated only, never inferred. Cached in `people.key_facts`; `{refresh: true}` regenerates. Failure paths return cached facts, never wipe. Linked categories (spouse/siblings/parents/kids) resolve to person chips on exact-full-name match OR a `relationships` table row (2026-07-20, additive — never overrides an AI-extracted fact, just fills in a linked person the table already knows about). Has its OWN category vocabulary (not the shared 5-kind enum — known mismatch, read-only so harmless). |
 | `summarize-group` | One-sentence group description → cached `groups.summary`. Members = explicit roster only, never event attendees. |
 | `summarize-moment` | 2-4 sentence first-person event summary → cached `moments.summary`. Cleared/regenerated when notes change. |
 | `suggest-prompts` | 3 suggestion cards for Home → cached in `home_suggestions` table; regenerates only when data is newer than cache or on manual refresh. |
 | `transcribe` | Whisper speech-to-text. |
 
-**Shared module** `_shared/relationships.ts`: the 5 relationship kinds (spouse/sibling/parent/child/partner), reciprocal notes written on BOTH sides (`INVERSE_RELATIONSHIP` map — incl. when a suggestion banner is confirmed, not just an immediate confident match, fixed 2026-07-20), dedupe on an EXACT match against the deterministic note text (not a loose name+keyword heuristic — the loose version used to false-positive on the SUBJECT's own original sentence and silently block their own reciprocal note, fixed 2026-07-20, see PROJECT_HISTORY §13), confident-match = name-as-typed exactly equals full name on file (else a suggest-don't-assert banner), siblings named together in one signal also link to EACH OTHER not just to the subject (direct write when confident, exact-full-name lookup at confirm-time otherwise — 2026-07-20), shared-parent inference suggestions, last-name inference for people created from relationship mentions (`inferLastNameFromSignals`, also called by the direct `new_people`/`add_people` creation paths). Used by `converse`/`add-fact`/`update-moment`/`update-group` so relationship behavior is identical at all four entry points. `chat` and `search` functions were deleted 2026-07-19 (superseded by `converse`).
+**Shared module** `_shared/relationships.ts`: the 5 relationship kinds (spouse/sibling/parent/child/partner), reciprocal notes written on BOTH sides (`INVERSE_RELATIONSHIP` map — incl. when a suggestion banner is confirmed, not just an immediate confident match, fixed 2026-07-20), dedupe on an EXACT match against the deterministic note text (not a loose name+keyword heuristic — the loose version used to false-positive on the SUBJECT's own original sentence and silently block their own reciprocal note, fixed 2026-07-20, see PROJECT_HISTORY §13), confident-match = name-as-typed exactly equals full name on file (else a suggest-don't-assert banner), siblings named together in one signal also link to EACH OTHER not just to the subject (direct write when confident, exact-full-name lookup at confirm-time otherwise — 2026-07-20), shared-parent inference suggestions, last-name inference for people created from relationship mentions (`inferLastNameFromSignals`, also called by the direct `new_people`/`add_people` creation paths). Every confident/pairwise note write here now ALSO dual-writes the matching row into the `relationships` table (2026-07-20, via `_shared/relationshipsTable.ts`'s `upsertRelationship` — takes a `userId` param now). Used by `converse`/`add-fact`/`update-moment`/`update-group` so relationship behavior is identical at all four entry points. `chat` and `search` functions were deleted 2026-07-19 (superseded by `converse`).
+
+**Shared module** `_shared/relationshipsTable.ts` (2026-07-20): the `relationships` table read/write layer — `upsertRelationship` (spouse/sibling/partner symmetric & normalized a<b by id sort; `parent` directional, not normalized) and `getRelationshipsForPerson` (all of one person's links, either side of a row, in one shape). Mirrored on the frontend at `src/lib/relationshipsTable.ts` (Deno can't import across the Vite boundary) — keep both in sync if the table shape changes. `_shared/selfContext.ts`: `findSelfPerson`/`buildSelfInstruction` — builds the "my mom/dad" instruction paragraph for `converse`/`update-moment`/`update-group`, appended to each function's own DYNAMIC per-user tier (never the stable tier — the self person's name/relationships are per-user data and would otherwise bust the globally-shared stable-instructions cache).
 
 ## 5. AI cost & caching architecture (see CLAUDE.md rule 3 — non-negotiable)
 
@@ -174,7 +187,20 @@ src/
 ```
 people        id, user_id, name (first), last_name?, nicknames? (comma-separated
               "goes by" list, additive), key_facts jsonb?, key_facts_updated_at?,
-              created_at
+              is_self bool (default false, partial unique index per user_id — at most
+              one "this is me" profile; excluded from People list/search/Dunbar/
+              due-for-update, 2026-07-20), created_at
+relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partner —
+              symmetric, stored once normalized person_a_id < person_b_id by uuid
+              sort; parent — directional, person_a_id IS THE PARENT of person_b_id,
+              no separate "child" kind stored), created_at, unique(person_a_id,
+              person_b_id, kind) — 2026-07-20, THE shared source of truth for family
+              links: `_shared/relationships.ts` dual-writes here alongside its
+              reciprocal notes, `person-facts` cross-references it for Key Facts
+              linking, `converse`/`update-moment`/`update-group` read it for "my
+              mom/dad" resolution, Circle.tsx/FamilyTree.tsx read AND write it
+              directly. Backfilled once from existing deterministic reciprocal-note
+              text (exact-name match only, best-effort, not exhaustive).
 moments       id, user_id, raw_description (user's words only — never assistant
               turns), summary? (AI cache), occasion?, location?, when_text?
               (free-text, kept verbatim), event_date? (AI best-guess real date,
@@ -216,15 +242,16 @@ home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts
 - **Voice input** on every text box (record → Whisper → text dropped in for review, never auto-sends; no live captions — batch only). **Auto-grow textareas** everywhere.
 - **Cross-navigation:** any person/group/event mention anywhere is a chip → detail page, with breadcrumb trail; refresh restores location (sessionStorage).
 - **Search boxes** on People/Events/Groups (client-side).
+- **"My page" + real family tree + relationships table** (item 32, 2026-07-20 — see §3/§4/§6): a real `is_self` flag + `relationships` table replace the note-text-only inference that used to be the sole source of family data. Circle.tsx ("My page") is real (onboarding to flag/create the self person, live circle grid, "+" writes real facts). FamilyTree.tsx works for ANY person, not just the self person, walking the relationships table live. `person-facts` Key Facts linking and `converse`/`update-moment`/`update-group`'s "my mom/dad" resolution both read the same table now — the "all work together" ask is done, not just the tree UI.
 - Demo persona seed data exists ("John & Jane Doe", ~18 people/~22 moments — fake, handwritten UUIDs; don't pattern-match on it).
 
 ## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
 
-Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes. Also done: 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix, deployed and confirmed live — see §10); 36 (2026-07-20: manual "add an event" / "add a group" buttons, plus group delete — see §7); 35/Group Types (2026-07-20: `group_type` column + fixed picker on GroupDetail + filter/badge on Groups — see §7).
+Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes. Also done: 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix, deployed and confirmed live — see §10); 36 (2026-07-20: manual "add an event" / "add a group" buttons, plus group delete — see §7); 35/Group Types (2026-07-20: `group_type` column + fixed picker on GroupDetail + filter/badge on Groups — see §7); **32 (2026-07-20: real `is_self` flag + `relationships` table, real "My page"/family tree, "my mom/dad" resolution — see §7, DEPLOYED and DB-migrated live, see §10)**.
 
 **Open — bigger features:**
 14. Global search bar on every page (decide: text match first vs. semantic — merges with 30).
-15. **Relationship-aware smarts** umbrella: answer via family links ("Braden's dog" → spouse's note); resolve "my parents" (needs a user's own profile concept); auto-suggest links from note content; background relationship scanning; approval log on Home.
+15. **Relationship-aware smarts** umbrella — partially unblocked by item 32's `relationships` table: "resolve 'my parents'" is DONE (`converse`/`update-moment`/`update-group` all do it now). Still open: answer via family links ("Braden's dog" → spouse's note) — the table can now support this but nothing queries it for that yet; auto-suggest links from note content beyond what already exists; background relationship scanning; approval log on Home.
 16. Auto-notes from chat for every person mentioned (events do this; extend everywhere).
 17. Long story/voice-note handling (1–2 min recording parsed into all its facts) — chat currently chokes on long stories.
 18. Real-time voice transcription (words appear as you speak; Whisper is batch-only — partial option: Web Speech captions on non-iPhone only).
@@ -240,7 +267,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 29. Search within GroupDetail; People filter (criteria undecided).
 30. AI/"fuzzy" semantic search (likely merges into 14).
 31. **"Memory lane" curated media feed** — requested 2026-07-19. A scrollable, media-driven feed surfacing curated memories (vs. today's specific-lookup mode only); best outcome likely needs real event photos, so probably sequences after item 27 (photo gallery). Already named as a target query mode in §9's product philosophy, just not built yet.
-32. **User's own profile ("Me" page or a normal People entry)** — requested 2026-07-19. All events/groups should relate back to the user themself; founder undecided whether the user should live in the People list like a normal contact or get a dedicated "Me" page. Feeds directly into item 15's "resolve 'my parents'" need — this is the underlying concept item 15 was waiting on. **Static UX preview shipped 2026-07-20** (`CircleMock.tsx` + `FamilyTreeMock.tsx`, placeholder data only) — "My page" = self header + "Your circle" grid + "Your groups" list; the family tree moved OUT of the profile page and into a per-group view, scoped to whichever group is tagged "Family" (depends on item 35). Founder's rationale: tying the tree to group membership (not blood-relationship inference) lets you decide who counts as family — chosen family, in-laws, a friend's family you're close with — and doubles as a relationship-data-collection tool: an "unplaced" group member with no relationship on file is a direct nudge to add one, which then improves "my mom/dad" resolution and reciprocal notes everywhere else in the app. Open decisions before this becomes real: (a) empty relationship categories on "Your circle" shown as an invite-to-add vs. hidden until populated, (b) whether a family tree can be built for a group you're NOT a member of (a close friend's family) — that variant has no "You" tier to anchor on. **Architecture decision confirmed by founder 2026-07-20:** build a real `relationships` table as shared source of truth — the family tree, `person-facts` Key Facts linking, reciprocal notes (`_shared/relationships.ts`), and "my mom/dad" resolution should all read/write through it, not stay siloed per-feature the way relationship data is inferred today (notes text + `key_facts` JSON, no queryable structured graph). Real build handed off to a separate session — see item 15/33 for the features this unblocks.
+32. ~~User's own profile~~ — **DONE 2026-07-20.** Real `is_self` flag + `relationships` table (shared source of truth for family links), real "My page" (`Circle.tsx`) + real family tree (`FamilyTree.tsx`, works for any person), `person-facts` linking and "my mom/dad" resolution both read the same table — see §3/§4/§6/§7. Full build story in PROJECT_HISTORY §15. Still-open UX questions, not yet resolved: (a) empty relationship categories on "Your circle" shown as invite-to-add vs. hidden until populated, (b) a family tree for a group you're NOT a member of (no "You" tier to anchor on), (c) "+" always targets a tier's first branch when a tier has more than one.
 33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
 34. **Filterable "View" by event category on the Events page** — requested 2026-07-19. Founder's concern: as event volume grows, big events (weddings) get buried among day-to-day notes (a phone call), so a picklist of categories to narrow the list is needed. Categories would come from a learning/growing list derived from events actually added, not a fixed hardcoded set. Pairs with item 28 (manual + AI-suggested tags on events) — likely the same schema change powers both the tags and this filter view.
 35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later.
@@ -277,6 +304,8 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - ~~Sibling-linking fixes need redeploy~~ — **all 3 rounds deployed and confirmed live 2026-07-20** (`add-fact`/`converse`/`update-group`/`update-moment`, via `npx supabase functions deploy` with a founder-provided token; see PROJECT_HISTORY §13 for the full 3-bug story: asymmetric write-on-confirm, siblings-named-together not linking to each other, and the too-loose dedupe check that specifically blocked the SUBJECT of the original sentence from getting their own reciprocal notes). Verified end-to-end with disposable test people (deleted after). Ale/Fede/Manuel Sucre and the full Berzins family (Mark & Margaret, parents; Caroline Volin/Clare Sucre/Patrick Berzins/Bridget Berzins, children) both hand-repaired live via the fact bar — all 6 sibling pairs and 8 parent-child pairs in the Berzins family confirmed bidirectional by direct query.
 - ~~Database-wide scrub for the same asymmetric-relationship-note bug~~ — **done 2026-07-20** (see PROJECT_HISTORY §13). Scanned all 417 person-notes against the app's 5 deterministic reciprocal phrasings; found and bulk-fixed 48 asymmetric pairs across the whole database (not just the two reported families) via direct REST insert. Re-scan afterward confirmed zero gaps remain. Deliberately did not attempt fuller transitive closure (two people each linked to a common third person, but not stated as siblings of each other) — that's a new inference, not a stated-fact completion, and risks wrongly asserting full-sibling status in a half-/step-sibling structure (item 24 below is still an open founder decision).
 - **Founder cleanup needed: likely duplicate person "David" (no last name) vs. "David Adelstein"** — both have the identical single note "Married to Jill Tullman.", the signature of an accidental duplicate profile rather than two facts. Left unmerged deliberately (found during the scrub above) — merge via the app's own People search + merge-profile feature rather than guessed at.
+- **Founder cleanup needed: two separate "Amy Volin" profiles exist** — found 2026-07-20 while verifying the relationships-table build (see PROJECT_HISTORY §15). Not this session's doing and not touched — merge via People search + merge-profile once confirmed which one should survive.
+- ~~Relationships table + `is_self` migration + 5 Edge Function redeploy (item 32, 2026-07-20)~~ — **applied and deployed live 2026-07-20** via the Management API + `npx supabase functions deploy` with a founder-provided token (`add-fact`/`converse`/`update-group`/`update-moment`/`person-facts`, 3 of the 5 needed a retry after a transient Cloudflare 502). Backfill landed 75 relationship rows from existing notes. Click-tested end-to-end (My Page onboarding/circle/`+`, family tree render + re-center + `+`) against the real `jakevolin@gmail.com` account with disposable test data, cleaned up after — see PROJECT_HISTORY §15 for the full verification story, including a self-inflicted name-collision near-miss that was fully cleaned up.
 - Email confirmation must be re-enabled (with a proper redirect URL) before real users.
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.

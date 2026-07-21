@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase'
+import { upsertRelationship, type RelationshipKind } from '../lib/relationshipsTable'
 
 // Shared by every entry point that can surface a relationship suggestion (the profile fact bar,
 // Home chat, an event's chat, a group's chat) — the confirm/decline logic writes exactly what a
@@ -57,6 +58,25 @@ const INVERSE_RELATIONSHIP: Record<string, string> = {
 // from their side. Without this, confirming a suggestion only ever updated the named person's
 // profile — the one the fact was originally typed on stayed blank, which is exactly the
 // inconsistent-siblings bug (one side links back, the other never does).
+// Dual-write the confirmed fact into the structured relationships table (2026-07-20) alongside
+// the note text, so the family tree / Key Facts linking / "my mom/dad" resolution see suggestions
+// confirmed here exactly like a confident edge-function match — see
+// supabase/functions/_shared/relationships.ts's matching write for the non-suggestion path.
+// "parent"/"child" are directional in the table (aId is always the parent); spouse/partner/sibling
+// are symmetric.
+async function writeRelationshipTableEntry(
+  userId: string | undefined | null,
+  relationship: string,
+  subjectId: string,
+  targetId: string
+) {
+  if (relationship === 'parent') await upsertRelationship(userId, targetId, subjectId, 'parent')
+  else if (relationship === 'child') await upsertRelationship(userId, subjectId, targetId, 'parent')
+  else if (relationship === 'spouse' || relationship === 'partner' || relationship === 'sibling') {
+    await upsertRelationship(userId, subjectId, targetId, relationship as RelationshipKind)
+  }
+}
+
 async function writeSubjectSideNote(s: NewPersonSuggestion, targetFullName: string) {
   // subjectId is only absent if this suggestion came from an Edge Function still running the
   // pre-fix version (deploy lag between this frontend build and the next manual Supabase
@@ -79,7 +99,7 @@ async function writeSubjectSideNote(s: NewPersonSuggestion, targetFullName: stri
 // confirmed with that same predicted name — so whichever of two ambiguous suggestions gets
 // confirmed SECOND is the one that completes the link; confirming neither, or confirming with a
 // different name than guessed, safely leaves it unlinked rather than guessing wrong.
-async function linkCoSiblings(s: NewPersonSuggestion, resolvedId: string, resolvedFullName: string) {
+async function linkCoSiblings(s: NewPersonSuggestion, resolvedId: string, resolvedFullName: string, userId: string | undefined | null) {
   for (const peer of s.coSiblings ?? []) {
     let peerId = peer.id
     let peerFullName = peer.name
@@ -99,6 +119,7 @@ async function linkCoSiblings(s: NewPersonSuggestion, resolvedId: string, resolv
       { person_id: resolvedId, moment_id: null, content: `Their sibling is ${peerFullName}.` },
       { person_id: peerId, moment_id: null, content: `Their sibling is ${resolvedFullName}.` },
     ])
+    await upsertRelationship(userId, resolvedId, peerId, 'sibling')
   }
 }
 
@@ -143,6 +164,10 @@ export default function RelationshipSuggestionBanners({
       { person_id: s.parentId, moment_id: null, content: `Their child is ${s.childName}.` },
       { person_id: s.childId, moment_id: null, content: `Their parent is ${s.parentName}.` },
     ])
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    await upsertRelationship(user?.id, s.parentId, s.childId, 'parent')
     onApplied?.()
   }
 
@@ -172,7 +197,8 @@ export default function RelationshipSuggestionBanners({
       // siblings named together, connect the new person to any other named sibling too — without
       // these, only the brand-new profile ever reflected this fact, never the subject's own.
       await writeSubjectSideNote(s, newPersonFullName)
-      await linkCoSiblings(s, newPerson.id, newPersonFullName)
+      await writeRelationshipTableEntry(user?.id, s.relationship, s.subjectId, newPerson.id)
+      await linkCoSiblings(s, newPerson.id, newPersonFullName, user?.id)
     }
     onApplied?.()
   }
@@ -186,7 +212,11 @@ export default function RelationshipSuggestionBanners({
     await supabase.from('notes').insert({ person_id: s.candidateId, moment_id: null, content: s.reciprocalNote })
     const candidateFullName = s.candidateName ?? s.rawName
     await writeSubjectSideNote(s, candidateFullName)
-    await linkCoSiblings(s, s.candidateId, candidateFullName)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    await writeRelationshipTableEntry(user?.id, s.relationship, s.subjectId, s.candidateId)
+    await linkCoSiblings(s, s.candidateId, candidateFullName, user?.id)
     onApplied?.()
   }
 

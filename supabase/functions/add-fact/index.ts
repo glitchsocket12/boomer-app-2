@@ -233,7 +233,8 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
         supabaseClient,
         Deno.env.get("ANTHROPIC_API_KEY") ?? "",
         buildSingleSubjectSignals(personFullName, result.family_signals ?? []),
-        { idByName, nameById, lastNameById }
+        { idByName, nameById, lastNameById },
+        user.id
       )
       familyTags = applied.familyTags
       relationshipSuggestions = applied.relationshipSuggestions

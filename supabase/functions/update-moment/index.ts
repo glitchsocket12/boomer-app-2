@@ -7,6 +7,7 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
+import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -49,7 +50,7 @@ serve(async (req) => {
       .from("notes")
       .select("content, person_id")
       .eq("moment_id", momentId)
-    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
+    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames, is_self")
     const { data: existingGroups } = await supabaseClient.from("groups").select("id, name")
     const { data: existingMomentGroups } = await supabaseClient
       .from("moment_groups")
@@ -155,11 +156,14 @@ Leave any of these four keys null when the user didn't touch that field this tur
     // moment's own summary below, so an ordinary "add another detail" turn (which only updates
     // this moment's own notes) doesn't bust it. 1-hour TTL — see the matching comment in
     // converse/index.ts.
+    const selfInfo = findSelfPerson(people, nameById)
+    const selfInstruction = await buildSelfInstruction(supabaseClient, selfInfo, nameById)
+
     const rosterContext = `Here is everyone already recorded, by full name where a last name is known: ${peopleRoster || "(none yet)"}
 
 Here are the groups already on file: ${groupsRoster || "(none yet)"}
 
-Here are the OTHER events/moments already recorded in the app (not this one), by their name and roughly when they happened: ${otherEventsRoster || "(none yet)"}`
+Here are the OTHER events/moments already recorded in the app (not this one), by their name and roughly when they happened: ${otherEventsRoster || "(none yet)"}${selfInstruction}`
 
     // This moment's own summary — changes on essentially every turn in this chat (that's the
     // point of it), so kept on the default 5-minute cache rather than the pricier 1-hour write.
@@ -275,7 +279,8 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       supabaseClient,
       Deno.env.get("ANTHROPIC_API_KEY") ?? "",
       parsed.family_signals ?? [],
-      { idByName, nameById, lastNameById }
+      { idByName, nameById, lastNameById },
+      user.id
     )
 
     let notesAdded = 0

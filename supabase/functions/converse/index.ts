@@ -7,6 +7,7 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
+import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,7 +46,7 @@ serve(async (req) => {
     // calls — which reshuffles this text and breaks the prompt-cache prefix match on every turn
     // even when nothing changed (see the cache_control breakpoint below, and CLAUDE.md's
     // "serialize deterministically" rule).
-    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames").order("id")
+    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames, is_self").order("id")
     const { data: moments } = await supabaseClient
       .from("moments")
       .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
@@ -198,11 +199,14 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     // between separate chat sessions, and the default TTL would otherwise force a full-price
     // rewrite of the whole roster just because the user paused to think (CLAUDE.md's token/
     // billing efficiency rule).
+    const selfInfo = findSelfPerson(people, nameById)
+    const selfInstruction = await buildSelfInstruction(supabaseClient, selfInfo, nameById)
+
     const rosterContext = `Here are the groups already created:
 ${groupsContext || "(none yet)"}
 
 Here is everyone already recorded, by full name where a last name is known:
-${peopleRoster || "(none yet)"}`
+${peopleRoster || "(none yet)"}${selfInstruction}`
 
     // Moments tier — changes on every new capture, the most frequent write in the app, so it's
     // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier
@@ -346,7 +350,8 @@ ${context || "(none recorded yet)"}`
       supabaseClient,
       Deno.env.get("ANTHROPIC_API_KEY") ?? "",
       parsed.family_signals ?? [],
-      { idByName, nameById, lastNameById }
+      { idByName, nameById, lastNameById },
+      user.id
     )
 
     async function findOrCreateGroupId(name: string): Promise<string | null> {
