@@ -83,7 +83,8 @@ src/
 │   │                            suggested + manual picker), notes section, edit chat,
 │   │                            delete group
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
-│   │                            created_at), "Month Year" format; manual "add event"
+│   │                            created_at), "Month Year" format, grouped under
+│   │                            year headers (2026, 2025, ...); manual "add event"
 │   │                            (blank shell, no form) → lands on its detail page
 │   ├── EventDetail.tsx        — AI summary (gated: only auto-generates once
 │   │                            raw_description has content), editable description,
