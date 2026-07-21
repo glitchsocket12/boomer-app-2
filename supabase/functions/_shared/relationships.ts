@@ -6,7 +6,7 @@
 // relationship mentioned anywhere else silently became an untyped note with no reciprocal write
 // and no suggestion.
 
-import { upsertRelationship } from "./relationshipsTable.ts"
+import { upsertRelationship, getRelationshipsForPerson } from "./relationshipsTable.ts"
 
 export type RelationshipKind = "spouse" | "sibling" | "parent" | "child" | "partner"
 
@@ -306,6 +306,31 @@ async function resolveRelationNames(
   return extractRelationNames(anthropicApiKey, kind, personName, notesText)
 }
 
+// Siblings share parents. Once two people are confidently linked as siblings, copy whichever
+// parent links either side already has in the ACTUAL relationships table onto the other side —
+// distinct from findSharedParentSuggestions below, which is a best-effort AI-guessed banner over
+// free-text notes. This is a direct, already-confirmed-data copy (same discipline as the
+// writeRelationship.ts mirror of this function on the frontend "+" picker path), so it's safe to
+// write immediately rather than queue as a suggestion.
+async function syncSiblingParents(
+  supabaseClient: MinimalSupabaseClient,
+  userId: string | undefined | null,
+  aId: string,
+  bId: string
+): Promise<void> {
+  if (!userId) return
+  const [relA, relB] = await Promise.all([
+    getRelationshipsForPerson(supabaseClient, aId),
+    getRelationshipsForPerson(supabaseClient, bId),
+  ])
+  const parentsA = new Set(relA.parentIds)
+  const parentsB = new Set(relB.parentIds)
+  await Promise.all([
+    ...[...parentsA].filter((id) => !parentsB.has(id)).map((id) => upsertRelationship(supabaseClient, userId, id, bId, "parent")),
+    ...[...parentsB].filter((id) => !parentsA.has(id)).map((id) => upsertRelationship(supabaseClient, userId, id, aId, "parent")),
+  ])
+}
+
 // Compares two people who are (or are about to become) recorded as siblings and reports any
 // parent known for one but not the other — this is the "suggest, don't assert" half of
 // relationship inference: nothing is written here, just candidates for the user to confirm.
@@ -513,6 +538,7 @@ export async function applyFamilySignals(
         await writeNoteIfMissing(supabaseClient, a.id, RECIPROCAL_NOTE.sibling(b.name))
         await writeNoteIfMissing(supabaseClient, b.id, RECIPROCAL_NOTE.sibling(a.name))
         await upsertRelationship(supabaseClient, userId, a.id, b.id, "sibling")
+        await syncSiblingParents(supabaseClient, userId, a.id, b.id)
       }
     }
   }

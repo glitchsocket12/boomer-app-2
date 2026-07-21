@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { upsertRelationship } from './relationshipsTable'
+import { upsertRelationship, getRelationshipsForPerson } from './relationshipsTable'
 
 // Shared "+" write path for My Page's circle boxes and the family tree — writes through the
 // relationships table (2026-07-20 source of truth) AND the matching reciprocal note on both
@@ -29,6 +29,23 @@ async function writeNoteIfMissing(personId: string, content: string) {
   if (!already) await supabase.from('notes').insert({ person_id: personId, moment_id: null, content })
 }
 
+// Siblings share parents. When two people are linked as siblings, copy whichever parent links
+// either side already has onto the other side, so a newly-added sibling inherits an existing
+// sibling's parents (and vice versa) instead of showing an empty Parents tier.
+async function syncSiblingParents(userId: string | undefined | null, subjectId: string, targetId: string) {
+  if (!userId) return
+  const [subjectRel, targetRel] = await Promise.all([
+    getRelationshipsForPerson(subjectId),
+    getRelationshipsForPerson(targetId),
+  ])
+  const subjectParents = new Set(subjectRel.parentIds)
+  const targetParents = new Set(targetRel.parentIds)
+  await Promise.all([
+    ...[...subjectParents].filter((id) => !targetParents.has(id)).map((id) => upsertRelationship(userId, id, targetId, 'parent')),
+    ...[...targetParents].filter((id) => !subjectParents.has(id)).map((id) => upsertRelationship(userId, id, subjectId, 'parent')),
+  ])
+}
+
 // Links subjectId and targetId as `category` (from the subject's point of view, e.g.
 // category='parents' means targetId is one of subjectId's parents).
 export async function linkRelationship(
@@ -42,8 +59,10 @@ export async function linkRelationship(
   await writeNoteIfMissing(targetId, NOTE_FOR_TARGET[category](subjectName))
   await writeNoteIfMissing(subjectId, NOTE_FOR_SUBJECT[category](targetName))
   if (category === 'spouse') await upsertRelationship(userId, subjectId, targetId, 'spouse')
-  else if (category === 'siblings') await upsertRelationship(userId, subjectId, targetId, 'sibling')
-  else if (category === 'parents') await upsertRelationship(userId, targetId, subjectId, 'parent')
+  else if (category === 'siblings') {
+    await upsertRelationship(userId, subjectId, targetId, 'sibling')
+    await syncSiblingParents(userId, subjectId, targetId)
+  } else if (category === 'parents') await upsertRelationship(userId, targetId, subjectId, 'parent')
   else if (category === 'kids') await upsertRelationship(userId, subjectId, targetId, 'parent')
 }
 
