@@ -103,10 +103,8 @@ export default function People({
   }
 
   // No form up front — matches "add an event": creates a blank shell immediately and drops
-  // the founder straight onto the new profile. There's no direct name-edit control on
-  // PersonDetail by design (names are set conversationally via the fact bar, same path used to
-  // rename AI-created placeholders like "Clare's mom"), so this placeholder name leans on that
-  // same rename mechanism rather than adding a new one.
+  // the founder straight onto the new profile, where the name pencil and group picker are
+  // right there to fill in.
   async function handleAddPerson() {
     setAdding(true)
     setAddError(null)

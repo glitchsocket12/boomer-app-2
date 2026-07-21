@@ -1,12 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
-import { GroupChip, EventChip, PersonChip } from '../components/Chips'
+import { EventChip, PersonChip } from '../components/Chips'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import PhotoGallery from '../components/PhotoGallery'
 import RefreshButton from '../components/RefreshButton'
 import SearchBox from '../components/SearchBox'
+import SearchAddPicker from '../components/SearchAddPicker'
+import EditButton from '../components/EditButton'
 import RelationshipSuggestionBanners, {
   toStagedNewPersonSuggestions,
   type RelationshipSuggestion,
@@ -62,11 +64,9 @@ function sortKeyFacts(facts: KeyFact[]): KeyFact[] {
 const AFFILIATION_LIMIT = 5
 
 // Placeholder name a manually-created ("+ Add Person") profile starts with — matches
-// "Untitled moment"/"New group" being manual-shell placeholders elsewhere. There's no direct
-// name-edit control on this page by design (§9: names are set conversationally via the fact
-// bar, not form fields — the AI already handles this for chat-created placeholders like
-// "Clare's mom"), so a fresh profile leans on that same rename path. Used to swap in a
-// name-specific nudge instead of the generic one.
+// "Untitled moment"/"New group" being manual-shell placeholders elsewhere. Used to swap in a
+// name-specific nudge instead of the generic one until it's renamed (either via the pencil
+// icon below or conversationally through the fact bar).
 const NEW_PERSON_PLACEHOLDER = 'New person'
 
 // Mirrors the deterministic note phrasings RECIPROCAL_NOTE writes in
@@ -111,8 +111,13 @@ export default function PersonDetail({
 }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [groups, setGroups] = useState<GroupRef[]>([])
+  const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [person, setPerson] = useState<PersonRow | null>(null)
   const [loading, setLoading] = useState(true)
+  const [editingName, setEditingName] = useState(false)
+  const [firstNameInput, setFirstNameInput] = useState('')
+  const [lastNameInput, setLastNameInput] = useState('')
+  const [savingName, setSavingName] = useState(false)
   const [newFact, setNewFact] = useState('')
   const [saving, setSaving] = useState(false)
   const [groupTagMessage, setGroupTagMessage] = useState<string | null>(null)
@@ -135,8 +140,17 @@ export default function PersonDetail({
 
   useEffect(() => {
     setLastNameSuggestion(null)
+    setEditingName(false)
     loadData()
+    loadGroupsList()
   }, [personId])
+
+  // Full group roster for the manual "tag a group" search box below — separate from `groups`
+  // (this person's actual memberships), same split EventDetail.tsx uses for its own group tagger.
+  async function loadGroupsList() {
+    const { data } = await supabase.from('groups').select('id, name').order('name')
+    setAllGroupsList((data as GroupRef[]) ?? [])
+  }
 
   useEffect(() => {
     if (loading || person?.last_name) {
@@ -302,6 +316,40 @@ export default function PersonDetail({
     loadFacts(true)
   }
 
+  async function handleTagGroup(groupId: string) {
+    await supabase
+      .from('person_groups')
+      .upsert({ person_id: personId, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+    await loadData()
+  }
+
+  // "Untagging" is pure detachment from person_groups, not deletion — same non-destructive
+  // reasoning as EventDetail.tsx's handleUntagGroup. The group itself is untouched.
+  async function handleUntagGroup(groupId: string) {
+    await supabase.from('person_groups').delete().eq('person_id', personId).eq('group_id', groupId)
+    await loadData()
+  }
+
+  async function handleSaveName(e: FormEvent) {
+    e.preventDefault()
+    if (!person) return
+    const trimmedFirst = firstNameInput.trim()
+    if (!trimmedFirst) return
+    const trimmedLast = lastNameInput.trim() || null
+    if (trimmedFirst === person.name && trimmedLast === person.last_name) {
+      setEditingName(false)
+      return
+    }
+    setSavingName(true)
+    const { error } = await supabase.from('people').update({ name: trimmedFirst, last_name: trimmedLast }).eq('id', personId)
+    setSavingName(false)
+    if (error) return
+
+    setPerson({ name: trimmedFirst, last_name: trimmedLast })
+    setEditingName(false)
+    onRenamed?.(`${trimmedFirst}${trimmedLast ? ` ${trimmedLast}` : ''}`)
+  }
+
   async function confirmSuggestedGroup() {
     if (!suggestedGroup) return
     const groupName = suggestedGroup
@@ -447,7 +495,6 @@ export default function PersonDetail({
   }
   const allEvents = Array.from(affiliatedEvents.values())
   const shownEvents = allEvents.slice(0, AFFILIATION_LIMIT)
-  const shownGroups = groups.slice(0, AFFILIATION_LIMIT)
 
   const fullName = person ? `${person.name}${person.last_name ? ` ${person.last_name}` : ''}` : personName
   const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => f.category === c.category))
@@ -456,7 +503,44 @@ export default function PersonDetail({
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
-      <h1 style={styles.heading}>{fullName}</h1>
+
+      {editingName ? (
+        <form onSubmit={handleSaveName} style={styles.renameForm}>
+          <input
+            type="text"
+            value={firstNameInput}
+            onChange={(e) => setFirstNameInput(e.target.value)}
+            placeholder="First name"
+            style={styles.renameInput}
+            autoFocus
+          />
+          <input
+            type="text"
+            value={lastNameInput}
+            onChange={(e) => setLastNameInput(e.target.value)}
+            placeholder="Last name"
+            style={styles.renameInput}
+          />
+          <button type="submit" disabled={savingName || !firstNameInput.trim()} style={styles.saveButton}>
+            {savingName ? '…' : 'Save'}
+          </button>
+          <button type="button" onClick={() => setEditingName(false)} style={styles.cancelButton}>
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div style={styles.headingRow}>
+          <h1 style={styles.heading}>{fullName}</h1>
+          <EditButton
+            label="Edit name"
+            onClick={() => {
+              setFirstNameInput(person?.name ?? '')
+              setLastNameInput(person?.last_name ?? '')
+              setEditingName(true)
+            }}
+          />
+        </div>
+      )}
 
       {!loading && (factsLoading || keyFacts.length > 0) && (
         <div style={styles.keyFacts}>
@@ -476,17 +560,32 @@ export default function PersonDetail({
         </div>
       )}
 
-      {!loading && shownGroups.length > 0 && (
+      {!loading && (
         <>
           <h2 style={styles.subheading}>Associated Groups</h2>
-          <div style={styles.chipRow}>
-            {shownGroups.map((g) => (
-              <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-            ))}
-            {groups.length > AFFILIATION_LIMIT && (
-              <span style={styles.moreText}>+{groups.length - AFFILIATION_LIMIT} more</span>
-            )}
-          </div>
+          {groups.length > 0 && (
+            <>
+              <p style={styles.chatHint}>Tap a group for its profile, or hover to untag it from {fullName}.</p>
+              <div style={styles.chipRow}>
+                {groups.map((g) => (
+                  <AffiliatedGroupChip
+                    key={g.id}
+                    group={g}
+                    onSelect={() => onSelectGroup(g)}
+                    onRemove={() => handleUntagGroup(g.id)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+          <SearchAddPicker
+            items={allGroupsList
+              .filter((g) => !groups.some((tagged) => tagged.id === g.id))
+              .map((g) => ({ id: g.id, label: g.name }))}
+            placeholder="Tag this person to a group…"
+            onSelect={(item) => handleTagGroup(item.id)}
+            emptyText="No groups match."
+          />
         </>
       )}
 
@@ -737,6 +836,52 @@ export default function PersonDetail({
   )
 }
 
+const TRASH_ICON = (
+  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+  </svg>
+)
+
+// Clicking goes to the group's profile, same as any other chip. Hovering reveals a trash badge
+// that untags the group from this person — same corner-badge pattern as EventDetail.tsx's
+// AffiliatedGroupChip, reused here for a person's group memberships.
+function AffiliatedGroupChip({
+  group,
+  onSelect,
+  onRemove,
+}: {
+  group: GroupRef
+  onSelect: () => void
+  onRemove: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button onClick={onSelect} style={styles.groupChip}>
+        <span style={styles.groupDot} />
+        {group.name}
+      </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Untag ${group.name} from this person`}
+          style={styles.cornerBadge}
+        >
+          {TRASH_ICON}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // One Key Fact bullet — purely presentational. Editing/deleting the underlying text, and seeing
 // where it came from, now happens on the note itself in the Notes section below (see NoteCard),
 // since a fact can be derived from more than one note and "edit this bullet" was ambiguous there.
@@ -880,7 +1025,79 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '1rem',
     padding: 0,
   },
-  heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '1rem' },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
+  headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem', flexWrap: 'wrap' },
+  renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' },
+  renameInput: {
+    fontSize: '1.5rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E4034',
+    padding: '0.25rem 0.5rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    flex: '1 1 150px',
+  },
+  saveButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
+  cancelButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    backgroundColor: '#FFF',
+    color: '#555',
+    cursor: 'pointer',
+  },
+  chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
+  groupChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.45rem',
+    fontSize: '0.88rem',
+    fontWeight: 700,
+    padding: '0.35rem 0.85rem 0.35rem 0.7rem',
+    borderRadius: '8px',
+    border: '1px solid #B08B2E',
+    backgroundColor: '#FBF3E0',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    letterSpacing: '0.02em',
+  },
+  groupDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    backgroundColor: '#B08B2E',
+    flexShrink: 0,
+  },
+  badgeWrapper: { position: 'relative', display: 'inline-block' },
+  cornerBadge: {
+    position: 'absolute',
+    top: '-8px',
+    right: '-8px',
+    width: '18px',
+    height: '18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    border: '1px solid #B04A3B',
+    backgroundColor: '#FFF',
+    color: '#B04A3B',
+    fontSize: '0.8rem',
+    lineHeight: 1,
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+  },
   keyFacts: {
     display: 'flex',
     flexDirection: 'column',
