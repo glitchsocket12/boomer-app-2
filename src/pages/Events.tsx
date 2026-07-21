@@ -142,37 +142,46 @@ export default function Events({
       )}
 
       <div style={styles.list}>
-        {filteredMoments.map(({ moment, attendees, summary, groups }) => {
+        {filteredMoments.map(({ moment, attendees, summary, groups }, i) => {
+          const year = eventSortDate(moment).getFullYear()
+          const prevYear = i > 0 ? eventSortDate(filteredMoments[i - 1].moment).getFullYear() : null
+          const showYearHeader = year !== prevYear
+
           return (
-            <div key={moment.id} style={styles.card}>
-              <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
-                {moment.occasion || 'Untitled moment'}
-              </button>
-              <p style={styles.meta}>
-                {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
-              </p>
-
-              {attendees.size === 0 ? (
-                <p style={styles.empty}>No one tagged yet.</p>
-              ) : (
-                <div style={styles.chipRow}>
-                  {Array.from(attendees.values()).map((p) => (
-                    <PersonChip
-                      key={p.id}
-                      label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-                      onClick={() => onSelectPerson(p)}
-                    />
-                  ))}
-                </div>
+            <div key={moment.id}>
+              {showYearHeader && (
+                <h2 style={{ ...styles.yearHeading, marginTop: i === 0 ? 0 : '1.75rem' }}>{year}</h2>
               )}
+              <div style={styles.card}>
+                <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
+                  {moment.occasion || 'Untitled moment'}
+                </button>
+                <p style={styles.meta}>
+                  {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
+                </p>
 
-              {groups.length > 0 && (
-                <div style={styles.chipRow}>
-                  {groups.map((g) => (
-                    <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-                  ))}
-                </div>
-              )}
+                {attendees.size === 0 ? (
+                  <p style={styles.empty}>No one tagged yet.</p>
+                ) : (
+                  <div style={styles.chipRow}>
+                    {Array.from(attendees.values()).map((p) => (
+                      <PersonChip
+                        key={p.id}
+                        label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
+                        onClick={() => onSelectPerson(p)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {groups.length > 0 && (
+                  <div style={styles.chipRow}>
+                    {groups.map((g) => (
+                      <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )
         })}
@@ -199,6 +208,13 @@ const styles: { [key: string]: React.CSSProperties } = {
   addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1rem' },
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
+  yearHeading: {
+    fontSize: '1.3rem',
+    color: '#2E4034',
+    margin: '0 0 0.75rem 0',
+    borderBottom: '1px solid #DDD',
+    paddingBottom: '0.4rem',
+  },
   card: {
     backgroundColor: '#FFF',
     borderRadius: '10px',
