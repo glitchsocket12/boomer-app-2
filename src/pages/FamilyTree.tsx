@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { buildFamilyTree, type TreeData, type TreePerson, type TreeBranch } from '../lib/familyTree'
+import { buildFamilyTree, type TreeData, type TreePerson, type TreeBranch, type TreeTier, type Union } from '../lib/familyTree'
 import { linkRelationship, createAndLinkRelationship, type CircleCategory } from '../lib/writeRelationship'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 
@@ -32,19 +32,36 @@ function boxWidth(name: string) {
 
 type Placed = { person: TreePerson; x: number; w: number }
 
+// Lays out one union (a person + their spouses) as a contiguous a -> spouse1 -> spouse2 chain,
+// returning the x position just past the end of it.
+function placeUnion(union: Union, x: number, placed: Placed[]): number {
+  const aw = boxWidth(union.a.name)
+  placed.push({ person: union.a, x, w: aw })
+  x += aw
+  union.spouses.forEach((spouse) => {
+    x += MARRIAGE_GAP
+    const sw = boxWidth(spouse.name)
+    placed.push({ person: spouse, x, w: sw })
+    x += sw
+  })
+  return x
+}
+
 function layoutTier(branches: TreeBranch[]): { placed: Placed[]; totalWidth: number } {
   const placed: Placed[] = []
   let x = 0
   branches.forEach((branch, bi) => {
     if (bi > 0) x += BRANCH_GAP
-    const aw = boxWidth(branch.union.a.name)
-    placed.push({ person: branch.union.a, x, w: aw })
-    x += aw
-    branch.union.spouses.forEach((spouse) => {
-      x += MARRIAGE_GAP
-      const sw = boxWidth(spouse.name)
-      placed.push({ person: spouse, x, w: sw })
-      x += sw
+    branch.leftExtended.forEach((union, ui) => {
+      if (ui > 0) x += SLOT_GAP
+      x = placeUnion(union, x, placed)
+    })
+    if (branch.leftExtended.length > 0) x += SLOT_GAP
+    x = placeUnion(branch.union, x, placed)
+    if (branch.rightExtended.length > 0) x += SLOT_GAP
+    branch.rightExtended.forEach((union, ui) => {
+      if (ui > 0) x += SLOT_GAP
+      x = placeUnion(union, x, placed)
     })
     branch.siblings.forEach((sib) => {
       x += SLOT_GAP
@@ -59,6 +76,26 @@ function layoutTier(branches: TreeBranch[]): { placed: Placed[]; totalWidth: num
 function centerX(placed: Placed[], id: string): number | undefined {
   const p = placed.find((pp) => pp.person.id === id)
   return p ? p.x + p.w / 2 : undefined
+}
+
+// Every union in a tier (a branch's own couple, plus every aunt/uncle's mini-union on either
+// side) — used to resolve which marriage line a child's connector line should drop from.
+function allUnions(tier: TreeTier): Union[] {
+  return tier.branches.flatMap((b) => [b.union, ...b.leftExtended, ...b.rightExtended])
+}
+
+// The x a parent-child connector line should drop from: the midpoint of the marriage line if
+// personId belongs to a union with a spouse (so a couple's kids connect to the wire that joins
+// the couple, not to just one of them), otherwise that person's own box center.
+function anchorX(tier: TreeTier, layout: { placed: Placed[] }, personId: string): number | undefined {
+  for (const union of allUnions(tier)) {
+    const memberIds = [union.a.id, ...union.spouses.map((s) => s.id)]
+    if (!memberIds.includes(personId)) continue
+    const xs = memberIds.map((id) => centerX(layout.placed, id)).filter((v): v is number => v !== undefined)
+    if (xs.length === 0) return undefined
+    return (Math.min(...xs) + Math.max(...xs)) / 2
+  }
+  return centerX(layout.placed, personId)
 }
 
 export default function FamilyTree({
@@ -131,7 +168,15 @@ export default function FamilyTree({
   const height = TIER_Y_START + TIER_Y_STEP * (tiers.length - 1) + BOX_H + 40
   const contentWidth = Math.max(...layouts.map((l) => l.totalWidth), 0)
   const canvasWidth = Math.max(CANVAS_W, contentWidth + 80)
-  const allShownIds = tiers.flatMap((t) => t.branches.flatMap((b) => [b.union.a.id, ...b.union.spouses.map((s) => s.id), ...b.siblings.map((s) => s.id)]))
+  const allShownIds = tiers.flatMap((t) =>
+    t.branches.flatMap((b) => [
+      b.union.a.id,
+      ...b.union.spouses.map((s) => s.id),
+      ...b.leftExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
+      ...b.rightExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
+      ...b.siblings.map((s) => s.id),
+    ])
+  )
 
   const parentsTier = tiers.find((t) => t.label === 'Parents')
   const parentsList = parentsTier ? parentsTier.branches.flatMap((b) => [b.union.a, ...b.union.spouses]) : []
@@ -186,7 +231,7 @@ export default function FamilyTree({
           return (
             <g key={i}>
               {Array.from(groups.entries()).map(([parentId, centers]) => {
-                const sourceX = centerX(layoutAbove.placed, parentId)
+                const sourceX = anchorX(tiers[i], layoutAbove, parentId)
                 if (sourceX === undefined) return null
                 const sx = startAbove + sourceX
                 const barLeft = Math.min(...centers)
@@ -224,18 +269,22 @@ export default function FamilyTree({
             )
           }
 
-          // One line per adjacent pair in the a -> spouse1 -> spouse2 chain, since spouses are
-          // laid out left-to-right in that order — reads as a chain when there's more than one.
+          // One line per adjacent pair in each union's a -> spouse1 -> spouse2 chain (since spouses
+          // are laid out left-to-right in that order — reads as a chain when there's more than
+          // one), for the branch's own couple AND every aunt/uncle mini-union on either side.
           const marriageLines = tier.branches.flatMap((branch) => {
-            const chain = [branch.union.a, ...branch.union.spouses]
-            const lines: { x1: number; x2: number; y: number }[] = []
-            for (let k = 0; k < chain.length - 1; k++) {
-              const leftPlaced = layout.placed.find((p) => p.person === chain[k])
-              const rightPlaced = layout.placed.find((p) => p.person === chain[k + 1])
-              if (!leftPlaced || !rightPlaced) continue
-              lines.push({ x1: startX + leftPlaced.x + leftPlaced.w, x2: startX + rightPlaced.x, y: y + BOX_H / 2 })
-            }
-            return lines
+            const unions = [...branch.leftExtended, branch.union, ...branch.rightExtended]
+            return unions.flatMap((union) => {
+              const chain = [union.a, ...union.spouses]
+              const lines: { x1: number; x2: number; y: number }[] = []
+              for (let k = 0; k < chain.length - 1; k++) {
+                const leftPlaced = layout.placed.find((p) => p.person === chain[k])
+                const rightPlaced = layout.placed.find((p) => p.person === chain[k + 1])
+                if (!leftPlaced || !rightPlaced) continue
+                lines.push({ x1: startX + leftPlaced.x + leftPlaced.w, x2: startX + rightPlaced.x, y: y + BOX_H / 2 })
+              }
+              return lines
+            })
           })
 
           return (
