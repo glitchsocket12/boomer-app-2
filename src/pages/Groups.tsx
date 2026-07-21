@@ -94,6 +94,13 @@ export default function Groups({
       return
     }
 
+    // Every group the founder creates should include them — otherwise a group they made
+    // themselves (e.g. their own family) can end up not showing on their own profile page.
+    const { data: self } = await supabase.from('people').select('id').eq('is_self', true).maybeSingle()
+    if (self) {
+      await supabase.from('person_groups').upsert({ person_id: self.id, group_id: data.id }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+    }
+
     onSelectGroup({ id: data.id, name: data.name })
   }
 
