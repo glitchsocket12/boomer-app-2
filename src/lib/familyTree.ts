@@ -15,7 +15,11 @@ export type Union = { a: TreePerson; spouses: TreePerson[] }
 // keeps its narrower original meaning: only used for the root's own siblings on the root-gen tier.
 export type TreeBranch = { union: Union; leftExtended: Union[]; rightExtended: Union[]; siblings: TreePerson[] }
 export type TreeTier = { label: string; branches: TreeBranch[]; defaultParentId?: string }
-export type TreeData = { rootId: string; rootName: string; tiers: TreeTier[] }
+// The root's own direct relations, flat — lets the UI offer "remove this relationship" without
+// having to reverse-engineer which tree nodes are actually direct edges of the root vs. one hop
+// further out (an aunt/uncle's own parentId, e.g., points at a grandparent, not at the root).
+export type RootDirect = { parents: TreePerson[]; spouses: TreePerson[]; siblings: TreePerson[]; children: TreePerson[] }
+export type TreeData = { rootId: string; rootName: string; tiers: TreeTier[]; rootDirect: RootDirect }
 
 type Graph = {
   nameById: Map<string, string>
@@ -123,6 +127,8 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   // shouldn't silently drop a spouse from the tree.
   const spouseNodes: TreePerson[] = rootSpouses.map((id) => node(g, id, 'direct', undefined))
   const siblingNodes: TreePerson[] = rootSiblings.map((id) => node(g, id, 'direct', rootAnchor))
+  const rootParentNodes: TreePerson[] = rootParents.map((id) => node(g, id, 'direct', primaryParentId(g, id)))
+  const rootChildNodes: TreePerson[] = rootChildren.map((id) => node(g, id, 'direct', rootId))
 
   const jakeBranch: TreeBranch = {
     union: { a: rootNode, spouses: spouseNodes },
@@ -186,8 +192,8 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
 
   // --- Kids tier ---
   const kidsBranches: TreeBranch[] = [
-    ...rootChildren.map((id) => ({
-      union: { a: node(g, id, 'direct', rootId), spouses: [] },
+    ...rootChildNodes.map((childNode) => ({
+      union: { a: childNode, spouses: [] },
       leftExtended: [],
       rightExtended: [],
       siblings: [],
@@ -204,5 +210,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   tiers.push({ label: isSelfRoot ? 'You' : rootName, branches: rootGenBranches, defaultParentId: rootId })
   tiers.push({ label: 'Kids', branches: kidsBranches, defaultParentId: rootId })
 
-  return { rootId, rootName, tiers }
+  const rootDirect: RootDirect = { parents: rootParentNodes, spouses: spouseNodes, siblings: siblingNodes, children: rootChildNodes }
+
+  return { rootId, rootName, tiers, rootDirect }
 }

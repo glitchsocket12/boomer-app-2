@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { upsertRelationship, getRelationshipsForPerson } from './relationshipsTable'
+import { upsertRelationship, removeRelationship, getRelationshipsForPerson } from './relationshipsTable'
 
 // Shared "+" write path for My Page's circle boxes and the family tree — writes through the
 // relationships table (2026-07-20 source of truth) AND the matching reciprocal note on both
@@ -27,6 +27,17 @@ async function writeNoteIfMissing(personId: string, content: string) {
   const { data: existing } = await supabase.from('notes').select('content').eq('person_id', personId)
   const already = (existing ?? []).some((n) => n.content.trim().toLowerCase() === content.trim().toLowerCase())
   if (!already) await supabase.from('notes').insert({ person_id: personId, moment_id: null, content })
+}
+
+// Notes have no column linking them back to the relationship they came from (see
+// 2026-07-20-relationships-table.sql's backfill, which matches the same way) — an exact,
+// case-insensitive match against the same phrasing writeNoteIfMissing wrote is the only way to
+// find "the note this relationship produced" so unlinking can clean it up too, instead of leaving
+// a stale note behind that still claims a relationship that was just removed.
+async function deleteNoteIfPresent(personId: string, content: string) {
+  const { data: existing } = await supabase.from('notes').select('id, content').eq('person_id', personId)
+  const match = (existing ?? []).find((n) => n.content.trim().toLowerCase() === content.trim().toLowerCase())
+  if (match) await supabase.from('notes').delete().eq('id', match.id)
 }
 
 // Siblings share parents. When two people are linked as siblings, copy whichever parent links
@@ -64,6 +75,27 @@ export async function linkRelationship(
     await syncSiblingParents(userId, subjectId, targetId)
   } else if (category === 'parents') await upsertRelationship(userId, targetId, subjectId, 'parent')
   else if (category === 'kids') await upsertRelationship(userId, subjectId, targetId, 'parent')
+}
+
+// Inverse of linkRelationship — removes the relationship row and both reciprocal notes it wrote,
+// so a mis-added relationship (wrong person, wrong kind) can be fully undone and re-added
+// correctly, rather than only ever growing the graph. Doesn't attempt to unwind any downstream
+// effects of the original add (e.g. syncSiblingParents may have already copied a parent onto the
+// other side when the bad sibling link was made) — that's a separate fact; re-adding correctly
+// will re-sync it on its own.
+export async function unlinkRelationship(
+  category: CircleCategory,
+  subjectId: string,
+  subjectName: string,
+  targetId: string,
+  targetName: string
+): Promise<void> {
+  await deleteNoteIfPresent(targetId, NOTE_FOR_TARGET[category](subjectName))
+  await deleteNoteIfPresent(subjectId, NOTE_FOR_SUBJECT[category](targetName))
+  if (category === 'spouse') await removeRelationship(subjectId, targetId, 'spouse')
+  else if (category === 'siblings') await removeRelationship(subjectId, targetId, 'sibling')
+  else if (category === 'parents') await removeRelationship(targetId, subjectId, 'parent')
+  else if (category === 'kids') await removeRelationship(subjectId, targetId, 'parent')
 }
 
 // Creates a brand-new person (first/last split from typed text) and links them as above — used

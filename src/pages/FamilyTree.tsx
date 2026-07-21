@@ -9,8 +9,18 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { buildFamilyTree, type TreeData, type TreePerson, type TreeBranch, type TreeTier, type Union } from '../lib/familyTree'
-import { linkRelationship, createAndLinkRelationship, type CircleCategory } from '../lib/writeRelationship'
+import { linkRelationship, createAndLinkRelationship, unlinkRelationship, type CircleCategory } from '../lib/writeRelationship'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
+
+const TRASH_ICON = (
+  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+  </svg>
+)
 
 const COLORS: Record<TreePerson['kind'], { border: string; fill: string; text: string }> = {
   self: { border: '#6B4E9E', fill: '#F1EDF9', text: '#4A3C7A' },
@@ -98,6 +108,8 @@ function anchorX(tier: TreeTier, layout: { placed: Placed[] }, personId: string)
   return centerX(layout.placed, personId)
 }
 
+type RemoveTarget = { category: CircleCategory; label: string; subjectId: string; subjectName: string; targetId: string; targetName: string }
+
 export default function FamilyTree({
   personId,
   onBack,
@@ -113,6 +125,8 @@ export default function FamilyTree({
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
   const [allPeople, setAllPeople] = useState<{ id: string; label: string }[]>([])
+  const [removeConfirm, setRemoveConfirm] = useState<RemoveTarget | null>(null)
+  const [removing, setRemoving] = useState(false)
 
   useEffect(() => {
     load()
@@ -154,6 +168,27 @@ export default function FamilyTree({
     setData(refreshed)
   }
 
+  // A relationship added in the wrong spot (wrong person, wrong category) needs to be fully
+  // undoable — not just re-addable on top — so a mistake doesn't permanently pollute the graph.
+  // Only offered for the root's own direct relations (parents/spouse/siblings/kids): one hop
+  // further out (grandparents, aunts/uncles, cousins) isn't a relationship OF the centered
+  // person, so re-center onto them first to remove/fix their own direct relations instead.
+  async function confirmRemove() {
+    if (!data || !removeConfirm) return
+    setRemoving(true)
+    await unlinkRelationship(
+      removeConfirm.category,
+      removeConfirm.subjectId,
+      removeConfirm.subjectName,
+      removeConfirm.targetId,
+      removeConfirm.targetName
+    )
+    const refreshed = await buildFamilyTree(data.rootId)
+    setData(refreshed)
+    setRemoving(false)
+    setRemoveConfirm(null)
+  }
+
   if (loading || !data) {
     return (
       <div style={styles.page}>
@@ -192,6 +227,51 @@ export default function FamilyTree({
     { key: 'spouse', label: 'Spouse', category: 'spouse', subjectId: data.rootId, subjectName: data.rootName },
     { key: 'sibling', label: 'Sibling', category: 'siblings', subjectId: data.rootId, subjectName: data.rootName },
     { key: 'child', label: 'Child', category: 'kids', subjectId: data.rootId, subjectName: data.rootName },
+  ]
+
+  // Only the root's own direct relations are offered for removal — see confirmRemove's comment
+  // for why one hop further out isn't included here.
+  const removeSlots: (RemoveTarget & { key: string; relLabel: string })[] = [
+    ...data.rootDirect.parents.map((p) => ({
+      key: `rm-parent-${p.id}`,
+      relLabel: 'parent',
+      category: 'parents' as CircleCategory,
+      subjectId: data.rootId,
+      subjectName: data.rootName,
+      targetId: p.id,
+      targetName: p.name,
+      label: `Remove ${p.name} as ${data.rootName}'s parent?`,
+    })),
+    ...data.rootDirect.spouses.map((p) => ({
+      key: `rm-spouse-${p.id}`,
+      relLabel: 'spouse',
+      category: 'spouse' as CircleCategory,
+      subjectId: data.rootId,
+      subjectName: data.rootName,
+      targetId: p.id,
+      targetName: p.name,
+      label: `Remove ${p.name} as ${data.rootName}'s spouse?`,
+    })),
+    ...data.rootDirect.siblings.map((p) => ({
+      key: `rm-sibling-${p.id}`,
+      relLabel: 'sibling',
+      category: 'siblings' as CircleCategory,
+      subjectId: data.rootId,
+      subjectName: data.rootName,
+      targetId: p.id,
+      targetName: p.name,
+      label: `Remove ${p.name} as ${data.rootName}'s sibling?`,
+    })),
+    ...data.rootDirect.children.map((p) => ({
+      key: `rm-child-${p.id}`,
+      relLabel: 'child',
+      category: 'kids' as CircleCategory,
+      subjectId: data.rootId,
+      subjectName: data.rootName,
+      targetId: p.id,
+      targetName: p.name,
+      label: `Remove ${p.name} as ${data.rootName}'s child?`,
+    })),
   ]
 
   return (
@@ -330,10 +410,60 @@ export default function FamilyTree({
         ))}
       </div>
 
+      {removeSlots.length > 0 && (
+        <div style={styles.removeSection}>
+          <span style={styles.addLabel}>Remove a relationship:</span>
+          <div style={styles.addRow}>
+            {removeSlots.map((slot) => (
+              <RemoveChip key={slot.key} name={slot.targetName} relLabel={slot.relLabel} onRemove={() => setRemoveConfirm(slot)} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {removeConfirm && (
+        <div style={styles.suggestBanner}>
+          <span>{removeConfirm.label} This can be re-added afterward if it was added in the wrong spot.</span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={confirmRemove} style={styles.dangerDeleteButton} disabled={removing}>
+              {removing ? 'Removing…' : 'Yes, remove'}
+            </button>
+            <button type="button" onClick={() => setRemoveConfirm(null)} style={styles.suggestNoButton} disabled={removing}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <p style={styles.legend}>
         Solid border = direct relationship on file. Gray = one hop further out (a parent's sibling, or
         their kids). Tap any name to re-center the tree on them.
       </p>
+    </div>
+  )
+}
+
+// Same hover-reveals-a-trash-badge pattern as PersonDetail.tsx's AffiliatedGroupChip — click just
+// opens the confirm banner below, doesn't remove directly, since this is destructive.
+function RemoveChip({ name, relLabel, onRemove }: { name: string; relLabel: string; onRemove: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <span style={styles.removeChip}>
+        {name} <span style={styles.removeChipRel}>({relLabel})</span>
+      </span>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Remove ${name} as a ${relLabel}`}
+          style={styles.cornerBadge}
+        >
+          {TRASH_ICON}
+        </button>
+      )}
     </div>
   )
 }
@@ -357,5 +487,69 @@ const styles: { [key: string]: React.CSSProperties } = {
   addRow: { display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '1.25rem', alignItems: 'flex-start' },
   addItem: { display: 'flex', alignItems: 'center', gap: '0.4rem' },
   addLabel: { fontSize: '0.8rem', color: '#999' },
+  removeSection: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '1.25rem' },
+  badgeWrapper: { position: 'relative', display: 'inline-block' },
+  removeChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.25rem',
+    fontSize: '0.85rem',
+    color: '#2E4034',
+    backgroundColor: '#F4F6F3',
+    border: '1px solid #DDE3D8',
+    borderRadius: '999px',
+    padding: '0.3rem 0.7rem',
+  },
+  removeChipRel: { color: '#999', fontSize: '0.78rem' },
+  cornerBadge: {
+    position: 'absolute',
+    top: '-8px',
+    right: '-8px',
+    width: '18px',
+    height: '18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    border: '1px solid #B04A3B',
+    backgroundColor: '#FFF',
+    color: '#B04A3B',
+    fontSize: '0.8rem',
+    lineHeight: 1,
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+  },
+  suggestBanner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.6rem',
+    fontSize: '0.9rem',
+    color: '#5A4A20',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #E6D6AC',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+    marginTop: '1rem',
+  },
+  suggestButtonRow: { display: 'flex', gap: '0.5rem' },
+  suggestNoButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: '1px solid #CCC',
+    backgroundColor: '#FFF',
+    color: '#555',
+    cursor: 'pointer',
+  },
+  dangerDeleteButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: 'none',
+    backgroundColor: '#B04A3B',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
   legend: { fontSize: '0.78rem', color: '#999', marginTop: '1rem', lineHeight: 1.5 },
 }

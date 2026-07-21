@@ -26,6 +26,18 @@ export async function upsertRelationship(
     )
 }
 
+// Inverse of upsertRelationship — same normalization, so a mis-added edge (wrong kind, wrong
+// direction) can be cleanly removed rather than left to rot as bad data once someone notices.
+export async function removeRelationship(
+  aId: string | undefined | null,
+  bId: string | undefined | null,
+  kind: RelationshipKind
+): Promise<void> {
+  if (!aId || !bId || aId === bId) return
+  const [personA, personB] = kind === 'parent' ? [aId, bId] : aId < bId ? [aId, bId] : [bId, aId]
+  await supabase.from('relationships').delete().eq('person_a_id', personA).eq('person_b_id', personB).eq('kind', kind)
+}
+
 export type PersonRelationships = {
   spouseIds: string[]
   partnerIds: string[]
