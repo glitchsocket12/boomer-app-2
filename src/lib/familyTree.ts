@@ -7,7 +7,13 @@ import { supabase } from './supabase'
 
 export type TreePersonKind = 'self' | 'direct' | 'extended'
 export type TreePerson = { id: string; name: string; kind: TreePersonKind; parentId?: string }
-export type TreeBranch = { union: { a: TreePerson; spouses: TreePerson[] }; siblings: TreePerson[] }
+export type Union = { a: TreePerson; spouses: TreePerson[] }
+// leftExtended/rightExtended hold a person's own siblings (aunts/uncles), each as their own
+// mini-union (the sibling + their spouse, if any) — kept on the same side as the parent they
+// belong to (union.a's siblings on the left, the trailing spouse's siblings on the right) so the
+// tree fans outward like a normal family tree instead of pooling everyone on one side. `siblings`
+// keeps its narrower original meaning: only used for the root's own siblings on the root-gen tier.
+export type TreeBranch = { union: Union; leftExtended: Union[]; rightExtended: Union[]; siblings: TreePerson[] }
 export type TreeTier = { label: string; branches: TreeBranch[]; defaultParentId?: string }
 export type TreeData = { rootId: string; rootName: string; tiers: TreeTier[] }
 
@@ -88,9 +94,16 @@ function groupIntoBranches(
       seen.add(sid)
       return node(g, sid, kind, parentIdFn(sid))
     })
-    branches.push({ union: { a, spouses }, siblings: [] })
+    branches.push({ union: { a, spouses }, leftExtended: [], rightExtended: [], siblings: [] })
   }
   return branches
+}
+
+// A spouse/partner who isn't a blood relative of the root never gets a parentId, so the
+// parent-child connector code can never draw a false ancestor line through them — they only ever
+// show up via the marriage line next to their spouse.
+function inLawSpouses(g: Graph, personId: string, kind: TreePersonKind): TreePerson[] {
+  return (g.spousesOf.get(personId) ?? []).map((sid) => node(g, sid, kind, undefined))
 }
 
 export async function buildFamilyTree(rootId: string): Promise<TreeData> {
@@ -111,27 +124,56 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   const spouseNodes: TreePerson[] = rootSpouses.map((id) => node(g, id, 'direct', undefined))
   const siblingNodes: TreePerson[] = rootSiblings.map((id) => node(g, id, 'direct', rootAnchor))
 
-  const rootGenBranches: TreeBranch[] = [{ union: { a: rootNode, spouses: spouseNodes }, siblings: siblingNodes }]
+  const jakeBranch: TreeBranch = {
+    union: { a: rootNode, spouses: spouseNodes },
+    leftExtended: [],
+    rightExtended: [],
+    siblings: siblingNodes,
+  }
 
-  // --- Parents tier: root's own parents, grouped into couples, with their siblings
-  // (aunts/uncles) riding along in the same branch, and those siblings' kids (cousins) slotted
-  // into the root's generation tier as their own extended branches.
+  // --- Parents tier: root's own parents, grouped into couples. Each parent's own siblings
+  // (aunts/uncles) — with their spouses, if any — go on THAT parent's side (union.a's siblings
+  // to the left, the trailing spouse's siblings to the right), so the tree fans outward like a
+  // normal family-tree diagram instead of pooling everyone on one side. Those siblings' kids
+  // (cousins) — with their own spouses and kids, if any — are slotted into the root's own
+  // generation tier and the Kids tier respectively, on the matching side.
   const parentBranches = groupIntoBranches(g, rootParents, 'direct', (id) => primaryParentId(g, id))
+  const leftCousinBranches: TreeBranch[] = []
+  const rightCousinBranches: TreeBranch[] = []
+  const extraKidsBranches: TreeBranch[] = []
   for (const branch of parentBranches) {
     const branchIds = [branch.union.a.id, ...branch.union.spouses.map((s) => s.id)]
-    for (const parentId of branchIds) {
+    branchIds.forEach((parentId, idx) => {
+      const isLeftSide = idx === 0
+      const extendedSide = isLeftSide ? branch.leftExtended : branch.rightExtended
+      const cousinSide = isLeftSide ? leftCousinBranches : rightCousinBranches
       const parentAnchor = primaryParentId(g, parentId)
       const auntsUncles = (g.siblingsOf.get(parentId) ?? []).filter((id) => !branchIds.includes(id))
       for (const auId of auntsUncles) {
-        if (branch.siblings.some((s) => s.id === auId)) continue
-        branch.siblings.push(node(g, auId, 'extended', parentAnchor))
+        if (extendedSide.some((u) => u.a.id === auId)) continue
+        extendedSide.push({ a: node(g, auId, 'extended', parentAnchor), spouses: inLawSpouses(g, auId, 'extended') })
         for (const cousinId of g.childrenOf.get(auId) ?? []) {
-          if (rootGenBranches.some((b) => b.union.a.id === cousinId)) continue
-          rootGenBranches.push({ union: { a: node(g, cousinId, 'extended', auId), spouses: [] }, siblings: [] })
+          if (cousinSide.some((b) => b.union.a.id === cousinId)) continue
+          cousinSide.push({
+            union: { a: node(g, cousinId, 'extended', auId), spouses: inLawSpouses(g, cousinId, 'extended') },
+            leftExtended: [],
+            rightExtended: [],
+            siblings: [],
+          })
+          for (const kidId of g.childrenOf.get(cousinId) ?? []) {
+            extraKidsBranches.push({
+              union: { a: node(g, kidId, 'extended', cousinId), spouses: [] },
+              leftExtended: [],
+              rightExtended: [],
+              siblings: [],
+            })
+          }
         }
       }
-    }
+    })
   }
+
+  const rootGenBranches: TreeBranch[] = [...leftCousinBranches, jakeBranch, ...rightCousinBranches]
 
   // --- Grandparents tier: each parent's own parents, grouped the same way ---
   const grandparentIds: string[] = []
@@ -143,10 +185,15 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   const grandparentBranches = groupIntoBranches(g, grandparentIds, 'extended', () => undefined)
 
   // --- Kids tier ---
-  const kidsBranches: TreeBranch[] = rootChildren.map((id) => ({
-    union: { a: node(g, id, 'direct', rootId), spouses: [] },
-    siblings: [],
-  }))
+  const kidsBranches: TreeBranch[] = [
+    ...rootChildren.map((id) => ({
+      union: { a: node(g, id, 'direct', rootId), spouses: [] },
+      leftExtended: [],
+      rightExtended: [],
+      siblings: [],
+    })),
+    ...extraKidsBranches,
+  ]
 
   // Parents/Kids tiers always render (even at zero) so there's always a "+" to add the first one —
   // same as Kids always did. Grandparents only renders once there's at least one parent to anchor
