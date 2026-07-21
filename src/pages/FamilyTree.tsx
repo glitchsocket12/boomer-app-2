@@ -129,6 +129,8 @@ export default function FamilyTree({
   const { tiers } = data
   const layouts = tiers.map((tier) => layoutTier(tier.branches))
   const height = TIER_Y_START + TIER_Y_STEP * (tiers.length - 1) + BOX_H + 40
+  const contentWidth = Math.max(...layouts.map((l) => l.totalWidth), 0)
+  const canvasWidth = Math.max(CANVAS_W, contentWidth + 80)
   const allShownIds = tiers.flatMap((t) => t.branches.flatMap((b) => [b.union.a.id, ...b.union.spouses.map((s) => s.id), ...b.siblings.map((s) => s.id)]))
 
   const parentsTier = tiers.find((t) => t.label === 'Parents')
@@ -153,7 +155,8 @@ export default function FamilyTree({
 
       <p style={styles.contextLine}>Family tree — centered on {data.rootName}</p>
 
-      <svg width="100%" viewBox={`0 0 ${CANVAS_W} ${height}`} style={styles.svg}>
+      <div style={styles.svgScroll}>
+      <svg width={canvasWidth} height={height} viewBox={`0 0 ${canvasWidth} ${height}`} style={styles.svg}>
         {tiers.map((tier, i) => {
           const y = TIER_Y_START + TIER_Y_STEP * i
           return (
@@ -169,8 +172,8 @@ export default function FamilyTree({
           const barY = yAbove + BOX_H + 46
           const layoutAbove = layouts[i]
           const layoutBelow = layouts[i + 1]
-          const startAbove = (CANVAS_W - layoutAbove.totalWidth) / 2
-          const startBelow = (CANVAS_W - layoutBelow.totalWidth) / 2
+          const startAbove = (canvasWidth - layoutAbove.totalWidth) / 2
+          const startBelow = (canvasWidth - layoutBelow.totalWidth) / 2
 
           const groups = new Map<string, number[]>()
           layoutBelow.placed.forEach((p) => {
@@ -205,12 +208,12 @@ export default function FamilyTree({
         {tiers.map((tier, i) => {
           const y = TIER_Y_START + TIER_Y_STEP * i
           const layout = layouts[i]
-          const startX = (CANVAS_W - layout.totalWidth) / 2
+          const startX = (canvasWidth - layout.totalWidth) / 2
 
           if (tier.branches.length === 0) {
             const emptyLabel = tier.label === 'Kids' ? 'Add child' : tier.label === 'Grandparents' ? 'Add grandparent' : 'Add parent'
             const w = boxWidth(emptyLabel)
-            const x = CANVAS_W / 2 - w / 2
+            const x = canvasWidth / 2 - w / 2
             return (
               <g key={tier.label + i}>
                 <rect x={x} y={y} width={w} height={BOX_H} rx={6} fill="none" stroke="#BBB" strokeWidth={1} strokeDasharray="4 3" />
@@ -262,6 +265,7 @@ export default function FamilyTree({
           )
         })}
       </svg>
+      </div>
 
       <div style={styles.addRow}>
         {addSlots.map((slot) => (
@@ -299,6 +303,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '1rem',
   },
   contextLine: { fontSize: '0.85rem', color: '#888', marginBottom: '1rem' },
+  svgScroll: { overflowX: 'auto', margin: '0 -1.5rem', padding: '0 1.5rem' },
   svg: { display: 'block' },
   addRow: { display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '1.25rem', alignItems: 'flex-start' },
   addItem: { display: 'flex', alignItems: 'center', gap: '0.4rem' },
