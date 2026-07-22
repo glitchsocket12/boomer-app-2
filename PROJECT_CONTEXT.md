@@ -39,6 +39,17 @@ src/
 │   ├── familyTree.ts          — buildFamilyTree(personId): walks the relationships table
 │   │                            (one full-table fetch, then in-memory graph walk) into the
 │   │                            tiers/branches FamilyTree.tsx renders
+│   ├── resetOnboarding.ts     — (2026-07-22) `resetOnboardingData()`: wipes all people/moments/
+│   │                            groups (+ dependents) for the current account and clears the
+│   │                            `onboarding_complete` flag, so Onboarding.tsx can be re-tested
+│   │                            from scratch without a new signup each time. Gated by an exact
+│   │                            email constant (`ONBOARDING_RESET_TEST_EMAIL`) checked again in
+│   │                            components/DevOnboardingReset.tsx before the control even
+│   │                            renders — currently `jake.volin+onboardtest@gmail.com`, a
+│   │                            disposable signup created solely for this. Deliberately NOT
+│   │                            `jakevolin@gmail.com` — that account has 413 real people/706
+│   │                            notes, confirmed live 2026-07-22, so it's unsuitable as a wipe
+│   │                            target despite being the usual browser-verification login.
 │   └── ensureSelfFromSignup.ts — (2026-07-22) turns sign-up's auth user_metadata
 │                                (first_name/last_name/birthday) into a real self `people`
 │                                row + Birthday `reminders` row, so a new signup skips
@@ -347,7 +358,11 @@ src/
 │   │                            (blue) — shared visual language everywhere
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)
 │   ├── Breadcrumb.tsx         — trail for App.tsx's navStack
-│   └── RelationshipSuggestions.tsx — shared suggestion-banner UI (all 4 surfaces)
+│   ├── RelationshipSuggestions.tsx — shared suggestion-banner UI (all 4 surfaces)
+│   └── DevOnboardingReset.tsx — (2026-07-22) "Testing tools" link on Home, renders null unless
+│                                signed in as the onboarding test account (see lib/
+│                                resetOnboarding.ts); expands to a type-RESET-to-confirm panel,
+│                                then reloads straight into Onboarding.tsx
 ```
 
 `App.tsx` is the traffic controller: auth state, first-run onboarding gate (`onboardingPending`/`checkOnboarding()` — see Onboarding.tsx above), tab nav (Home/People/Events/Groups), a generic `navStack: Crumb[]` breadcrumb stack any page can push person/group/event crumbs onto, persisted to sessionStorage (`boomer-nav`) so refresh stays put. Voice input + AutoGrowTextarea are on every conversational text box (Home, event chat, group chat, fact bar).

@@ -10,6 +10,7 @@ import RelationshipSuggestionBanners, {
   type RelationshipSuggestion,
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
+import DevOnboardingReset from '../components/DevOnboardingReset'
 
 type PersonRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
@@ -266,6 +267,8 @@ export default function Home({
               </div>
             </div>
           )}
+
+          <DevOnboardingReset />
 
           <p style={styles.emptyState}>Ask about anyone or any moment, or just tell me what's on your mind.</p>
           {suggestionsLoading && (
