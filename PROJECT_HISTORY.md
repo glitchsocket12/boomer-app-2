@@ -794,4 +794,22 @@ Frontend: `Circle.tsx` (real "My page," replacing `CircleMock.tsx`) — onboardi
 
 ---
 
+## 17. Family tree bug scan (2026-07-20, wire-connection follow-up 2026-07-21)
+
+**The audit.** Founder-requested audit of `familyTree.ts`/`FamilyTree.tsx` turned up and fixed five bugs: Parents/Grandparents tiers now always render with an add option (previously vanished entirely at zero, unlike Kids — no way to add a first parent from the tree); tree "+" can now add a spouse (previously only ever added a sibling); a person can now show more than one spouse/partner on the tree (previously only the first was shown, others silently dropped); "add grandparent" now offers one option per parent by name instead of silently always attaching to whichever parent was listed first (closes backlog item 32c); the `relationships` query is now ordered by `created_at` so which parent/spouse a tree branch anchors on is stable across reloads instead of depending on unspecified DB row order. Verified end-to-end against the real `jakevolin@gmail.com` account (Jake Volin's tree — Amy/Steve Volin as parents, Lisa/David Bach as Amy's side, Noah Bach as cousin) including adding a disposable second spouse to confirm multi-spouse rendering, then deleted the test person.
+
+**Follow-up fix, same day: canvas clipping.** The SVG canvas was a fixed 680px width, so wide trees (many siblings/spouses) overflowed the viewBox and got clipped instead of shown. Canvas now sizes to actual content width and scrolls horizontally in its own strip instead of clipping.
+
+**Follow-up fix, 2026-07-21: wire connections.** Founder-reported, spotted on his own live tree (Amy/Steve Volin as parents). Parent-child connector lines now drop from the marriage-line midpoint of a couple instead of just one parent's box (was: Jake+Josh only visually connected to whichever parent was `primaryParentId`). Aunts/uncles now fetch and render their own spouse (was: hardcoded out entirely, so a married-in aunt/uncle never showed or connected) with no blood-anchor of their own, so they only ever show via the marriage line, never a false ancestor line. Cousins now do the same (fetch + render their own spouse) and their own kids are now included (anchored to the cousin), closing the "cousin's spouse and cousin's kids are invisible" gap. Aunts/uncles and cousins now render on the correct side of their parent (left for `union.a`'s side, right for the trailing spouse's side) instead of all pooling to one side — this both matches a normal family-tree layout and, as a side effect, fixes a geometry bug where the sibling-group bar visually crossed through the other spouse's box. See `src/lib/familyTree.ts`/`src/pages/FamilyTree.tsx`.
+
+## 18. Undo a mis-added family tree relationship (2026-07-21)
+
+**The report.** Barbara Bach's tree showed Bill as her father and Lisa as her sister, when the real facts are Bill=husband, Lisa=daughter — bad data with no way to fix it except direct DB surgery.
+
+**The fix.** Added `removeRelationship` (`src/lib/relationshipsTable.ts`) and `unlinkRelationship` (`src/lib/writeRelationship.ts`, deletes the relationship row + both reciprocal notes the original add wrote) plus a "Remove a relationship" section on the family tree page (`FamilyTree.tsx`) — hover-reveals-a-trash-icon chip (same pattern as `PersonDetail.tsx`'s `AffiliatedGroupChip`) + confirm banner (same pattern as its delete-profile flow), scoped to the centered person's own direct relations (parent/spouse/sibling/child — one hop further out isn't a relationship *of* them, re-center onto that person first). Doesn't unwind `syncSiblingParents` side effects from the original bad add; re-adding correctly re-syncs on its own.
+
+**Verification gap.** Verified with `npm run build` + a synthetic-data harness (deleted before commit) only — no live credentials in that session to fix Barbara/Bill/Lisa's actual data or confirm end-to-end. See PROJECT_CONTEXT.md §10 for current status of the real fix.
+
+---
+
 _End of document. Update this file as the project progresses — it's meant to be the single source of truth for anyone (human or AI) picking this project up._
