@@ -32,7 +32,12 @@ const CANVAS_W = 680
 const BOX_H = 44
 const MARRIAGE_GAP = 16
 const SLOT_GAP = 24
-const BRANCH_GAP = 44
+// Wider than a plain visual gap needs to be: the parent-child connector bar for each branch now
+// stretches to reach its own anchor (the marriage-line midpoint one tier up), which can extend a
+// bar well past its own children — e.g. a cousin group's bar reaching toward its aunt/uncle's own
+// position. Without enough room between branches, two unrelated bars at the same row can end up
+// looking like one continuous line even though they don't actually share a point.
+const BRANCH_GAP = 80
 const TIER_Y_STEP = 120
 const TIER_Y_START = 40
 
