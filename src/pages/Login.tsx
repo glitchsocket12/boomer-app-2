@@ -1,10 +1,16 @@
 import { useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 
-export default function Login() {
+export default function Login({
+  initialSignUp = false,
+  onBack,
+}: {
+  initialSignUp?: boolean
+  onBack?: () => void
+}) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [isSignUp, setIsSignUp] = useState(false)
+  const [isSignUp, setIsSignUp] = useState(initialSignUp)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -33,6 +39,11 @@ export default function Login() {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
+        {onBack && (
+          <button onClick={onBack} style={styles.backLink}>
+            ← Back
+          </button>
+        )}
         <h1 style={styles.title}>Boomer</h1>
         <p style={styles.subtitle}>Stay close to the people who matter.</p>
 
@@ -91,6 +102,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     boxShadow: '0 2px 12px rgba(0,0,0,0.08)',
     width: '100%',
     maxWidth: '420px',
+  },
+  backLink: {
+    background: 'none',
+    border: 'none',
+    color: '#5A5A5A',
+    fontSize: '0.95rem',
+    cursor: 'pointer',
+    padding: 0,
+    marginBottom: '1.25rem',
+    fontFamily: 'Georgia, serif',
   },
   title: { fontSize: '2.25rem', marginBottom: '0.25rem', color: '#2E4034' },
   subtitle: { fontSize: '1.1rem', color: '#5A5A5A', marginBottom: '2rem' },

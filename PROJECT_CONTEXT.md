@@ -60,11 +60,24 @@ src/
 │   │                            "150 — Dunbar's number" stat callout + a forgetting-curve
 │   │                            citation as data-backed emphasis in place of pitch prose.
 │   │                            Nav "Boomer" wordmark is now a button that smooth-scrolls
-│   │                            to page top; added a pill "Log in" button at nav's far
-│   │                            right (scrolls to the Get Started form, which already
-│   │                            defaults to log-in mode — no state wiring needed).
-│   ├── Login.tsx              — combined sign up / log in; still its own component,
-│   │                            now rendered inside Landing.tsx rather than standalone
+│   │                            to page top.
+│   │                            Pass 3 same day (founder: embedded login form at the
+│   │                            bottom still felt awkward, wanted a real standalone login
+│   │                            page back like pre-Landing): Get Started section no
+│   │                            longer embeds Login.tsx inline — it's two tiles ("New
+│   │                            here? Sign up" / "Already have an account? Log in") plus
+│   │                            the nav's "Log in" button (now a button, not an anchor),
+│   │                            all three calling `onAuthClick(mode)` up to App.tsx. Which
+│   │                            mode opens which screen lives in App.tsx's `authView`
+│   │                            state (`'landing' | 'login' | 'signup'`), not Landing.tsx
+│   │                            itself — Landing only fires the callback.
+│   ├── Login.tsx              — combined sign up / log in. Takes `initialSignUp` (which
+│   │                            tile/button was clicked sets the starting mode) and
+│   │                            `onBack` (rendered as a "← Back" link, returns to
+│   │                            Landing) props, both optional/undefined-safe so existing
+│   │                            callers don't break. Rendered full-page by App.tsx once
+│   │                            `authView !== 'landing'` — a real standalone page again,
+│   │                            not embedded in Landing's scroll flow.
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an

@@ -1,5 +1,3 @@
-import Login from './Login'
-
 const NAV_ITEMS: { id: string; label: string }[] = [
   { id: 'what-is-boomer', label: 'What is Boomer?' },
   { id: 'not-social-media', label: 'Not another social network' },
@@ -29,7 +27,7 @@ function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-export default function Landing() {
+export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' | 'signup') => void }) {
   return (
     <div style={styles.page}>
       <nav style={styles.nav}>
@@ -43,9 +41,9 @@ export default function Landing() {
             </a>
           ))}
         </div>
-        <a href="#get-started" style={styles.loginButton}>
+        <button onClick={() => onAuthClick('login')} style={styles.loginButton}>
           Log in
-        </a>
+        </button>
       </nav>
 
       <section style={{ ...styles.section, ...styles.hero }}>
@@ -141,8 +139,15 @@ export default function Landing() {
         <p style={styles.body}>
           About a minute, no credit card — just start telling Boomer about your people.
         </p>
-        <div style={styles.loginWrap}>
-          <Login />
+        <div style={styles.tileRow}>
+          <button onClick={() => onAuthClick('signup')} style={styles.tile}>
+            <span style={styles.tileEyebrow}>New here?</span>
+            <span style={styles.tileAction}>Sign up</span>
+          </button>
+          <button onClick={() => onAuthClick('login')} style={styles.tile}>
+            <span style={styles.tileEyebrow}>Already have an account?</span>
+            <span style={styles.tileAction}>Log in</span>
+          </button>
         </div>
       </section>
     </div>
@@ -188,12 +193,14 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   loginButton: {
     color: '#2E4034',
-    textDecoration: 'none',
+    backgroundColor: 'transparent',
     fontSize: '0.95rem',
     fontWeight: 700,
     padding: '0.4rem 1rem',
     borderRadius: '999px',
     border: '1px solid #2E4034',
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
   },
   section: {
     padding: '3.5rem 1.5rem',
@@ -306,9 +313,33 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 0.5rem',
     borderBottom: '1px solid rgba(46,64,52,0.15)',
   },
-  loginWrap: {
+  tileRow: {
     display: 'flex',
     justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: '1.25rem',
     marginTop: '2rem',
+  },
+  tile: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '0.5rem',
+    backgroundColor: '#F7F5F2',
+    border: '1px solid rgba(46,64,52,0.2)',
+    borderRadius: '12px',
+    padding: '2rem 2.5rem',
+    minWidth: '200px',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  tileEyebrow: {
+    fontSize: '0.9rem',
+    color: '#5A5A5A',
+  },
+  tileAction: {
+    fontSize: '1.35rem',
+    fontWeight: 700,
+    color: '#2E4034',
   },
 }

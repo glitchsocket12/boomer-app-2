@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
+import Login from './pages/Login'
 import Home from './pages/Home'
 import People from './pages/People'
 import Events from './pages/Events'
@@ -56,6 +57,7 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
 export default function App() {
   const [session, setSession] = useState<any>(null)
   const [checkingSession, setCheckingSession] = useState(true)
+  const [authView, setAuthView] = useState<'landing' | 'login' | 'signup'>('landing')
   const [view, setView] = useState<Tab>(() => restoreNav().view)
   const [navStack, setNavStack] = useState<Crumb[]>(() => restoreNav().navStack)
 
@@ -109,7 +111,10 @@ export default function App() {
   }
 
   if (!session) {
-    return <Landing />
+    if (authView === 'landing') {
+      return <Landing onAuthClick={(mode) => setAuthView(mode)} />
+    }
+    return <Login initialSignUp={authView === 'signup'} onBack={() => setAuthView('landing')} />
   }
 
   const current = navStack[navStack.length - 1] ?? null
