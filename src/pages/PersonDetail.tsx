@@ -388,13 +388,19 @@ export default function PersonDetail({
   async function handleDeleteProfile() {
     setActionBusy(true)
     setActionError(null)
-    const [notesRes, remindersRes, groupsRes, peopleRes] = await Promise.all([
+    const results = await Promise.all([
       supabase.from('notes').delete().eq('person_id', personId),
       supabase.from('reminders').delete().eq('person_id', personId),
       supabase.from('person_groups').delete().eq('person_id', personId),
-      supabase.from('people').delete().eq('id', personId),
     ])
-    const error = notesRes.error || remindersRes.error || groupsRes.error || peopleRes.error
+    const dependentsError = results.find((r) => r.error)?.error
+    if (dependentsError) {
+      setActionError('Something went wrong deleting this profile — please try again.')
+      setActionBusy(false)
+      return
+    }
+
+    const { error } = await supabase.from('people').delete().eq('id', personId)
     if (error) {
       setActionError('Something went wrong deleting this profile — please try again.')
       setActionBusy(false)

@@ -223,12 +223,18 @@ export default function EventDetail({
   async function handleDeleteEvent() {
     setActionBusy(true)
     setActionError(null)
-    const [notesRes, groupsRes, momentRes] = await Promise.all([
+    const results = await Promise.all([
       supabase.from('notes').delete().eq('moment_id', eventId),
       supabase.from('moment_groups').delete().eq('moment_id', eventId),
-      supabase.from('moments').delete().eq('id', eventId),
     ])
-    const error = notesRes.error || groupsRes.error || momentRes.error
+    const dependentsError = results.find((r) => r.error)?.error
+    if (dependentsError) {
+      setActionError('Something went wrong deleting this event — please try again.')
+      setActionBusy(false)
+      return
+    }
+
+    const { error } = await supabase.from('moments').delete().eq('id', eventId)
     if (error) {
       setActionError('Something went wrong deleting this event — please try again.')
       setActionBusy(false)
