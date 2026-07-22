@@ -126,7 +126,10 @@ src/
 │                                 people (deleted after). Grandparents tier also pulls in
 │                                 parents' siblings (aunts/uncles, riding in the same
 │                                 branch) and their kids (cousins, shown as extended in
-│                                 the root's own tier). "+" writes a real relationship
+│                                 the root's own tier). Kids tier and cousins' kids both pair in-law
+│                                 spouses via inLawSpouses() (fixed 2026-07-21 — previously
+│                                 hardcoded spouses: [], unlike Parents/Grandparents/root-gen
+│                                 tiers). "+" writes a real relationship
 │                                 fact (relationships table row + both-sides reciprocal
 │                                 note) and reloads the tree from the server. Known gap
 │                                 carried over from the mock: "+" always targets a

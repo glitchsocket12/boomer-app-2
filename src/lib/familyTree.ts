@@ -168,7 +168,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
           })
           for (const kidId of g.childrenOf.get(cousinId) ?? []) {
             extraKidsBranches.push({
-              union: { a: node(g, kidId, 'extended', cousinId), spouses: [] },
+              union: { a: node(g, kidId, 'extended', cousinId), spouses: inLawSpouses(g, kidId, 'extended') },
               leftExtended: [],
               rightExtended: [],
               siblings: [],
@@ -193,7 +193,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   // --- Kids tier ---
   const kidsBranches: TreeBranch[] = [
     ...rootChildNodes.map((childNode) => ({
-      union: { a: childNode, spouses: [] },
+      union: { a: childNode, spouses: inLawSpouses(g, childNode.id, 'direct') },
       leftExtended: [],
       rightExtended: [],
       siblings: [],
