@@ -77,7 +77,23 @@ src/
 │   │                            Landing) props, both optional/undefined-safe so existing
 │   │                            callers don't break. Rendered full-page by App.tsx once
 │   │                            `authView !== 'landing'` — a real standalone page again,
-│   │                            not embedded in Landing's scroll flow.
+│   │                            not embedded in Landing's scroll flow. Sign-up mode
+│   │                            (2026-07-22) collects First/Last name, Birthday, Email,
+│   │                            Password, Confirm password (log-in mode still just
+│   │                            Email/Password). Age-gated at 13+ (industry-standard/
+│   │                            COPPA threshold): the birthday `<input type="date">`'s
+│   │                            `max` attribute blocks the native picker from selecting
+│   │                            an under-13 date at all; `calculateAge()` re-checks on
+│   │                            submit as a fallback (blocks with a message, never calls
+│   │                            `supabase.auth.signUp`). Password/confirm mismatch is
+│   │                            also blocked pre-submit with its own message. First/last
+│   │                            name + birthday are passed as `options.data` on
+│   │                            `signUp()` — land in the Supabase auth user's metadata
+│   │                            only. **Not yet wired to the `people` table or the
+│   │                            existing self-profile onboarding in Circle.tsx** — a
+│   │                            newly signed-up user still goes through that separate
+│   │                            "flag or create yourself" flow with no pre-fill. Worth
+│   │                            connecting later (flagged, not built — see §8).
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
@@ -412,7 +428,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 
-**Small known follow-ups:** align `person-facts`' category vocabulary with the shared 5-kind enum; nicknames stated via `update-moment`/`person-facts` paths aren't written (only lookup); Edge Function test coverage (needs Anthropic/Supabase mocks); no retroactive group backfill for pre-2026-07-15 moments.
+**Small known follow-ups:** align `person-facts`' category vocabulary with the shared 5-kind enum; nicknames stated via `update-moment`/`person-facts` paths aren't written (only lookup); Edge Function test coverage (needs Anthropic/Supabase mocks); no retroactive group backfill for pre-2026-07-15 moments; sign-up's First/Last name + Birthday (2026-07-22) land in Supabase auth metadata only, not pre-filled into a `people` row via Circle.tsx's self-onboarding — a new user still has to do that flow manually with no head start.
 
 ## 9. Product & UX decisions (the standing "why")
 

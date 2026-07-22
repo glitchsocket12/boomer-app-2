@@ -1,6 +1,25 @@
 import { useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 
+const MIN_SIGNUP_AGE = 13
+
+function maxBirthdayForMinAge(minAge: number) {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() - minAge)
+  return d.toISOString().split('T')[0]
+}
+
+function calculateAge(birthdayISO: string) {
+  const birthDate = new Date(birthdayISO)
+  const today = new Date()
+  let age = today.getFullYear() - birthDate.getFullYear()
+  const monthDiff = today.getMonth() - birthDate.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--
+  }
+  return age
+}
+
 export default function Login({
   initialSignUp = false,
   onBack,
@@ -8,19 +27,46 @@ export default function Login({
   initialSignUp?: boolean
   onBack?: () => void
 }) {
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [birthday, setBirthday] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [isSignUp, setIsSignUp] = useState(initialSignUp)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
+  function toggleMode() {
+    setIsSignUp(!isSignUp)
+    setMessage('')
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    setLoading(true)
     setMessage('')
 
     if (isSignUp) {
-      const { error } = await supabase.auth.signUp({ email, password })
+      if (password !== confirmPassword) {
+        setMessage('Passwords do not match.')
+        return
+      }
+      if (calculateAge(birthday) < MIN_SIGNUP_AGE) {
+        setMessage(`You must be at least ${MIN_SIGNUP_AGE} years old to use Boomer.`)
+        return
+      }
+    }
+
+    setLoading(true)
+
+    if (isSignUp) {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { first_name: firstName, last_name: lastName, birthday },
+        },
+      })
       if (error) {
         setMessage(error.message)
       } else {
@@ -48,6 +94,45 @@ export default function Login({
         <p style={styles.subtitle}>Stay close to the people who matter.</p>
 
         <form onSubmit={handleSubmit} style={styles.form}>
+          {isSignUp && (
+            <>
+              <label style={styles.label}>
+                First name
+                <input
+                  type="text"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  required
+                  style={styles.input}
+                />
+              </label>
+
+              <label style={styles.label}>
+                Last name
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  required
+                  style={styles.input}
+                />
+              </label>
+
+              <label style={styles.label}>
+                Birthday
+                <input
+                  type="date"
+                  value={birthday}
+                  onChange={(e) => setBirthday(e.target.value)}
+                  required
+                  max={maxBirthdayForMinAge(MIN_SIGNUP_AGE)}
+                  min="1900-01-01"
+                  style={styles.input}
+                />
+              </label>
+            </>
+          )}
+
           <label style={styles.label}>
             Email
             <input
@@ -71,6 +156,20 @@ export default function Login({
             />
           </label>
 
+          {isSignUp && (
+            <label style={styles.label}>
+              Confirm password
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                minLength={6}
+                style={styles.input}
+              />
+            </label>
+          )}
+
           <button type="submit" disabled={loading} style={styles.button}>
             {loading ? 'Please wait…' : isSignUp ? 'Create account' : 'Log in'}
           </button>
@@ -78,7 +177,7 @@ export default function Login({
 
         {message && <p style={styles.message}>{message}</p>}
 
-        <button onClick={() => setIsSignUp(!isSignUp)} style={styles.linkButton}>
+        <button onClick={toggleMode} style={styles.linkButton}>
           {isSignUp ? 'Already have an account? Log in' : "New here? Create an account"}
         </button>
       </div>
