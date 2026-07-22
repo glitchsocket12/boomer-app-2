@@ -25,11 +25,17 @@ function Mark({ yes }: { yes: boolean }) {
   )
 }
 
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
 export default function Landing() {
   return (
     <div style={styles.page}>
       <nav style={styles.nav}>
-        <span style={styles.navBrand}>Boomer</span>
+        <button onClick={scrollToTop} style={styles.navBrand}>
+          Boomer
+        </button>
         <div style={styles.navLinks}>
           {NAV_ITEMS.map((item) => (
             <a key={item.id} href={`#${item.id}`} style={styles.navLink}>
@@ -37,6 +43,9 @@ export default function Landing() {
             </a>
           ))}
         </div>
+        <a href="#get-started" style={styles.loginButton}>
+          Log in
+        </a>
       </nav>
 
       <section style={{ ...styles.section, ...styles.hero }}>
@@ -50,27 +59,23 @@ export default function Landing() {
       </section>
 
       <section id="what-is-boomer" style={styles.section}>
-        <h2 style={styles.sectionTitle}>What is Boomer?</h2>
         <p style={styles.body}>
-          Think about the car ride home from a dinner party — when you and your spouse recap
-          who you talked to, what you learned, who seemed different, who's expecting a baby.
-          That's basically what Boomer is for, just built into an app.
-        </p>
-        <p style={styles.body}>
-          Talk to Boomer the way you'd talk to your spouse on that ride home — who you saw,
-          what's new with them, that story they told you. Boomer quietly keeps track. Next
-          time you're about to see them, pull up their page and you'll remember everything
-          that matters, instantly.
+          Think about the car ride home from a dinner party — recapping with your spouse who
+          you saw, what you learned, who's expecting a baby. That's Boomer, built into an
+          app. Talk to it the way you'd talk on that ride home, and next time you see
+          someone, you'll walk in remembering everything that matters.
         </p>
       </section>
 
       <section id="not-social-media" style={{ ...styles.section, ...styles.altBg }}>
-        <h2 style={styles.sectionTitle}>Built for you, not for engagement</h2>
-        <p style={styles.body}>
-          No feed to scroll, no followers to chase, no audience — by design. No public
-          profile, nobody to perform for. It's a private map of the people you care about,
-          built to give something back instead of extracting your time.
-        </p>
+        <div style={styles.statCallout}>
+          <span style={styles.statNumber}>150</span>
+          <p style={styles.statCaption}>
+            the number of stable relationships psychologists say the human brain can track
+            at once — Dunbar's number. Most of us know a lot more people than that.
+          </p>
+        </div>
+        <p style={styles.body}>No feed, no followers, no audience — by design.</p>
 
         <div style={styles.tableWrap}>
           <table style={styles.table}>
@@ -99,58 +104,42 @@ export default function Landing() {
       </section>
 
       <section id="how-it-works" style={styles.section}>
-        <h2 style={styles.sectionTitle}>How it works</h2>
         <ul style={styles.featureList}>
           <li style={styles.featureItem}>
-            <strong>Talk naturally, or just hit record.</strong> Tell Boomer what's going on
-            the way you'd tell a friend, typed or spoken (voice transcription built in). It's
-            AI-powered — it figures out who's who without a single form to fill out.
+            <strong>Talk, or just hit record.</strong> No forms — Boomer's AI sorts out
+            who's who.
           </li>
           <li style={styles.featureItem}>
             <strong>See how everyone connects.</strong> A real family tree, plus groups for
-            friend circles, teams, and work.
+            friends, teams, and work.
           </li>
           <li style={styles.featureItem}>
-            <strong>Boomer doesn't replace your memory — it backs it up.</strong> You're
-            already someone who cares enough to remember. Boomer just makes sure a busy week
-            or a bad night's sleep never gets in the way of showing up the way you actually
-            want to.
-          </li>
-          <li style={styles.featureItem}>
-            <strong>Never lose a memory.</strong> Every person, moment, and group you've ever
-            mentioned lives in one private, permanent place.
+            <strong>Backs up your memory — doesn't replace it.</strong> Psychologists have
+            shown most new information fades within days unless we revisit it (the
+            "forgetting curve"). Boomer does the revisiting for you.
           </li>
         </ul>
       </section>
 
       <section id="who-its-for" style={{ ...styles.section, ...styles.altBg }}>
-        <h2 style={styles.sectionTitle}>Who it's for</h2>
         <p style={styles.body}>
-          For anyone who cares about the people in their life and doesn't want to lean on
-          memory alone. People with a big extended family to keep straight. People who see
-          friends a few times a year and want to walk in remembering everything. Anyone who's
-          ever frozen mid-conversation trying to recall a name, a kid's name, or how two
-          people are related. Boomer is for showing up a little more present, a little more
-          thoughtful, the next time it counts.
+          For people who care enough to want to remember — big extended families, friends
+          you see twice a year, anyone who's frozen mid-conversation trying to recall a name
+          or how two people are related.
         </p>
       </section>
 
       <section id="privacy" style={styles.section}>
-        <h2 style={styles.sectionTitle}>Just yours</h2>
         <p style={styles.body}>
-          Boomer is not for sale, and neither is your data. There's no public profile, no
-          feed, no algorithm — nobody but you can see what you write here. Your notes are
-          stored securely (encrypted in transit and at rest). Boomer's AI reads what you
-          write in order to organize it for you — that's how it turns a fragment into a fact
-          — but it's never used for ads, never sold, and never shown to anyone else.
+          Nobody but you can see what's here — no public profile, no feed, no ads. Boomer's
+          AI reads your notes only to organize them; everything is encrypted in transit and
+          at rest, and never sold.
         </p>
       </section>
 
       <section id="get-started" style={{ ...styles.section, ...styles.altBg }}>
-        <h2 style={styles.sectionTitle}>Get started</h2>
         <p style={styles.body}>
-          It takes about a minute. No credit card, nothing to fill out — just start telling
-          Boomer about your people.
+          About a minute, no credit card — just start telling Boomer about your people.
         </p>
         <div style={styles.loginWrap}>
           <Login />
@@ -180,13 +169,31 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#F7F5F2',
     borderBottom: '1px solid rgba(46,64,52,0.15)',
   },
-  navBrand: { fontSize: '1.4rem', fontWeight: 700, color: '#2E4034' },
+  navBrand: {
+    fontSize: '1.4rem',
+    fontWeight: 700,
+    color: '#2E4034',
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
+  },
   navLinks: { display: 'flex', flexWrap: 'wrap', gap: '1rem' },
   navLink: {
     color: '#2E4034',
     textDecoration: 'none',
     fontSize: '0.95rem',
     borderBottom: '1px solid transparent',
+  },
+  loginButton: {
+    color: '#2E4034',
+    textDecoration: 'none',
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    padding: '0.4rem 1rem',
+    borderRadius: '999px',
+    border: '1px solid #2E4034',
   },
   section: {
     padding: '3.5rem 1.5rem',
@@ -221,15 +228,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#FFFFFF',
     textDecoration: 'none',
   },
-  sectionTitle: {
-    fontSize: '1.85rem',
-    color: '#2E4034',
-    marginBottom: '1.25rem',
-    maxWidth: '760px',
-    marginLeft: 'auto',
-    marginRight: 'auto',
-    padding: '0 1.5rem',
-  },
   body: {
     fontSize: '1.1rem',
     lineHeight: 1.6,
@@ -239,6 +237,28 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginLeft: 'auto',
     marginRight: 'auto',
     padding: '0 1.5rem',
+  },
+  statCallout: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1.5rem',
+    maxWidth: '760px',
+    margin: '0 auto 1.5rem',
+    padding: '0 1.5rem',
+    flexWrap: 'wrap',
+  },
+  statNumber: {
+    fontSize: '4rem',
+    fontWeight: 700,
+    color: '#2E4034',
+    lineHeight: 1,
+  },
+  statCaption: {
+    fontSize: '1rem',
+    lineHeight: 1.5,
+    color: '#5A5A5A',
+    maxWidth: '480px',
+    margin: 0,
   },
   featureList: {
     listStyle: 'none',
