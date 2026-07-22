@@ -110,6 +110,51 @@ src/
 │   │                            directly rather than `new Date(...)` — the latter parses
 │   │                            as UTC midnight and can misjudge the 13-cutoff by a year
 │   │                            in timezones west of UTC.
+│   ├── Onboarding.tsx         — (2026-07-22) standalone first-run "experience": full-screen,
+│   │                            no tab bar/breadcrumb, shown once instead of Home for a
+│   │                            brand-new account. App.tsx gates on it via `onboardingPending`
+│   │                            state (`checkOnboarding()`): shown only when the session's
+│   │                            auth `user_metadata.onboarding_complete` flag is unset AND
+│   │                            the account has zero non-self people yet (the second check
+│   │                            is what keeps every pre-2026-07-22 account, which has no
+│   │                            metadata flag at all, from suddenly being routed into
+│   │                            onboarding). Sequenced by the gameplan's "juice for the
+│   │                            squeeze" ranking, not alphabetically: Stage 1 (Welcome)
+│   │                            just confirms the name `ensureSelfFromSignup.ts` already
+│   │                            wrote (falls back to an inline "what's your name?" form if
+│   │                            no self person exists yet — covers pre-existing accounts
+│   │                            and the rare metadata-write race) plus a brief People/
+│   │                            Events/Groups/Notes orientation; Stage 2 embeds
+│   │                            `FamilyTree.tsx` AS-IS (no changes to that file) centered on
+│   │                            self, framed to encourage going as far out as possible
+│   │                            (grandparents, cousins, in-laws — no depth cap, item 42);
+│   │                            Stage 3 offers turning everyone just added into a Family
+│   │                            group (reuses item 41's existing Family-group/tree pairing,
+│   │                            seeded from `buildFamilyTree()`'s own output rather than
+│   │                            re-asking); Stage 4 is a closed-ended group picker (the
+│   │                            existing `GROUP_TYPES` list minus Family) walked through one
+│   │                            type at a time — name it, list members (comma/newline-
+│   │                            separated, matched against existing people case-
+│   │                            insensitively or created new, mirroring
+│   │                            `writeRelationship.ts`'s create-new logic but for plain
+│   │                            group membership); final handoff regenerates
+│   │                            `suggest-prompts` live (`{refresh:true}`) before dropping
+│   │                            into real Home. Every stage has a "Skip" escape hatch, which
+│   │                            (like finishing normally) sets the `onboarding_complete`
+│   │                            auth metadata flag via `supabase.auth.updateUser()` so it
+│   │                            never shows again. Known gap, not a bug: `suggest-prompts`
+│   │                            only generates personalized suggestions when at least one
+│   │                            `moments` row exists (see its own source) — onboarding only
+│   │                            creates people/relationships/group membership, no moments,
+│   │                            so the Stage 4 "live payoff" regenerate call is real but
+│   │                            still falls back to the generic 3 ice-breakers until the
+│   │                            user logs an actual moment. Verified live end-to-end
+│   │                            (signup → self-confirm → tree with a spouse add → Family
+│   │                            group offer → two more groups, one saved with members, one
+│   │                            skipped → handoff → real Home showing the right counts) with
+│   │                            a disposable test account (`onboarding.verify.test@
+│   │                            example.com` — not yet deleted, needs founder cleanup via
+│   │                            the Supabase dashboard, no admin access from this session).
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
@@ -302,7 +347,7 @@ src/
 │   └── RelationshipSuggestions.tsx — shared suggestion-banner UI (all 4 surfaces)
 ```
 
-`App.tsx` is the traffic controller: auth state, tab nav (Home/People/Events/Groups), a generic `navStack: Crumb[]` breadcrumb stack any page can push person/group/event crumbs onto, persisted to sessionStorage (`boomer-nav`) so refresh stays put. Voice input + AutoGrowTextarea are on every conversational text box (Home, event chat, group chat, fact bar).
+`App.tsx` is the traffic controller: auth state, first-run onboarding gate (`onboardingPending`/`checkOnboarding()` — see Onboarding.tsx above), tab nav (Home/People/Events/Groups), a generic `navStack: Crumb[]` breadcrumb stack any page can push person/group/event crumbs onto, persisted to sessionStorage (`boomer-nav`) so refresh stays put. Voice input + AutoGrowTextarea are on every conversational text box (Home, event chat, group chat, fact bar).
 
 ## 4. Edge Functions (`supabase/functions/`)
 
@@ -441,6 +486,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 42. ~~Family tree generation cap~~ — **DONE 2026-07-21.** Founder-reported: Harvey/Roberta's great-grandchild (Wesley Gregorian) had no section — both tree modes were hardcoded to a fixed generation window (ego mode: 2 up/1 down; descendants mode: 5 labels). Both now walk however far the relationships data actually goes in each direction (capped at 25 generations only as a cycle guard) — see §7 FamilyTree.tsx entry for the mechanism. Matters for the founder's stated use case: people using this to keep track of real family lineage, potentially recording many generations back. Verified live: Harvey Volin's tree now shows a "Great-Grandchildren" section containing Wesley Gregorian; The Volins group tree unaffected in shape, still renders correctly.
 43. ~~Family tree color coding~~ — **DONE 2026-07-21.** Founder-requested: make relationships easier to read at a glance — who's centered on whom, and which side grandparents/aunts-uncles/cousins are on. See §7 FamilyTree.tsx entry for the mechanism. Deferred (founder's own call, flagged to revisit — see item 44): a gender icon per person, not bundled into this pass. Verified live against Jake Volin's tree (purple moves correctly when re-centered on a non-self person like Amy Volin; blue/rose sides span from Great-Grandparents down through cousins' kids) and The Berzins' group meta-tree (single green color, no purple, clicking any member correctly opens their own purple-centered ego tree).
 44. **Gender icon on family tree tiles** — raised by founder 2026-07-21 alongside item 43, deliberately deferred (founder's call, revisit with them whether this was the right sequencing). Needs a new nullable `gender` column on `people` (Male/Female/Non-Binary/Other, always manually editable on a profile) plus a one-time hybrid auto-fill: a static first-name→gender lookup (not a live AI call — no per-view cost) sets it automatically only when confidence is ≥90%, otherwise leaves it unset for the founder to confirm. Independent of the `side`/`TreePerson` machinery item 43 shipped — the icon would render per-person on every tile (ego or group meta-tree alike), unrelated to root/purple/side logic.
+45. ~~Standalone first-run onboarding experience~~ — **DONE 2026-07-22.** Full gameplan discussed and iterated with the founder before building (plan file: `gameplan-the-onboarding-experience-lexical-parrot.md`, not checked into the repo). Built on top of the founder's own same-day signup expansion (items above: name/birthday at signup, auto-created self profile). See §3 Onboarding.tsx entry for the full mechanism — full-screen, no app chrome, sequenced by connective leverage (family tree first, then a closed-ended group picker, notes/events deliberately excluded). Verified live end-to-end with a disposable test account; that test account (`onboarding.verify.test@example.com`) still needs founder cleanup via the Supabase dashboard.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 
@@ -484,6 +530,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - ~~Relationships table + `is_self` migration + 5 Edge Function redeploy (item 32, 2026-07-20)~~ — **applied and deployed live 2026-07-20** via the Management API + `npx supabase functions deploy` with a founder-provided token (`add-fact`/`converse`/`update-group`/`update-moment`/`person-facts`, 3 of the 5 needed a retry after a transient Cloudflare 502). Backfill landed 75 relationship rows from existing notes. Click-tested end-to-end (My Page onboarding/circle/`+`, family tree render + re-center + `+`) against the real `jakevolin@gmail.com` account with disposable test data, cleaned up after — see PROJECT_HISTORY §15 for the full verification story, including a self-inflicted name-collision near-miss that was fully cleaned up.
 - ~~Self missing from groups created before the 2026-07-20 auto-add-self fix~~ — **backfilled 2026-07-20**: one-off script (authenticated as the real `jakevolin@gmail.com` account, RLS-respecting) added the self person to all 22 pre-existing groups that were missing them (only "Volin Family" already had self as a member). Cached group summaries were deliberately NOT invalidated by this backfill, to avoid a 22-call regeneration cost spike (CLAUDE.md rule 3) — a summary will just read as slightly stale until it's naturally refreshed.
 - Email confirmation must be re-enabled (with a proper redirect URL) before real users.
+- **Founder cleanup needed: disposable test account `onboarding.verify.test@example.com`** — created 2026-07-22 to verify the new onboarding experience end-to-end (signup → tree → groups → Home). Fully isolated by RLS from real data, but this session has no Supabase auth-admin access to delete it — needs removing via the dashboard.
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.
 

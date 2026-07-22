@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import { ensureSelfPersonFromSignupMetadata } from './lib/ensureSelfFromSignup'
+import Onboarding from './pages/Onboarding'
 import Home from './pages/Home'
 import People from './pages/People'
 import Events from './pages/Events'
@@ -59,6 +60,12 @@ export default function App() {
   const [session, setSession] = useState<any>(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const [authView, setAuthView] = useState<'landing' | 'login' | 'signup'>('landing')
+  // null = still checking, true = show the standalone onboarding experience instead of the app
+  // shell. Gated on two signals together: the account hasn't already finished/skipped onboarding
+  // (auth user_metadata, set by Onboarding.tsx on completion) AND it doesn't already have real
+  // data (people beyond the self profile) — the second check keeps every pre-existing account
+  // (no metadata flag at all) from suddenly being routed into onboarding.
+  const [onboardingPending, setOnboardingPending] = useState<boolean | null>(null)
   const [view, setView] = useState<Tab>(() => restoreNav().view)
   const [navStack, setNavStack] = useState<Crumb[]>(() => restoreNav().navStack)
 
@@ -70,6 +77,7 @@ export default function App() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setCheckingSession(false)
+      checkOnboarding(session)
     })
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -77,10 +85,24 @@ export default function App() {
       if (event === 'SIGNED_IN' && session?.user) {
         ensureSelfPersonFromSignupMetadata(session.user.id, session.user.user_metadata ?? {})
       }
+      checkOnboarding(session)
     })
 
     return () => listener.subscription.unsubscribe()
   }, [])
+
+  async function checkOnboarding(session: any) {
+    if (!session?.user) {
+      setOnboardingPending(false)
+      return
+    }
+    if (session.user.user_metadata?.onboarding_complete) {
+      setOnboardingPending(false)
+      return
+    }
+    const { count } = await supabase.from('people').select('id', { count: 'exact', head: true }).eq('is_self', false)
+    setOnboardingPending((count ?? 0) === 0)
+  }
 
   function goToTab(tab: Tab) {
     setView(tab)
@@ -119,6 +141,13 @@ export default function App() {
       return <Landing onAuthClick={(mode) => setAuthView(mode)} />
     }
     return <Login initialSignUp={authView === 'signup'} onBack={() => setAuthView('landing')} />
+  }
+
+  if (onboardingPending === null) {
+    return <p style={{ textAlign: 'center', marginTop: '4rem' }}>Loading…</p>
+  }
+  if (onboardingPending) {
+    return <Onboarding onComplete={() => setOnboardingPending(false)} />
   }
 
   const current = navStack[navStack.length - 1] ?? null
