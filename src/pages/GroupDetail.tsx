@@ -4,6 +4,7 @@ import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { GROUP_TYPES } from '../lib/groupTypes'
+import { pickFamilyTreeRoot } from '../lib/familyTree'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import { PersonChip, GroupChip } from '../components/Chips'
@@ -48,6 +49,7 @@ export default function GroupDetail({
   onBack,
   backLabel,
   onRenamed,
+  onOpenFamilyTree,
 }: {
   groupId: string
   groupName: string
@@ -57,6 +59,7 @@ export default function GroupDetail({
   onBack: () => void
   backLabel: string
   onRenamed?: (newName: string) => void
+  onOpenFamilyTree: (personId: string, label: string) => void
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [explicitMembers, setExplicitMembers] = useState<PersonRef[]>([])
@@ -87,6 +90,7 @@ export default function GroupDetail({
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [buildingTree, setBuildingTree] = useState(false)
 
   useEffect(() => {
     loadMoments()
@@ -180,6 +184,16 @@ export default function GroupDetail({
     const { error } = await supabase.from('groups').update({ group_type: newType }).eq('id', groupId)
     setSavingType(false)
     if (!error) setGroupType(newType)
+  }
+
+  // Roots the tree on whichever explicit member's tree window (2 generations up, 1 down —
+  // see pickFamilyTreeRoot) covers the most of this group's other members, so opening it from a
+  // Family-typed group lands on a sensible view of the whole family rather than an arbitrary person.
+  async function handleGenerateFamilyTree() {
+    setBuildingTree(true)
+    const rootId = await pickFamilyTreeRoot(explicitMembers.map((p) => p.id))
+    setBuildingTree(false)
+    if (rootId) onOpenFamilyTree(rootId, `${name} family tree`)
   }
 
   // Candidate associated groups sourced from members: any OTHER group this group's own explicit
@@ -547,6 +561,17 @@ export default function GroupDetail({
           </option>
         ))}
       </select>
+
+      {groupType === 'Family' && (
+        <button
+          type="button"
+          onClick={handleGenerateFamilyTree}
+          disabled={buildingTree || explicitMembers.length === 0}
+          style={styles.familyTreeButton}
+        >
+          {buildingTree ? 'Building…' : explicitMembers.length === 0 ? 'Add members to generate a family tree' : 'Generate this family’s tree →'}
+        </button>
+      )}
 
       <div style={styles.summaryRow}>
         <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
@@ -1128,6 +1153,18 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#FFF',
     color: '#666',
     marginBottom: '0.75rem',
+  },
+  familyTreeButton: {
+    display: 'block',
+    fontSize: '0.9rem',
+    padding: '0.55rem 0.9rem',
+    borderRadius: '8px',
+    border: '2px solid #6B4E9E',
+    backgroundColor: 'transparent',
+    color: '#6B4E9E',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    marginBottom: '1.25rem',
   },
   summaryRow: { display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '1.5rem' },
   summary: { margin: 0, flex: 1, fontSize: '1rem', color: '#666', fontStyle: 'italic' },

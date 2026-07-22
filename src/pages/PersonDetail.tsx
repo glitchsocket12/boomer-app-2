@@ -98,6 +98,7 @@ export default function PersonDetail({
   onSelectEvent,
   onMerged,
   onRenamed,
+  onOpenFamilyTree,
 }: {
   personId: string
   personName: string
@@ -108,6 +109,7 @@ export default function PersonDetail({
   onSelectEvent: (event: { id: string; summary: string }) => void
   onMerged: (person: { id: string; name: string }) => void
   onRenamed?: (newName: string) => void
+  onOpenFamilyTree: (personId: string, label: string) => void
 }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [groups, setGroups] = useState<GroupRef[]>([])
@@ -546,6 +548,16 @@ export default function PersonDetail({
             }}
           />
         </div>
+      )}
+
+      {!loading && (
+        <button
+          type="button"
+          style={styles.treeLink}
+          onClick={() => onOpenFamilyTree(personId, `${fullName}'s family tree`)}
+        >
+          View family tree →
+        </button>
       )}
 
       {!loading && (factsLoading || keyFacts.length > 0) && (
@@ -1033,6 +1045,18 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
   headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem', flexWrap: 'wrap' },
+  treeLink: {
+    display: 'block',
+    background: 'none',
+    border: 'none',
+    color: '#6B4E9E',
+    fontSize: '0.9rem',
+    cursor: 'pointer',
+    padding: 0,
+    marginBottom: '1.25rem',
+    fontFamily: 'Georgia, serif',
+    textDecoration: 'underline',
+  },
   renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' },
   renameInput: {
     fontSize: '1.5rem',
