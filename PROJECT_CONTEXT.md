@@ -111,8 +111,18 @@ src/
 │   │                             one (lands on its PersonDetail to name it). Reached
 │   │                             via "My page" in the top bar
 │   └── FamilyTree.tsx          — real family tree (item 32/15, REPLACED
-│                                 FamilyTreeMock.tsx 2026-07-20): SAME validated layout/
-│                                 reflow algorithm (branches: `{union:{a,b?}, siblings}`,
+│                                 FamilyTreeMock.tsx 2026-07-20). Layout engine rewritten
+│                                 2026-07-21 (item 37): root-gen ("You") and Kids tiers lay
+│                                 out naturally and center independently on the canvas, same
+│                                 as before; Parents/Grandparents tiers instead center each
+│                                 union on the midpoint of its own children's span one tier
+│                                 below (a childless aunt/uncle falls back to sitting next to
+│                                 its nearest resolved neighbor), then a collision pass pushes
+│                                 overlapping units apart symmetrically to a minimum
+│                                 clearance — ancestors positioned relative to descendants,
+│                                 not the reverse, replacing the old "layout independently,
+│                                 stretch a connector to bridge the gap" approach. Underlying
+│                                 data model unchanged (branches: `{union:{a,b?}, siblings}`,
 │                                 each PERSON carries their own `parentId` so a couple's
 │                                 two partners can trace to two different branches above
 │                                 — paternal vs maternal grandparents both shown), now
@@ -278,7 +288,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
 34. **Filterable "View" by event category on the Events page** — requested 2026-07-19. Founder's concern: as event volume grows, big events (weddings) get buried among day-to-day notes (a phone call), so a picklist of categories to narrow the list is needed. Categories would come from a learning/growing list derived from events actually added, not a fixed hardcoded set. Pairs with item 28 (manual + AI-suggested tags on events) — likely the same schema change powers both the tags and this filter view.
 35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later.
-37. ~~Family tree bug scan~~ — **DONE 2026-07-20**, wire-connection follow-up **2026-07-21**. Fixed 5 rendering/data bugs (missing add-parent options, tree "+" couldn't add a spouse, only first spouse shown, wrong-parent grandparent add, unstable branch ordering) plus canvas-clipping and aunt/uncle/cousin wire-connection follow-ups. Verified live against the real account. Full story: PROJECT_HISTORY §17.
+37. ~~Family tree bug scan~~ — **DONE 2026-07-20**, wire-connection follow-up **2026-07-21**, layout engine rewrite **2026-07-21**. Fixed 5 rendering/data bugs (missing add-parent options, tree "+" couldn't add a spouse, only first spouse shown, wrong-parent grandparent add, unstable branch ordering) plus canvas-clipping and aunt/uncle/cousin wire-connection follow-ups. The wire-connection patches treated symptoms of a root design flaw (each tier laid out independently, then stretched to connect) — rewrote `layoutTier`/rendering in `FamilyTree.tsx` so Parents/Grandparents tiers instead center on the midpoint of their own children's span in the tier below, with a collision pass to de-overlap. Root-gen/Kids tiers unchanged. Verified via `npm run build` + synthetic-data harness (multiple centered people, incl. a childless aunt/uncle edge case) — not yet confirmed against live data.
 
 38. ~~Undo a mis-added family tree relationship~~ — **DONE 2026-07-21.** Added `removeRelationship`/`unlinkRelationship` + a "Remove a relationship" control on the family tree page, scoped to the centered person's direct relations. Verified via `npm run build` + synthetic-data harness only — not yet confirmed against live data (see §10). Full story: PROJECT_HISTORY §18.
 

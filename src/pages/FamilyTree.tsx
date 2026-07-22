@@ -108,6 +108,107 @@ function anchorX(tier: TreeTier, layout: { placed: Placed[] }, personId: string)
   return centerX(layout.placed, personId)
 }
 
+// Every union in a tier as a flat left-to-right list (leftExtended..., the branch's own union,
+// rightExtended...), tagged with which branch it belongs to — the structural order collision
+// resolution walks, and the boundary along which BRANCH_GAP (vs. the narrower SLOT_GAP) applies.
+function tierUnits(branches: TreeBranch[]): { union: Union; branchIndex: number }[] {
+  const units: { union: Union; branchIndex: number }[] = []
+  branches.forEach((branch, bi) => {
+    branch.leftExtended.forEach((u) => units.push({ union: u, branchIndex: bi }))
+    units.push({ union: branch.union, branchIndex: bi })
+    branch.rightExtended.forEach((u) => units.push({ union: u, branchIndex: bi }))
+  })
+  return units
+}
+
+function unionNaturalWidth(union: Union): number {
+  return union.spouses.reduce((w, s) => w + MARRIAGE_GAP + boxWidth(s.name), boxWidth(union.a.name))
+}
+
+function unionMemberIds(union: Union): string[] {
+  return [union.a.id, ...union.spouses.map((s) => s.id)]
+}
+
+// The x a union should be centered on: the midpoint of the span of its own children's centers in
+// the tier below (already placed, in absolute coordinates) — the inverse of anchorX's "midpoint
+// of a union's members," used to position an ancestor tier relative to its descendants instead of
+// the reverse.
+function childrenSpanCenter(union: Union, childPlaced: Placed[]): number | undefined {
+  const memberIds = unionMemberIds(union)
+  const centers = childPlaced
+    .filter((p) => p.person.parentId !== undefined && memberIds.includes(p.person.parentId))
+    .map((p) => p.x + p.w / 2)
+  if (centers.length === 0) return undefined
+  return (Math.min(...centers) + Math.max(...centers)) / 2
+}
+
+// Lays out an ancestor tier (Parents, Grandparents) relative to its own descendants instead of
+// independently: each unit (a branch's own couple, or an aunt/uncle's mini-union) centers on the
+// midpoint of its own children's span in childPlaced (an already-placed, absolute-coordinate tier
+// one generation below). A unit with no children on file (e.g. a childless aunt/uncle) falls back
+// to sitting next to its nearest resolved neighbor. A left-to-right collision pass then pushes any
+// units whose natural widths would overlap apart symmetrically to a minimum clearance — since each
+// push moves both sides by an equal, opposite amount, the tier's overall center of mass never
+// drifts away from where its children actually anchor it.
+function layoutAncestorTier(branches: TreeBranch[], childPlaced: Placed[]): { placed: Placed[]; totalWidth: number } {
+  const units = tierUnits(branches)
+  if (units.length === 0) return { placed: [], totalWidth: 0 }
+
+  const widths = units.map((u) => unionNaturalWidth(u.union))
+  const centers: (number | undefined)[] = units.map((u) => childrenSpanCenter(u.union, childPlaced))
+
+  for (let i = 0; i < units.length; i++) {
+    if (centers[i] !== undefined) continue
+    for (let d = 1; d < units.length && centers[i] === undefined; d++) {
+      const left = i - d
+      const right = i + d
+      if (left >= 0 && centers[left] !== undefined) {
+        const gap = units[left].branchIndex === units[i].branchIndex ? SLOT_GAP : BRANCH_GAP
+        centers[i] = centers[left]! + widths[left] / 2 + gap + widths[i] / 2
+      } else if (right < units.length && centers[right] !== undefined) {
+        const gap = units[right].branchIndex === units[i].branchIndex ? SLOT_GAP : BRANCH_GAP
+        centers[i] = centers[right]! - widths[right] / 2 - gap - widths[i] / 2
+      }
+    }
+  }
+  // Nothing in the whole tier had children to anchor to (fully childless) — fall back to
+  // centering under the tier below as a group.
+  if (centers.some((c) => c === undefined)) {
+    const fallback = childPlaced.length > 0
+      ? (Math.min(...childPlaced.map((p) => p.x)) + Math.max(...childPlaced.map((p) => p.x + p.w))) / 2
+      : 0
+    centers.forEach((c, i) => { if (c === undefined) centers[i] = fallback })
+  }
+  const resolved = centers as number[]
+
+  // A single left-to-right sweep only resolves one adjacent pair's overlap at a time — a push can
+  // reopen the gap with the pair beside it, so a chain of 3+ colliding units needs the sweep
+  // repeated for the push to fully propagate. Each pass halves the remaining error for a chain
+  // like this, so a generous fixed pass count (independent of unit count, which is always small
+  // here) converges to sub-pixel precision; `moved` still exits early once nothing needs to move.
+  for (let pass = 0; pass < 40; pass++) {
+    let moved = false
+    for (let i = 0; i < units.length - 1; i++) {
+      const gap = units[i].branchIndex === units[i + 1].branchIndex ? SLOT_GAP : BRANCH_GAP
+      const minGap = widths[i] / 2 + gap + widths[i + 1] / 2
+      const actualGap = resolved[i + 1] - resolved[i]
+      if (actualGap < minGap - 0.01) {
+        const deficit = (minGap - actualGap) / 2
+        resolved[i] -= deficit
+        resolved[i + 1] += deficit
+        moved = true
+      }
+    }
+    if (!moved) break
+  }
+
+  const placed: Placed[] = []
+  units.forEach((u, i) => placeUnion(u.union, resolved[i] - widths[i] / 2, placed))
+  const minX = Math.min(...placed.map((p) => p.x))
+  const maxX = Math.max(...placed.map((p) => p.x + p.w))
+  return { placed, totalWidth: maxX - minX }
+}
+
 type RemoveTarget = { category: CircleCategory; label: string; subjectId: string; subjectName: string; targetId: string; targetName: string }
 
 export default function FamilyTree({
@@ -199,10 +300,51 @@ export default function FamilyTree({
   }
 
   const { tiers } = data
-  const layouts = tiers.map((tier) => layoutTier(tier.branches))
+  // Grandparents/Parents/Kids are always these exact fixed labels; root-gen's label is dynamic
+  // (rootName, or "You" when centered on yourself) — it's whichever tier isn't one of the other
+  // three, rather than a hardcoded array position, so this doesn't break if buildFamilyTree's tier
+  // order ever changes.
+  const fixedTierLabels = new Set(['Grandparents', 'Parents', 'Kids'])
+  const kidsIdx = tiers.findIndex((t) => t.label === 'Kids')
+  const parentsIdx = tiers.findIndex((t) => t.label === 'Parents')
+  const grandparentsIdx = tiers.findIndex((t) => t.label === 'Grandparents')
+  const rootGenIdx = tiers.findIndex((t) => !fixedTierLabels.has(t.label))
+
+  // Sizing pass only: every tier laid out independently and naturally, purely to size the canvas.
+  // Parents/Grandparents get re-laid-out below relative to their descendants, but the
+  // collision-resolved result rarely exceeds this natural estimate by much, so it's a safe proxy —
+  // and root-gen/Kids use this layout directly, unchanged from before.
+  const naturalLayouts = tiers.map((tier) => layoutTier(tier.branches))
   const height = TIER_Y_START + TIER_Y_STEP * (tiers.length - 1) + BOX_H + 40
-  const contentWidth = Math.max(...layouts.map((l) => l.totalWidth), 0)
+  const contentWidth = Math.max(...naturalLayouts.map((l) => l.totalWidth), 0)
   const canvasWidth = Math.max(CANVAS_W, contentWidth + 80)
+
+  // Root-gen ("You") and Kids stay centered independently on the canvas, exactly as before.
+  const startXRootGen = (canvasWidth - naturalLayouts[rootGenIdx].totalWidth) / 2
+  const startXKids = (canvasWidth - naturalLayouts[kidsIdx].totalWidth) / 2
+  const rootGenAbsPlaced = naturalLayouts[rootGenIdx].placed.map((p) => ({ ...p, x: p.x + startXRootGen }))
+
+  // Parents centers on root-gen's own absolute positions; Grandparents then centers on Parents'
+  // now-final (post-collision) absolute positions — ancestors positioned relative to descendants,
+  // one generation at a time.
+  const parentsLayout = layoutAncestorTier(tiers[parentsIdx].branches, rootGenAbsPlaced)
+  const grandparentsLayout =
+    grandparentsIdx >= 0 ? layoutAncestorTier(tiers[grandparentsIdx].branches, parentsLayout.placed) : null
+
+  // Final per-tier layout + canvas offset actually used for rendering. Parents/Grandparents are
+  // already in absolute coordinates (centered relative to their own descendants), so they need no
+  // further offset — only root-gen/Kids still use the "center this tier's own width on the
+  // canvas" offset.
+  const layouts = tiers.map((_tier, i) => {
+    if (i === parentsIdx) return parentsLayout
+    if (i === grandparentsIdx) return grandparentsLayout!
+    return naturalLayouts[i]
+  })
+  const startXs = tiers.map((_tier, i) => {
+    if (i === rootGenIdx) return startXRootGen
+    if (i === kidsIdx) return startXKids
+    return 0
+  })
   const allShownIds = tiers.flatMap((t) =>
     t.branches.flatMap((b) => [
       b.union.a.id,
@@ -297,8 +439,8 @@ export default function FamilyTree({
           const barY = yAbove + BOX_H + 46
           const layoutAbove = layouts[i]
           const layoutBelow = layouts[i + 1]
-          const startAbove = (canvasWidth - layoutAbove.totalWidth) / 2
-          const startBelow = (canvasWidth - layoutBelow.totalWidth) / 2
+          const startAbove = startXs[i]
+          const startBelow = startXs[i + 1]
 
           const groups = new Map<string, number[]>()
           layoutBelow.placed.forEach((p) => {
@@ -333,7 +475,7 @@ export default function FamilyTree({
         {tiers.map((tier, i) => {
           const y = TIER_Y_START + TIER_Y_STEP * i
           const layout = layouts[i]
-          const startX = (canvasWidth - layout.totalWidth) / 2
+          const startX = startXs[i]
 
           if (tier.branches.length === 0) {
             const emptyLabel = tier.label === 'Kids' ? 'Add child' : tier.label === 'Grandparents' ? 'Add grandparent' : 'Add parent'
