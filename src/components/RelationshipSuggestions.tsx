@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { upsertRelationship, type RelationshipKind } from '../lib/relationshipsTable'
+import { syncFamilyClique } from '../lib/writeRelationship'
 
 // Shared by every entry point that can surface a relationship suggestion (the profile fact bar,
 // Home chat, an event's chat, a group's chat) — the confirm/decline logic writes exactly what a
@@ -70,10 +71,15 @@ async function writeRelationshipTableEntry(
   subjectId: string,
   targetId: string
 ) {
-  if (relationship === 'parent') await upsertRelationship(userId, targetId, subjectId, 'parent')
-  else if (relationship === 'child') await upsertRelationship(userId, subjectId, targetId, 'parent')
-  else if (relationship === 'spouse' || relationship === 'partner' || relationship === 'sibling') {
+  if (relationship === 'parent') {
+    await upsertRelationship(userId, targetId, subjectId, 'parent')
+    await syncFamilyClique(userId, subjectId)
+  } else if (relationship === 'child') {
+    await upsertRelationship(userId, subjectId, targetId, 'parent')
+    await syncFamilyClique(userId, targetId)
+  } else if (relationship === 'spouse' || relationship === 'partner' || relationship === 'sibling') {
     await upsertRelationship(userId, subjectId, targetId, relationship as RelationshipKind)
+    if (relationship === 'sibling') await syncFamilyClique(userId, subjectId)
   }
 }
 
@@ -120,6 +126,7 @@ async function linkCoSiblings(s: NewPersonSuggestion, resolvedId: string, resolv
       { person_id: peerId, moment_id: null, content: `Their sibling is ${resolvedFullName}.` },
     ])
     await upsertRelationship(userId, resolvedId, peerId, 'sibling')
+    await syncFamilyClique(userId, resolvedId)
   }
 }
 
@@ -168,6 +175,7 @@ export default function RelationshipSuggestionBanners({
       data: { user },
     } = await supabase.auth.getUser()
     await upsertRelationship(user?.id, s.parentId, s.childId, 'parent')
+    await syncFamilyClique(user?.id, s.childId)
     onApplied?.()
   }
 

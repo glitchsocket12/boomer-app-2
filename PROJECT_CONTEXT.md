@@ -223,7 +223,16 @@ relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partne
               linking, `converse`/`update-moment`/`update-group` read it for "my
               mom/dad" resolution, Circle.tsx/FamilyTree.tsx read AND write it
               directly. Backfilled once from existing deterministic reciprocal-note
-              text (exact-name match only, best-effort, not exhaustive).
+              text (exact-name match only, best-effort, not exhaustive). Sibling/
+              parent links auto-propagate across the WHOLE transitive sibling group
+              on every add, not just the pair being linked (`syncFamilyClique` in
+              `_shared/relationships.ts` and `writeRelationship.ts`, 2026-07-21) —
+              adding a sibling links them to every existing sibling too and shares
+              all parents across the group; adding a parent to anyone in the group
+              gives it to the rest of the siblings as well. One-time retroactive
+              backfill for pre-existing data written to `migrations_manual/
+              2026-07-21-family-clique-backfill.sql`, not yet run (needs a fresh
+              access token — pending).
 moments       id, user_id, raw_description (user's words only — never assistant
               turns), summary? (AI cache), occasion?, location?, when_text?
               (free-text, kept verbatim), event_date? (AI best-guess real date,
@@ -283,7 +292,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 21. Internet lookup for added context.
 22. Settings page: tile colors, suggestion sensitivity, chat tone, user's own profile/library, terminology library, About.
 23. **Security hardening** + honest About-page writeup ("I don't want it to be bullshit") — start from §10's reality, audit first.
-24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both).
+24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both). Concretely blocks auto-linking a new spouse as a parent of the other spouse's existing kids (step-parent case) — deliberately left manual-only in item 40 pending this. Real example on file: Andy Volin (deceased) was married to Andi Volin, who's since remarried to Michael Galchinsky.
 26. Ratings/thumbs feedback loop (tunes suggestions; does not retrain the model).
 27. Photo gallery for real (upload/Supabase Storage/tagging; placeholder shipped). True camera-roll sync needs the native iPhone app.
 28. Manual + AI-suggested tags on events (schema change).
@@ -299,6 +308,8 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 38. ~~Undo a mis-added family tree relationship~~ — **DONE 2026-07-21.** Added `removeRelationship`/`unlinkRelationship` + a "Remove a relationship" control on the family tree page, scoped to the centered person's direct relations. Verified via `npm run build` + synthetic-data harness only — not yet confirmed against live data (see §10). Full story: PROJECT_HISTORY §18.
 
 39. ~~Family tree layout engine rewrite~~ — **DONE 2026-07-22**, same day as founder-proposed. Implemented in the fresh session the founder asked for; see item 37's "Root-cause rewrite" entry for what shipped.
+
+40. ~~Full sibling/parent clique sync~~ — **DONE 2026-07-21.** Founder-requested: adding any relationship should reciprocate across everyone it touches, not just the pair directly linked (e.g. adding a 3rd sibling to a 2-sibling group should connect all 3, and share all parents across all 3 — not just sync the new pair). Replaced the old 2-person-only `syncSiblingParents` with `syncFamilyClique` (see §6), which walks the full transitive sibling closure on every sibling or parent add. Verified live against Jake's real sibling group (Josh/Jake/Jess/Danny Volin): a test sibling added only to Josh correctly picked up Amy/Steve as parents AND direct sibling links to Jake/Jess/Danny; a test parent added only to that new sibling correctly propagated to all four. Spouse→parent propagation (step-parent case) explicitly excluded — see item 24. One-time SQL backfill for pre-existing data (`migrations_manual/2026-07-21-family-clique-backfill.sql`) written but not yet run — needs a fresh access token.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 

@@ -40,21 +40,55 @@ async function deleteNoteIfPresent(personId: string, content: string) {
   if (match) await supabase.from('notes').delete().eq('id', match.id)
 }
 
-// Siblings share parents. When two people are linked as siblings, copy whichever parent links
-// either side already has onto the other side, so a newly-added sibling inherits an existing
-// sibling's parents (and vice versa) instead of showing an empty Parents tier.
-async function syncSiblingParents(userId: string | undefined | null, subjectId: string, targetId: string) {
-  if (!userId) return
-  const [subjectRel, targetRel] = await Promise.all([
-    getRelationshipsForPerson(subjectId),
-    getRelationshipsForPerson(targetId),
-  ])
-  const subjectParents = new Set(subjectRel.parentIds)
-  const targetParents = new Set(targetRel.parentIds)
-  await Promise.all([
-    ...[...subjectParents].filter((id) => !targetParents.has(id)).map((id) => upsertRelationship(userId, id, targetId, 'parent')),
-    ...[...targetParents].filter((id) => !subjectParents.has(id)).map((id) => upsertRelationship(userId, id, subjectId, 'parent')),
-  ])
+// Siblings form a clique, and share parents. Whenever a sibling or parent link touching
+// anchorId is written, walk the full transitive sibling closure reachable from anchorId (not just
+// the pair that was just linked — a newly-added sibling of an EXISTING sibling group must connect
+// to every member of that group, not just the one it was directly linked to), then: (1) fill in
+// any missing sibling edge between every pair in that closure, and (2) give every closure member
+// every parent known for any other member. Exported so RelationshipSuggestions.tsx (the
+// suggestion-banner confirm path) can reuse the same logic instead of a third copy — no
+// Deno-boundary issue between two browser/Vite files like there is with the edge-function mirror
+// of this function in supabase/functions/_shared/relationships.ts.
+export async function syncFamilyClique(userId: string | undefined | null, anchorId: string) {
+  if (!userId || !anchorId) return
+
+  const closure = new Set<string>([anchorId])
+  const queue = [anchorId]
+  const relById = new Map<string, Awaited<ReturnType<typeof getRelationshipsForPerson>>>()
+  while (queue.length > 0) {
+    const current = queue.shift() as string
+    const rel = await getRelationshipsForPerson(current)
+    relById.set(current, rel)
+    for (const sibId of rel.siblingIds) {
+      if (!closure.has(sibId)) {
+        closure.add(sibId)
+        queue.push(sibId)
+      }
+    }
+  }
+  if (closure.size < 2) return
+
+  const ids = [...closure]
+  for (const id of ids) {
+    if (!relById.has(id)) relById.set(id, await getRelationshipsForPerson(id))
+  }
+
+  const allParents = new Set<string>()
+  for (const id of ids) for (const p of relById.get(id)!.parentIds) allParents.add(p)
+
+  const writes: Promise<void>[] = []
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      writes.push(upsertRelationship(userId, ids[i], ids[j], 'sibling'))
+    }
+  }
+  for (const id of ids) {
+    const existingParents = new Set(relById.get(id)!.parentIds)
+    for (const p of allParents) {
+      if (p !== id && !existingParents.has(p)) writes.push(upsertRelationship(userId, p, id, 'parent'))
+    }
+  }
+  await Promise.all(writes)
 }
 
 // Links subjectId and targetId as `category` (from the subject's point of view, e.g.
@@ -72,9 +106,14 @@ export async function linkRelationship(
   if (category === 'spouse') await upsertRelationship(userId, subjectId, targetId, 'spouse')
   else if (category === 'siblings') {
     await upsertRelationship(userId, subjectId, targetId, 'sibling')
-    await syncSiblingParents(userId, subjectId, targetId)
-  } else if (category === 'parents') await upsertRelationship(userId, targetId, subjectId, 'parent')
-  else if (category === 'kids') await upsertRelationship(userId, subjectId, targetId, 'parent')
+    await syncFamilyClique(userId, subjectId)
+  } else if (category === 'parents') {
+    await upsertRelationship(userId, targetId, subjectId, 'parent')
+    await syncFamilyClique(userId, subjectId)
+  } else if (category === 'kids') {
+    await upsertRelationship(userId, subjectId, targetId, 'parent')
+    await syncFamilyClique(userId, targetId)
+  }
 }
 
 // Inverse of linkRelationship — removes the relationship row and both reciprocal notes it wrote,

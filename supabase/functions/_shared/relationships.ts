@@ -306,29 +306,59 @@ async function resolveRelationNames(
   return extractRelationNames(anthropicApiKey, kind, personName, notesText)
 }
 
-// Siblings share parents. Once two people are confidently linked as siblings, copy whichever
-// parent links either side already has in the ACTUAL relationships table onto the other side —
-// distinct from findSharedParentSuggestions below, which is a best-effort AI-guessed banner over
-// free-text notes. This is a direct, already-confirmed-data copy (same discipline as the
-// writeRelationship.ts mirror of this function on the frontend "+" picker path), so it's safe to
-// write immediately rather than queue as a suggestion.
-async function syncSiblingParents(
+// Siblings form a clique, and share parents. Whenever a sibling or parent link touching
+// anchorId is written, walk the full transitive sibling closure reachable from anchorId (not just
+// the pair that was just linked — a newly-added sibling of an EXISTING sibling group must connect
+// to every member of that group, not just the one it was directly linked to), then: (1) fill in
+// any missing sibling edge between every pair in that closure, and (2) give every closure member
+// every parent known for any other member. Distinct from findSharedParentSuggestions below, which
+// is a best-effort AI-guessed banner over free-text notes — this is a direct, already-confirmed-
+// data copy (same discipline as the writeRelationship.ts mirror of this function on the frontend
+// "+" picker path), so it's safe to write immediately rather than queue as a suggestion.
+async function syncFamilyClique(
   supabaseClient: MinimalSupabaseClient,
   userId: string | undefined | null,
-  aId: string,
-  bId: string
+  anchorId: string
 ): Promise<void> {
-  if (!userId) return
-  const [relA, relB] = await Promise.all([
-    getRelationshipsForPerson(supabaseClient, aId),
-    getRelationshipsForPerson(supabaseClient, bId),
-  ])
-  const parentsA = new Set(relA.parentIds)
-  const parentsB = new Set(relB.parentIds)
-  await Promise.all([
-    ...[...parentsA].filter((id) => !parentsB.has(id)).map((id) => upsertRelationship(supabaseClient, userId, id, bId, "parent")),
-    ...[...parentsB].filter((id) => !parentsA.has(id)).map((id) => upsertRelationship(supabaseClient, userId, id, aId, "parent")),
-  ])
+  if (!userId || !anchorId) return
+
+  const closure = new Set<string>([anchorId])
+  const queue = [anchorId]
+  const relById = new Map<string, Awaited<ReturnType<typeof getRelationshipsForPerson>>>()
+  while (queue.length > 0) {
+    const current = queue.shift() as string
+    const rel = await getRelationshipsForPerson(supabaseClient, current)
+    relById.set(current, rel)
+    for (const sibId of rel.siblingIds) {
+      if (!closure.has(sibId)) {
+        closure.add(sibId)
+        queue.push(sibId)
+      }
+    }
+  }
+  if (closure.size < 2) return
+
+  const ids = [...closure]
+  for (const id of ids) {
+    if (!relById.has(id)) relById.set(id, await getRelationshipsForPerson(supabaseClient, id))
+  }
+
+  const allParents = new Set<string>()
+  for (const id of ids) for (const p of relById.get(id)!.parentIds) allParents.add(p)
+
+  const writes: Promise<void>[] = []
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      writes.push(upsertRelationship(supabaseClient, userId, ids[i], ids[j], "sibling"))
+    }
+  }
+  for (const id of ids) {
+    const existingParents = new Set(relById.get(id)!.parentIds)
+    for (const p of allParents) {
+      if (p !== id && !existingParents.has(p)) writes.push(upsertRelationship(supabaseClient, userId, p, id, "parent"))
+    }
+  }
+  await Promise.all(writes)
 }
 
 // Compares two people who are (or are about to become) recorded as siblings and reports any
@@ -502,8 +532,10 @@ export async function applyFamilySignals(
         // symmetric.
         if (signal.relationship === "parent") {
           await upsertRelationship(supabaseClient, userId, targetId, subjectId, "parent")
+          await syncFamilyClique(supabaseClient, userId, subjectId)
         } else if (signal.relationship === "child") {
           await upsertRelationship(supabaseClient, userId, subjectId, targetId, "parent")
+          await syncFamilyClique(supabaseClient, userId, targetId)
         } else if (signal.relationship === "spouse" || signal.relationship === "partner") {
           await upsertRelationship(supabaseClient, userId, subjectId, targetId, signal.relationship)
         }
@@ -538,8 +570,12 @@ export async function applyFamilySignals(
         await writeNoteIfMissing(supabaseClient, a.id, RECIPROCAL_NOTE.sibling(b.name))
         await writeNoteIfMissing(supabaseClient, b.id, RECIPROCAL_NOTE.sibling(a.name))
         await upsertRelationship(supabaseClient, userId, a.id, b.id, "sibling")
-        await syncSiblingParents(supabaseClient, userId, a.id, b.id)
       }
+    }
+    // All of confidentPeers is now one connected component (every pair was just linked above), so
+    // one clique sync anchored on any member reaches the whole group.
+    if (confidentPeers.length >= 2) {
+      await syncFamilyClique(supabaseClient, userId, confidentPeers[0].id)
     }
   }
 
