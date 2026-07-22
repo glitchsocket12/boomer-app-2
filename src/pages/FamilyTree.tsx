@@ -314,8 +314,12 @@ export default function FamilyTree({
                 const sourceX = anchorX(tiers[i], layoutAbove, parentId)
                 if (sourceX === undefined) return null
                 const sx = startAbove + sourceX
-                const barLeft = Math.min(...centers)
-                const barRight = Math.max(...centers)
+                // The bar has to stretch to reach the stem too, not just span the children —
+                // otherwise, whenever a couple's marriage-line midpoint falls outside their
+                // children's own horizontal range (any asymmetric layout, e.g. cousins added
+                // unevenly on one side), the stem and bar don't touch and the line looks broken.
+                const barLeft = Math.min(sx, ...centers)
+                const barRight = Math.max(sx, ...centers)
                 return (
                   <g key={parentId}>
                     <line x1={sx} y1={yAbove + BOX_H} x2={sx} y2={barY} stroke="#CCC" strokeWidth={1} />

@@ -110,6 +110,21 @@ function inLawSpouses(g: Graph, personId: string, kind: TreePersonKind): TreePer
   return (g.spousesOf.get(personId) ?? []).map((sid) => node(g, sid, kind, undefined))
 }
 
+// A kid can be legitimately recorded as the child of either parent — whoever happened to be
+// mentioned when the fact was captured — so looking up only one specific person's own recorded
+// children would silently miss kids recorded under their spouse instead. "Children of X" has to
+// mean "children of X's whole marriage."
+function childrenOfEither(g: Graph, personId: string): string[] {
+  const ids = [personId, ...(g.spousesOf.get(personId) ?? [])]
+  const result: string[] = []
+  for (const id of ids) {
+    for (const childId of g.childrenOf.get(id) ?? []) {
+      if (!result.includes(childId)) result.push(childId)
+    }
+  }
+  return result
+}
+
 export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   const g = await loadGraph()
   const rootName = g.nameById.get(rootId) ?? 'Unknown'
@@ -118,7 +133,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   const rootParents = g.parentsOf.get(rootId) ?? []
   const rootSpouses = g.spousesOf.get(rootId) ?? []
   const rootSiblings = (g.siblingsOf.get(rootId) ?? []).filter((id) => id !== rootId)
-  const rootChildren = g.childrenOf.get(rootId) ?? []
+  const rootChildren = childrenOfEither(g, rootId)
   const rootAnchor = primaryParentId(g, rootId)
 
   // --- Root's own generation tier ---
@@ -158,7 +173,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
       for (const auId of auntsUncles) {
         if (extendedSide.some((u) => u.a.id === auId)) continue
         extendedSide.push({ a: node(g, auId, 'extended', parentAnchor), spouses: inLawSpouses(g, auId, 'extended') })
-        for (const cousinId of g.childrenOf.get(auId) ?? []) {
+        for (const cousinId of childrenOfEither(g, auId)) {
           if (cousinSide.some((b) => b.union.a.id === cousinId)) continue
           cousinSide.push({
             union: { a: node(g, cousinId, 'extended', auId), spouses: inLawSpouses(g, cousinId, 'extended') },
@@ -166,7 +181,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
             rightExtended: [],
             siblings: [],
           })
-          for (const kidId of g.childrenOf.get(cousinId) ?? []) {
+          for (const kidId of childrenOfEither(g, cousinId)) {
             extraKidsBranches.push({
               union: { a: node(g, kidId, 'extended', cousinId), spouses: inLawSpouses(g, kidId, 'extended') },
               leftExtended: [],
