@@ -174,7 +174,24 @@ src/
 │                                 chains any number of tiers off `depth` (no more mode-specific
 │                                 branching in the layout code). Verified live: Harvey/Roberta
 │                                 Volin's tree now shows their great-grandchild Wesley Gregorian
-│                                 in a "Great-Grandchildren" section
+│                                 in a "Great-Grandchildren" section. Founder-selection fixed
+│                                 2026-07-21 (item 41 follow-up): "furthest back" is NOT "fewest
+│                                 recorded ancestors" — an in-law with no separately-recorded
+│                                 ancestry (a fiancé(e), a spouse) trivially looks like the oldest
+│                                 gen too. Now a greedy set-cover picks whichever member's own
+│                                 descendant set (blood descendants + their spouses, so an in-law
+│                                 doesn't ALSO get picked as their own spurious founder) explains
+│                                 the most of the group, repeating for any leftover members —
+│                                 then climbs one hop up wherever 2+ picked founders turn out to
+│                                 share a parent who wasn't tagged into the group themselves,
+│                                 unifying siblings under that shared parent instead of showing
+│                                 them as disconnected branches. Verified live: The Berzins' group
+│                                 (13 members, none of them Villis/Marilee Berzins) now correctly
+│                                 unifies under Villis & Marilee as the root couple, with Mark
+│                                 Berzins's and Lisa Ruskaup's full lines underneath — the old
+│                                 logic had picked unrelated in-laws (Jeremy Crigler, Bridget
+│                                 Dugan, Faye Higgins) as "founders" instead and dropped Mark's
+│                                 entire branch
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):

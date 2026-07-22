@@ -181,9 +181,7 @@ function childrenOfEither(g: Graph, personId: string): string[] {
 // For a "generate this family's tree" action from a Family-typed group, we want ONLY that
 // family's own lineage — not the full ego graph a person's own tree shows (which would pull in
 // unrelated in-law branches, e.g. a member's spouse's own parents/siblings who have nothing to do
-// with this group). "Furthest back" = fewest recorded ancestors among the group's members — same
-// generation-depth reasoning buildFamilyTree's tiers are built on, just walked as far as the data
-// goes instead of capped at 2 hops. Starting there and fanning strictly downward (children,
+// with this group). Starting from the founders and fanning strictly downward (children,
 // grandchildren, ... plus each generation's married-in spouses) is what "Marilee/Villis are the
 // generation that goes furthest back, so show their kids/grandkids/etc." means structurally.
 export async function buildDescendantTree(memberIds: string[]): Promise<TreeData> {
@@ -193,18 +191,83 @@ export async function buildDescendantTree(memberIds: string[]): Promise<TreeData
   }
 
   const g = await loadGraph()
-  const depthCache = new Map<string, number>()
-  function depthOf(id: string, visiting: Set<string>): number {
-    if (depthCache.has(id)) return depthCache.get(id)!
-    if (visiting.has(id)) return 0 // guard against bad/cyclic relationship data
-    visiting.add(id)
-    const parents = g.parentsOf.get(id) ?? []
-    const d = parents.length === 0 ? 0 : 1 + Math.min(...parents.map((p) => depthOf(p, visiting)))
-    depthCache.set(id, d)
-    return d
+
+  // "Furthest back" is NOT the same as "fewest recorded ancestors" — a group almost always
+  // includes people who married in (a fiancé(e), a spouse) whose OWN parents were never recorded,
+  // which trivially makes them look like the "oldest" generation despite having nothing to do with
+  // this family's actual lineage. What genuinely identifies the root(s) of this family is whoever's
+  // downward descendant set covers the most of the group's OTHER members — a real ancestor's
+  // descendant set is always a superset of their own descendants', so this naturally surfaces the
+  // highest generation that actually has data, not just whoever's least documented. Greedy set
+  // cover: repeatedly pick whichever remaining member explains the most still-unexplained members,
+  // until everyone's accounted for (handles a group spanning more than one family branch too).
+  function descendantsOf(id: string): Set<string> {
+    const result = new Set<string>()
+    const stack = [id]
+    while (stack.length > 0) {
+      const cur = stack.pop()!
+      if (result.has(cur)) continue
+      result.add(cur)
+      for (const childId of childrenOfEither(g, cur)) stack.push(childId)
+    }
+    return result
   }
-  const minDepth = Math.min(...memberIds.map((id) => depthOf(id, new Set())))
-  const founderIds = [...new Set(memberIds.filter((id) => depthOf(id, new Set()) === minDepth))]
+
+  // A covered descendant's own spouse rides along automatically as an in-law once that descendant's
+  // branch is built (same as buildFamilyTree's Kids tier), so they shouldn't ALSO get picked as
+  // their own separate founder just because they happen to be a group member too — e.g. a
+  // descendant's spouse (Manuel Sucre, married to Mark Berzins's daughter Clare) is covered by
+  // Mark's branch, not a founder in their own right.
+  function coveredSet(id: string): Set<string> {
+    const blood = descendantsOf(id)
+    const covered = new Set(blood)
+    for (const bId of blood) {
+      for (const sId of g.spousesOf.get(bId) ?? []) covered.add(sId)
+    }
+    return covered
+  }
+
+  const remaining = new Set(memberIds)
+  let founderIds: string[] = []
+  while (remaining.size > 0) {
+    let best: string | null = null
+    let bestCoverage = -1
+    for (const id of remaining) {
+      const coverage = [...coveredSet(id)].filter((d) => remaining.has(d)).length
+      if (coverage > bestCoverage) {
+        bestCoverage = coverage
+        best = id
+      }
+    }
+    if (!best) break
+    founderIds.push(best)
+    for (const d of coveredSet(best)) remaining.delete(d)
+  }
+
+  // Two or more of the founders picked above commonly turn out to be siblings (Mark Berzins, Lisa
+  // Ruskaup) who share a parent that was never itself tagged into the group (Villis/Marilee
+  // Berzins, in the founder's own example) — climb one hop up whenever that's the case and use the
+  // shared parent instead, so the tree unifies under them rather than showing siblings as separate,
+  // disconnected branches. Repeats in case that parent also turns out to share a parent with another
+  // branch (great-grandparents, etc.).
+  let climbing = true
+  while (climbing) {
+    climbing = false
+    const foundersByParent = new Map<string, string[]>()
+    for (const id of founderIds) {
+      for (const parentId of g.parentsOf.get(id) ?? []) {
+        const arr = foundersByParent.get(parentId) ?? []
+        arr.push(id)
+        foundersByParent.set(parentId, arr)
+      }
+    }
+    for (const [parentId, kids] of foundersByParent) {
+      if (kids.length < 2) continue
+      founderIds = [parentId, ...founderIds.filter((id) => !kids.includes(id))]
+      climbing = true
+      break
+    }
+  }
 
   // Walk generation by generation. `seen` prevents a person appearing twice (e.g. a cousin
   // marriage, or bad data); `parentOf` attributes each generation's members to whichever blood
