@@ -87,9 +87,12 @@ src/
 │   │                            itself — Landing only fires the callback.
 │   ├── Login.tsx              — combined sign up / log in. Takes `initialSignUp` (which
 │   │                            tile/button was clicked sets the starting mode) and
-│   │                            `onBack` (rendered as a "← Back" link, returns to
-│   │                            Landing) props, both optional/undefined-safe so existing
-│   │                            callers don't break. Rendered full-page by App.tsx once
+│   │                            `onBack` (returns to Landing) props, both
+│   │                            optional/undefined-safe so existing callers don't break.
+│   │                            `onBack` is now wired to a sticky top nav bar with a
+│   │                            clickable "Boomer" wordmark (2026-07-22, matches
+│   │                            Landing.tsx's nav styling) instead of a small "← Back"
+│   │                            text link inside the card. Rendered full-page by App.tsx once
 │   │                            `authView !== 'landing'` — a real standalone page again,
 │   │                            not embedded in Landing's scroll flow. Sign-up mode
 │   │                            (2026-07-22) collects First/Last name, Birthday, Email,

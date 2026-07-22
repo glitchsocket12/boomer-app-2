@@ -86,13 +86,14 @@ export default function Login({
   }
 
   return (
-    <div style={styles.page}>
+    <div style={styles.outer}>
+      <nav style={styles.nav}>
+        <button onClick={() => onBack?.()} style={styles.navBrand}>
+          Boomer
+        </button>
+      </nav>
+      <div style={styles.page}>
       <div style={styles.card}>
-        {onBack && (
-          <button onClick={onBack} style={styles.backLink}>
-            ← Back
-          </button>
-        )}
         <h1 style={styles.title}>Boomer</h1>
         <p style={styles.subtitle}>Stay close to the people who matter.</p>
 
@@ -184,18 +185,45 @@ export default function Login({
           {isSignUp ? 'Already have an account? Log in' : "New here? Create an account"}
         </button>
       </div>
+      </div>
     </div>
   )
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: {
+  outer: {
     minHeight: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: '#F7F5F2',
+    fontFamily: 'Georgia, serif',
+  },
+  nav: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 10,
+    display: 'flex',
+    alignItems: 'center',
+    padding: '1rem 1.5rem',
+    backgroundColor: '#F7F5F2',
+    borderBottom: '1px solid rgba(46,64,52,0.15)',
+  },
+  navBrand: {
+    fontSize: '1.4rem',
+    fontWeight: 700,
+    color: '#2E4034',
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
+  },
+  page: {
+    flex: 1,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F7F5F2',
-    fontFamily: 'Georgia, serif',
+    padding: '2rem 1rem',
   },
   card: {
     backgroundColor: '#FFFFFF',
@@ -204,16 +232,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     boxShadow: '0 2px 12px rgba(0,0,0,0.08)',
     width: '100%',
     maxWidth: '420px',
-  },
-  backLink: {
-    background: 'none',
-    border: 'none',
-    color: '#5A5A5A',
-    fontSize: '0.95rem',
-    cursor: 'pointer',
-    padding: 0,
-    marginBottom: '1.25rem',
-    fontFamily: 'Georgia, serif',
   },
   title: { fontSize: '2.25rem', marginBottom: '0.25rem', color: '#2E4034' },
   subtitle: { fontSize: '1.1rem', color: '#5A5A5A', marginBottom: '2rem' },
