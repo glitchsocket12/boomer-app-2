@@ -13,7 +13,7 @@ export type Union = { a: TreePerson; spouses: TreePerson[] }
 // belong to (union.a's siblings on the left, the trailing spouse's siblings on the right) so the
 // tree fans outward like a normal family tree instead of pooling everyone on one side. `siblings`
 // keeps its narrower original meaning: only used for the root's own siblings on the root-gen tier.
-export type TreeBranch = { union: Union; leftExtended: Union[]; rightExtended: Union[]; siblings: TreePerson[] }
+export type TreeBranch = { union: Union; leftExtended: Union[]; rightExtended: Union[]; siblings: Union[] }
 export type TreeTier = { label: string; branches: TreeBranch[]; defaultParentId?: string }
 // The root's own direct relations, flat — lets the UI offer "remove this relationship" without
 // having to reverse-engineer which tree nodes are actually direct edges of the root vs. one hop
@@ -125,6 +125,43 @@ function childrenOfEither(g: Graph, personId: string): string[] {
   return result
 }
 
+// For a "generate this family's tree" action from a Family-typed group, we need to pick which
+// member to hand to buildFamilyTree as its root — the tree it builds always shows a fixed window
+// of 2 generations above the root and 1 below (Grandparents/Parents/root-gen/Kids), so the choice
+// of root determines which of the group's other members actually land inside that window.
+// "Generation depth" = hops up the parent chain to reach someone with no recorded parents (0 =
+// the oldest known ancestor in that line). We pick whichever member's window ([depth-2, depth+1])
+// covers the most OTHER members — i.e. start from the oldest generation and walk down through
+// parents/children to see who that person's tree would actually include.
+export async function pickFamilyTreeRoot(memberIds: string[]): Promise<string | null> {
+  if (memberIds.length === 0) return null
+  if (memberIds.length === 1) return memberIds[0]
+
+  const g = await loadGraph()
+  const depthCache = new Map<string, number>()
+  function depthOf(id: string, visiting: Set<string>): number {
+    if (depthCache.has(id)) return depthCache.get(id)!
+    if (visiting.has(id)) return 0 // guard against bad/cyclic relationship data
+    visiting.add(id)
+    const parents = g.parentsOf.get(id) ?? []
+    const d = parents.length === 0 ? 0 : 1 + Math.min(...parents.map((p) => depthOf(p, visiting)))
+    depthCache.set(id, d)
+    return d
+  }
+  const depths = memberIds.map((id) => ({ id, depth: depthOf(id, new Set()) }))
+
+  let best = depths[0]
+  let bestCoverage = -1
+  for (const candidate of depths) {
+    const coverage = depths.filter((d) => d.depth >= candidate.depth - 2 && d.depth <= candidate.depth + 1).length
+    if (coverage > bestCoverage) {
+      bestCoverage = coverage
+      best = candidate
+    }
+  }
+  return best.id
+}
+
 export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   const g = await loadGraph()
   const rootName = g.nameById.get(rootId) ?? 'Unknown'
@@ -142,6 +179,10 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   // shouldn't silently drop a spouse from the tree.
   const spouseNodes: TreePerson[] = rootSpouses.map((id) => node(g, id, 'direct', undefined))
   const siblingNodes: TreePerson[] = rootSiblings.map((id) => node(g, id, 'direct', rootAnchor))
+  // Each sibling's own spouse rides along as an in-law (no parentId — same treatment as the root's
+  // own spouse, aunts/uncles, cousins, and kids) so a married sibling gets a marriage line too,
+  // instead of the sibling showing up as a lone box with their spouse missing entirely.
+  const siblingUnions: Union[] = siblingNodes.map((sib) => ({ a: sib, spouses: inLawSpouses(g, sib.id, 'direct') }))
   const rootParentNodes: TreePerson[] = rootParents.map((id) => node(g, id, 'direct', primaryParentId(g, id)))
   const rootChildNodes: TreePerson[] = rootChildren.map((id) => node(g, id, 'direct', rootId))
 
@@ -149,7 +190,7 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
     union: { a: rootNode, spouses: spouseNodes },
     leftExtended: [],
     rightExtended: [],
-    siblings: siblingNodes,
+    siblings: siblingUnions,
   }
 
   // --- Parents tier: root's own parents, grouped into couples. Each parent's own siblings

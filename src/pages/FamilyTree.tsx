@@ -78,11 +78,9 @@ function layoutTier(branches: TreeBranch[]): { placed: Placed[]; totalWidth: num
       if (ui > 0) x += SLOT_GAP
       x = placeUnion(union, x, placed)
     })
-    branch.siblings.forEach((sib) => {
+    branch.siblings.forEach((sibUnion) => {
       x += SLOT_GAP
-      const sw = boxWidth(sib.name)
-      placed.push({ person: sib, x, w: sw })
-      x += sw
+      x = placeUnion(sibUnion, x, placed)
     })
   })
   return { placed, totalWidth: x }
@@ -371,7 +369,7 @@ export default function FamilyTree({
       ...b.union.spouses.map((s) => s.id),
       ...b.leftExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
       ...b.rightExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
-      ...b.siblings.map((s) => s.id),
+      ...b.siblings.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
     ])
   )
 
@@ -519,7 +517,7 @@ export default function FamilyTree({
           // are laid out left-to-right in that order — reads as a chain when there's more than
           // one), for the branch's own couple AND every aunt/uncle mini-union on either side.
           const marriageLines = tier.branches.flatMap((branch) => {
-            const unions = [...branch.leftExtended, branch.union, ...branch.rightExtended]
+            const unions = [...branch.leftExtended, branch.union, ...branch.rightExtended, ...branch.siblings]
             return unions.flatMap((union) => {
               const chain = [union.a, ...union.spouses]
               const lines: { x1: number; x2: number; y: number }[] = []
