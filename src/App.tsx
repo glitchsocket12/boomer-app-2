@@ -23,7 +23,7 @@ type Crumb =
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
   | { type: 'circle'; id: string; label: string }
-  | { type: 'familyTree'; id: string; label: string }
+  | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
 
 const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
 
@@ -139,7 +139,7 @@ export default function App() {
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onMerged={(p) => replaceCurrentCrumb({ type: 'person', id: p.id, label: p.name })}
         onRenamed={renameCurrentCrumb}
-        onOpenFamilyTree={(personId, label) => pushCrumb({ type: 'familyTree', id: personId, label })}
+        onOpenFamilyTree={(personId, label, memberIds) => pushCrumb({ type: 'familyTree', id: personId, label, memberIds })}
       />
     )
   } else if (current?.type === 'group') {
@@ -153,7 +153,7 @@ export default function App() {
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onRenamed={renameCurrentCrumb}
-        onOpenFamilyTree={(personId, label) => pushCrumb({ type: 'familyTree', id: personId, label })}
+        onOpenFamilyTree={(personId, label, memberIds) => pushCrumb({ type: 'familyTree', id: personId, label, memberIds })}
       />
     )
   } else if (current?.type === 'event') {
@@ -185,13 +185,14 @@ export default function App() {
         backLabel={parentLabel}
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
-        onOpenFamilyTree={(personId, label) => pushCrumb({ type: 'familyTree', id: personId, label })}
+        onOpenFamilyTree={(personId, label, memberIds) => pushCrumb({ type: 'familyTree', id: personId, label, memberIds })}
       />
     )
   } else if (current?.type === 'familyTree') {
     content = (
       <FamilyTree
         personId={current.id}
+        memberIds={current.memberIds}
         onBack={popCrumb}
         backLabel={parentLabel}
         onSelectTree={(id, label) => pushCrumb({ type: 'familyTree', id, label })}

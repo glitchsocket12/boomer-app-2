@@ -4,7 +4,6 @@ import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { GROUP_TYPES } from '../lib/groupTypes'
-import { pickFamilyTreeRoot } from '../lib/familyTree'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import { PersonChip, GroupChip } from '../components/Chips'
@@ -59,7 +58,9 @@ export default function GroupDetail({
   onBack: () => void
   backLabel: string
   onRenamed?: (newName: string) => void
-  onOpenFamilyTree: (personId: string, label: string) => void
+  // memberIds, when present, scopes the tree to that group's own lineage (buildDescendantTree)
+  // instead of the single centered person's full ego graph.
+  onOpenFamilyTree: (personId: string, label: string, memberIds?: string[]) => void
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [explicitMembers, setExplicitMembers] = useState<PersonRef[]>([])
@@ -90,7 +91,6 @@ export default function GroupDetail({
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [buildingTree, setBuildingTree] = useState(false)
 
   useEffect(() => {
     loadMoments()
@@ -186,14 +186,12 @@ export default function GroupDetail({
     if (!error) setGroupType(newType)
   }
 
-  // Roots the tree on whichever explicit member's tree window (2 generations up, 1 down —
-  // see pickFamilyTreeRoot) covers the most of this group's other members, so opening it from a
-  // Family-typed group lands on a sensible view of the whole family rather than an arbitrary person.
-  async function handleGenerateFamilyTree() {
-    setBuildingTree(true)
-    const rootId = await pickFamilyTreeRoot(explicitMembers.map((p) => p.id))
-    setBuildingTree(false)
-    if (rootId) onOpenFamilyTree(rootId, `${name} family tree`)
+  // Scopes the tree to this group's own lineage (buildDescendantTree, via memberIds) rather than
+  // any one member's full ego graph, so opening it from a Family-typed group shows the whole
+  // family's downward fan from its eldest known generation instead of an arbitrary person's view.
+  function handleGenerateFamilyTree() {
+    const memberIds = explicitMembers.map((p) => p.id)
+    onOpenFamilyTree(memberIds[0] ?? '', `${name} family tree`, memberIds)
   }
 
   // Candidate associated groups sourced from members: any OTHER group this group's own explicit
@@ -566,10 +564,10 @@ export default function GroupDetail({
         <button
           type="button"
           onClick={handleGenerateFamilyTree}
-          disabled={buildingTree || explicitMembers.length === 0}
+          disabled={explicitMembers.length === 0}
           style={styles.familyTreeButton}
         >
-          {buildingTree ? 'Building…' : explicitMembers.length === 0 ? 'Add members to generate a family tree' : 'Generate this family’s tree →'}
+          {explicitMembers.length === 0 ? 'Add members to generate a family tree' : 'Generate this family’s tree →'}
         </button>
       )}
 

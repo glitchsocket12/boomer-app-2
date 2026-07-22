@@ -75,8 +75,12 @@ src/
 │   │                            (All/No type/Family/Friend group/School/Team/Work,
 │   │                            2026-07-20)
 │   ├── GroupDetail.tsx        — "Generate this family's tree →" button on Family-typed
-│   │                            groups (item 41), roots on the member `pickFamilyTreeRoot()`
-│   │                            (familyTree.ts) picks as best-covering. group type picker (fixed 5-option dropdown, nullable,
+│   │                            groups (item 41), passes explicit member ids straight through
+│   │                            to FamilyTree.tsx (`memberIds` prop) which calls
+│   │                            `buildDescendantTree()` (familyTree.ts) — scoped to that
+│   │                            group's own lineage, not any one member's ego graph.
+│   │                            `pickFamilyTreeRoot()` removed 2026-07-21 (superseded by this).
+│   │                            group type picker (fixed 5-option dropdown, nullable,
 │   │                            writes on change, 2026-07-20), summary + refresh (rename now invalidates the cached
 │   │                            summary too, not just membership changes — a manually-
 │   │                            created group's summary can otherwise stay generated
@@ -156,7 +160,21 @@ src/
 │                                 note) and reloads the tree from the server. Known gap
 │                                 carried over from the mock: "+" always targets a
 │                                 tier's first branch — no UI yet to pick which branch
-│                                 when a tier has more than one
+│                                 when a tier has more than one. Tier count is data-driven, not
+│                                 fixed (2026-07-21, item 42): every tier carries a signed `depth`
+│                                 (0 = root-gen/family's eldest gen, negative = ancestors, positive
+│                                 = descendants); buildFamilyTree() walks parentsOf/childrenOf
+│                                 outward from the old fixed Grandparents/Parents/Kids window as
+│                                 far as the data goes (Great-Grandparents, Great-Great-
+│                                 Grandparents, ... and Grandchildren, Great-Grandchildren, ...),
+│                                 capped at 25 generations each direction as a cycle guard only.
+│                                 buildDescendantTree() (used by GroupDetail's "Generate this
+│                                 family's tree", `mode: 'descendants'`) got the same treatment —
+│                                 its old fixed 5-label array is gone. FamilyTree.tsx's layout
+│                                 chains any number of tiers off `depth` (no more mode-specific
+│                                 branching in the layout code). Verified live: Harvey/Roberta
+│                                 Volin's tree now shows their great-grandchild Wesley Gregorian
+│                                 in a "Great-Grandchildren" section
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
@@ -316,7 +334,9 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 40. ~~Full sibling/parent clique sync~~ — **DONE 2026-07-21, deployed and DB-backfilled.** Founder-requested: adding any relationship should reciprocate across everyone it touches, not just the pair directly linked (e.g. adding a 3rd sibling to a 2-sibling group should connect all 3, and share all parents across all 3 — not just sync the new pair). Replaced the old 2-person-only `syncSiblingParents` with `syncFamilyClique` (see §6), which walks the full transitive sibling closure on every sibling or parent add — wired into both the frontend "+" picker/suggestion-banner paths AND all 4 relationship-capturing edge functions (`add-fact`, `converse`, `update-moment`, `update-group`, all redeployed same day). Verified live against Jake's real sibling group (Josh/Jake/Jess/Danny Volin): a test sibling added only to Josh correctly picked up Amy/Steve as parents AND direct sibling links to Jake/Jess/Danny; a test parent added only to that new sibling correctly propagated to all four. Spouse→parent propagation (step-parent case) explicitly excluded — see item 24. One-time SQL backfill for pre-existing data run same day (165 → 177 relationship rows).
 
-41. ~~Family tree entry points beyond My Page~~ — **DONE 2026-07-21.** Founder-requested: see any person's tree from their own profile, and generate a Family-typed group's tree without needing to be a member yourself. `PersonDetail.tsx` now has a "View family tree →" link (any profile, not just self). `GroupDetail.tsx` now has a "Generate this family's tree →" button on `group_type === 'Family'` groups, which picks the root via the new `pickFamilyTreeRoot()` in `familyTree.ts` — scores each explicit member by how many *other* members would land inside `buildFamilyTree`'s fixed 4-tier window (2 generations up, 1 down) if centered on them, and picks the best-covering one. Verified live: The Volins (21 members) → centers on Jess Volin, surfacing both sides' cousins and nieces/nephews; a non-self profile (Steve Volin) opens its own tree correctly.
+41. ~~Family tree entry points beyond My Page~~ — **DONE 2026-07-21.** Founder-requested: see any person's tree from their own profile, and generate a Family-typed group's tree without needing to be a member yourself. `PersonDetail.tsx` now has a "View family tree →" link (any profile, not just self). `GroupDetail.tsx` now has a "Generate this family's tree →" button on `group_type === 'Family'` groups. Shipped in two passes same day: first via `pickFamilyTreeRoot()` picking a best-covering center person, then superseded within the day by a dedicated `buildDescendantTree()` (familyTree.ts, `mode: 'descendants'`) scoped to the whole group's lineage instead of one member's ego graph — `pickFamilyTreeRoot()` removed. Verified live: The Volins (21 members) → tree centers on the family's eldest known generation, correctly fanning down through all members; a non-self profile (Steve Volin) opens its own ego tree correctly.
+
+42. ~~Family tree generation cap~~ — **DONE 2026-07-21.** Founder-reported: Harvey/Roberta's great-grandchild (Wesley Gregorian) had no section — both tree modes were hardcoded to a fixed generation window (ego mode: 2 up/1 down; descendants mode: 5 labels). Both now walk however far the relationships data actually goes in each direction (capped at 25 generations only as a cycle guard) — see §7 FamilyTree.tsx entry for the mechanism. Matters for the founder's stated use case: people using this to keep track of real family lineage, potentially recording many generations back. Verified live: Harvey Volin's tree now shows a "Great-Grandchildren" section containing Wesley Gregorian; The Volins group tree unaffected in shape, still renders correctly.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 

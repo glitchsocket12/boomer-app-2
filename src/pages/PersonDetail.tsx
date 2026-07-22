@@ -109,7 +109,7 @@ export default function PersonDetail({
   onSelectEvent: (event: { id: string; summary: string }) => void
   onMerged: (person: { id: string; name: string }) => void
   onRenamed?: (newName: string) => void
-  onOpenFamilyTree: (personId: string, label: string) => void
+  onOpenFamilyTree: (personId: string, label: string, memberIds?: string[]) => void
 }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [groups, setGroups] = useState<GroupRef[]>([])

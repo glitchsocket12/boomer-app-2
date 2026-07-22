@@ -14,12 +14,19 @@ export type Union = { a: TreePerson; spouses: TreePerson[] }
 // tree fans outward like a normal family tree instead of pooling everyone on one side. `siblings`
 // keeps its narrower original meaning: only used for the root's own siblings on the root-gen tier.
 export type TreeBranch = { union: Union; leftExtended: Union[]; rightExtended: Union[]; siblings: Union[] }
-export type TreeTier = { label: string; branches: TreeBranch[]; defaultParentId?: string }
+// depth is generations from root: 0 = root's own generation, negative = ancestors (-1 Parents,
+// -2 Grandparents, ...), positive = descendants (1 Kids, 2 Grandchildren, ...). FamilyTree.tsx uses
+// this to chain each tier's layout off the adjacent, already-placed tier, however many exist.
+export type TreeTier = { label: string; branches: TreeBranch[]; defaultParentId?: string; depth: number }
 // The root's own direct relations, flat — lets the UI offer "remove this relationship" without
 // having to reverse-engineer which tree nodes are actually direct edges of the root vs. one hop
 // further out (an aunt/uncle's own parentId, e.g., points at a grandparent, not at the root).
 export type RootDirect = { parents: TreePerson[]; spouses: TreePerson[]; siblings: TreePerson[]; children: TreePerson[] }
-export type TreeData = { rootId: string; rootName: string; tiers: TreeTier[]; rootDirect: RootDirect }
+// 'ego' (buildFamilyTree): any person's own relationship graph — fixed Grandparents/Parents/
+// root-gen/Kids window relative to whoever the root is. 'descendants' (buildDescendantTree): a
+// group's tree scoped to one lineage — starts at the eldest known generation and fans downward
+// only, with no ancestor tiers and no collateral (aunt/uncle/cousin) branches.
+export type TreeData = { mode: 'ego' | 'descendants'; rootId: string; rootName: string; tiers: TreeTier[]; rootDirect: RootDirect }
 
 type Graph = {
   nameById: Map<string, string>
@@ -78,6 +85,52 @@ function primaryParentId(g: Graph, personId: string): string | undefined {
   return (g.parentsOf.get(personId) ?? [])[0]
 }
 
+// Like primaryParentId, but constrained to a specific set of ids — used when extending a tier one
+// more hop out: a child can be recorded under either parent, but only the parent actually present
+// in the tier being extended from is a valid connector-line anchor for the new tier.
+function parentWithinSet(g: Graph, personId: string, allowed: Set<string>): string | undefined {
+  return (g.parentsOf.get(personId) ?? []).find((id) => allowed.has(id))
+}
+
+// Turns a "how many generations of great- this is" count into the word prefix used in tier
+// labels — 1-2 stay as repeated "Great-" (the familiar phrasing), 3+ switch to "Nx Great-" so the
+// label doesn't run away for someone tracking many generations of lineage.
+function greatsPrefix(n: number): string {
+  if (n === 1) return 'Great-'
+  if (n === 2) return 'Great-Great-'
+  return `${n}x Great-`
+}
+
+// Ego-mode (buildFamilyTree) ancestor tier label for a given negative depth relative to root.
+function ancestorLabel(depth: number): string {
+  const hops = -depth
+  if (hops === 1) return 'Parents'
+  if (hops === 2) return 'Grandparents'
+  return `${greatsPrefix(hops - 2)}Grandparents`
+}
+
+// Ego-mode descendant tier label for a given positive depth relative to root.
+function descendantLabel(depth: number): string {
+  if (depth === 1) return 'Kids'
+  if (depth === 2) return 'Grandchildren'
+  return `${greatsPrefix(depth - 2)}Grandchildren`
+}
+
+// Descendants-mode (buildDescendantTree) tier label for a generation counted from the family's
+// eldest known members — gen 0 is the founders themselves, so "Kids" doesn't apply the way it does
+// in ego mode (there's no single root person for them to be the kids OF).
+function descendantGenLabel(gen: number): string {
+  if (gen === 0) return 'Family'
+  if (gen === 1) return 'Children'
+  if (gen === 2) return 'Grandchildren'
+  return `${greatsPrefix(gen - 2)}Grandchildren`
+}
+
+// A guard against cyclic/bad relationship data looping forever when walking a lineage outward —
+// real family trees, even ambitious lineage-keeping ones, won't come close to this many recorded
+// generations in one direction.
+const MAX_GENERATIONS = 25
+
 // Groups a flat list of ids into branches: spouses/partners within the same list pair up into one
 // union (ALL of them, not just the first — someone can have more than one spouse/partner on file),
 // everyone else gets their own single-person union.
@@ -125,17 +178,19 @@ function childrenOfEither(g: Graph, personId: string): string[] {
   return result
 }
 
-// For a "generate this family's tree" action from a Family-typed group, we need to pick which
-// member to hand to buildFamilyTree as its root — the tree it builds always shows a fixed window
-// of 2 generations above the root and 1 below (Grandparents/Parents/root-gen/Kids), so the choice
-// of root determines which of the group's other members actually land inside that window.
-// "Generation depth" = hops up the parent chain to reach someone with no recorded parents (0 =
-// the oldest known ancestor in that line). We pick whichever member's window ([depth-2, depth+1])
-// covers the most OTHER members — i.e. start from the oldest generation and walk down through
-// parents/children to see who that person's tree would actually include.
-export async function pickFamilyTreeRoot(memberIds: string[]): Promise<string | null> {
-  if (memberIds.length === 0) return null
-  if (memberIds.length === 1) return memberIds[0]
+// For a "generate this family's tree" action from a Family-typed group, we want ONLY that
+// family's own lineage — not the full ego graph a person's own tree shows (which would pull in
+// unrelated in-law branches, e.g. a member's spouse's own parents/siblings who have nothing to do
+// with this group). "Furthest back" = fewest recorded ancestors among the group's members — same
+// generation-depth reasoning buildFamilyTree's tiers are built on, just walked as far as the data
+// goes instead of capped at 2 hops. Starting there and fanning strictly downward (children,
+// grandchildren, ... plus each generation's married-in spouses) is what "Marilee/Villis are the
+// generation that goes furthest back, so show their kids/grandkids/etc." means structurally.
+export async function buildDescendantTree(memberIds: string[]): Promise<TreeData> {
+  const emptyRootDirect: RootDirect = { parents: [], spouses: [], siblings: [], children: [] }
+  if (memberIds.length === 0) {
+    return { mode: 'descendants', rootId: '', rootName: '', tiers: [], rootDirect: emptyRootDirect }
+  }
 
   const g = await loadGraph()
   const depthCache = new Map<string, number>()
@@ -148,18 +203,48 @@ export async function pickFamilyTreeRoot(memberIds: string[]): Promise<string | 
     depthCache.set(id, d)
     return d
   }
-  const depths = memberIds.map((id) => ({ id, depth: depthOf(id, new Set()) }))
+  const minDepth = Math.min(...memberIds.map((id) => depthOf(id, new Set())))
+  const founderIds = [...new Set(memberIds.filter((id) => depthOf(id, new Set()) === minDepth))]
 
-  let best = depths[0]
-  let bestCoverage = -1
-  for (const candidate of depths) {
-    const coverage = depths.filter((d) => d.depth >= candidate.depth - 2 && d.depth <= candidate.depth + 1).length
-    if (coverage > bestCoverage) {
-      bestCoverage = coverage
-      best = candidate
+  // Walk generation by generation. `seen` prevents a person appearing twice (e.g. a cousin
+  // marriage, or bad data); `parentOf` attributes each generation's members to whichever blood
+  // member of the PREVIOUS generation they descend from, so the connector lines land under the
+  // right couple. Runs until the lineage runs out — however many generations the family actually
+  // has on file — capped only at MAX_GENERATIONS as a cycle guard, not at a fixed label count.
+  const seen = new Set<string>()
+  const tiers: TreeTier[] = []
+  let bloodIds = founderIds
+  let parentOf = new Map<string, string>()
+
+  for (let gen = 0; gen < MAX_GENERATIONS && bloodIds.length > 0; gen++) {
+    const freshBlood = bloodIds.filter((id) => !seen.has(id))
+    if (freshBlood.length === 0) break
+
+    const branches: TreeBranch[] = []
+    for (const id of freshBlood) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      const a = node(g, id, 'direct', parentOf.get(id))
+      const spouses = inLawSpouses(g, id, 'direct').filter((s) => !seen.has(s.id))
+      spouses.forEach((s) => seen.add(s.id))
+      branches.push({ union: { a, spouses }, leftExtended: [], rightExtended: [], siblings: [] })
     }
+    tiers.push({ label: descendantGenLabel(gen), branches, depth: gen })
+
+    const nextParentOf = new Map<string, string>()
+    for (const id of freshBlood) {
+      for (const childId of childrenOfEither(g, id)) {
+        if (!seen.has(childId) && !nextParentOf.has(childId)) nextParentOf.set(childId, id)
+      }
+    }
+    bloodIds = [...nextParentOf.keys()]
+    parentOf = nextParentOf
   }
-  return best.id
+
+  const rootName =
+    tiers[0]?.branches.map((b) => [b.union.a, ...b.union.spouses].map((p) => p.name).join(' & ')).join(', ') ?? ''
+
+  return { mode: 'descendants', rootId: founderIds[0] ?? '', rootName, tiers, rootDirect: emptyRootDirect }
 }
 
 export async function buildFamilyTree(rootId: string): Promise<TreeData> {
@@ -244,7 +329,9 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
       if (!grandparentIds.includes(gpId)) grandparentIds.push(gpId)
     }
   }
-  const grandparentBranches = groupIntoBranches(g, grandparentIds, 'extended', () => undefined)
+  // parentId here (unlike most 'extended' nodes) is set, not undefined — it's the anchor a
+  // Great-Grandparents tier further out needs to hook onto, in case the data goes that far back.
+  const grandparentBranches = groupIntoBranches(g, grandparentIds, 'extended', (id) => primaryParentId(g, id))
 
   // --- Kids tier ---
   const kidsBranches: TreeBranch[] = [
@@ -261,12 +348,59 @@ export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   // same as Kids always did. Grandparents only renders once there's at least one parent to anchor
   // it on (no parent on file yet means there's nothing to add a grandparent "through").
   const tiers: TreeTier[] = []
-  if (rootParents.length > 0) tiers.push({ label: 'Grandparents', branches: grandparentBranches })
-  tiers.push({ label: 'Parents', branches: parentBranches, defaultParentId: rootId })
-  tiers.push({ label: isSelfRoot ? 'You' : rootName, branches: rootGenBranches, defaultParentId: rootId })
-  tiers.push({ label: 'Kids', branches: kidsBranches, defaultParentId: rootId })
+  if (rootParents.length > 0) tiers.push({ label: 'Grandparents', branches: grandparentBranches, depth: -2 })
+  tiers.push({ label: 'Parents', branches: parentBranches, defaultParentId: rootId, depth: -1 })
+  tiers.push({ label: isSelfRoot ? 'You' : rootName, branches: rootGenBranches, defaultParentId: rootId, depth: 0 })
+  tiers.push({ label: 'Kids', branches: kidsBranches, defaultParentId: rootId, depth: 1 })
+
+  // --- Ancestor tiers beyond Grandparents (Great-Grandparents, Great-Great-Grandparents, ...) ---
+  // Repeats the same "collect parentsOf everyone in the current oldest tier" step Grandparents used,
+  // however many more generations back the founder has actually recorded — a lineage-keeper adding
+  // great-great-grandparents shouldn't need a code change to see a section for them.
+  let extraAncestorIds = grandparentIds
+  let ancestorDepth = -2
+  for (let i = 0; i < MAX_GENERATIONS && extraAncestorIds.length > 0; i++) {
+    const nextIds: string[] = []
+    for (const id of extraAncestorIds) {
+      for (const pId of g.parentsOf.get(id) ?? []) {
+        if (!nextIds.includes(pId)) nextIds.push(pId)
+      }
+    }
+    if (nextIds.length === 0) break
+    ancestorDepth -= 1
+    const branches = groupIntoBranches(g, nextIds, 'extended', (id) => primaryParentId(g, id))
+    tiers.unshift({ label: ancestorLabel(ancestorDepth), branches, depth: ancestorDepth })
+    extraAncestorIds = nextIds
+  }
+
+  // --- Descendant tiers beyond Kids (Grandchildren, Great-Grandchildren, ...) ---
+  // Same idea downward: repeats "children of everyone in the current youngest tier, plus their own
+  // spouses as in-laws" (the same pattern the Kids tier itself uses) as many times as the data goes —
+  // this is what makes a great-grandchild like Wesley Gregorian get his own section instead of being
+  // silently dropped past the old fixed Kids-tier ceiling.
+  let extraDescendantIds = kidsBranches.map((b) => b.union.a.id)
+  let descendantDepth = 1
+  for (let i = 0; i < MAX_GENERATIONS && extraDescendantIds.length > 0; i++) {
+    const allowed = new Set(extraDescendantIds)
+    const nextIds: string[] = []
+    for (const id of extraDescendantIds) {
+      for (const childId of childrenOfEither(g, id)) {
+        if (!nextIds.includes(childId)) nextIds.push(childId)
+      }
+    }
+    if (nextIds.length === 0) break
+    descendantDepth += 1
+    const branches: TreeBranch[] = nextIds.map((childId) => ({
+      union: { a: node(g, childId, 'extended', parentWithinSet(g, childId, allowed)), spouses: inLawSpouses(g, childId, 'extended') },
+      leftExtended: [],
+      rightExtended: [],
+      siblings: [],
+    }))
+    tiers.push({ label: descendantLabel(descendantDepth), branches, depth: descendantDepth })
+    extraDescendantIds = nextIds
+  }
 
   const rootDirect: RootDirect = { parents: rootParentNodes, spouses: spouseNodes, siblings: siblingNodes, children: rootChildNodes }
 
-  return { rootId, rootName, tiers, rootDirect }
+  return { mode: 'ego', rootId, rootName, tiers, rootDirect }
 }

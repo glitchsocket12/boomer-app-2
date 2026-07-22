@@ -42,7 +42,7 @@ export default function Circle({
   backLabel: string
   onSelectPerson: (person: PersonRef) => void
   onSelectGroup: (group: { id: string; name: string }) => void
-  onOpenFamilyTree: (personId: string, label: string) => void
+  onOpenFamilyTree: (personId: string, label: string, memberIds?: string[]) => void
 }) {
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)

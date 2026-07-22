@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { buildFamilyTree, type TreeData, type TreePerson, type TreeBranch, type TreeTier, type Union } from '../lib/familyTree'
+import { buildFamilyTree, buildDescendantTree, type TreeData, type TreePerson, type TreeBranch, type TreeTier, type Union } from '../lib/familyTree'
 import { linkRelationship, createAndLinkRelationship, unlinkRelationship, type CircleCategory } from '../lib/writeRelationship'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 
@@ -240,11 +240,15 @@ export default function FamilyTree({
   onBack,
   backLabel,
   onSelectTree,
+  memberIds,
 }: {
   personId: string
   onBack: () => void
   backLabel: string
   onSelectTree: (id: string, label: string) => void
+  // Present only when opened from a Family-typed group's "Generate this family's tree" button —
+  // scopes the tree to that lineage (buildDescendantTree) instead of personId's own full ego graph.
+  memberIds?: string[]
 }) {
   const [data, setData] = useState<TreeData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -256,14 +260,14 @@ export default function FamilyTree({
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [personId])
+  }, [personId, memberIds])
 
   async function load() {
     setLoading(true)
     const [{ data: { user } }, { data: everyone }, tree] = await Promise.all([
       supabase.auth.getUser(),
       supabase.from('people').select('id, name, last_name'),
-      buildFamilyTree(personId),
+      memberIds && memberIds.length > 0 ? buildDescendantTree(memberIds) : buildFamilyTree(personId),
     ])
     setUserId(user?.id ?? null)
     setAllPeople((everyone ?? []).map((p) => ({ id: p.id, label: p.last_name ? `${p.name} ${p.last_name}` : p.name })))
@@ -323,35 +327,39 @@ export default function FamilyTree({
     )
   }
 
-  const { tiers } = data
-  // Grandparents/Parents/Kids are always these exact fixed labels; root-gen's label is dynamic
-  // (rootName, or "You" when centered on yourself) — it's whichever tier isn't one of the other
-  // three, rather than a hardcoded array position, so this doesn't break if buildFamilyTree's tier
-  // order ever changes.
-  const fixedTierLabels = new Set(['Grandparents', 'Parents', 'Kids'])
-  const kidsIdx = tiers.findIndex((t) => t.label === 'Kids')
-  const parentsIdx = tiers.findIndex((t) => t.label === 'Parents')
-  const grandparentsIdx = tiers.findIndex((t) => t.label === 'Grandparents')
-  const rootGenIdx = tiers.findIndex((t) => !fixedTierLabels.has(t.label))
+  const { tiers, mode } = data
 
-  // Root-gen ("You") is the one tier laid out naturally and independently — every other tier
-  // derives its position from an adjacent, already-placed tier, one generation at a time: Parents
-  // centers on root-gen's own positions, Grandparents then centers on Parents' now-final positions,
-  // and Kids (nothing below it to anchor to) centers on root-gen's positions from above instead.
-  // All four end up living in one shared coordinate frame with no per-tier canvas-centering
-  // approximation to go wrong — the frame is sized to fit everything only once, at the very end.
-  const rootGenLayout = layoutTier(tiers[rootGenIdx].branches)
-  const parentsLayout = layoutRelativeToChildren(tiers[parentsIdx].branches, rootGenLayout.placed)
-  const grandparentsLayout =
-    grandparentsIdx >= 0 ? layoutRelativeToChildren(tiers[grandparentsIdx].branches, parentsLayout.placed) : null
-  const kidsLayout = layoutRelativeToParent(tiers[kidsIdx].branches, tiers[rootGenIdx], rootGenLayout.placed)
+  // Every tier carries a depth relative to depth 0 (root-gen in ego mode; the family's eldest known
+  // generation in descendants mode — see buildFamilyTree/buildDescendantTree). Depth 0 lays out
+  // naturally and independently; every other tier derives its position from the adjacent,
+  // already-placed tier one step closer to 0 — ancestor tiers (negative depth) center on their own
+  // children's span below, descendant tiers (positive depth) center on their own parents' marriage
+  // line above. Walking outward from 0 in both directions this way means all tiers end up living in
+  // one shared coordinate frame with no per-tier canvas-centering approximation to go wrong, however
+  // many tiers there are — the frame is sized to fit everything only once, at the very end.
+  const byDepth = new Map(tiers.map((t, i) => [t.depth, i]))
+  const zeroIdx = byDepth.get(0)!
+  const layoutByDepth = new Map<number, { placed: Placed[]; totalWidth: number }>()
+  layoutByDepth.set(0, layoutTier(tiers[zeroIdx].branches))
 
-  const layouts = tiers.map((_tier, i) => {
-    if (i === rootGenIdx) return rootGenLayout
-    if (i === kidsIdx) return kidsLayout
-    if (i === parentsIdx) return parentsLayout
-    return grandparentsLayout!
-  })
+  const depths = tiers.map((t) => t.depth)
+  const minDepth = Math.min(...depths)
+  const maxDepth = Math.max(...depths)
+  for (let d = -1; d >= minDepth; d--) {
+    const idx = byDepth.get(d)
+    const childLayout = layoutByDepth.get(d + 1)
+    if (idx === undefined || !childLayout) continue
+    layoutByDepth.set(d, layoutRelativeToChildren(tiers[idx].branches, childLayout.placed))
+  }
+  for (let d = 1; d <= maxDepth; d++) {
+    const idx = byDepth.get(d)
+    const parentIdx = byDepth.get(d - 1)
+    const parentLayout = layoutByDepth.get(d - 1)
+    if (idx === undefined || parentIdx === undefined || !parentLayout) continue
+    layoutByDepth.set(d, layoutRelativeToParent(tiers[idx].branches, tiers[parentIdx], parentLayout.placed))
+  }
+
+  const layouts = tiers.map((t) => layoutByDepth.get(t.depth)!)
 
   // A single uniform shift (not a per-tier one) brings the whole shared frame into view: every
   // tier's coordinates are already correct relative to each other, so sliding all of them by the
@@ -373,21 +381,26 @@ export default function FamilyTree({
     ])
   )
 
+  // Add/remove relationship controls only make sense for a single centered person (ego mode) —
+  // a descendants-mode tree has no one "root" to attach a new relationship to.
   const parentsTier = tiers.find((t) => t.label === 'Parents')
   const parentsList = parentsTier ? parentsTier.branches.flatMap((b) => [b.union.a, ...b.union.spouses]) : []
-  const addSlots: { key: string; label: string; category: CircleCategory; subjectId: string; subjectName: string }[] = [
-    ...parentsList.map((p) => ({
-      key: `grandparent-${p.id}`,
-      label: `Grandparent (${p.name}'s side)`,
-      category: 'parents' as CircleCategory,
-      subjectId: p.id,
-      subjectName: p.name,
-    })),
-    { key: 'parent', label: 'Parent', category: 'parents', subjectId: data.rootId, subjectName: data.rootName },
-    { key: 'spouse', label: 'Spouse', category: 'spouse', subjectId: data.rootId, subjectName: data.rootName },
-    { key: 'sibling', label: 'Sibling', category: 'siblings', subjectId: data.rootId, subjectName: data.rootName },
-    { key: 'child', label: 'Child', category: 'kids', subjectId: data.rootId, subjectName: data.rootName },
-  ]
+  const addSlots: { key: string; label: string; category: CircleCategory; subjectId: string; subjectName: string }[] =
+    mode === 'ego'
+      ? [
+          ...parentsList.map((p) => ({
+            key: `grandparent-${p.id}`,
+            label: `Grandparent (${p.name}'s side)`,
+            category: 'parents' as CircleCategory,
+            subjectId: p.id,
+            subjectName: p.name,
+          })),
+          { key: 'parent', label: 'Parent', category: 'parents' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
+          { key: 'spouse', label: 'Spouse', category: 'spouse' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
+          { key: 'sibling', label: 'Sibling', category: 'siblings' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
+          { key: 'child', label: 'Child', category: 'kids' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
+        ]
+      : []
 
   // Only the root's own direct relations are offered for removal — see confirmRemove's comment
   // for why one hop further out isn't included here.
@@ -438,7 +451,9 @@ export default function FamilyTree({
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
-      <p style={styles.contextLine}>Family tree — centered on {data.rootName}</p>
+      <p style={styles.contextLine}>
+        {mode === 'descendants' ? `Family tree — descendants of ${data.rootName}` : `Family tree — centered on ${data.rootName}`}
+      </p>
 
       <div style={styles.svgScroll}>
       <svg width={canvasWidth} height={height} viewBox={`0 0 ${canvasWidth} ${height}`} style={styles.svg}>
@@ -538,7 +553,7 @@ export default function FamilyTree({
               ))}
               {layout.placed.map((p) => {
                 const c = COLORS[p.person.kind]
-                const clickable = p.person.id !== data.rootId
+                const clickable = mode === 'descendants' ? true : p.person.id !== data.rootId
                 const x = startX + p.x
                 return (
                   <g
