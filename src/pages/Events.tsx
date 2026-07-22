@@ -117,6 +117,17 @@ export default function Events({
     return haystack.includes(query)
   })
 
+  const yearGroups: { year: number; items: typeof filteredMoments }[] = []
+  for (const entry of filteredMoments) {
+    const year = eventSortDate(entry.moment).getFullYear()
+    const lastGroup = yearGroups[yearGroups.length - 1]
+    if (lastGroup && lastGroup.year === year) {
+      lastGroup.items.push(entry)
+    } else {
+      yearGroups.push({ year, items: [entry] })
+    }
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.headingRow}>
@@ -142,49 +153,45 @@ export default function Events({
       )}
 
       <div style={styles.list}>
-        {filteredMoments.map(({ moment, attendees, summary, groups }, i) => {
-          const year = eventSortDate(moment).getFullYear()
-          const prevYear = i > 0 ? eventSortDate(filteredMoments[i - 1].moment).getFullYear() : null
-          const showYearHeader = year !== prevYear
+        {yearGroups.map(({ year, items }) => (
+          <div key={year}>
+            <h2 style={styles.yearHeading}>{year}</h2>
+            <div style={styles.yearCards}>
+              {items.map(({ moment, attendees, summary, groups }) => (
+                <div key={moment.id} style={styles.card}>
+                  <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
+                    {moment.occasion || 'Untitled moment'}
+                  </button>
+                  <p style={styles.meta}>
+                    {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
+                  </p>
 
-          return (
-            <div key={moment.id}>
-              {showYearHeader && (
-                <h2 style={{ ...styles.yearHeading, marginTop: i === 0 ? 0 : '1.75rem' }}>{year}</h2>
-              )}
-              <div style={styles.card}>
-                <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
-                  {moment.occasion || 'Untitled moment'}
-                </button>
-                <p style={styles.meta}>
-                  {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
-                </p>
+                  {attendees.size === 0 ? (
+                    <p style={styles.empty}>No one tagged yet.</p>
+                  ) : (
+                    <div style={styles.chipRow}>
+                      {Array.from(attendees.values()).map((p) => (
+                        <PersonChip
+                          key={p.id}
+                          label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
+                          onClick={() => onSelectPerson(p)}
+                        />
+                      ))}
+                    </div>
+                  )}
 
-                {attendees.size === 0 ? (
-                  <p style={styles.empty}>No one tagged yet.</p>
-                ) : (
-                  <div style={styles.chipRow}>
-                    {Array.from(attendees.values()).map((p) => (
-                      <PersonChip
-                        key={p.id}
-                        label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-                        onClick={() => onSelectPerson(p)}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {groups.length > 0 && (
-                  <div style={styles.chipRow}>
-                    {groups.map((g) => (
-                      <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-                    ))}
-                  </div>
-                )}
-              </div>
+                  {groups.length > 0 && (
+                    <div style={styles.chipRow}>
+                      {groups.map((g) => (
+                        <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          )
-        })}
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -209,12 +216,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   yearHeading: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
     fontSize: '1.3rem',
     color: '#2E4034',
-    margin: '0 0 0.75rem 0',
+    margin: 0,
+    padding: '0.6rem 0 0.4rem 0',
+    backgroundColor: '#F7F5F2',
     borderBottom: '1px solid #DDD',
-    paddingBottom: '0.4rem',
   },
+  yearCards: { display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.75rem' },
   card: {
     backgroundColor: '#FFF',
     borderRadius: '10px',
