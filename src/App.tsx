@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
-import Login from './pages/Login'
+import Landing from './pages/Landing'
 import Home from './pages/Home'
 import People from './pages/People'
 import Events from './pages/Events'
@@ -109,7 +109,7 @@ export default function App() {
   }
 
   if (!session) {
-    return <Login />
+    return <Landing />
   }
 
   const current = navStack[navStack.length - 1] ?? null
