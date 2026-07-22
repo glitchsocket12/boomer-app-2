@@ -10,11 +10,14 @@ function maxBirthdayForMinAge(minAge: number) {
 }
 
 function calculateAge(birthdayISO: string) {
-  const birthDate = new Date(birthdayISO)
+  // Parse the 'YYYY-MM-DD' parts directly rather than `new Date(birthdayISO)` — that parses as
+  // UTC midnight, which shifts to the previous local day west of UTC and can misjudge the
+  // 13-and-up cutoff by a year right at the boundary.
+  const [birthYear, birthMonth, birthDay] = birthdayISO.split('-').map(Number)
   const today = new Date()
-  let age = today.getFullYear() - birthDate.getFullYear()
-  const monthDiff = today.getMonth() - birthDate.getMonth()
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+  let age = today.getFullYear() - birthYear
+  const monthDiff = today.getMonth() + 1 - birthMonth
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDay)) {
     age--
   }
   return age

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
+import { ensureSelfPersonFromSignupMetadata } from './lib/ensureSelfFromSignup'
 import Home from './pages/Home'
 import People from './pages/People'
 import Events from './pages/Events'
@@ -71,8 +72,11 @@ export default function App() {
       setCheckingSession(false)
     })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
+      if (event === 'SIGNED_IN' && session?.user) {
+        ensureSelfPersonFromSignupMetadata(session.user.id, session.user.user_metadata ?? {})
+      }
     })
 
     return () => listener.subscription.unsubscribe()

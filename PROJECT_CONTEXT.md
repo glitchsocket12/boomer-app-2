@@ -36,9 +36,23 @@ src/
 │   ├── writeRelationship.ts   — linkRelationship/createAndLinkRelationship: the shared "+"
 │   │                            write path (relationships table row + both-sides reciprocal
 │   │                            note) used by Circle.tsx and FamilyTree.tsx
-│   └── familyTree.ts          — buildFamilyTree(personId): walks the relationships table
-│                                (one full-table fetch, then in-memory graph walk) into the
-│                                tiers/branches FamilyTree.tsx renders
+│   ├── familyTree.ts          — buildFamilyTree(personId): walks the relationships table
+│   │                            (one full-table fetch, then in-memory graph walk) into the
+│   │                            tiers/branches FamilyTree.tsx renders
+│   └── ensureSelfFromSignup.ts — (2026-07-22) turns sign-up's auth user_metadata
+│                                (first_name/last_name/birthday) into a real self `people`
+│                                row + Birthday `reminders` row, so a new signup skips
+│                                Circle.tsx's "which profile is you?" onboarding. Called
+│                                from App.tsx's `onAuthStateChange` on the `SIGNED_IN`
+│                                event only (not the initial session restore, so it isn't
+│                                re-run on every page load). No-ops safely: does nothing
+│                                if `first_name` is absent (pre-2026-07-22 accounts, or
+│                                login rather than signup) or if a self person already
+│                                exists (checked before inserting — verified live against
+│                                the real `jakevolin@gmail.com` account that this correctly
+│                                skips rather than creating a duplicate). Errors are
+│                                logged, never thrown — worst case a new user just falls
+│                                through to the existing manual onboarding screen.
 ├── pages/
 │   ├── Landing.tsx            — public marketing page (2026-07-22), now what `!session`
 │   │                            renders in App.tsx instead of bare Login.tsx: single
@@ -88,12 +102,14 @@ src/
 │   │                            `supabase.auth.signUp`). Password/confirm mismatch is
 │   │                            also blocked pre-submit with its own message. First/last
 │   │                            name + birthday are passed as `options.data` on
-│   │                            `signUp()` — land in the Supabase auth user's metadata
-│   │                            only. **Not yet wired to the `people` table or the
-│   │                            existing self-profile onboarding in Circle.tsx** — a
-│   │                            newly signed-up user still goes through that separate
-│   │                            "flag or create yourself" flow with no pre-fill. Worth
-│   │                            connecting later (flagged, not built — see §8).
+│   │                            `signUp()`, landing in the Supabase auth user's metadata;
+│   │                            `lib/ensureSelfFromSignup.ts` (2026-07-22) turns that into
+│   │                            a real self person + birthday reminder on first sign-in,
+│   │                            so Circle.tsx's onboarding is skipped for new users.
+│   │                            `calculateAge()` parses the 'YYYY-MM-DD' string's parts
+│   │                            directly rather than `new Date(...)` — the latter parses
+│   │                            as UTC midnight and can misjudge the 13-cutoff by a year
+│   │                            in timezones west of UTC.
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
@@ -428,7 +444,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 
-**Small known follow-ups:** align `person-facts`' category vocabulary with the shared 5-kind enum; nicknames stated via `update-moment`/`person-facts` paths aren't written (only lookup); Edge Function test coverage (needs Anthropic/Supabase mocks); no retroactive group backfill for pre-2026-07-15 moments; sign-up's First/Last name + Birthday (2026-07-22) land in Supabase auth metadata only, not pre-filled into a `people` row via Circle.tsx's self-onboarding — a new user still has to do that flow manually with no head start.
+**Small known follow-ups:** align `person-facts`' category vocabulary with the shared 5-kind enum; nicknames stated via `update-moment`/`person-facts` paths aren't written (only lookup); Edge Function test coverage (needs Anthropic/Supabase mocks); no retroactive group backfill for pre-2026-07-15 moments.
 
 ## 9. Product & UX decisions (the standing "why")
 
