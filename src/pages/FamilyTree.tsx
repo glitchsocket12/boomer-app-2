@@ -32,7 +32,12 @@ const CANVAS_W = 680
 const BOX_H = 44
 const MARRIAGE_GAP = 16
 const SLOT_GAP = 24
-const BRANCH_GAP = 44
+// Wider than a plain visual gap needs to be: the parent-child connector bar for each branch now
+// stretches to reach its own anchor (the marriage-line midpoint one tier up), which can extend a
+// bar well past its own children — e.g. a cousin group's bar reaching toward its aunt/uncle's own
+// position. Without enough room between branches, two unrelated bars at the same row can end up
+// looking like one continuous line even though they don't actually share a point.
+const BRANCH_GAP = 80
 const TIER_Y_STEP = 120
 const TIER_Y_START = 40
 
@@ -456,8 +461,12 @@ export default function FamilyTree({
                 const sourceX = anchorX(tiers[i], layoutAbove, parentId)
                 if (sourceX === undefined) return null
                 const sx = startAbove + sourceX
-                const barLeft = Math.min(...centers)
-                const barRight = Math.max(...centers)
+                // The bar has to stretch to reach the stem too, not just span the children —
+                // otherwise, whenever a couple's marriage-line midpoint falls outside their
+                // children's own horizontal range (any asymmetric layout, e.g. cousins added
+                // unevenly on one side), the stem and bar don't touch and the line looks broken.
+                const barLeft = Math.min(sx, ...centers)
+                const barRight = Math.max(sx, ...centers)
                 return (
                   <g key={parentId}>
                     <line x1={sx} y1={yAbove + BOX_H} x2={sx} y2={barY} stroke="#CCC" strokeWidth={1} />
