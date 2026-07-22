@@ -191,7 +191,23 @@ src/
 │                                 Berzins's and Lisa Ruskaup's full lines underneath — the old
 │                                 logic had picked unrelated in-laws (Jeremy Crigler, Bridget
 │                                 Dugan, Faye Higgins) as "founders" instead and dropped Mark's
-│                                 entire branch
+│                                 entire branch. Color coding overhauled 2026-07-21 (item 43):
+│                                 purple now means "the person this tree is centered on" (any
+│                                 root, not just the app's own `is_self` person — every ego-mode
+│                                 tree is root-focused by construction, so no flag needed);
+│                                 buildDescendantTree()'s group meta-tree never assigns purple at
+│                                 all (single green color throughout — no gender data exists to
+│                                 support true maternal/paternal, and there's no single root to
+│                                 focus on anyway). Extended family (grandparents, aunts/uncles,
+│                                 cousins, and their own further ancestors/descendants) is now
+│                                 tinted by which of the root's two parents they trace back
+│                                 through — labeled by that parent's actual name in the legend
+│                                 (e.g. "Sarah's side"), not "maternal/paternal" (no gender field
+│                                 to support that). Connector and marriage lines are tinted to
+│                                 match. `TreePerson` gained an optional `side: 'a'|'b'` carried
+│                                 through every tier-building loop, including the item-42
+│                                 arbitrary-depth ancestor/descendant extensions. Verified live
+│                                 against Jake Volin's and Mark Berzins's real trees.
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
@@ -354,6 +370,8 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 41. ~~Family tree entry points beyond My Page~~ — **DONE 2026-07-21.** Founder-requested: see any person's tree from their own profile, and generate a Family-typed group's tree without needing to be a member yourself. `PersonDetail.tsx` now has a "View family tree →" link (any profile, not just self). `GroupDetail.tsx` now has a "Generate this family's tree →" button on `group_type === 'Family'` groups. Shipped in two passes same day: first via `pickFamilyTreeRoot()` picking a best-covering center person, then superseded within the day by a dedicated `buildDescendantTree()` (familyTree.ts, `mode: 'descendants'`) scoped to the whole group's lineage instead of one member's ego graph — `pickFamilyTreeRoot()` removed. Verified live: The Volins (21 members) → tree centers on the family's eldest known generation, correctly fanning down through all members; a non-self profile (Steve Volin) opens its own ego tree correctly.
 
 42. ~~Family tree generation cap~~ — **DONE 2026-07-21.** Founder-reported: Harvey/Roberta's great-grandchild (Wesley Gregorian) had no section — both tree modes were hardcoded to a fixed generation window (ego mode: 2 up/1 down; descendants mode: 5 labels). Both now walk however far the relationships data actually goes in each direction (capped at 25 generations only as a cycle guard) — see §7 FamilyTree.tsx entry for the mechanism. Matters for the founder's stated use case: people using this to keep track of real family lineage, potentially recording many generations back. Verified live: Harvey Volin's tree now shows a "Great-Grandchildren" section containing Wesley Gregorian; The Volins group tree unaffected in shape, still renders correctly.
+43. ~~Family tree color coding~~ — **DONE 2026-07-21.** Founder-requested: make relationships easier to read at a glance — who's centered on whom, and which side grandparents/aunts-uncles/cousins are on. See §7 FamilyTree.tsx entry for the mechanism. Deferred (founder's own call, flagged to revisit — see item 44): a gender icon per person, not bundled into this pass. Verified live against Jake Volin's tree (purple moves correctly when re-centered on a non-self person like Amy Volin; blue/rose sides span from Great-Grandparents down through cousins' kids) and The Berzins' group meta-tree (single green color, no purple, clicking any member correctly opens their own purple-centered ego tree).
+44. **Gender icon on family tree tiles** — raised by founder 2026-07-21 alongside item 43, deliberately deferred (founder's call, revisit with them whether this was the right sequencing). Needs a new nullable `gender` column on `people` (Male/Female/Non-Binary/Other, always manually editable on a profile) plus a one-time hybrid auto-fill: a static first-name→gender lookup (not a live AI call — no per-view cost) sets it automatically only when confidence is ≥90%, otherwise leaves it unset for the founder to confirm. Independent of the `side`/`TreePerson` machinery item 43 shipped — the icon would render per-person on every tile (ego or group meta-tree alike), unrelated to root/purple/side logic.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 

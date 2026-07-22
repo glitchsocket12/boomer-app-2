@@ -8,7 +8,16 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { buildFamilyTree, buildDescendantTree, type TreeData, type TreePerson, type TreeBranch, type TreeTier, type Union } from '../lib/familyTree'
+import {
+  buildFamilyTree,
+  buildDescendantTree,
+  type TreeData,
+  type TreePerson,
+  type TreeBranch,
+  type TreeTier,
+  type Union,
+  type TreeSide,
+} from '../lib/familyTree'
 import { linkRelationship, createAndLinkRelationship, unlinkRelationship, type CircleCategory } from '../lib/writeRelationship'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 
@@ -23,9 +32,22 @@ const TRASH_ICON = (
 )
 
 const COLORS: Record<TreePerson['kind'], { border: string; fill: string; text: string }> = {
-  self: { border: '#6B4E9E', fill: '#F1EDF9', text: '#4A3C7A' },
+  focal: { border: '#6B4E9E', fill: '#F1EDF9', text: '#4A3C7A' },
   direct: { border: '#2E4034', fill: '#F4F8F1', text: '#2E4034' },
+  // Fallback for 'extended' people with no side (root's own descendants past Kids, e.g.
+  // grandchildren — they're root's own line, not a side branch, so they don't get blue/rose).
   extended: { border: '#BBB', fill: '#FFFFFF', text: '#888' },
+}
+// The two sides of the extended family (see TreeSide in familyTree.ts) — muted to match the app's
+// existing earthy palette, and deliberately distinct from the #B04A3B delete/danger red used
+// elsewhere so a side color can never read as a warning.
+const SIDE_COLORS: Record<TreeSide, { border: string; fill: string; text: string }> = {
+  a: { border: '#3E6B8A', fill: '#EEF4F8', text: '#2E4E63' }, // muted steel blue
+  b: { border: '#9C5B72', fill: '#F8EEF1', text: '#6B3E4E' }, // muted dusty rose
+}
+function colorsFor(person: TreePerson) {
+  if (person.kind === 'extended' && person.side) return SIDE_COLORS[person.side]
+  return COLORS[person.kind]
 }
 
 const CANVAS_W = 680
@@ -447,6 +469,25 @@ export default function FamilyTree({
     })),
   ]
 
+  // Plain-language legend, dynamic since which colors actually appear depends on the data (a
+  // one-parent person only has one side to name, a group's descendants-mode tree has neither
+  // purple nor sides at all).
+  let legendText: string
+  if (mode === 'descendants') {
+    legendText = 'Everyone shown is a blood relative or spouse in this family line. Tap any name to build a full family tree centered on them.'
+  } else {
+    const [sideAParent, sideBParent] = data.rootDirect.parents
+    const sideLegend =
+      sideAParent && sideBParent
+        ? `${sideAParent.name}'s side of the family is shown in blue, and ${sideBParent.name}'s side is shown in rose. `
+        : sideAParent
+        ? `${sideAParent.name}'s side of the family is shown in blue. `
+        : ''
+    legendText =
+      `Purple = the person this tree is centered on. Green = their parents, spouse, siblings, and kids — a direct relationship on file. ${sideLegend}` +
+      `Gray = family further out that isn't tied to one side (like great-grandchildren). Tap any name to re-center the tree on them.`
+  }
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -495,12 +536,18 @@ export default function FamilyTree({
                 // unevenly on one side), the stem and bar don't touch and the line looks broken.
                 const barLeft = Math.min(sx, ...centers)
                 const barRight = Math.max(sx, ...centers)
+                // Tint the whole stem/bar/drops with the parent's own side color, so a glance at the
+                // connector lines alone shows which cousin group hangs off which side — falls back to
+                // plain gray for anything rooted in a non-sided person (root's own family).
+                const parentSide = layoutAbove.placed.find((pp) => pp.person.id === parentId)?.person.side
+                const lineColor = parentSide ? SIDE_COLORS[parentSide].border : '#CCC'
+                const lineOpacity = parentSide ? 0.6 : 1
                 return (
                   <g key={parentId}>
-                    <line x1={sx} y1={yAbove + BOX_H} x2={sx} y2={barY} stroke="#CCC" strokeWidth={1} />
-                    <line x1={barLeft} y1={barY} x2={barRight} y2={barY} stroke="#CCC" strokeWidth={1} />
+                    <line x1={sx} y1={yAbove + BOX_H} x2={sx} y2={barY} stroke={lineColor} strokeOpacity={lineOpacity} strokeWidth={1} />
+                    <line x1={barLeft} y1={barY} x2={barRight} y2={barY} stroke={lineColor} strokeOpacity={lineOpacity} strokeWidth={1} />
                     {centers.map((cx, ci) => (
-                      <line key={ci} x1={cx} y1={barY} x2={cx} y2={yBelow} stroke="#CCC" strokeWidth={1} />
+                      <line key={ci} x1={cx} y1={barY} x2={cx} y2={yBelow} stroke={lineColor} strokeOpacity={lineOpacity} strokeWidth={1} />
                     ))}
                   </g>
                 )
@@ -535,12 +582,19 @@ export default function FamilyTree({
             const unions = [...branch.leftExtended, branch.union, ...branch.rightExtended, ...branch.siblings]
             return unions.flatMap((union) => {
               const chain = [union.a, ...union.spouses]
-              const lines: { x1: number; x2: number; y: number }[] = []
+              const side = union.a.side
+              const lines: { x1: number; x2: number; y: number; color: string; opacity: number }[] = []
               for (let k = 0; k < chain.length - 1; k++) {
                 const leftPlaced = layout.placed.find((p) => p.person === chain[k])
                 const rightPlaced = layout.placed.find((p) => p.person === chain[k + 1])
                 if (!leftPlaced || !rightPlaced) continue
-                lines.push({ x1: startX + leftPlaced.x + leftPlaced.w, x2: startX + rightPlaced.x, y: y + BOX_H / 2 })
+                lines.push({
+                  x1: startX + leftPlaced.x + leftPlaced.w,
+                  x2: startX + rightPlaced.x,
+                  y: y + BOX_H / 2,
+                  color: side ? SIDE_COLORS[side].border : '#CCC',
+                  opacity: side ? 0.6 : 1,
+                })
               }
               return lines
             })
@@ -549,10 +603,10 @@ export default function FamilyTree({
           return (
             <g key={tier.label + i}>
               {marriageLines.map((l, li) => (
-                <line key={li} x1={l.x1} y1={l.y} x2={l.x2} y2={l.y} stroke="#CCC" strokeWidth={1} />
+                <line key={li} x1={l.x1} y1={l.y} x2={l.x2} y2={l.y} stroke={l.color} strokeOpacity={l.opacity} strokeWidth={1} />
               ))}
               {layout.placed.map((p) => {
-                const c = COLORS[p.person.kind]
+                const c = colorsFor(p.person)
                 const clickable = mode === 'descendants' ? true : p.person.id !== data.rootId
                 const x = startX + p.x
                 return (
@@ -614,10 +668,7 @@ export default function FamilyTree({
         </div>
       )}
 
-      <p style={styles.legend}>
-        Solid border = direct relationship on file. Gray = one hop further out (a parent's sibling, or
-        their kids). Tap any name to re-center the tree on them.
-      </p>
+      <p style={styles.legend}>{legendText}</p>
     </div>
   )
 }
