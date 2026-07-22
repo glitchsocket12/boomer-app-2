@@ -229,10 +229,9 @@ relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partne
               `_shared/relationships.ts` and `writeRelationship.ts`, 2026-07-21) —
               adding a sibling links them to every existing sibling too and shares
               all parents across the group; adding a parent to anyone in the group
-              gives it to the rest of the siblings as well. One-time retroactive
-              backfill for pre-existing data written to `migrations_manual/
-              2026-07-21-family-clique-backfill.sql`, not yet run (needs a fresh
-              access token — pending).
+              gives it to the rest of the siblings as well. Retroactive backfill
+              for pre-existing data run 2026-07-21 (`migrations_manual/
+              2026-07-21-family-clique-backfill.sql`, 165 → 177 relationship rows).
 moments       id, user_id, raw_description (user's words only — never assistant
               turns), summary? (AI cache), occasion?, location?, when_text?
               (free-text, kept verbatim), event_date? (AI best-guess real date,
@@ -309,7 +308,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 39. ~~Family tree layout engine rewrite~~ — **DONE 2026-07-22**, same day as founder-proposed. Implemented in the fresh session the founder asked for; see item 37's "Root-cause rewrite" entry for what shipped.
 
-40. ~~Full sibling/parent clique sync~~ — **DONE 2026-07-21.** Founder-requested: adding any relationship should reciprocate across everyone it touches, not just the pair directly linked (e.g. adding a 3rd sibling to a 2-sibling group should connect all 3, and share all parents across all 3 — not just sync the new pair). Replaced the old 2-person-only `syncSiblingParents` with `syncFamilyClique` (see §6), which walks the full transitive sibling closure on every sibling or parent add. Verified live against Jake's real sibling group (Josh/Jake/Jess/Danny Volin): a test sibling added only to Josh correctly picked up Amy/Steve as parents AND direct sibling links to Jake/Jess/Danny; a test parent added only to that new sibling correctly propagated to all four. Spouse→parent propagation (step-parent case) explicitly excluded — see item 24. One-time SQL backfill for pre-existing data (`migrations_manual/2026-07-21-family-clique-backfill.sql`) written but not yet run — needs a fresh access token.
+40. ~~Full sibling/parent clique sync~~ — **DONE 2026-07-21, deployed and DB-backfilled.** Founder-requested: adding any relationship should reciprocate across everyone it touches, not just the pair directly linked (e.g. adding a 3rd sibling to a 2-sibling group should connect all 3, and share all parents across all 3 — not just sync the new pair). Replaced the old 2-person-only `syncSiblingParents` with `syncFamilyClique` (see §6), which walks the full transitive sibling closure on every sibling or parent add — wired into both the frontend "+" picker/suggestion-banner paths AND all 4 relationship-capturing edge functions (`add-fact`, `converse`, `update-moment`, `update-group`, all redeployed same day). Verified live against Jake's real sibling group (Josh/Jake/Jess/Danny Volin): a test sibling added only to Josh correctly picked up Amy/Steve as parents AND direct sibling links to Jake/Jess/Danny; a test parent added only to that new sibling correctly propagated to all four. Spouse→parent propagation (step-parent case) explicitly excluded — see item 24. One-time SQL backfill for pre-existing data run same day (165 → 177 relationship rows).
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 
