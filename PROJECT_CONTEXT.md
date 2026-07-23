@@ -334,7 +334,7 @@ src/
 │   │                             existing people to flag `is_self`, or create a blank
 │   │                             one (lands on its PersonDetail to name it). Reached
 │   │                             via "My page" in the top bar
-│   └── FamilyTree.tsx          — real family tree (item 32/15, REPLACED
+│   ├── FamilyTree.tsx          — real family tree (item 32/15, REPLACED
 │                                 FamilyTreeMock.tsx 2026-07-20). Layout engine rewritten
 │                                 2026-07-21/22 (item 37): root-gen ("You") is the only tier
 │                                 still laid out naturally/independently; every other tier
@@ -452,6 +452,19 @@ src/
 SVG tree canvas isn't squeezed into a narrow column on desktop; svg
 style also centers via margin 0 auto when the tree is narrower than
 the container.
+│   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
+│   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
+│   │                            only, not app-navigation shortcuts (a "My page" link was cut
+│   │                            for that reason). Email/password change via
+│   │                            `supabase.auth.updateUser()`; chat-tone picker (4 presets,
+│   │                            `user_settings` table) upserts on click, same shape as
+│   │                            `home_suggestions`; links to About/Privacy
+│   ├── About.tsx               — (2026-07-23) placeholder page reached from Settings — real
+│   │                            copy (item 23's "I don't want it to be bullshit" honesty ask)
+│   │                            still to be drafted with the founder
+│   └── Privacy.tsx             — (2026-07-23) placeholder page reached from Settings — real
+│                                privacy/data policy still to be drafted with the founder, not
+│                                invented unilaterally
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
@@ -519,7 +532,7 @@ Every page listed above under `pages/` (Home/People/PersonDetail/Groups/GroupDet
 
 | Function | Purpose |
 |---|---|
-| `converse` | **The main unified brain** (Home). Per turn decides: answer question / capture new moment(s — `moments` array, multiple per turn supported) / update moment / rename placeholder / name+nickname corrections / create+tag groups / create+tag tags / relationship signals / logs recall attempts to `search_log`. AI-suggested tags (item 28, 2026-07-22): each moment entry's `moment_tags: string[]` is resolved via `findOrCreateTagId()` — the same find-by-name-or-create pattern as `moment_groups`/`findOrCreateGroupId`, capped at 1-3 tags per moment with an explicit "prefer reusing an existing tag over coining a near-duplicate" instruction (both live in the fully-static `stableInstructions` tier, so this cost nothing extra to cache; the tags roster itself lives in the 1-hour roster tier alongside the groups roster). `update-moment`'s `add_tags` deliberately NOT added yet (see §8 item 28 — holding the AI surface to one entry point until real usage confirms the vocabulary stays clean). Knows the self person (`is_self`) and their known relationships (`_shared/selfContext.ts`) so "my mom"/"my parents" resolve without a named subject (2026-07-20). Quirk: model occasionally replies in prose instead of the JSON envelope — falls back to showing that prose as the reply. |
+| `converse` | **The main unified brain** (Home). Per turn decides: answer question / capture new moment(s — `moments` array, multiple per turn supported) / update moment / rename placeholder / name+nickname corrections / create+tag groups / create+tag tags / relationship signals / logs recall attempts to `search_log`. AI-suggested tags (item 28, 2026-07-22): each moment entry's `moment_tags: string[]` is resolved via `findOrCreateTagId()` — the same find-by-name-or-create pattern as `moment_groups`/`findOrCreateGroupId`, capped at 1-3 tags per moment with an explicit "prefer reusing an existing tag over coining a near-duplicate" instruction (both live in the fully-static `stableInstructions` tier, so this cost nothing extra to cache; the tags roster itself lives in the 1-hour roster tier alongside the groups roster). `update-moment`'s `add_tags` deliberately NOT added yet (see §8 item 28 — holding the AI surface to one entry point until real usage confirms the vocabulary stays clean). Knows the self person (`is_self`) and their known relationships (`_shared/selfContext.ts`) so "my mom"/"my parents" resolve without a named subject (2026-07-20). Chat-tone preference (2026-07-23, items 22/49): `_shared/userSettings.ts`'s `buildChatToneInstruction` reads `user_settings.chat_tone` and appends one of 4 fixed instruction sentences to the roster tier, right after `selfInstruction` — never the stable tier. Quirk: model occasionally replies in prose instead of the JSON envelope — falls back to showing that prose as the reply. |
 | `add-fact` | Classifies fact-bar text: name/nickname update, birthday/anniversary (upserts `reminders`), or plain note. Group inference (`group_signal`, high=auto/medium=ask). Relationship handling via `_shared/relationships.ts`. A fact typed on the self profile's own page already resolves "my X" correctly with no special-casing (the subject is always whichever profile is being viewed). |
 | `update-moment` | Event chat. Saves per turn (not on "done"), has full people+events rosters, `moment_field_updates` (when/where/title), `add_groups`, relationship signals, self-person "my X" resolution (2026-07-20). |
 | `update-group` | Group chat: rename, members, tag/untag events, member facts (tagged `source_group_id`), relationship signals, self-person "my X" resolution (2026-07-20). Saves per turn. |
@@ -617,7 +630,13 @@ search_log    id, user_id, query_text, matched bool, created_at — one row per
 home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts cache
 feedback_notes id, user_id, page_label?, element_label?, note, status ("open"/"done",
               default "open"), created_at — click-to-comment feedback widget (§3
-              FeedbackWidget.tsx); not yet created live, see §10 pending migration
+              FeedbackWidget.tsx), live and confirmed working (2026-07-23: 8 real
+              founder notes captured then folded into §8's backlog as items 46-53)
+user_settings user_id (PK), chat_tone (text, CHECK-constrained to 'warm'/'direct'/
+              'playful'/'formal', default 'warm'), updated_at — 2026-07-23, items
+              22/49. Same one-row-per-account shape as home_suggestions. Read by
+              `converse` via `_shared/userSettings.ts`'s `buildChatToneInstruction`,
+              appended into the roster cache tier (never the stable tier — see §5).
 ```
 
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
@@ -651,7 +670,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 19. Rules engine ("group A + group B ⇒ group C") + group hierarchy visualization.
 20. Data viz: family tree, connection map.
 21. Internet lookup for added context.
-22. Settings page: tile colors, suggestion sensitivity, chat tone, user's own profile/library, terminology library, About.
+22. ~~Settings page~~ — **DONE 2026-07-23** (v1, see item 49 for what shipped). Of the six candidates speculated here, only chat tone/About shipped in v1; tile colors, suggestion sensitivity, and terminology library remain open (each needs new infrastructure built first — a theme layer, a suggestion-frequency concept, a centralized vocabulary module, respectively). "User's own profile/library" was considered and cut from Settings entirely — that's app navigation (already reachable via the main nav), not a setting.
 23. **Security hardening** + honest About-page writeup ("I don't want it to be bullshit") — start from §10's reality, audit first.
 24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both). Concretely blocks auto-linking a new spouse as a parent of the other spouse's existing kids (step-parent case) — deliberately left manual-only in item 40 pending this. Real example on file: Andy Volin (deceased) was married to Andi Volin, who's since remarried to Michael Galchinsky.
 26. Ratings/thumbs feedback loop (tunes suggestions; does not retrain the model).
@@ -684,7 +703,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 46. Rename the Home "Notes" stat tile to "Datapoints" — founder's framing: not just a note count, but a summary across notes/contacts/events/groups meant to show how much the app is assisting memory beyond the ~150 Dunbar cap. Quick copy/label change first pass; broader "datapoints" reframing (what else counts, how it's computed) is the bigger open question.
 47. Dunbar's-tiers widget on Home — show the actual names of who's in each tier ("Intimate circle 5 of 5: ...") instead of just a count, to make it feel more dynamic/personal.
 48. New Calendar feature — nav button placed next to Groups; ships first as a mockup placeholder page. Auto-populates from dates already on people's profiles/events. Must be filterable by tag — founder specifically doesn't want a calendar cluttered with reminders from a two-year-old phone call.
-49. Add a "Settings" button next to Log out — **needs a founder brainstorm first** on what settings actually belong in v1 (tile colors/suggestion sensitivity/chat tone already speculated in item 22 — likely the same feature, dedupe when scoped).
+49. ~~Add a "Settings" button next to Log out~~ — **DONE 2026-07-23.** Scoped down with the founder to account + AI settings only (email/password change, chat-tone preference) plus About and Privacy/data-policy links — explicitly not a place for app-interface shortcuts. `SettingsPage.tsx`/`About.tsx`/`Privacy.tsx` (see §3), `user_settings` table (see §6), `converse` roster-tier read (see §4/§5). About/Privacy are placeholder pages — real copy for both still needs to be drafted together with the founder, not invented unilaterally. Verified live against the founder's real account: email/tone sections render correctly, chat tone persists and visibly changes `converse` reply style (tested "direct"), password change round-tripped (changed, logged in with the new one, reverted to original) — email-change form intentionally not tested live against the real account (low-risk code path, same `supabase.auth.updateUser()` already proven for password, but founder chose not to risk it on the real login for this pass).
 50. Home page engagement — founder wants the "Most reinforced this month" area (and Home generally) to prompt the user to confirm/add value back into the model: "is this person in group X?", "confirm this relationship", "suggested tags for this event." Explicitly a brainstorm ask, not a spec — related to item 15's relationship-aware smarts and item 26's ratings loop.
 51. EventDetail "Affiliated Groups" section — formatting should match how Groups.tsx handles adding additional groups; currently wastes space when a moment has none. Same treatment for tags: click-to-reveal rather than always-visible. Also pick one term, "Affiliated" or "Associated" groups, and use it consistently.
 52. Event dates — use an exact date when one is known instead of vague guidance text; vague text (e.g. "late February 2018") is fine specifically when no exact date exists. Flagged live on the VCIC Competition event.

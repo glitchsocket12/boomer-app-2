@@ -8,6 +8,7 @@ import {
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
+import { buildChatToneInstruction } from "../_shared/userSettings.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -228,6 +229,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     // billing efficiency rule).
     const selfInfo = findSelfPerson(people, nameById)
     const selfInstruction = await buildSelfInstruction(supabaseClient, selfInfo, nameById)
+    const chatToneInstruction = await buildChatToneInstruction(supabaseClient, user.id)
 
     const rosterContext = `Here are the groups already created:
 ${groupsContext || "(none yet)"}
@@ -235,7 +237,7 @@ ${groupsContext || "(none yet)"}
 Here are the tags already created: ${tagsContext || "(none yet)"}
 
 Here is everyone already recorded, by full name where a last name is known:
-${peopleRoster || "(none yet)"}${selfInstruction}`
+${peopleRoster || "(none yet)"}${selfInstruction}${chatToneInstruction}`
 
     // Moments tier — changes on every new capture, the most frequent write in the app, so it's
     // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier

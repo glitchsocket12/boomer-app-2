@@ -17,6 +17,9 @@ import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
 import ManageTags from './pages/ManageTags'
 import Circle from './pages/Circle'
+import SettingsPage from './pages/SettingsPage'
+import About from './pages/About'
+import Privacy from './pages/Privacy'
 import FamilyTree from './pages/FamilyTree'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
@@ -32,6 +35,9 @@ type Crumb =
   | { type: 'manageTags'; id: string; label: string }
   | { type: 'circle'; id: string; label: string }
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
+  | { type: 'settings'; id: string; label: string }
+  | { type: 'about'; id: string; label: string }
+  | { type: 'privacy'; id: string; label: string }
 
 const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
 
@@ -50,7 +56,7 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
       ? parsed.navStack.filter(
           (c: Crumb) =>
             c &&
-            ['person', 'group', 'event', 'dunbar', 'nudges', 'manageTags', 'circle', 'familyTree'].includes(c.type) &&
+            ['person', 'group', 'event', 'dunbar', 'nudges', 'manageTags', 'circle', 'familyTree', 'settings', 'about', 'privacy'].includes(c.type) &&
             typeof c.id === 'string' &&
             typeof c.label === 'string'
         )
@@ -267,6 +273,19 @@ export default function App() {
         onSelectTree={(id, label) => pushCrumb({ type: 'familyTree', id, label })}
       />
     )
+  } else if (current?.type === 'settings') {
+    content = (
+      <SettingsPage
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onOpenAbout={() => pushCrumb({ type: 'about', id: 'about', label: 'About' })}
+        onOpenPrivacy={() => pushCrumb({ type: 'privacy', id: 'privacy', label: 'Privacy' })}
+      />
+    )
+  } else if (current?.type === 'about') {
+    content = <About onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'privacy') {
+    content = <Privacy onBack={popCrumb} backLabel={parentLabel} />
   } else {
     content = (
       <>
@@ -322,6 +341,12 @@ export default function App() {
           <button onClick={() => goToTab('groups')}>Groups</button>
         </div>
         <div>
+          <button
+            onClick={() => pushCrumb({ type: 'settings', id: 'settings', label: 'Settings' })}
+            style={{ marginRight: '0.5rem' }}
+          >
+            Settings
+          </button>
           <button onClick={() => supabase.auth.signOut()}>Log out</button>
         </div>
       </div>
