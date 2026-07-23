@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type RefObject, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
@@ -12,10 +12,10 @@ import RelationshipSuggestionBanners, {
 } from '../components/RelationshipSuggestions'
 import DevOnboardingReset from '../components/DevOnboardingReset'
 
-type PersonRef = { id: string; name: string }
-type EventRef = { id: string; summary: string }
-type GroupRef = { id: string; name: string }
-type ChatMessage = {
+export type PersonRef = { id: string; name: string }
+export type EventRef = { id: string; summary: string }
+export type GroupRef = { id: string; name: string }
+export type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   people?: PersonRef[]
@@ -25,7 +25,7 @@ type ChatMessage = {
 
 const DUNBAR_LIMIT = 150
 
-type LeaderboardEntry = { id: string; name: string; count: number }
+export type LeaderboardEntry = { id: string; name: string; count: number }
 
 function initials(name: string): string {
   return name
@@ -191,6 +191,94 @@ export default function Home({
   }
 
   return (
+    <HomeView
+      thread={thread}
+      sending={sending}
+      input={input}
+      onInputChange={setInput}
+      onSend={handleSend}
+      onSuggestionClick={handleSuggestionClick}
+      stats={stats}
+      recallAssists={recallAssists}
+      leaderboard={leaderboard}
+      suggestions={suggestions}
+      suggestionsLoading={suggestionsLoading}
+      onRefreshSuggestions={() => loadSuggestions(true)}
+      relationshipSuggestions={relationshipSuggestions}
+      setRelationshipSuggestions={setRelationshipSuggestions}
+      newPersonSuggestions={newPersonSuggestions}
+      setNewPersonSuggestions={setNewPersonSuggestions}
+      onSelectPerson={onSelectPerson}
+      onSelectEvent={onSelectEvent}
+      onSelectGroup={onSelectGroup}
+      onSelectDunbar={onSelectDunbar}
+      onSelectNudges={onSelectNudges}
+      onNavigateTab={onNavigateTab}
+      bottomRef={bottomRef}
+      devTools={<DevOnboardingReset />}
+    />
+  )
+}
+
+// Pure render — everything it needs comes in as props. Split out (2026-07-22) so the landing-page
+// demo can render the exact same dashboard/chat UI fed by static data, with no Supabase/Edge
+// Function calls anywhere in this component. `readOnly` hides the mic button (which would
+// otherwise call the `transcribe` Edge Function) and `devTools` is a slot the real container fills
+// with the auth-only DevOnboardingReset control — the demo simply doesn't pass it.
+export function HomeView({
+  thread,
+  sending,
+  input,
+  onInputChange,
+  onSend,
+  onSuggestionClick,
+  stats,
+  recallAssists,
+  leaderboard,
+  suggestions,
+  suggestionsLoading,
+  onRefreshSuggestions,
+  relationshipSuggestions,
+  setRelationshipSuggestions,
+  newPersonSuggestions,
+  setNewPersonSuggestions,
+  onSelectPerson,
+  onSelectEvent,
+  onSelectGroup,
+  onSelectDunbar,
+  onSelectNudges,
+  onNavigateTab,
+  bottomRef,
+  devTools,
+  readOnly = false,
+}: {
+  thread: ChatMessage[]
+  sending: boolean
+  input: string
+  onInputChange: (value: string) => void
+  onSend: () => void
+  onSuggestionClick: (text: string) => void
+  stats: { people: number; events: number; groups: number; notes: number } | null
+  recallAssists: number | null
+  leaderboard: LeaderboardEntry[]
+  suggestions: string[]
+  suggestionsLoading: boolean
+  onRefreshSuggestions: () => void
+  relationshipSuggestions: RelationshipSuggestion[]
+  setRelationshipSuggestions: Dispatch<SetStateAction<RelationshipSuggestion[]>>
+  newPersonSuggestions: NewPersonSuggestion[]
+  setNewPersonSuggestions: Dispatch<SetStateAction<NewPersonSuggestion[]>>
+  onSelectPerson: (person: PersonRef) => void
+  onSelectEvent: (event: EventRef) => void
+  onSelectGroup: (group: GroupRef) => void
+  onSelectDunbar: () => void
+  onSelectNudges: () => void
+  onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
+  bottomRef: RefObject<HTMLDivElement | null>
+  devTools?: ReactNode
+  readOnly?: boolean
+}) {
+  return (
     <div style={styles.page}>
       <h1 style={styles.heading}>Boomer</h1>
 
@@ -268,7 +356,7 @@ export default function Home({
             </div>
           )}
 
-          <DevOnboardingReset />
+          {devTools}
 
           <p style={styles.emptyState}>Ask about anyone or any moment, or just tell me what's on your mind.</p>
           {suggestionsLoading && (
@@ -281,10 +369,10 @@ export default function Home({
             <div style={styles.suggestionList}>
               <span style={styles.suggestionsHeadingRow}>
                 <span style={styles.suggestionsHeading}>A few ideas</span>
-                <RefreshButton label="Refresh suggestions" refreshing={suggestionsLoading} onClick={() => loadSuggestions(true)} />
+                <RefreshButton label="Refresh suggestions" refreshing={suggestionsLoading} onClick={onRefreshSuggestions} />
               </span>
               {suggestions.map((s, i) => (
-                <button key={i} onClick={() => handleSuggestionClick(s)} style={styles.suggestionCard}>
+                <button key={i} onClick={() => onSuggestionClick(s)} style={styles.suggestionCard}>
                   {s}
                 </button>
               ))}
@@ -330,17 +418,19 @@ export default function Home({
           <div style={styles.inputRow}>
             <AutoGrowTextarea
               value={input}
-              onChange={setInput}
-              onEnter={handleSend}
+              onChange={onInputChange}
+              onEnter={onSend}
               placeholder="Ask, share, or add a detail…"
               style={styles.input}
               disabled={sending}
             />
-            <VoiceInputButton
-              disabled={sending}
-              onTranscribed={(text) => setInput((prev) => (prev ? `${prev} ${text}` : text))}
-            />
-            <button onClick={handleSend} disabled={sending} style={styles.button}>
+            {!readOnly && (
+              <VoiceInputButton
+                disabled={sending}
+                onTranscribed={(text) => onInputChange(input ? `${input} ${text}` : text)}
+              />
+            )}
+            <button onClick={onSend} disabled={sending} style={styles.button}>
               Send
             </button>
           </div>

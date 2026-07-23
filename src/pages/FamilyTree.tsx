@@ -398,6 +398,71 @@ export default function FamilyTree({
     )
   }
 
+  return (
+    <FamilyTreeView
+      data={data}
+      onBack={onBack}
+      backLabel={backLabel}
+      onSelectTree={onSelectTree}
+      allPeople={allPeople}
+      onAddRelationship={addRelationship}
+      removeConfirm={removeConfirm}
+      removing={removing}
+      onRequestRemove={setRemoveConfirm}
+      onConfirmRemove={confirmRemove}
+      onCancelRemove={() => setRemoveConfirm(null)}
+      spouseSuggestions={spouseSuggestions}
+      onAcceptSpouseSuggestion={acceptSpouseSuggestion}
+      onDeclineSpouseSuggestion={declineSpouseSuggestion}
+    />
+  )
+}
+
+// Pure render — split out (2026-07-22) so the landing-page demo can render the exact same tree UI
+// fed by a hand-built `TreeData` (via familyTree.ts's `buildFamilyTreeFromGraph`, no Supabase
+// involved), instead of the real `buildFamilyTree()`/`buildDescendantTree()` which query the live
+// `relationships` table. `readOnly` hides every write-only control (the "+" add-relationship
+// pickers and "Remove a relationship" section, plus their confirm banners) — the tree itself
+// (layout, colors, re-centering by clicking any name) renders and behaves identically either way.
+export function FamilyTreeView({
+  data,
+  onBack,
+  backLabel,
+  onSelectTree,
+  readOnly = false,
+  allPeople = [],
+  onAddRelationship = () => {},
+  removeConfirm = null,
+  removing = false,
+  onRequestRemove = () => {},
+  onConfirmRemove = () => {},
+  onCancelRemove = () => {},
+  spouseSuggestions = [],
+  onAcceptSpouseSuggestion = () => {},
+  onDeclineSpouseSuggestion = () => {},
+}: {
+  data: TreeData
+  onBack: () => void
+  backLabel: string
+  onSelectTree: (id: string, label: string) => void
+  readOnly?: boolean
+  allPeople?: { id: string; label: string }[]
+  onAddRelationship?: (
+    category: CircleCategory,
+    subjectId: string,
+    subjectName: string,
+    existing?: { id: string; label: string },
+    newName?: string
+  ) => void
+  removeConfirm?: RemoveTarget | null
+  removing?: boolean
+  onRequestRemove?: (target: RemoveTarget) => void
+  onConfirmRemove?: () => void
+  onCancelRemove?: () => void
+  spouseSuggestions?: SpouseSuggestion[]
+  onAcceptSpouseSuggestion?: (s: SpouseSuggestion) => void
+  onDeclineSpouseSuggestion?: (s: SpouseSuggestion) => void
+}) {
   const { tiers, mode } = data
 
   // Every tier carries a depth relative to depth 0 (root-gen in ego mode; the family's eldest known
@@ -459,7 +524,7 @@ export default function FamilyTree({
   const parentsTier = tiers.find((t) => t.label === 'Parents')
   const parentsList = parentsTier ? parentsTier.branches.flatMap((b) => [b.union.a, ...b.union.spouses]) : []
   const addSlots: { key: string; label: string; category: CircleCategory; subjectId: string; subjectName: string }[] =
-    mode === 'ego'
+    !readOnly && mode === 'ego'
       ? [
           ...parentsList.map((p) => ({
             key: `grandparent-${p.id}`,
@@ -477,48 +542,50 @@ export default function FamilyTree({
 
   // Only the root's own direct relations are offered for removal — see confirmRemove's comment
   // for why one hop further out isn't included here.
-  const removeSlots: (RemoveTarget & { key: string; relLabel: string })[] = [
-    ...data.rootDirect.parents.map((p) => ({
-      key: `rm-parent-${p.id}`,
-      relLabel: 'parent',
-      category: 'parents' as CircleCategory,
-      subjectId: data.rootId,
-      subjectName: data.rootName,
-      targetId: p.id,
-      targetName: p.name,
-      label: `Remove ${p.name} as ${data.rootName}'s parent?`,
-    })),
-    ...data.rootDirect.spouses.map((p) => ({
-      key: `rm-spouse-${p.id}`,
-      relLabel: 'spouse',
-      category: 'spouse' as CircleCategory,
-      subjectId: data.rootId,
-      subjectName: data.rootName,
-      targetId: p.id,
-      targetName: p.name,
-      label: `Remove ${p.name} as ${data.rootName}'s spouse?`,
-    })),
-    ...data.rootDirect.siblings.map((p) => ({
-      key: `rm-sibling-${p.id}`,
-      relLabel: 'sibling',
-      category: 'siblings' as CircleCategory,
-      subjectId: data.rootId,
-      subjectName: data.rootName,
-      targetId: p.id,
-      targetName: p.name,
-      label: `Remove ${p.name} as ${data.rootName}'s sibling?`,
-    })),
-    ...data.rootDirect.children.map((p) => ({
-      key: `rm-child-${p.id}`,
-      relLabel: 'child',
-      category: 'kids' as CircleCategory,
-      subjectId: data.rootId,
-      subjectName: data.rootName,
-      targetId: p.id,
-      targetName: p.name,
-      label: `Remove ${p.name} as ${data.rootName}'s child?`,
-    })),
-  ]
+  const removeSlots: (RemoveTarget & { key: string; relLabel: string })[] = readOnly
+    ? []
+    : [
+        ...data.rootDirect.parents.map((p) => ({
+          key: `rm-parent-${p.id}`,
+          relLabel: 'parent',
+          category: 'parents' as CircleCategory,
+          subjectId: data.rootId,
+          subjectName: data.rootName,
+          targetId: p.id,
+          targetName: p.name,
+          label: `Remove ${p.name} as ${data.rootName}'s parent?`,
+        })),
+        ...data.rootDirect.spouses.map((p) => ({
+          key: `rm-spouse-${p.id}`,
+          relLabel: 'spouse',
+          category: 'spouse' as CircleCategory,
+          subjectId: data.rootId,
+          subjectName: data.rootName,
+          targetId: p.id,
+          targetName: p.name,
+          label: `Remove ${p.name} as ${data.rootName}'s spouse?`,
+        })),
+        ...data.rootDirect.siblings.map((p) => ({
+          key: `rm-sibling-${p.id}`,
+          relLabel: 'sibling',
+          category: 'siblings' as CircleCategory,
+          subjectId: data.rootId,
+          subjectName: data.rootName,
+          targetId: p.id,
+          targetName: p.name,
+          label: `Remove ${p.name} as ${data.rootName}'s sibling?`,
+        })),
+        ...data.rootDirect.children.map((p) => ({
+          key: `rm-child-${p.id}`,
+          relLabel: 'child',
+          category: 'kids' as CircleCategory,
+          subjectId: data.rootId,
+          subjectName: data.rootName,
+          targetId: p.id,
+          targetName: p.name,
+          label: `Remove ${p.name} as ${data.rootName}'s child?`,
+        })),
+      ]
 
   // Plain-language legend, dynamic since which colors actually appear depends on the data (a
   // one-parent person only has one side to name, a group's descendants-mode tree has neither
@@ -671,26 +738,28 @@ export default function FamilyTree({
       </svg>
       </div>
 
-      <div style={styles.addRow}>
-        {addSlots.map((slot) => (
-          <div key={slot.key} style={styles.addItem}>
-            <span style={styles.addLabel}>{slot.label}:</span>
-            <RelationshipAddPicker
-              people={allPeople}
-              excludeIds={allShownIds}
-              onSelectExisting={(p) => addRelationship(slot.category, slot.subjectId, slot.subjectName, p)}
-              onCreateNew={(name) => addRelationship(slot.category, slot.subjectId, slot.subjectName, undefined, name)}
-            />
-          </div>
-        ))}
-      </div>
+      {!readOnly && (
+        <div style={styles.addRow}>
+          {addSlots.map((slot) => (
+            <div key={slot.key} style={styles.addItem}>
+              <span style={styles.addLabel}>{slot.label}:</span>
+              <RelationshipAddPicker
+                people={allPeople}
+                excludeIds={allShownIds}
+                onSelectExisting={(p) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, p)}
+                onCreateNew={(name) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, undefined, name)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
 
       {removeSlots.length > 0 && (
         <div style={styles.removeSection}>
           <span style={styles.addLabel}>Remove a relationship:</span>
           <div style={styles.addRow}>
             {removeSlots.map((slot) => (
-              <RemoveChip key={slot.key} name={slot.targetName} relLabel={slot.relLabel} onRemove={() => setRemoveConfirm(slot)} />
+              <RemoveChip key={slot.key} name={slot.targetName} relLabel={slot.relLabel} onRemove={() => onRequestRemove(slot)} />
             ))}
           </div>
         </div>
@@ -700,10 +769,10 @@ export default function FamilyTree({
         <div style={styles.suggestBanner}>
           <span>{removeConfirm.label} This can be re-added afterward if it was added in the wrong spot.</span>
           <div style={styles.suggestButtonRow}>
-            <button type="button" onClick={confirmRemove} style={styles.dangerDeleteButton} disabled={removing}>
+            <button type="button" onClick={onConfirmRemove} style={styles.dangerDeleteButton} disabled={removing}>
               {removing ? 'Removing…' : 'Yes, remove'}
             </button>
-            <button type="button" onClick={() => setRemoveConfirm(null)} style={styles.suggestNoButton} disabled={removing}>
+            <button type="button" onClick={onCancelRemove} style={styles.suggestNoButton} disabled={removing}>
               Cancel
             </button>
           </div>
@@ -716,10 +785,10 @@ export default function FamilyTree({
             Are {s.aName} and {s.bName} married or partners? Both are on file as parents of the same person.
           </span>
           <div style={styles.suggestButtonRow}>
-            <button type="button" onClick={() => acceptSpouseSuggestion(s)} style={styles.suggestYesButton}>
+            <button type="button" onClick={() => onAcceptSpouseSuggestion(s)} style={styles.suggestYesButton}>
               Yes, link them
             </button>
-            <button type="button" onClick={() => declineSpouseSuggestion(s)} style={styles.suggestNoButton}>
+            <button type="button" onClick={() => onDeclineSpouseSuggestion(s)} style={styles.suggestNoButton}>
               No thanks
             </button>
           </div>

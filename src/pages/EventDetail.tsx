@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
@@ -10,13 +10,13 @@ import VoiceInputButton from '../components/VoiceInputButton'
 import { summarize } from '../lib/summarize'
 import { sortByLastName } from '../lib/people'
 
-type PersonRef = { id: string; name: string; last_name: string | null }
-type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
-type TagRef = { id: string; name: string }
-type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null; source: string | null }
-type OtherEvent = { id: string; occasion: string | null; raw_description: string }
+export type PersonRef = { id: string; name: string; last_name: string | null }
+export type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
+export type TagRef = { id: string; name: string }
+export type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null; source: string | null }
+export type OtherEvent = { id: string; occasion: string | null; raw_description: string }
 
-type MomentDetail = {
+export type MomentDetail = {
   id: string
   occasion: string | null
   location: string | null
@@ -341,6 +341,177 @@ export default function EventDetail({
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
   if (!moment) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Couldn't find that event.</p>
 
+  return (
+    <EventDetailView
+      moment={moment}
+      onSelectPerson={onSelectPerson}
+      onSelectGroup={onSelectGroup}
+      onBack={onBack}
+      backLabel={backLabel}
+      allPeople={allPeople}
+      allGroupsList={allGroupsList}
+      allTagsList={allTagsList}
+      editingTitle={editingTitle}
+      titleInput={titleInput}
+      savingTitle={savingTitle}
+      onStartEditTitle={() => {
+        setTitleInput(moment.occasion ?? '')
+        setEditingTitle(true)
+      }}
+      onTitleInputChange={setTitleInput}
+      onSaveTitle={handleSaveTitle}
+      onCancelEditTitle={() => setEditingTitle(false)}
+      editingDescription={editingDescription}
+      descriptionInput={descriptionInput}
+      savingDescription={savingDescription}
+      onStartEditDescription={startEditingDescription}
+      onDescriptionInputChange={setDescriptionInput}
+      onSaveDescription={handleSaveDescription}
+      onCancelEditDescription={() => setEditingDescription(false)}
+      onTagGroup={handleTagGroup}
+      onUntagGroup={handleUntagGroup}
+      onTagMoment={handleTagMoment}
+      onCreateAndTagMoment={handleCreateAndTagMoment}
+      onUntagMoment={handleUntagMoment}
+      onAddAttendee={handleAddAttendee}
+      onRemoveAttendee={handleRemoveAttendee}
+      onDenySuggestion={handleDenySuggestion}
+      onDenyAllSuggestions={handleDenyAllSuggestions}
+      notesOpen={notesOpen}
+      onToggleNotesOpen={() => setNotesOpen((o) => !o)}
+      deleteConfirming={deleteConfirming}
+      onStartDelete={() => setDeleteConfirming(true)}
+      onCancelDelete={() => setDeleteConfirming(false)}
+      onConfirmDelete={handleDeleteEvent}
+      mergeOpen={mergeOpen}
+      onOpenMerge={openMerge}
+      mergeSearch={mergeSearch}
+      onMergeSearchChange={setMergeSearch}
+      otherEvents={otherEvents}
+      mergeCandidate={mergeCandidate}
+      onSelectMergeCandidate={setMergeCandidate}
+      onCancelMerge={() => setMergeOpen(false)}
+      onBackFromMergeCandidate={() => setMergeCandidate(null)}
+      onConfirmMerge={handleMergeEvent}
+      actionBusy={actionBusy}
+      actionError={actionError}
+      updateChat={<UpdateMomentChat momentId={moment.id} onSaved={handleNoteSaved} />}
+    />
+  )
+}
+
+// Pure render — split out (2026-07-22) so the landing-page demo can render the exact same event
+// UI fed by static data, with no Supabase/Edge Function calls. `readOnly` hides every write-only
+// control (rename pencil, description edit, group/tag/attendee pickers, note-source chip
+// hover-untag, suggestion banners, delete/merge, the "Remember something else?" chat) —
+// everything else (summary, groups, tags, attendees, notes, navigation) renders and behaves
+// identically either way. `updateChat` is a slot the real container fills with
+// `UpdateMomentChat` — the demo simply doesn't pass it.
+export function EventDetailView({
+  moment,
+  onSelectPerson,
+  onSelectGroup,
+  onBack,
+  backLabel,
+  allPeople = [],
+  allGroupsList = [],
+  allTagsList = [],
+  readOnly = false,
+  editingTitle = false,
+  titleInput = '',
+  savingTitle = false,
+  onStartEditTitle = () => {},
+  onTitleInputChange = () => {},
+  onSaveTitle = () => {},
+  onCancelEditTitle = () => {},
+  editingDescription = false,
+  descriptionInput = '',
+  savingDescription = false,
+  onStartEditDescription = () => {},
+  onDescriptionInputChange = () => {},
+  onSaveDescription = () => {},
+  onCancelEditDescription = () => {},
+  onTagGroup = () => {},
+  onUntagGroup = () => {},
+  onTagMoment = () => {},
+  onCreateAndTagMoment = () => {},
+  onUntagMoment = () => {},
+  onAddAttendee = () => {},
+  onRemoveAttendee = () => {},
+  onDenySuggestion = () => {},
+  onDenyAllSuggestions = () => {},
+  notesOpen = false,
+  onToggleNotesOpen = () => {},
+  deleteConfirming = false,
+  onStartDelete = () => {},
+  onCancelDelete = () => {},
+  onConfirmDelete = () => {},
+  mergeOpen = false,
+  onOpenMerge = () => {},
+  mergeSearch = '',
+  onMergeSearchChange = () => {},
+  otherEvents = [],
+  mergeCandidate = null,
+  onSelectMergeCandidate = () => {},
+  onCancelMerge = () => {},
+  onBackFromMergeCandidate = () => {},
+  onConfirmMerge = () => {},
+  actionBusy = false,
+  actionError = null,
+  updateChat,
+}: {
+  moment: MomentDetail
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onBack: () => void
+  backLabel: string
+  allPeople?: PersonRef[]
+  allGroupsList?: GroupRef[]
+  allTagsList?: TagRef[]
+  readOnly?: boolean
+  editingTitle?: boolean
+  titleInput?: string
+  savingTitle?: boolean
+  onStartEditTitle?: () => void
+  onTitleInputChange?: (v: string) => void
+  onSaveTitle?: (e: FormEvent) => void
+  onCancelEditTitle?: () => void
+  editingDescription?: boolean
+  descriptionInput?: string
+  savingDescription?: boolean
+  onStartEditDescription?: () => void
+  onDescriptionInputChange?: (v: string) => void
+  onSaveDescription?: () => void
+  onCancelEditDescription?: () => void
+  onTagGroup?: (groupId: string) => void
+  onUntagGroup?: (groupId: string) => void
+  onTagMoment?: (tagId: string) => void
+  onCreateAndTagMoment?: (name: string) => void
+  onUntagMoment?: (tagId: string) => void
+  onAddAttendee?: (person: PersonRef) => void
+  onRemoveAttendee?: (person: PersonRef) => void
+  onDenySuggestion?: (person: PersonRef) => void
+  onDenyAllSuggestions?: (people: PersonRef[]) => void
+  notesOpen?: boolean
+  onToggleNotesOpen?: () => void
+  deleteConfirming?: boolean
+  onStartDelete?: () => void
+  onCancelDelete?: () => void
+  onConfirmDelete?: () => void
+  mergeOpen?: boolean
+  onOpenMerge?: () => void
+  mergeSearch?: string
+  onMergeSearchChange?: (v: string) => void
+  otherEvents?: OtherEvent[]
+  mergeCandidate?: OtherEvent | null
+  onSelectMergeCandidate?: (e: OtherEvent) => void
+  onCancelMerge?: () => void
+  onBackFromMergeCandidate?: () => void
+  onConfirmMerge?: () => void
+  actionBusy?: boolean
+  actionError?: string | null
+  updateChat?: ReactNode
+}) {
   const attendees = new Map<string, PersonRef>()
   for (const n of moment.notes ?? []) {
     if (n.people) attendees.set(n.people.id, n.people)
@@ -395,11 +566,11 @@ export default function EventDetail({
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
       {editingTitle ? (
-        <form onSubmit={handleSaveTitle} style={styles.renameForm}>
+        <form onSubmit={onSaveTitle} style={styles.renameForm}>
           <input
             type="text"
             value={titleInput}
-            onChange={(e) => setTitleInput(e.target.value)}
+            onChange={(e) => onTitleInputChange(e.target.value)}
             placeholder="Untitled moment"
             style={styles.renameInput}
             autoFocus
@@ -409,7 +580,7 @@ export default function EventDetail({
           </button>
           <button
             type="button"
-            onClick={() => setEditingTitle(false)}
+            onClick={onCancelEditTitle}
             style={styles.cancelButton}
           >
             Cancel
@@ -418,13 +589,7 @@ export default function EventDetail({
       ) : (
         <div style={styles.headingRow}>
           <h1 style={styles.heading}>{moment.occasion || 'Untitled moment'}</h1>
-          <EditButton
-            label="Rename event"
-            onClick={() => {
-              setTitleInput(moment.occasion ?? '')
-              setEditingTitle(true)
-            }}
-          />
+          {!readOnly && <EditButton label="Rename event" onClick={onStartEditTitle} />}
         </div>
       )}
       <p style={styles.meta}>
@@ -451,79 +616,87 @@ export default function EventDetail({
       <h2 style={styles.subheading}>Affiliated Groups</h2>
       {groups.length > 0 && (
         <>
-          <p style={styles.chatHint}>Tap a group for its profile, or hover to untag it from this event.</p>
+          <p style={styles.chatHint}>
+            {readOnly ? 'Tap a group for its profile.' : 'Tap a group for its profile, or hover to untag it from this event.'}
+          </p>
           <div style={styles.chipRow}>
             {groups.map((g) => (
               <AffiliatedGroupChip
                 key={g.id}
                 group={g}
                 onSelect={() => onSelectGroup(g)}
-                onRemove={() => handleUntagGroup(g.id)}
+                onRemove={readOnly ? undefined : () => onUntagGroup(g.id)}
               />
             ))}
           </div>
         </>
       )}
-      <SearchAddPicker
-        items={allGroupsList
-          .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-          .map((g) => ({ id: g.id, label: g.name }))}
-        placeholder="Tag this event to a group…"
-        onSelect={(item) => handleTagGroup(item.id)}
-        emptyText="No groups match."
-      />
+      {!readOnly && (
+        <SearchAddPicker
+          items={allGroupsList
+            .filter((g) => !groups.some((tagged) => tagged.id === g.id))
+            .map((g) => ({ id: g.id, label: g.name }))}
+          placeholder="Tag this event to a group…"
+          onSelect={(item) => onTagGroup(item.id)}
+          emptyText="No groups match."
+        />
+      )}
 
-      <h2 style={styles.subheading}>Tags</h2>
+      {(tags.length > 0 || !readOnly) && <h2 style={styles.subheading}>Tags</h2>}
       {tags.length > 0 && (
         <>
-          <p style={styles.chatHint}>What kind of thing this was — hover a tag to untag it from this event.</p>
+          <p style={styles.chatHint}>
+            {readOnly ? 'What kind of thing this was.' : 'What kind of thing this was — hover a tag to untag it from this event.'}
+          </p>
           <div style={styles.chipRow}>
             {tags.map((t) => (
-              <TagChip key={t.id} tag={t} onRemove={() => handleUntagMoment(t.id)} />
+              <TagChip key={t.id} tag={t} onRemove={readOnly ? undefined : () => onUntagMoment(t.id)} />
             ))}
           </div>
         </>
       )}
-      <SearchAddPicker
-        items={[...allTagsList]
-          .filter((t) => !tags.some((tagged) => tagged.id === t.id))
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map((t) => ({ id: t.id, label: t.name }))}
-        placeholder="Tag this event (e.g. milestone, vacation)…"
-        onSelect={(item) => handleTagMoment(item.id)}
-        onCreateNew={(name) => handleCreateAndTagMoment(name)}
-        createLabel={(q) => `+ Add "${q}" as a new tag`}
-        emptyText="No tags match."
-        browseAll
-      />
+      {!readOnly && (
+        <SearchAddPicker
+          items={[...allTagsList]
+            .filter((t) => !tags.some((tagged) => tagged.id === t.id))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((t) => ({ id: t.id, label: t.name }))}
+          placeholder="Tag this event (e.g. milestone, vacation)…"
+          onSelect={(item) => onTagMoment(item.id)}
+          onCreateNew={(name) => onCreateAndTagMoment(name)}
+          createLabel={(q) => `+ Add "${q}" as a new tag`}
+          emptyText="No tags match."
+          browseAll
+        />
+      )}
 
       {editingDescription ? (
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            handleSaveDescription()
+            onSaveDescription()
           }}
           style={styles.descriptionEditForm}
         >
           <div style={styles.descriptionEditRow}>
             <AutoGrowTextarea
               value={descriptionInput}
-              onChange={setDescriptionInput}
-              onEnter={handleSaveDescription}
+              onChange={onDescriptionInputChange}
+              onEnter={onSaveDescription}
               placeholder="What happened?"
               style={styles.descriptionEditInput}
               disabled={savingDescription}
             />
             <VoiceInputButton
               disabled={savingDescription}
-              onTranscribed={(text) => setDescriptionInput((prev) => (prev ? `${prev} ${text}` : text))}
+              onTranscribed={(text) => onDescriptionInputChange(descriptionInput ? `${descriptionInput} ${text}` : text)}
             />
           </div>
           <div style={styles.suggestButtonRow}>
             <button type="submit" disabled={savingDescription} style={styles.saveButton}>
               {savingDescription ? '…' : 'Save'}
             </button>
-            <button type="button" onClick={() => setEditingDescription(false)} style={styles.cancelButton} disabled={savingDescription}>
+            <button type="button" onClick={onCancelEditDescription} style={styles.cancelButton} disabled={savingDescription}>
               Cancel
             </button>
           </div>
@@ -534,7 +707,7 @@ export default function EventDetail({
             {moment.summary ||
               (moment.raw_description.trim() ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
           </p>
-          <EditButton label="Edit description" onClick={startEditingDescription} />
+          {!readOnly && <EditButton label="Edit description" onClick={onStartEditDescription} />}
         </div>
       )}
 
@@ -554,38 +727,42 @@ export default function EventDetail({
       <h2 style={styles.subheading}>Who was there</h2>
       {attendees.size > 0 && (
         <>
-          <p style={styles.chatHint}>Tap a name for their profile, or hover to untag them from this event.</p>
+          <p style={styles.chatHint}>
+            {readOnly ? 'Tap a name for their profile.' : 'Tap a name for their profile, or hover to untag them from this event.'}
+          </p>
           <div style={styles.chipRow}>
             {sortByLastName(Array.from(attendees.values())).map((p) => (
               <AttendeeChip
                 key={p.id}
                 person={p}
                 onSelect={() => onSelectPerson(p)}
-                onRemove={() => handleRemoveAttendee(p)}
+                onRemove={readOnly ? undefined : () => onRemoveAttendee(p)}
               />
             ))}
           </div>
         </>
       )}
-      <SearchAddPicker
-        items={allPeople
-          .filter((p) => !attendees.has(p.id))
-          .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
-        placeholder="Search people to tag…"
-        onSelect={(item) => {
-          const person = allPeople.find((p) => p.id === item.id)
-          if (person) handleAddAttendee(person)
-        }}
-        emptyText="No one matches."
-      />
+      {!readOnly && (
+        <SearchAddPicker
+          items={allPeople
+            .filter((p) => !attendees.has(p.id))
+            .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
+          placeholder="Search people to tag…"
+          onSelect={(item) => {
+            const person = allPeople.find((p) => p.id === item.id)
+            if (person) onAddAttendee(person)
+          }}
+          emptyText="No one matches."
+        />
+      )}
 
-      {suggestedAttendees.size > 0 && (
+      {!readOnly && suggestedAttendees.size > 0 && (
         <>
           <div style={styles.suggestionHeaderRow}>
             <h2 style={{ ...styles.subheading, margin: 0 }}>Also from the affiliated group?</h2>
             {suggestedAttendees.size > 1 && (
               <button
-                onClick={() => handleDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
+                onClick={() => onDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
                 style={styles.removeAllButton}
               >
                 × Remove all suggestions
@@ -598,8 +775,8 @@ export default function EventDetail({
               <SuggestedAttendeeChip
                 key={p.id}
                 person={p}
-                onApprove={() => handleAddAttendee(p)}
-                onDeny={() => handleDenySuggestion(p)}
+                onApprove={() => onAddAttendee(p)}
+                onDeny={() => onDenySuggestion(p)}
               />
             ))}
           </div>
@@ -612,7 +789,7 @@ export default function EventDetail({
             <h2 style={{ ...styles.subheading, margin: 0 }}>Notes</h2>
             <button
               type="button"
-              onClick={() => setNotesOpen((o) => !o)}
+              onClick={onToggleNotesOpen}
               style={styles.notesToggle}
             >
               {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
@@ -642,104 +819,110 @@ export default function EventDetail({
         </>
       )}
 
-      <h2 style={styles.subheading}>Remember something else?</h2>
-      <p style={styles.chatHint}>Tell me anything more about this — who else was there, how it went, anything you'd want to look back on.</p>
-      <UpdateMomentChat momentId={moment.id} onSaved={handleNoteSaved} />
+      {!readOnly && updateChat && (
+        <>
+          <h2 style={styles.subheading}>Remember something else?</h2>
+          <p style={styles.chatHint}>Tell me anything more about this — who else was there, how it went, anything you'd want to look back on.</p>
+          {updateChat}
+        </>
+      )}
 
-      <div style={styles.dangerZone}>
-        <span style={styles.dangerHeading}>Event</span>
+      {!readOnly && (
+        <div style={styles.dangerZone}>
+          <span style={styles.dangerHeading}>Event</span>
 
-        {actionError && <p style={styles.factErrorBanner}>{actionError}</p>}
+          {actionError && <p style={styles.factErrorBanner}>{actionError}</p>}
 
-        {!mergeOpen && !deleteConfirming && (
-          <div style={styles.dangerButtonRow}>
-            <button type="button" onClick={openMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
-              This is a duplicate — merge it away…
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeleteConfirming(true)}
-              style={styles.dangerDeleteButton}
-              disabled={actionBusy}
-            >
-              Delete this event
-            </button>
-          </div>
-        )}
-
-        {deleteConfirming && (
-          <div style={styles.suggestBanner}>
-            <span>Delete this event permanently? This removes all of its notes. This can't be undone.</span>
-            <div style={styles.suggestButtonRow}>
-              <button type="button" onClick={handleDeleteEvent} style={styles.dangerDeleteButton} disabled={actionBusy}>
-                {actionBusy ? 'Deleting…' : 'Yes, delete'}
+          {!mergeOpen && !deleteConfirming && (
+            <div style={styles.dangerButtonRow}>
+              <button type="button" onClick={onOpenMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                This is a duplicate — merge it away…
               </button>
               <button
                 type="button"
-                onClick={() => setDeleteConfirming(false)}
-                style={styles.suggestNoButton}
+                onClick={onStartDelete}
+                style={styles.dangerDeleteButton}
                 disabled={actionBusy}
               >
-                Cancel
+                Delete this event
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {mergeOpen && (
-          <div style={styles.suggestBanner}>
-            {!mergeCandidate ? (
-              <>
-                <span>Search for the event you want to keep. Everything here will move there, and this event will be deleted:</span>
-                <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search events…" />
-                <div style={styles.mergeResultsList}>
-                  {otherEvents
-                    .filter((e) => {
-                      const label = summarize(e.occasion, e.raw_description).toLowerCase()
-                      return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
-                    })
-                    .slice(0, 8)
-                    .map((e) => (
-                      <button
-                        key={e.id}
-                        type="button"
-                        onClick={() => setMergeCandidate(e)}
-                        style={styles.mergeResultButton}
-                      >
-                        {summarize(e.occasion, e.raw_description)}
-                      </button>
-                    ))}
-                </div>
-                <div style={styles.suggestButtonRow}>
-                  <button type="button" onClick={() => setMergeOpen(false)} style={styles.suggestNoButton}>
-                    Cancel
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <span>
-                  Merge this event into "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}"?
-                  All notes and group tags move there, this event is deleted, and you'll be taken to the kept event. This can't be undone.
-                </span>
-                <div style={styles.suggestButtonRow}>
-                  <button type="button" onClick={handleMergeEvent} style={styles.suggestYesButton} disabled={actionBusy}>
-                    {actionBusy ? 'Merging…' : 'Yes, merge'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMergeCandidate(null)}
-                    style={styles.suggestNoButton}
-                    disabled={actionBusy}
-                  >
-                    Back
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+          {deleteConfirming && (
+            <div style={styles.suggestBanner}>
+              <span>Delete this event permanently? This removes all of its notes. This can't be undone.</span>
+              <div style={styles.suggestButtonRow}>
+                <button type="button" onClick={onConfirmDelete} style={styles.dangerDeleteButton} disabled={actionBusy}>
+                  {actionBusy ? 'Deleting…' : 'Yes, delete'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelDelete}
+                  style={styles.suggestNoButton}
+                  disabled={actionBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mergeOpen && (
+            <div style={styles.suggestBanner}>
+              {!mergeCandidate ? (
+                <>
+                  <span>Search for the event you want to keep. Everything here will move there, and this event will be deleted:</span>
+                  <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search events…" />
+                  <div style={styles.mergeResultsList}>
+                    {otherEvents
+                      .filter((e) => {
+                        const label = summarize(e.occasion, e.raw_description).toLowerCase()
+                        return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
+                      })
+                      .slice(0, 8)
+                      .map((e) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          onClick={() => onSelectMergeCandidate(e)}
+                          style={styles.mergeResultButton}
+                        >
+                          {summarize(e.occasion, e.raw_description)}
+                        </button>
+                      ))}
+                  </div>
+                  <div style={styles.suggestButtonRow}>
+                    <button type="button" onClick={onCancelMerge} style={styles.suggestNoButton}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span>
+                    Merge this event into "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}"?
+                    All notes and group tags move there, this event is deleted, and you'll be taken to the kept event. This can't be undone.
+                  </span>
+                  <div style={styles.suggestButtonRow}>
+                    <button type="button" onClick={onConfirmMerge} style={styles.suggestYesButton} disabled={actionBusy}>
+                      {actionBusy ? 'Merging…' : 'Yes, merge'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onBackFromMergeCandidate}
+                      style={styles.suggestNoButton}
+                      disabled={actionBusy}
+                    >
+                      Back
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -758,6 +941,7 @@ const TRASH_ICON = (
 // Hovering reveals a small trash badge in the corner (a separate control, not a swap of the
 // chip's own content/click behavior), matching GroupDetail.tsx's MemberChip pattern, which was
 // specifically chosen after an earlier hover-swap version caused a resize-driven flicker loop.
+// `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
 function AttendeeChip({
   person,
   onSelect,
@@ -765,7 +949,7 @@ function AttendeeChip({
 }: {
   person: PersonRef
   onSelect: () => void
-  onRemove: () => void
+  onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
@@ -775,7 +959,7 @@ function AttendeeChip({
       <button onClick={onSelect} style={styles.attendeeChip}>
         {label}
       </button>
-      {hovered && (
+      {hovered && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -794,6 +978,7 @@ function AttendeeChip({
 // Clicking goes to the group's profile, same as any other chip. Hovering reveals a trash badge
 // that untags the group from this event — same corner-badge pattern as AttendeeChip above,
 // reused here for groups instead of people (matching GroupDetail.tsx's AssociatedGroupChip).
+// `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
 function AffiliatedGroupChip({
   group,
   onSelect,
@@ -801,7 +986,7 @@ function AffiliatedGroupChip({
 }: {
   group: GroupRef
   onSelect: () => void
-  onRemove: () => void
+  onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
 
@@ -811,7 +996,7 @@ function AffiliatedGroupChip({
         <span style={styles.groupDot} />
         {group.name}
       </button>
-      {hovered && (
+      {hovered && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -828,14 +1013,15 @@ function AffiliatedGroupChip({
 }
 
 // Tags have no detail page of their own to navigate to (unlike person/group chips), so this is
-// display-only plus the same hover-reveal-remove-badge affordance as the other chips on this page.
-function TagChip({ tag, onRemove }: { tag: TagRef; onRemove: () => void }) {
+// display-only plus the same hover-reveal-remove-badge affordance as the other chips on this
+// page. `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
+function TagChip({ tag, onRemove }: { tag: TagRef; onRemove?: () => void }) {
   const [hovered, setHovered] = useState(false)
 
   return (
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <span style={styles.tagChip}>#{tag.name}</span>
-      {hovered && (
+      {hovered && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()

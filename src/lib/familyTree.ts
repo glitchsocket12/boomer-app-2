@@ -35,7 +35,7 @@ export type RootDirect = { parents: TreePerson[]; spouses: TreePerson[]; sibling
 // only, with no ancestor tiers and no collateral (aunt/uncle/cousin) branches.
 export type TreeData = { mode: 'ego' | 'descendants'; rootId: string; rootName: string; tiers: TreeTier[]; rootDirect: RootDirect }
 
-type Graph = {
+export type Graph = {
   nameById: Map<string, string>
   selfId: string | null
   parentsOf: Map<string, string[]>
@@ -203,12 +203,19 @@ function childrenOfEither(g: Graph, personId: string): string[] {
 // grandchildren, ... plus each generation's married-in spouses) is what "Marilee/Villis are the
 // generation that goes furthest back, so show their kids/grandkids/etc." means structurally.
 export async function buildDescendantTree(memberIds: string[]): Promise<TreeData> {
+  const g = await loadGraph()
+  return buildDescendantTreeFromGraph(memberIds, g)
+}
+
+// Pure graph-walking half of buildDescendantTree — split out (2026-07-22) so a caller with its own
+// in-memory Graph (e.g. the landing-page demo's static dataset) can get a real TreeData without any
+// Supabase I/O. buildDescendantTree above is now just this function plus the loadGraph() fetch —
+// behavior-identical to before the split.
+export function buildDescendantTreeFromGraph(memberIds: string[], g: Graph): TreeData {
   const emptyRootDirect: RootDirect = { parents: [], spouses: [], siblings: [], children: [] }
   if (memberIds.length === 0) {
     return { mode: 'descendants', rootId: '', rootName: '', tiers: [], rootDirect: emptyRootDirect }
   }
-
-  const g = await loadGraph()
 
   // "Furthest back" is NOT the same as "fewest recorded ancestors" — a group almost always
   // includes people who married in (a fiancé(e), a spouse) whose OWN parents were never recorded,
@@ -330,6 +337,12 @@ export async function buildDescendantTree(memberIds: string[]): Promise<TreeData
 
 export async function buildFamilyTree(rootId: string): Promise<TreeData> {
   const g = await loadGraph()
+  return buildFamilyTreeFromGraph(rootId, g)
+}
+
+// Pure graph-walking half of buildFamilyTree — see buildDescendantTreeFromGraph's comment above for
+// why this split exists.
+export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   const rootName = g.nameById.get(rootId) ?? 'Unknown'
   const isSelfRoot = g.selfId === rootId
 

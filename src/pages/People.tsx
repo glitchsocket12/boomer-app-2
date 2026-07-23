@@ -8,11 +8,13 @@ type GroupRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
 type ReminderRef = { month: number; day: number }
 
-type Person = {
+export type Person = {
   id: string
   name: string
   last_name: string | null
   nicknames: string | null
+  middle_name: string | null
+  goes_by_other: string | null
   created_at: string
   person_groups: { groups: GroupRef | null }[]
   notes: { moment_id: string | null; moments: { id: string; occasion: string | null; raw_description: string } | null }[]
@@ -21,7 +23,7 @@ type Person = {
 
 const AFFILIATION_LIMIT = 4
 
-type SortMode = 'name-asc' | 'name-desc' | 'date-added' | 'relevance' | 'timely'
+export type SortMode = 'name-asc' | 'name-desc' | 'date-added' | 'relevance' | 'timely'
 
 const SORT_LABELS: { value: SortMode; label: string }[] = [
   { value: 'name-asc', label: 'Name (A–Z)' },
@@ -47,7 +49,7 @@ function nearestUpcomingDays(person: Person): number {
   return days.length > 0 ? Math.min(...days) : Infinity
 }
 
-function sortPeople(people: Person[], mode: SortMode): Person[] {
+export function sortPeople(people: Person[], mode: SortMode): Person[] {
   const sorted = [...people]
   switch (mode) {
     case 'name-desc':
@@ -62,6 +64,19 @@ function sortPeople(people: Person[], mode: SortMode): Person[] {
     default:
       return sorted.sort((a, b) => a.name.localeCompare(b.name))
   }
+}
+
+export function filterPeople(people: Person[], search: string): Person[] {
+  const query = search.trim().toLowerCase()
+  return people.filter((person) => {
+    const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+    return (
+      fullName.toLowerCase().includes(query) ||
+      (person.nicknames ?? '').toLowerCase().includes(query) ||
+      (person.middle_name ?? '').toLowerCase().includes(query) ||
+      (person.goes_by_other ?? '').toLowerCase().includes(query)
+    )
+  })
 }
 
 export default function People({
@@ -91,7 +106,7 @@ export default function People({
     const { data, error } = await supabase
       .from('people')
       .select(
-        'id, name, last_name, nicknames, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
+        'id, name, last_name, nicknames, middle_name, goes_by_other, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
       )
       .eq('is_self', false)
       .order('name')
@@ -129,33 +144,77 @@ export default function People({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
-  const filteredPeople = sortPeople(
-    people.filter((person) => {
-      const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
-      const query = search.trim().toLowerCase()
-      return fullName.toLowerCase().includes(query) || (person.nicknames ?? '').toLowerCase().includes(query)
-    }),
-    sortMode
-  )
+  const filteredPeople = sortPeople(filterPeople(people, search), sortMode)
 
+  return (
+    <PeopleView
+      peopleCount={people.length}
+      filteredPeople={filteredPeople}
+      search={search}
+      onSearchChange={setSearch}
+      sortMode={sortMode}
+      onSortModeChange={setSortMode}
+      onAddPerson={handleAddPerson}
+      adding={adding}
+      addError={addError}
+      onSelectPerson={onSelectPerson}
+      onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
+    />
+  )
+}
+
+// Pure render — split out (2026-07-22) so the landing-page demo can render the exact same list UI
+// fed by static data, with no Supabase calls. `readOnly` hides "+ Add Person" (a real insert).
+export function PeopleView({
+  peopleCount,
+  filteredPeople,
+  search,
+  onSearchChange,
+  sortMode,
+  onSortModeChange,
+  onAddPerson,
+  adding,
+  addError,
+  onSelectPerson,
+  onSelectGroup,
+  onSelectEvent,
+  readOnly = false,
+}: {
+  peopleCount: number
+  filteredPeople: Person[]
+  search: string
+  onSearchChange: (value: string) => void
+  sortMode: SortMode
+  onSortModeChange: (value: SortMode) => void
+  onAddPerson: () => void
+  adding: boolean
+  addError: string | null
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  readOnly?: boolean
+}) {
   return (
     <div style={styles.page}>
       <div style={styles.headingRow}>
         <h1 style={styles.heading}>
-          People{people.length > 0 && <span style={styles.count}> ({people.length})</span>}
+          People{peopleCount > 0 && <span style={styles.count}> ({peopleCount})</span>}
         </h1>
-        <button type="button" onClick={handleAddPerson} style={styles.addButton} disabled={adding}>
-          {adding ? '…' : '+ Add Person'}
-        </button>
+        {!readOnly && (
+          <button type="button" onClick={onAddPerson} style={styles.addButton} disabled={adding}>
+            {adding ? '…' : '+ Add Person'}
+          </button>
+        )}
       </div>
       {addError && <p style={styles.addErrorText}>{addError}</p>}
 
-      {people.length > 0 && (
+      {peopleCount > 0 && (
         <div style={styles.searchRow}>
-          <SearchBox value={search} onChange={setSearch} placeholder="Search people…" />
+          <SearchBox value={search} onChange={onSearchChange} placeholder="Search people…" />
           <select
             value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
+            onChange={(e) => onSortModeChange(e.target.value as SortMode)}
             style={styles.sortSelect}
             aria-label="Sort people"
           >
@@ -169,8 +228,8 @@ export default function People({
       )}
 
       <div style={styles.list}>
-        {people.length === 0 && <p style={styles.empty}>No one added yet — add someone above.</p>}
-        {people.length > 0 && filteredPeople.length === 0 && (
+        {peopleCount === 0 && <p style={styles.empty}>No one added yet — add someone above.</p>}
+        {peopleCount > 0 && filteredPeople.length === 0 && (
           <p style={styles.empty}>No one matches "{search}".</p>
         )}
         {filteredPeople.map((person) => (

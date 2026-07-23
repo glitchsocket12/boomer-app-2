@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { EventChip, PersonChip } from '../components/Chips'
@@ -15,7 +15,7 @@ import RelationshipSuggestionBanners, {
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
 
-type Note = {
+export type Note = {
   id: string
   content: string
   created_at: string
@@ -26,13 +26,28 @@ type Note = {
   groups: { id: string; name: string } | null
 }
 
-type GroupRef = { id: string; name: string }
+export type GroupRef = { id: string; name: string }
 
-type PersonRow = { name: string; last_name: string | null }
+export type PersonRow = {
+  name: string
+  last_name: string | null
+  middle_name: string | null
+  goes_by_kind: 'first' | 'middle' | 'last' | 'other' | null
+  goes_by_other: string | null
+}
+
+// Which of first/middle/last/other actually displays as this person's name on their profile —
+// e.g. going by a middle name or a callsign. Falls back to the legal first name when unset.
+export function computeFullName(person: PersonRow): string {
+  if (person.goes_by_kind === 'middle' && person.middle_name) return `${person.middle_name} ${person.last_name ?? ''}`.trim()
+  if (person.goes_by_kind === 'other' && person.goes_by_other) return `${person.goes_by_other} ${person.last_name ?? ''}`.trim()
+  if (person.goes_by_kind === 'last' && person.last_name) return person.last_name
+  return `${person.name} ${person.last_name ?? ''}`.trim()
+}
 
 type LinkedPerson = { name: string; personId?: string }
 
-type KeyFact = {
+export type KeyFact = {
   category: 'spouse' | 'siblings' | 'parents' | 'kids' | 'location' | 'education' | 'other'
   text?: string
   relationshipLabel?: string
@@ -50,7 +65,7 @@ const KEY_FACT_CATEGORY_ORDER: Partial<Record<KeyFact['category'], number>> = {
   siblings: 2,
   kids: 3,
 }
-function sortKeyFacts(facts: KeyFact[]): KeyFact[] {
+export function sortKeyFacts(facts: KeyFact[]): KeyFact[] {
   return facts
     .map((fact, index) => ({ fact, index }))
     .sort((a, b) => {
@@ -67,7 +82,7 @@ const AFFILIATION_LIMIT = 5
 // "Untitled moment"/"New group" being manual-shell placeholders elsewhere. Used to swap in a
 // name-specific nudge instead of the generic one until it's renamed (either via the pencil
 // icon below or conversationally through the fact bar).
-const NEW_PERSON_PLACEHOLDER = 'New person'
+export const NEW_PERSON_PLACEHOLDER = 'New person'
 
 // Mirrors the deterministic note phrasings RECIPROCAL_NOTE writes in
 // supabase/functions/_shared/relationships.ts — used only to retroactively spot a last-name
@@ -119,6 +134,9 @@ export default function PersonDetail({
   const [editingName, setEditingName] = useState(false)
   const [firstNameInput, setFirstNameInput] = useState('')
   const [lastNameInput, setLastNameInput] = useState('')
+  const [middleNameInput, setMiddleNameInput] = useState('')
+  const [goesByKind, setGoesByKind] = useState<'first' | 'middle' | 'last' | 'other'>('first')
+  const [goesByOtherInput, setGoesByOtherInput] = useState('')
   const [savingName, setSavingName] = useState(false)
   const [newFact, setNewFact] = useState('')
   const [saving, setSaving] = useState(false)
@@ -201,7 +219,7 @@ export default function PersonDetail({
     await supabase.from('people').update({ last_name: lastNameSuggestion.lastName }).eq('id', personId)
     setLastNameSuggestion(null)
     const updated = await loadData()
-    if (updated) onRenamed?.(`${updated.name}${updated.last_name ? ` ${updated.last_name}` : ''}`)
+    if (updated) onRenamed?.(computeFullName(updated))
     loadFacts(true)
   }
 
@@ -237,7 +255,11 @@ export default function PersonDetail({
         .eq('person_id', personId)
         .order('created_at', { ascending: false }),
       supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
-      supabase.from('people').select('name, last_name').eq('id', personId).single(),
+      supabase
+        .from('people')
+        .select('name, last_name, middle_name, goes_by_kind, goes_by_other')
+        .eq('id', personId)
+        .single(),
     ])
 
     setNotes((notesRes.data as unknown as Note[]) ?? [])
@@ -294,13 +316,8 @@ export default function PersonDetail({
     // changes — see NEW_PERSON_PLACEHOLDER above), so refresh the breadcrumb label along with
     // the page itself; harmless to call when the name didn't actually change.
     const updated = await loadData()
-    if (updated) onRenamed?.(`${updated.name}${updated.last_name ? ` ${updated.last_name}` : ''}`)
+    if (updated) onRenamed?.(computeFullName(updated))
     loadFacts(true)
-  }
-
-  function handleAddFact(e: FormEvent) {
-    e.preventDefault()
-    submitFact()
   }
 
   // Editing a note directly improves the data everywhere it's used (not just this one card),
@@ -338,18 +355,64 @@ export default function PersonDetail({
     const trimmedFirst = firstNameInput.trim()
     if (!trimmedFirst) return
     const trimmedLast = lastNameInput.trim() || null
-    if (trimmedFirst === person.name && trimmedLast === person.last_name) {
+    const trimmedMiddle = middleNameInput.trim() || null
+
+    // Fall back to 'first' (stored as null) if the chosen slot has since gone empty — e.g. the
+    // dropdown was left on "middle" but the middle name field was then cleared.
+    let finalGoesByKind: 'middle' | 'last' | 'other' | null = goesByKind === 'first' ? null : goesByKind
+    if (finalGoesByKind === 'middle' && !trimmedMiddle) finalGoesByKind = null
+    if (finalGoesByKind === 'last' && !trimmedLast) finalGoesByKind = null
+    let trimmedGoesByOther = finalGoesByKind === 'other' ? goesByOtherInput.trim() || null : null
+    if (finalGoesByKind === 'other' && !trimmedGoesByOther) finalGoesByKind = null
+    if (finalGoesByKind !== 'other') trimmedGoesByOther = null
+
+    const unchanged =
+      trimmedFirst === person.name &&
+      trimmedLast === person.last_name &&
+      trimmedMiddle === person.middle_name &&
+      finalGoesByKind === person.goes_by_kind &&
+      trimmedGoesByOther === person.goes_by_other
+    if (unchanged) {
       setEditingName(false)
       return
     }
+
     setSavingName(true)
-    const { error } = await supabase.from('people').update({ name: trimmedFirst, last_name: trimmedLast }).eq('id', personId)
+    const { error } = await supabase
+      .from('people')
+      .update({
+        name: trimmedFirst,
+        last_name: trimmedLast,
+        middle_name: trimmedMiddle,
+        goes_by_kind: finalGoesByKind,
+        goes_by_other: trimmedGoesByOther,
+      })
+      .eq('id', personId)
     setSavingName(false)
     if (error) return
 
-    setPerson({ name: trimmedFirst, last_name: trimmedLast })
+    // A newly chosen "Other" goes-by name is new information worth keeping as a note (like any
+    // other fact about this person) — unlike picking First/Middle/Last, which just points at a
+    // name already on file and isn't itself new information.
+    const otherIsNew = finalGoesByKind === 'other' && !!trimmedGoesByOther && trimmedGoesByOther !== person.goes_by_other
+    if (otherIsNew) {
+      await supabase.from('notes').insert({ person_id: personId, content: `Goes by ${trimmedGoesByOther}.` })
+    }
+
+    const updatedPerson: PersonRow = {
+      name: trimmedFirst,
+      last_name: trimmedLast,
+      middle_name: trimmedMiddle,
+      goes_by_kind: finalGoesByKind,
+      goes_by_other: trimmedGoesByOther,
+    }
+    setPerson(updatedPerson)
     setEditingName(false)
-    onRenamed?.(`${trimmedFirst}${trimmedLast ? ` ${trimmedLast}` : ''}`)
+    onRenamed?.(computeFullName(updatedPerson))
+    if (otherIsNew) {
+      await loadData()
+      loadFacts(true)
+    }
   }
 
   async function confirmSuggestedGroup() {
@@ -438,7 +501,7 @@ export default function PersonDetail({
     const duplicateId = personId
 
     const [dupPersonRes, survivorPersonRes, survivorRemindersRes, dupRemindersRes, dupGroupsRes] = await Promise.all([
-      supabase.from('people').select('name, last_name, nicknames').eq('id', duplicateId).single(),
+      supabase.from('people').select('name, last_name, nicknames, middle_name, goes_by_other').eq('id', duplicateId).single(),
       supabase.from('people').select('nicknames').eq('id', survivorId).single(),
       supabase.from('reminders').select('id, label').eq('person_id', survivorId),
       supabase.from('reminders').select('id, label').eq('person_id', duplicateId),
@@ -473,6 +536,8 @@ export default function PersonDetail({
     const dupNames = [
       dup?.name,
       dup?.last_name ? `${dup.name} ${dup.last_name}` : null,
+      dup?.middle_name,
+      dup?.goes_by_other,
       ...(dup?.nicknames ?? '').split(',').map((n: string) => n.trim()),
     ].filter((n): n is string => !!n)
     const mergedNicknames = (survivorPersonRes.data?.nicknames ?? '').split(',').map((n: string) => n.trim()).filter(Boolean)
@@ -495,6 +560,245 @@ export default function PersonDetail({
     })
   }
 
+  return (
+    <PersonDetailView
+      personId={personId}
+      personName={personName}
+      person={person}
+      loading={loading}
+      notes={notes}
+      groups={groups}
+      allGroupsList={allGroupsList}
+      keyFacts={keyFacts}
+      factsLoading={factsLoading}
+      onBack={onBack}
+      backLabel={backLabel}
+      onSelectPerson={onSelectPerson}
+      onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
+      onOpenFamilyTree={onOpenFamilyTree}
+      onRefreshFacts={() => loadFacts(true)}
+      editingName={editingName}
+      firstNameInput={firstNameInput}
+      lastNameInput={lastNameInput}
+      middleNameInput={middleNameInput}
+      goesByKind={goesByKind}
+      goesByOtherInput={goesByOtherInput}
+      savingName={savingName}
+      onStartEditName={() => {
+        setFirstNameInput(person?.name ?? '')
+        setLastNameInput(person?.last_name ?? '')
+        setMiddleNameInput(person?.middle_name ?? '')
+        setGoesByKind(person?.goes_by_kind ?? 'first')
+        setGoesByOtherInput(person?.goes_by_other ?? '')
+        setEditingName(true)
+      }}
+      onFirstNameInputChange={setFirstNameInput}
+      onLastNameInputChange={setLastNameInput}
+      onMiddleNameInputChange={setMiddleNameInput}
+      onGoesByKindChange={setGoesByKind}
+      onGoesByOtherInputChange={setGoesByOtherInput}
+      onSaveName={handleSaveName}
+      onCancelEditName={() => setEditingName(false)}
+      newFact={newFact}
+      onNewFactChange={setNewFact}
+      saving={saving}
+      onSubmitFact={submitFact}
+      factError={factError}
+      groupTagMessage={groupTagMessage}
+      familyTagMessage={familyTagMessage}
+      suggestedGroup={suggestedGroup}
+      onConfirmSuggestedGroup={confirmSuggestedGroup}
+      onDeclineSuggestedGroup={() => setSuggestedGroup(null)}
+      lastNameSuggestion={lastNameSuggestion}
+      onConfirmLastNameSuggestion={confirmLastNameSuggestion}
+      onDeclineLastNameSuggestion={() => setLastNameSuggestion(null)}
+      relationshipSuggestions={relationshipSuggestions}
+      setRelationshipSuggestions={setRelationshipSuggestions}
+      newPersonSuggestions={newPersonSuggestions}
+      setNewPersonSuggestions={setNewPersonSuggestions}
+      onRelationshipApplied={() => {
+        loadData()
+        loadFacts(true)
+      }}
+      notesOpen={notesOpen}
+      onToggleNotesOpen={() => setNotesOpen((o) => !o)}
+      onEditNote={handleEditNote}
+      onDeleteNote={handleDeleteNote}
+      onTagGroup={handleTagGroup}
+      onUntagGroup={handleUntagGroup}
+      deleteConfirming={deleteConfirming}
+      onStartDelete={() => setDeleteConfirming(true)}
+      onCancelDelete={() => setDeleteConfirming(false)}
+      onConfirmDelete={handleDeleteProfile}
+      mergeOpen={mergeOpen}
+      onOpenMerge={openMerge}
+      mergeSearch={mergeSearch}
+      onMergeSearchChange={setMergeSearch}
+      otherPeople={otherPeople}
+      mergeCandidate={mergeCandidate}
+      onSelectMergeCandidate={setMergeCandidate}
+      onCancelMerge={() => setMergeOpen(false)}
+      onBackFromMergeCandidate={() => setMergeCandidate(null)}
+      onConfirmMerge={handleMerge}
+      actionBusy={actionBusy}
+      actionError={actionError}
+    />
+  )
+}
+
+// Pure render — split out (2026-07-22) so the landing-page demo can render the exact same profile
+// UI fed by static data, with no Supabase/Edge Function calls. `readOnly` hides every write-only
+// control (name-edit pencil, the fact bar, group tag/untag pickers, note edit/delete, relationship
+// suggestion banners, delete/merge) — everything else (Key Facts, notes, associated groups/events,
+// the family-tree link, all navigation) renders and behaves identically either way.
+export function PersonDetailView({
+  personId,
+  personName,
+  person,
+  loading,
+  notes,
+  groups,
+  allGroupsList,
+  keyFacts,
+  factsLoading,
+  onBack,
+  backLabel,
+  onSelectPerson,
+  onSelectGroup,
+  onSelectEvent,
+  onOpenFamilyTree,
+  onRefreshFacts,
+  readOnly = false,
+  editingName = false,
+  firstNameInput = '',
+  lastNameInput = '',
+  middleNameInput = '',
+  goesByKind = 'first',
+  goesByOtherInput = '',
+  savingName = false,
+  onStartEditName = () => {},
+  onFirstNameInputChange = () => {},
+  onLastNameInputChange = () => {},
+  onMiddleNameInputChange = () => {},
+  onGoesByKindChange = () => {},
+  onGoesByOtherInputChange = () => {},
+  onSaveName = () => {},
+  onCancelEditName = () => {},
+  newFact = '',
+  onNewFactChange = () => {},
+  saving = false,
+  onSubmitFact = () => {},
+  factError = null,
+  groupTagMessage = null,
+  familyTagMessage = null,
+  suggestedGroup = null,
+  onConfirmSuggestedGroup = () => {},
+  onDeclineSuggestedGroup = () => {},
+  lastNameSuggestion = null,
+  onConfirmLastNameSuggestion = () => {},
+  onDeclineLastNameSuggestion = () => {},
+  relationshipSuggestions = [],
+  setRelationshipSuggestions = () => {},
+  newPersonSuggestions = [],
+  setNewPersonSuggestions = () => {},
+  onRelationshipApplied = () => {},
+  notesOpen = true,
+  onToggleNotesOpen = () => {},
+  onEditNote = () => {},
+  onDeleteNote = () => {},
+  onTagGroup = () => {},
+  onUntagGroup = () => {},
+  deleteConfirming = false,
+  onStartDelete = () => {},
+  onCancelDelete = () => {},
+  onConfirmDelete = () => {},
+  mergeOpen = false,
+  onOpenMerge = () => {},
+  mergeSearch = '',
+  onMergeSearchChange = () => {},
+  otherPeople = [],
+  mergeCandidate = null,
+  onSelectMergeCandidate = () => {},
+  onCancelMerge = () => {},
+  onBackFromMergeCandidate = () => {},
+  onConfirmMerge = () => {},
+  actionBusy = false,
+  actionError = null,
+}: {
+  personId: string
+  personName: string
+  person: PersonRow | null
+  loading: boolean
+  notes: Note[]
+  groups: GroupRef[]
+  allGroupsList: GroupRef[]
+  keyFacts: KeyFact[]
+  factsLoading: boolean
+  onBack: () => void
+  backLabel: string
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  onOpenFamilyTree: (personId: string, label: string, memberIds?: string[]) => void
+  onRefreshFacts: () => void
+  readOnly?: boolean
+  editingName?: boolean
+  firstNameInput?: string
+  lastNameInput?: string
+  middleNameInput?: string
+  goesByKind?: 'first' | 'middle' | 'last' | 'other'
+  goesByOtherInput?: string
+  savingName?: boolean
+  onStartEditName?: () => void
+  onFirstNameInputChange?: (v: string) => void
+  onLastNameInputChange?: (v: string) => void
+  onMiddleNameInputChange?: (v: string) => void
+  onGoesByKindChange?: (v: 'first' | 'middle' | 'last' | 'other') => void
+  onGoesByOtherInputChange?: (v: string) => void
+  onSaveName?: (e: FormEvent) => void
+  onCancelEditName?: () => void
+  newFact?: string
+  onNewFactChange?: (v: string) => void
+  saving?: boolean
+  onSubmitFact?: () => void
+  factError?: string | null
+  groupTagMessage?: string | null
+  familyTagMessage?: string | null
+  suggestedGroup?: string | null
+  onConfirmSuggestedGroup?: () => void
+  onDeclineSuggestedGroup?: () => void
+  lastNameSuggestion?: { lastName: string; sourceName: string } | null
+  onConfirmLastNameSuggestion?: () => void
+  onDeclineLastNameSuggestion?: () => void
+  relationshipSuggestions?: RelationshipSuggestion[]
+  setRelationshipSuggestions?: Dispatch<SetStateAction<RelationshipSuggestion[]>>
+  newPersonSuggestions?: NewPersonSuggestion[]
+  setNewPersonSuggestions?: Dispatch<SetStateAction<NewPersonSuggestion[]>>
+  onRelationshipApplied?: () => void
+  notesOpen?: boolean
+  onToggleNotesOpen?: () => void
+  onEditNote?: (noteId: string, newContent: string) => void
+  onDeleteNote?: (noteId: string) => void
+  onTagGroup?: (groupId: string) => void
+  onUntagGroup?: (groupId: string) => void
+  deleteConfirming?: boolean
+  onStartDelete?: () => void
+  onCancelDelete?: () => void
+  onConfirmDelete?: () => void
+  mergeOpen?: boolean
+  onOpenMerge?: () => void
+  mergeSearch?: string
+  onMergeSearchChange?: (v: string) => void
+  otherPeople?: OtherPerson[]
+  mergeCandidate?: OtherPerson | null
+  onSelectMergeCandidate?: (p: OtherPerson) => void
+  onCancelMerge?: () => void
+  onBackFromMergeCandidate?: () => void
+  onConfirmMerge?: () => void
+  actionBusy?: boolean
+  actionError?: string | null
+}) {
   const affiliatedEvents = new Map<string, { id: string; summary: string }>()
   for (const n of notes) {
     if (n.moments) {
@@ -504,49 +808,80 @@ export default function PersonDetail({
   const allEvents = Array.from(affiliatedEvents.values())
   const shownEvents = allEvents.slice(0, AFFILIATION_LIMIT)
 
-  const fullName = person ? `${person.name}${person.last_name ? ` ${person.last_name}` : ''}` : personName
+  const fullName = person ? computeFullName(person) : personName
   const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => f.category === c.category))
-  const showNudge = notes.length === 0 || missingFactCategories.length > 0
+  const showNudge = !readOnly && (notes.length === 0 || missingFactCategories.length > 0)
 
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
       {editingName ? (
-        <form onSubmit={handleSaveName} style={styles.renameForm}>
-          <input
-            type="text"
-            value={firstNameInput}
-            onChange={(e) => setFirstNameInput(e.target.value)}
-            placeholder="First name"
-            style={styles.renameInput}
-            autoFocus
-          />
-          <input
-            type="text"
-            value={lastNameInput}
-            onChange={(e) => setLastNameInput(e.target.value)}
-            placeholder="Last name"
-            style={styles.renameInput}
-          />
-          <button type="submit" disabled={savingName || !firstNameInput.trim()} style={styles.saveButton}>
-            {savingName ? '…' : 'Save'}
-          </button>
-          <button type="button" onClick={() => setEditingName(false)} style={styles.cancelButton}>
-            Cancel
-          </button>
+        <form onSubmit={onSaveName} style={styles.renameForm}>
+          <div style={styles.nameInputRow}>
+            <input
+              type="text"
+              value={firstNameInput}
+              onChange={(e) => onFirstNameInputChange(e.target.value)}
+              placeholder="First name"
+              style={styles.renameInput}
+              autoFocus
+            />
+            <input
+              type="text"
+              value={middleNameInput}
+              onChange={(e) => onMiddleNameInputChange(e.target.value)}
+              placeholder="Middle name/nickname"
+              style={styles.renameInput}
+            />
+            <input
+              type="text"
+              value={lastNameInput}
+              onChange={(e) => onLastNameInputChange(e.target.value)}
+              placeholder="Last name"
+              style={styles.renameInput}
+            />
+          </div>
+          <div style={styles.goesByRow}>
+            <span style={styles.goesByLabel}>Goes by</span>
+            <select
+              value={goesByKind}
+              onChange={(e) => onGoesByKindChange(e.target.value as typeof goesByKind)}
+              style={styles.goesBySelect}
+            >
+              <option value="first">{firstNameInput.trim() || 'First name'}</option>
+              {middleNameInput.trim() && <option value="middle">{middleNameInput.trim()}</option>}
+              {lastNameInput.trim() && <option value="last">{lastNameInput.trim()}</option>}
+              <option value="other">Other…</option>
+            </select>
+            {goesByKind === 'other' && (
+              <input
+                type="text"
+                value={goesByOtherInput}
+                onChange={(e) => onGoesByOtherInputChange(e.target.value)}
+                placeholder="Their other name"
+                style={styles.goesByOtherInput}
+              />
+            )}
+          </div>
+          {goesByKind === 'other' && (
+            <p style={styles.goesByCaption}>
+              We'll save this as a note on {firstNameInput.trim() || 'their'}'s profile!
+            </p>
+          )}
+          <div style={styles.nameButtonRow}>
+            <button type="submit" disabled={savingName || !firstNameInput.trim()} style={styles.saveButton}>
+              {savingName ? '…' : 'Save'}
+            </button>
+            <button type="button" onClick={onCancelEditName} style={styles.cancelButton}>
+              Cancel
+            </button>
+          </div>
         </form>
       ) : (
         <div style={styles.headingRow}>
           <h1 style={styles.heading}>{fullName}</h1>
-          <EditButton
-            label="Edit name"
-            onClick={() => {
-              setFirstNameInput(person?.name ?? '')
-              setLastNameInput(person?.last_name ?? '')
-              setEditingName(true)
-            }}
-          />
+          {!readOnly && <EditButton label="Edit name" onClick={onStartEditName} />}
         </div>
       )}
 
@@ -564,7 +899,7 @@ export default function PersonDetail({
         <div style={styles.keyFacts}>
           <span style={styles.keyFactsHeadingRow}>
             <span style={styles.keyFactsHeading}>Key facts</span>
-            <RefreshButton label="Refresh key facts" refreshing={factsLoading} onClick={() => loadFacts(true)} />
+            {!readOnly && <RefreshButton label="Refresh key facts" refreshing={factsLoading} onClick={onRefreshFacts} />}
           </span>
           {factsLoading ? (
             <p style={styles.keyFactsLoading}>Gathering what we know…</p>
@@ -583,27 +918,31 @@ export default function PersonDetail({
           <h2 style={styles.subheading}>Associated Groups</h2>
           {groups.length > 0 && (
             <>
-              <p style={styles.chatHint}>Tap a group for its profile, or hover to untag it from {fullName}.</p>
+              <p style={styles.chatHint}>
+                {readOnly ? 'Tap a group for its profile.' : `Tap a group for its profile, or hover to untag it from ${fullName}.`}
+              </p>
               <div style={styles.chipRow}>
                 {groups.map((g) => (
                   <AffiliatedGroupChip
                     key={g.id}
                     group={g}
                     onSelect={() => onSelectGroup(g)}
-                    onRemove={() => handleUntagGroup(g.id)}
+                    onRemove={readOnly ? undefined : () => onUntagGroup(g.id)}
                   />
                 ))}
               </div>
             </>
           )}
-          <SearchAddPicker
-            items={allGroupsList
-              .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-              .map((g) => ({ id: g.id, label: g.name }))}
-            placeholder="Tag this person to a group…"
-            onSelect={(item) => handleTagGroup(item.id)}
-            emptyText="No groups match."
-          />
+          {!readOnly && (
+            <SearchAddPicker
+              items={allGroupsList
+                .filter((g) => !groups.some((tagged) => tagged.id === g.id))
+                .map((g) => ({ id: g.id, label: g.name }))}
+              placeholder="Tag this person to a group…"
+              onSelect={(item) => onTagGroup(item.id)}
+              emptyText="No groups match."
+            />
+          )}
         </>
       )}
 
@@ -642,31 +981,33 @@ export default function PersonDetail({
         </div>
       )}
 
-      <div style={styles.stickyBarWrapper}>
-        <div style={styles.stickyBarInner}>
-          <form onSubmit={handleAddFact} style={styles.addForm}>
-            <AutoGrowTextarea
-              value={newFact}
-              onChange={setNewFact}
-              onEnter={submitFact}
-              placeholder={
-                fullName === NEW_PERSON_PLACEHOLDER
-                  ? 'Who is this? e.g. "This is Sarah Chen, my old college roommate"'
-                  : `Add a fact about ${fullName}, e.g. "Married to Manuel, they share a house"`
-              }
-              style={styles.addInput}
-              disabled={saving}
-            />
-            <VoiceInputButton
-              disabled={saving}
-              onTranscribed={(text) => setNewFact((prev) => (prev ? `${prev} ${text}` : text))}
-            />
-            <button type="submit" disabled={saving} style={styles.addButton}>
-              {saving ? '…' : 'Add'}
-            </button>
-          </form>
+      {!readOnly && (
+        <div style={styles.stickyBarWrapper}>
+          <div style={styles.stickyBarInner}>
+            <form onSubmit={(e) => { e.preventDefault(); onSubmitFact() }} style={styles.addForm}>
+              <AutoGrowTextarea
+                value={newFact}
+                onChange={onNewFactChange}
+                onEnter={onSubmitFact}
+                placeholder={
+                  fullName === NEW_PERSON_PLACEHOLDER
+                    ? 'Who is this? e.g. "This is Sarah Chen, my old college roommate"'
+                    : `Add a fact about ${fullName}, e.g. "Married to Manuel, they share a house"`
+                }
+                style={styles.addInput}
+                disabled={saving}
+              />
+              <VoiceInputButton
+                disabled={saving}
+                onTranscribed={(text) => onNewFactChange(newFact ? `${newFact} ${text}` : text)}
+              />
+              <button type="submit" disabled={saving} style={styles.addButton}>
+                {saving ? '…' : 'Add'}
+              </button>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
 
       {factError && (
         <p style={styles.factErrorBanner}>{factError}</p>
@@ -684,10 +1025,10 @@ export default function PersonDetail({
         <div style={styles.suggestBanner}>
           <span>It sounds like {fullName} might belong to a group called "{suggestedGroup}". Add them?</span>
           <div style={styles.suggestButtonRow}>
-            <button type="button" onClick={confirmSuggestedGroup} style={styles.suggestYesButton}>
+            <button type="button" onClick={onConfirmSuggestedGroup} style={styles.suggestYesButton}>
               Yes, add
             </button>
-            <button type="button" onClick={() => setSuggestedGroup(null)} style={styles.suggestNoButton}>
+            <button type="button" onClick={onDeclineSuggestedGroup} style={styles.suggestNoButton}>
               No thanks
             </button>
           </div>
@@ -701,10 +1042,10 @@ export default function PersonDetail({
             {fullName}'s last name?
           </span>
           <div style={styles.suggestButtonRow}>
-            <button type="button" onClick={confirmLastNameSuggestion} style={styles.suggestYesButton}>
+            <button type="button" onClick={onConfirmLastNameSuggestion} style={styles.suggestYesButton}>
               Yes, add
             </button>
-            <button type="button" onClick={() => setLastNameSuggestion(null)} style={styles.suggestNoButton}>
+            <button type="button" onClick={onDeclineLastNameSuggestion} style={styles.suggestNoButton}>
               No thanks
             </button>
           </div>
@@ -716,10 +1057,7 @@ export default function PersonDetail({
         setRelationshipSuggestions={setRelationshipSuggestions}
         newPersonSuggestions={newPersonSuggestions}
         setNewPersonSuggestions={setNewPersonSuggestions}
-        onApplied={() => {
-          loadData()
-          loadFacts(true)
-        }}
+        onApplied={onRelationshipApplied}
       />
 
       {loading && <p>Loading…</p>}
@@ -732,7 +1070,7 @@ export default function PersonDetail({
         <>
           <div style={styles.notesHeaderRow}>
             <h2 style={styles.subheading}>Notes</h2>
-            <button type="button" onClick={() => setNotesOpen((o) => !o)} style={styles.notesToggle}>
+            <button type="button" onClick={onToggleNotesOpen} style={styles.notesToggle}>
               {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
             </button>
           </div>
@@ -744,8 +1082,8 @@ export default function PersonDetail({
                   note={note}
                   onSelectEvent={onSelectEvent}
                   onSelectGroup={onSelectGroup}
-                  onEdit={handleEditNote}
-                  onDelete={handleDeleteNote}
+                  onEdit={readOnly ? undefined : onEditNote}
+                  onDelete={readOnly ? undefined : onDeleteNote}
                 />
               ))}
             </div>
@@ -753,7 +1091,7 @@ export default function PersonDetail({
         </>
       )}
 
-      {!loading && (
+      {!loading && !readOnly && (
         <div style={styles.dangerZone}>
           <span style={styles.dangerHeading}>Profile</span>
 
@@ -761,12 +1099,12 @@ export default function PersonDetail({
 
           {!mergeOpen && !deleteConfirming && (
             <div style={styles.dangerButtonRow}>
-              <button type="button" onClick={openMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+              <button type="button" onClick={onOpenMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
                 This is a duplicate — merge it away…
               </button>
               <button
                 type="button"
-                onClick={() => setDeleteConfirming(true)}
+                onClick={onStartDelete}
                 style={styles.dangerDeleteButton}
                 disabled={actionBusy}
               >
@@ -779,12 +1117,12 @@ export default function PersonDetail({
             <div style={styles.suggestBanner}>
               <span>Delete {fullName} permanently? This removes all of their notes and reminders. This can't be undone.</span>
               <div style={styles.suggestButtonRow}>
-                <button type="button" onClick={handleDeleteProfile} style={styles.dangerDeleteButton} disabled={actionBusy}>
+                <button type="button" onClick={onConfirmDelete} style={styles.dangerDeleteButton} disabled={actionBusy}>
                   {actionBusy ? 'Deleting…' : 'Yes, delete'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setDeleteConfirming(false)}
+                  onClick={onCancelDelete}
                   style={styles.suggestNoButton}
                   disabled={actionBusy}
                 >
@@ -799,7 +1137,7 @@ export default function PersonDetail({
               {!mergeCandidate ? (
                 <>
                   <span>Search for the profile you want to keep. Everything on {fullName} will move there, and this profile will be deleted:</span>
-                  <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search people…" />
+                  <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search people…" />
                   <div style={styles.mergeResultsList}>
                     {otherPeople
                       .filter((p) => {
@@ -811,7 +1149,7 @@ export default function PersonDetail({
                         <button
                           key={p.id}
                           type="button"
-                          onClick={() => setMergeCandidate(p)}
+                          onClick={() => onSelectMergeCandidate(p)}
                           style={styles.mergeResultButton}
                         >
                           {p.name}{p.last_name ? ` ${p.last_name}` : ''}
@@ -819,7 +1157,7 @@ export default function PersonDetail({
                       ))}
                   </div>
                   <div style={styles.suggestButtonRow}>
-                    <button type="button" onClick={() => setMergeOpen(false)} style={styles.suggestNoButton}>
+                    <button type="button" onClick={onCancelMerge} style={styles.suggestNoButton}>
                       Cancel
                     </button>
                   </div>
@@ -832,12 +1170,12 @@ export default function PersonDetail({
                     "{fullName}" is deleted, and you'll be taken to the kept profile. This can't be undone.
                   </span>
                   <div style={styles.suggestButtonRow}>
-                    <button type="button" onClick={handleMerge} style={styles.suggestYesButton} disabled={actionBusy}>
+                    <button type="button" onClick={onConfirmMerge} style={styles.suggestYesButton} disabled={actionBusy}>
                       {actionBusy ? 'Merging…' : 'Yes, merge'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setMergeCandidate(null)}
+                      onClick={onBackFromMergeCandidate}
                       style={styles.suggestNoButton}
                       disabled={actionBusy}
                     >
@@ -866,7 +1204,8 @@ const TRASH_ICON = (
 
 // Clicking goes to the group's profile, same as any other chip. Hovering reveals a trash badge
 // that untags the group from this person — same corner-badge pattern as EventDetail.tsx's
-// AffiliatedGroupChip, reused here for a person's group memberships.
+// AffiliatedGroupChip, reused here for a person's group memberships. `onRemove` omitted (demo
+// read-only mode) simply never shows the hover badge.
 function AffiliatedGroupChip({
   group,
   onSelect,
@@ -874,7 +1213,7 @@ function AffiliatedGroupChip({
 }: {
   group: GroupRef
   onSelect: () => void
-  onRemove: () => void
+  onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
 
@@ -884,7 +1223,7 @@ function AffiliatedGroupChip({
         <span style={styles.groupDot} />
         {group.name}
       </button>
-      {hovered && (
+      {hovered && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -934,6 +1273,7 @@ function KeyFactItem({
 // wrapper-plus-corner-badge pattern used for member/suggestion chips elsewhere in the app,
 // chosen specifically because it doesn't resize the card on hover and so can't flicker).
 // Shows the date it was added plus, if it came from a tagged event, a clickable link to it.
+// `onEdit`/`onDelete` omitted (demo read-only mode) simply never shows the hover badges.
 function NoteCard({
   note,
   onSelectEvent,
@@ -944,8 +1284,8 @@ function NoteCard({
   note: Note
   onSelectEvent: (event: { id: string; summary: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
-  onEdit: (noteId: string, newContent: string) => void
-  onDelete: (noteId: string) => void
+  onEdit?: (noteId: string, newContent: string) => void
+  onDelete?: (noteId: string) => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -957,7 +1297,7 @@ function NoteCard({
   }
 
   function commitEdit() {
-    if (draft.trim()) onEdit(note.id, draft.trim())
+    if (draft.trim()) onEdit?.(note.id, draft.trim())
     setEditing(false)
   }
 
@@ -1009,23 +1349,27 @@ function NoteCard({
         </div>
       </div>
 
-      {hovered && (
+      {hovered && (onEdit || onDelete) && (
         <div style={styles.noteBadgeRow}>
-          <button onClick={startEditing} aria-label="Edit this note" style={styles.noteBadge}>
-            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
-            </svg>
-          </button>
-          <button onClick={() => onDelete(note.id)} aria-label="Delete this note" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
-            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 6h18" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6" />
-              <path d="M14 11v6" />
-            </svg>
-          </button>
+          {onEdit && (
+            <button onClick={startEditing} aria-label="Edit this note" style={styles.noteBadge}>
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          )}
+          {onDelete && (
+            <button onClick={() => onDelete(note.id)} aria-label="Delete this note" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+              </svg>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1057,7 +1401,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
     textDecoration: 'underline',
   },
-  renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' },
+  renameForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1rem' },
+  nameInputRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
   renameInput: {
     fontSize: '1.5rem',
     fontFamily: 'Georgia, serif',
@@ -1067,6 +1412,30 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: '1px solid #CCC',
     flex: '1 1 150px',
   },
+  goesByRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' },
+  goesByLabel: { fontSize: '0.9rem', color: '#2E4034' },
+  goesBySelect: {
+    fontSize: '0.95rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E4034',
+    padding: '0.3rem 0.4rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    width: '130px',
+    flex: '0 0 auto',
+  },
+  goesByOtherInput: {
+    fontSize: '0.95rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E4034',
+    padding: '0.3rem 0.5rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    width: '160px',
+    flex: '0 0 auto',
+  },
+  goesByCaption: { fontSize: '0.78rem', color: '#999', margin: 0 },
+  nameButtonRow: { display: 'flex', gap: '0.5rem' },
   saveButton: {
     fontSize: '0.9rem',
     padding: '0.5rem 0.9rem',

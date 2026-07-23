@@ -27,7 +27,7 @@ function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' | 'signup') => void }) {
+export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' | 'signup' | 'demo') => void }) {
   return (
     <div style={styles.page}>
       <nav style={styles.nav}>
@@ -54,6 +54,9 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         <a href="#get-started" style={styles.heroButton}>
           Start remembering
         </a>
+        <button onClick={() => onAuthClick('demo')} style={styles.heroDemoLink}>
+          Just want to look around? See a live demo →
+        </button>
       </section>
 
       <section id="what-is-boomer" style={styles.section}>
@@ -148,6 +151,10 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
             <span style={styles.tileEyebrow}>Already have an account?</span>
             <span style={styles.tileAction}>Log in</span>
           </button>
+          <button onClick={() => onAuthClick('demo')} style={styles.tile}>
+            <span style={styles.tileEyebrow}>Just want to look around?</span>
+            <span style={styles.tileAction}>See a live demo</span>
+          </button>
         </div>
       </section>
     </div>
@@ -234,6 +241,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#2E4034',
     color: '#FFFFFF',
     textDecoration: 'none',
+  },
+  heroDemoLink: {
+    display: 'block',
+    margin: '1rem auto 0',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '0.95rem',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
   },
   body: {
     fontSize: '1.1rem',

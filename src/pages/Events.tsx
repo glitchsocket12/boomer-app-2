@@ -5,9 +5,9 @@ import { eventSortDate, formatMonthYear } from '../lib/dates'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 
-type PersonRef = { id: string; name: string; last_name: string | null }
+export type PersonRef = { id: string; name: string; last_name: string | null }
 
-type Moment = {
+export type Moment = {
   id: string
   occasion: string | null
   location: string | null
@@ -18,6 +18,65 @@ type Moment = {
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: { id: string; name: string } | null }[]
   moment_tags: { tags: { id: string; name: string } | null }[]
+}
+
+export type DecoratedMoment = {
+  moment: Moment
+  attendees: Map<string, PersonRef>
+  summary: string
+  groups: { id: string; name: string }[]
+  tags: { id: string; name: string }[]
+}
+
+export function decorateMoments(moments: Moment[]): DecoratedMoment[] {
+  return moments.map((moment) => {
+    // Attendees can repeat across multiple notes for the same moment — dedupe by person id
+    const attendees = new Map<string, PersonRef>()
+    for (const n of moment.notes ?? []) {
+      if (n.people) attendees.set(n.people.id, n.people)
+    }
+
+    const summary = summarize(moment.occasion, moment.raw_description)
+    const groups = (moment.moment_groups ?? [])
+      .map((mg) => mg.groups)
+      .filter((g): g is { id: string; name: string } => g !== null)
+    const tags = (moment.moment_tags ?? [])
+      .map((mt) => mt.tags)
+      .filter((t): t is { id: string; name: string } => t !== null)
+
+    return { moment, attendees, summary, groups, tags }
+  })
+}
+
+export function filterMoments(decorated: DecoratedMoment[], search: string, tagFilter: string): DecoratedMoment[] {
+  const query = search.trim().toLowerCase()
+  return decorated.filter(({ moment, attendees, summary, groups, tags }) => {
+    if (tagFilter === 'untagged' && tags.length > 0) return false
+    if (tagFilter !== 'all' && tagFilter !== 'untagged' && !tags.some((t) => t.name === tagFilter)) return false
+    if (!query) return true
+    const attendeeNames = Array.from(attendees.values()).map((p) => `${p.name} ${p.last_name ?? ''}`)
+    const groupNames = groups.map((g) => g.name)
+    const tagNames = tags.map((t) => t.name)
+    const haystack = [moment.occasion, moment.location, summary, ...attendeeNames, ...groupNames, ...tagNames]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(query)
+  })
+}
+
+export function groupMomentsByYear(filteredMoments: DecoratedMoment[]): { year: number; items: DecoratedMoment[] }[] {
+  const yearGroups: { year: number; items: DecoratedMoment[] }[] = []
+  for (const entry of filteredMoments) {
+    const year = eventSortDate(entry.moment).getFullYear()
+    const lastGroup = yearGroups[yearGroups.length - 1]
+    if (lastGroup && lastGroup.year === year) {
+      lastGroup.items.push(entry)
+    } else {
+      yearGroups.push({ year, items: [entry] })
+    }
+  }
+  return yearGroups
 }
 
 export default function Events({
@@ -107,61 +166,79 @@ export default function Events({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
-  const decoratedMoments = moments.map((moment) => {
-    // Attendees can repeat across multiple notes for the same moment — dedupe by person id
-    const attendees = new Map<string, PersonRef>()
-    for (const n of moment.notes ?? []) {
-      if (n.people) attendees.set(n.people.id, n.people)
-    }
+  return (
+    <EventsView
+      moments={moments}
+      distinctTags={distinctTags}
+      search={search}
+      onSearchChange={setSearch}
+      tagFilter={tagFilter}
+      onTagFilterChange={setTagFilter}
+      onAddEvent={handleAddEvent}
+      creating={creating}
+      createError={createError}
+      onManageTags={onManageTags}
+      onSelectPerson={onSelectPerson}
+      onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
+    />
+  )
+}
 
-    const summary = summarize(moment.occasion, moment.raw_description)
-    const groups = (moment.moment_groups ?? [])
-      .map((mg) => mg.groups)
-      .filter((g): g is { id: string; name: string } => g !== null)
-    const tags = (moment.moment_tags ?? [])
-      .map((mt) => mt.tags)
-      .filter((t): t is { id: string; name: string } => t !== null)
-
-    return { moment, attendees, summary, groups, tags }
-  })
-
+// Pure render — split out (2026-07-22) so the landing-page demo can render the exact same list UI
+// fed by static data, with no Supabase calls. `readOnly` hides "+ Add Event" (a real insert) and
+// "Manage tags →" (a separate real page not part of the demo).
+export function EventsView({
+  moments,
+  distinctTags,
+  search,
+  onSearchChange,
+  tagFilter,
+  onTagFilterChange,
+  onAddEvent,
+  creating,
+  createError,
+  onManageTags,
+  onSelectPerson,
+  onSelectGroup,
+  onSelectEvent,
+  readOnly = false,
+}: {
+  moments: Moment[]
+  distinctTags: string[]
+  search: string
+  onSearchChange: (value: string) => void
+  tagFilter: string
+  onTagFilterChange: (value: string) => void
+  onAddEvent: () => void
+  creating: boolean
+  createError: string | null
+  onManageTags: () => void
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  readOnly?: boolean
+}) {
+  const decorated = decorateMoments(moments)
+  const filteredMoments = filterMoments(decorated, search, tagFilter)
+  const yearGroups = groupMomentsByYear(filteredMoments)
   const query = search.trim().toLowerCase()
-  const filteredMoments = decoratedMoments.filter(({ moment, attendees, summary, groups, tags }) => {
-    if (tagFilter === 'untagged' && tags.length > 0) return false
-    if (tagFilter !== 'all' && tagFilter !== 'untagged' && !tags.some((t) => t.name === tagFilter)) return false
-    if (!query) return true
-    const attendeeNames = Array.from(attendees.values()).map((p) => `${p.name} ${p.last_name ?? ''}`)
-    const groupNames = groups.map((g) => g.name)
-    const tagNames = tags.map((t) => t.name)
-    const haystack = [moment.occasion, moment.location, summary, ...attendeeNames, ...groupNames, ...tagNames]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase()
-    return haystack.includes(query)
-  })
-
-  const yearGroups: { year: number; items: typeof filteredMoments }[] = []
-  for (const entry of filteredMoments) {
-    const year = eventSortDate(entry.moment).getFullYear()
-    const lastGroup = yearGroups[yearGroups.length - 1]
-    if (lastGroup && lastGroup.year === year) {
-      lastGroup.items.push(entry)
-    } else {
-      yearGroups.push({ year, items: [entry] })
-    }
-  }
 
   return (
     <div style={styles.page}>
       <div style={styles.headingRow}>
         <h1 style={styles.heading}>Events</h1>
-        <button type="button" onClick={handleAddEvent} style={styles.addButton} disabled={creating}>
-          {creating ? '…' : '+ Add Event'}
-        </button>
+        {!readOnly && (
+          <button type="button" onClick={onAddEvent} style={styles.addButton} disabled={creating}>
+            {creating ? '…' : '+ Add Event'}
+          </button>
+        )}
       </div>
-      <button type="button" onClick={onManageTags} style={styles.manageTagsLink}>
-        Manage tags →
-      </button>
+      {!readOnly && (
+        <button type="button" onClick={onManageTags} style={styles.manageTagsLink}>
+          Manage tags →
+        </button>
+      )}
       {createError && <p style={styles.addErrorText}>{createError}</p>}
 
       {moments.length === 0 && (
@@ -172,11 +249,11 @@ export default function Events({
 
       {moments.length > 0 && (
         <div style={styles.searchRow}>
-          <SearchBox value={search} onChange={setSearch} placeholder="Search events…" />
+          <SearchBox value={search} onChange={onSearchChange} placeholder="Search events…" />
           {distinctTags.length > 0 && (
             <select
               value={tagFilter}
-              onChange={(e) => setTagFilter(e.target.value)}
+              onChange={(e) => onTagFilterChange(e.target.value)}
               style={styles.tagFilterSelect}
               aria-label="Filter by tag"
             >

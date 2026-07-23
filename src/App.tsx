@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
+import DemoShell from './pages/demo/DemoShell'
 import { ensureSelfPersonFromSignupMetadata } from './lib/ensureSelfFromSignup'
 import { ensureStarterTags } from './lib/ensureStarterTags'
 import Onboarding from './pages/Onboarding'
@@ -63,7 +64,7 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
 export default function App() {
   const [session, setSession] = useState<any>(null)
   const [checkingSession, setCheckingSession] = useState(true)
-  const [authView, setAuthView] = useState<'landing' | 'login' | 'signup'>('landing')
+  const [authView, setAuthView] = useState<'landing' | 'login' | 'signup' | 'demo'>('landing')
   // null = still checking, true = show the standalone onboarding experience instead of the app
   // shell. Gated on two signals together: the account hasn't already finished/skipped onboarding
   // (auth user_metadata, set by Onboarding.tsx on completion) AND it doesn't already have real
@@ -163,6 +164,9 @@ export default function App() {
   if (!session) {
     if (authView === 'landing') {
       return <Landing onAuthClick={(mode) => setAuthView(mode)} />
+    }
+    if (authView === 'demo') {
+      return <DemoShell onExit={() => setAuthView('landing')} onSignUp={() => setAuthView('signup')} />
     }
     return <Login initialSignUp={authView === 'signup'} onBack={() => setAuthView('landing')} />
   }

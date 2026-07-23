@@ -8,7 +8,7 @@ import { GROUP_TYPES } from '../lib/groupTypes'
 type PersonRef = { id: string; name: string; last_name: string | null }
 type MomentRef = { id: string; occasion: string | null; raw_description: string }
 
-type Group = {
+export type Group = {
   id: string
   name: string
   summary: string | null
@@ -22,6 +22,34 @@ const AFFILIATION_LIMIT = 4
 // "+N more" — a group with a large explicit roster (e.g. an extended family) shouldn't be able
 // to dominate the whole page. Full roster is still visible by clicking into the group.
 const MEMBER_LIMIT = 5
+
+export function filterGroups(groups: Group[], search: string, typeFilter: string): { group: Group; explicitMembers: PersonRef[]; events: { id: string; summary: string }[] }[] {
+  const decorated = groups.map((group) => {
+    const explicitMembers = (group.person_groups ?? [])
+      .map((pg) => pg.people)
+      .filter((p): p is PersonRef => p !== null)
+
+    const eventMap = new Map<string, { id: string; summary: string }>()
+    for (const mg of group.moment_groups ?? []) {
+      if (mg.moments) {
+        eventMap.set(mg.moments.id, { id: mg.moments.id, summary: summarize(mg.moments.occasion, mg.moments.raw_description) })
+      }
+    }
+    const events = [...eventMap.values()]
+
+    return { group, explicitMembers, events }
+  })
+
+  const query = search.trim().toLowerCase()
+  return decorated.filter(({ group, explicitMembers }) => {
+    if (typeFilter === 'untyped' && group.group_type) return false
+    if (typeFilter !== 'all' && typeFilter !== 'untyped' && group.group_type !== typeFilter) return false
+    if (!query) return true
+    const memberNames = explicitMembers.map((p) => `${p.name} ${p.last_name ?? ''}`)
+    const haystack = [group.name, group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
+    return haystack.includes(query)
+  })
+}
 
 export default function Groups({
   onSelectPerson,
@@ -106,44 +134,63 @@ export default function Groups({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
-  // "Members" is the explicit roster (person_groups) ONLY — this list page intentionally
-  // does NOT show event-only attendees or any add/remove affordance; that management
-  // (including the "also seen at this group's events" suggestions) only lives on a
-  // group's own detail page, not here, so a tile can't accidentally change membership
-  // with a stray click.
-  const decoratedGroups = groups.map((group) => {
-    const explicitMembers = (group.person_groups ?? [])
-      .map((pg) => pg.people)
-      .filter((p): p is PersonRef => p !== null)
+  return (
+    <GroupsView
+      groups={groups}
+      search={search}
+      onSearchChange={setSearch}
+      typeFilter={typeFilter}
+      onTypeFilterChange={setTypeFilter}
+      onAddGroup={handleAddGroup}
+      addingGroup={addingGroup}
+      addError={addError}
+      onSelectPerson={onSelectPerson}
+      onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
+    />
+  )
+}
 
-    const eventMap = new Map<string, { id: string; summary: string }>()
-    for (const mg of group.moment_groups ?? []) {
-      if (mg.moments) {
-        eventMap.set(mg.moments.id, { id: mg.moments.id, summary: summarize(mg.moments.occasion, mg.moments.raw_description) })
-      }
-    }
-    const events = [...eventMap.values()]
-
-    return { group, explicitMembers, events }
-  })
-
-  const query = search.trim().toLowerCase()
-  const filteredGroups = decoratedGroups.filter(({ group, explicitMembers }) => {
-    if (typeFilter === 'untyped' && group.group_type) return false
-    if (typeFilter !== 'all' && typeFilter !== 'untyped' && group.group_type !== typeFilter) return false
-    if (!query) return true
-    const memberNames = explicitMembers.map((p) => `${p.name} ${p.last_name ?? ''}`)
-    const haystack = [group.name, group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
-    return haystack.includes(query)
-  })
+// Pure render — split out (2026-07-22) so the landing-page demo can render the exact same list UI
+// fed by static data, with no Supabase calls. `readOnly` hides "+ Add Group" (a real insert).
+export function GroupsView({
+  groups,
+  search,
+  onSearchChange,
+  typeFilter,
+  onTypeFilterChange,
+  onAddGroup,
+  addingGroup,
+  addError,
+  onSelectPerson,
+  onSelectGroup,
+  onSelectEvent,
+  readOnly = false,
+}: {
+  groups: Group[]
+  search: string
+  onSearchChange: (value: string) => void
+  typeFilter: string
+  onTypeFilterChange: (value: string) => void
+  onAddGroup: () => void
+  addingGroup: boolean
+  addError: string | null
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  readOnly?: boolean
+}) {
+  const filteredGroups = filterGroups(groups, search, typeFilter)
 
   return (
     <div style={styles.page}>
       <div style={styles.headingRow}>
         <h1 style={styles.heading}>Groups</h1>
-        <button type="button" onClick={handleAddGroup} style={styles.addButton} disabled={addingGroup}>
-          {addingGroup ? '…' : '+ Add Group'}
-        </button>
+        {!readOnly && (
+          <button type="button" onClick={onAddGroup} style={styles.addButton} disabled={addingGroup}>
+            {addingGroup ? '…' : '+ Add Group'}
+          </button>
+        )}
       </div>
       {addError && <p style={styles.addErrorText}>{addError}</p>}
 
@@ -155,10 +202,10 @@ export default function Groups({
 
       {groups.length > 0 && (
         <div style={styles.searchRow}>
-          <SearchBox value={search} onChange={setSearch} placeholder="Search groups…" />
+          <SearchBox value={search} onChange={onSearchChange} placeholder="Search groups…" />
           <select
             value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
+            onChange={(e) => onTypeFilterChange(e.target.value)}
             style={styles.typeFilterSelect}
             aria-label="Filter by group type"
           >
@@ -175,7 +222,7 @@ export default function Groups({
 
       {groups.length > 0 && filteredGroups.length === 0 && (
         <p style={styles.empty}>
-          {query ? `No groups match "${search}".` : 'No groups have this type yet.'}
+          {search.trim() ? `No groups match "${search}".` : 'No groups have this type yet.'}
         </p>
       )}
 

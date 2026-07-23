@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
@@ -13,11 +13,11 @@ import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import SearchBox from '../components/SearchBox'
 
-type PersonRef = { id: string; name: string; last_name: string | null }
-type GroupRef = { id: string; name: string }
-type GroupNote = { id: string; content: string; created_at: string }
+export type PersonRef = { id: string; name: string; last_name: string | null }
+export type GroupRef = { id: string; name: string }
+export type GroupNote = { id: string; content: string; created_at: string }
 
-type Moment = {
+export type Moment = {
   id: string
   occasion: string | null
   location: string | null
@@ -481,9 +481,6 @@ export default function GroupDetail({
     if (!explicitIds.has(p.id) && !dismissedIds.has(p.id)) suggestedMembersById.set(p.id, p)
   }
   const suggestedMembers = sortByLastName([...suggestedMembersById.values()])
-  const visibleSuggestedMembers = suggestedMembers.slice(0, MEMBER_SUGGESTION_LIMIT)
-  const sortedExplicitMembers = sortByLastName(explicitMembers)
-  const visibleExplicitMembers = membersExpanded ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
 
   // Suggested associated groups combine two signals — any other group tagged to the same events
   // as this one (event-based, reusing the moments already loaded above, same one-hop reasoning as
@@ -504,9 +501,227 @@ export default function GroupDetail({
     if (!confirmedGroupIds.has(g.id) && !dismissedGroupIdSet.has(g.id)) suggestedGroupsById.set(g.id, g)
   }
   const suggestedAssociatedGroups = [...suggestedGroupsById.values()].sort((a, b) => a.name.localeCompare(b.name))
+
+  return (
+    <GroupDetailView
+      groupId={groupId}
+      name={name}
+      groupType={groupType}
+      summary={summary}
+      moments={moments}
+      explicitMembers={explicitMembers}
+      suggestedMembers={suggestedMembers}
+      confirmedAssociatedGroups={confirmedAssociatedGroups}
+      suggestedAssociatedGroups={suggestedAssociatedGroups}
+      groupNotes={groupNotes}
+      onSelectPerson={onSelectPerson}
+      onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
+      onBack={onBack}
+      backLabel={backLabel}
+      onOpenFamilyTree={handleGenerateFamilyTree}
+      editingName={editingName}
+      nameInput={nameInput}
+      savingName={savingName}
+      onStartEditName={() => setEditingName(true)}
+      onNameInputChange={setNameInput}
+      onSaveName={handleSaveName}
+      onCancelEditName={() => {
+        setEditingName(false)
+        setNameInput(name)
+      }}
+      savingType={savingType}
+      onChangeType={handleChangeType}
+      refreshingSummary={refreshingSummary}
+      onRefreshSummary={refreshSummary}
+      membersExpanded={membersExpanded}
+      onToggleMembersExpanded={() => setMembersExpanded((e) => !e)}
+      onAddMember={handleAddMember}
+      onRemoveMember={handleRemoveMember}
+      onApproveAllSuggestions={handleApproveAllSuggestions}
+      onDenySuggestion={handleDenySuggestion}
+      onDenyAllSuggestions={handleDenyAllSuggestions}
+      showGroupPicker={showGroupPicker}
+      onToggleGroupPicker={openGroupPicker}
+      groupPickerSearch={groupPickerSearch}
+      onGroupPickerSearchChange={setGroupPickerSearch}
+      pickableGroups={pickableGroups}
+      loadingPickableGroups={loadingPickableGroups}
+      onApproveGroupSuggestion={handleApproveGroupSuggestion}
+      onRemoveAssociatedGroup={handleRemoveAssociatedGroup}
+      onDenyGroupSuggestion={handleDenyGroupSuggestion}
+      onDenyAllGroupSuggestions={handleDenyAllGroupSuggestions}
+      notesOpen={notesOpen}
+      onToggleNotesOpen={() => setNotesOpen((o) => !o)}
+      newNote={newNote}
+      onNewNoteChange={setNewNote}
+      savingNote={savingNote}
+      onSubmitGroupNote={submitGroupNote}
+      onEditGroupNote={handleEditGroupNote}
+      onDeleteGroupNote={handleDeleteGroupNote}
+      deleteConfirming={deleteConfirming}
+      onStartDelete={() => setDeleteConfirming(true)}
+      onCancelDelete={() => setDeleteConfirming(false)}
+      onConfirmDelete={handleDeleteGroup}
+      actionBusy={actionBusy}
+      actionError={actionError}
+      editChat={
+        <UpdateGroupChat
+          groupId={groupId}
+          onSaved={({ rename }) => {
+            if (rename) {
+              setName(rename)
+              onRenamed?.(rename)
+            }
+            // Silent: this fires after every chat turn now (not just the final "done" turn), so a
+            // full loading-state flip here would unmount the in-progress chat mid-conversation.
+            loadMoments(true)
+            loadMembers()
+            loadSummary()
+            loadGroupNotes()
+          }}
+        />
+      }
+    />
+  )
+}
+
+// Pure render — split out (2026-07-22) so the landing-page demo can render the exact same group
+// UI fed by static data, with no Supabase/Edge Function calls. `readOnly` hides every write-only
+// control (rename pencil, type picker → static badge, member add/remove, associated-group
+// picker, suggestion banners, notes add/edit/delete, the "Edit this group" chat, delete) —
+// everything else (summary, membership, moments, associated groups, navigation, the family-tree
+// button) renders and behaves identically either way. `editChat` is a slot the real container
+// fills with `UpdateGroupChat` — the demo simply doesn't pass it.
+export function GroupDetailView({
+  name,
+  groupType,
+  summary,
+  moments,
+  explicitMembers,
+  suggestedMembers,
+  confirmedAssociatedGroups,
+  suggestedAssociatedGroups,
+  groupNotes,
+  onSelectPerson,
+  onSelectGroup,
+  onSelectEvent,
+  onBack,
+  backLabel,
+  onOpenFamilyTree,
+  readOnly = false,
+  editingName = false,
+  nameInput = '',
+  savingName = false,
+  onStartEditName = () => {},
+  onNameInputChange = () => {},
+  onSaveName = () => {},
+  onCancelEditName = () => {},
+  savingType = false,
+  onChangeType = () => {},
+  refreshingSummary = false,
+  onRefreshSummary = () => {},
+  membersExpanded = false,
+  onToggleMembersExpanded = () => {},
+  onAddMember = () => {},
+  onRemoveMember = () => {},
+  onApproveAllSuggestions = () => {},
+  onDenySuggestion = () => {},
+  onDenyAllSuggestions = () => {},
+  showGroupPicker = false,
+  onToggleGroupPicker = () => {},
+  groupPickerSearch = '',
+  onGroupPickerSearchChange = () => {},
+  pickableGroups = [],
+  loadingPickableGroups = false,
+  onApproveGroupSuggestion = () => {},
+  onRemoveAssociatedGroup = () => {},
+  onDenyGroupSuggestion = () => {},
+  onDenyAllGroupSuggestions = () => {},
+  notesOpen = true,
+  onToggleNotesOpen = () => {},
+  newNote = '',
+  onNewNoteChange = () => {},
+  savingNote = false,
+  onSubmitGroupNote = () => {},
+  onEditGroupNote = () => {},
+  onDeleteGroupNote = () => {},
+  deleteConfirming = false,
+  onStartDelete = () => {},
+  onCancelDelete = () => {},
+  onConfirmDelete = () => {},
+  actionBusy = false,
+  actionError = null,
+  editChat,
+}: {
+  groupId: string
+  name: string
+  groupType: string | null
+  summary: string | null
+  moments: Moment[]
+  explicitMembers: PersonRef[]
+  suggestedMembers: PersonRef[]
+  confirmedAssociatedGroups: GroupRef[]
+  suggestedAssociatedGroups: GroupRef[]
+  groupNotes: GroupNote[]
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  onBack: () => void
+  backLabel: string
+  onOpenFamilyTree: () => void
+  readOnly?: boolean
+  editingName?: boolean
+  nameInput?: string
+  savingName?: boolean
+  onStartEditName?: () => void
+  onNameInputChange?: (v: string) => void
+  onSaveName?: (e: FormEvent) => void
+  onCancelEditName?: () => void
+  savingType?: boolean
+  onChangeType?: (value: string) => void
+  refreshingSummary?: boolean
+  onRefreshSummary?: () => void
+  membersExpanded?: boolean
+  onToggleMembersExpanded?: () => void
+  onAddMember?: (person: PersonRef) => void
+  onRemoveMember?: (person: PersonRef) => void
+  onApproveAllSuggestions?: (people: PersonRef[]) => void
+  onDenySuggestion?: (person: PersonRef) => void
+  onDenyAllSuggestions?: (people: PersonRef[]) => void
+  showGroupPicker?: boolean
+  onToggleGroupPicker?: () => void
+  groupPickerSearch?: string
+  onGroupPickerSearchChange?: (v: string) => void
+  pickableGroups?: GroupRef[]
+  loadingPickableGroups?: boolean
+  onApproveGroupSuggestion?: (group: GroupRef) => void
+  onRemoveAssociatedGroup?: (group: GroupRef) => void
+  onDenyGroupSuggestion?: (group: GroupRef) => void
+  onDenyAllGroupSuggestions?: (groups: GroupRef[]) => void
+  notesOpen?: boolean
+  onToggleNotesOpen?: () => void
+  newNote?: string
+  onNewNoteChange?: (v: string) => void
+  savingNote?: boolean
+  onSubmitGroupNote?: () => void
+  onEditGroupNote?: (noteId: string, newContent: string) => void
+  onDeleteGroupNote?: (noteId: string) => void
+  deleteConfirming?: boolean
+  onStartDelete?: () => void
+  onCancelDelete?: () => void
+  onConfirmDelete?: () => void
+  actionBusy?: boolean
+  actionError?: string | null
+  editChat?: ReactNode
+}) {
+  const sortedExplicitMembers = sortByLastName(explicitMembers)
+  const visibleExplicitMembers = membersExpanded ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
+  const visibleSuggestedMembers = suggestedMembers.slice(0, MEMBER_SUGGESTION_LIMIT)
   const sortedConfirmedAssociatedGroups = [...confirmedAssociatedGroups].sort((a, b) => a.name.localeCompare(b.name))
 
   const groupPickerQuery = groupPickerSearch.trim().toLowerCase()
+  const confirmedGroupIds = new Set(confirmedAssociatedGroups.map((g) => g.id))
   const filteredPickableGroups = pickableGroups.filter(
     (g) => !confirmedGroupIds.has(g.id) && (!groupPickerQuery || g.name.toLowerCase().includes(groupPickerQuery))
   )
@@ -516,54 +731,51 @@ export default function GroupDetail({
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
       {editingName ? (
-        <form onSubmit={handleSaveName} style={styles.renameForm}>
+        <form onSubmit={onSaveName} style={styles.renameForm}>
           <input
             type="text"
             value={nameInput}
-            onChange={(e) => setNameInput(e.target.value)}
+            onChange={(e) => onNameInputChange(e.target.value)}
             style={styles.renameInput}
             autoFocus
           />
           <button type="submit" disabled={savingName || !nameInput.trim()} style={styles.saveButton}>
             {savingName ? '…' : 'Save'}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setEditingName(false)
-              setNameInput(name)
-            }}
-            style={styles.cancelButton}
-          >
+          <button type="button" onClick={onCancelEditName} style={styles.cancelButton}>
             Cancel
           </button>
         </form>
       ) : (
         <div style={styles.headingRow}>
           <h1 style={styles.heading}>{name}</h1>
-          <EditButton label="Rename group" onClick={() => setEditingName(true)} />
+          {!readOnly && <EditButton label="Rename group" onClick={onStartEditName} />}
         </div>
       )}
 
-      <select
-        value={groupType ?? ''}
-        onChange={(e) => handleChangeType(e.target.value)}
-        disabled={savingType}
-        style={styles.typeSelect}
-        aria-label="Group type"
-      >
-        <option value="">No type set</option>
-        {GROUP_TYPES.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-      </select>
+      {readOnly ? (
+        groupType && <span style={styles.typeBadgeStatic}>{groupType}</span>
+      ) : (
+        <select
+          value={groupType ?? ''}
+          onChange={(e) => onChangeType(e.target.value)}
+          disabled={savingType}
+          style={styles.typeSelect}
+          aria-label="Group type"
+        >
+          <option value="">No type set</option>
+          {GROUP_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      )}
 
       {groupType === 'Family' && (
         <button
           type="button"
-          onClick={handleGenerateFamilyTree}
+          onClick={onOpenFamilyTree}
           disabled={explicitMembers.length === 0}
           style={styles.familyTreeButton}
         >
@@ -573,7 +785,7 @@ export default function GroupDetail({
 
       <div style={styles.summaryRow}>
         <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
-        <RefreshButton label="Refresh description" onClick={refreshSummary} refreshing={refreshingSummary} />
+        {!readOnly && <RefreshButton label="Refresh description" onClick={onRefreshSummary} refreshing={refreshingSummary} />}
       </div>
 
       <PhotoGallery />
@@ -589,19 +801,19 @@ export default function GroupDetail({
                 key={p.id}
                 person={p}
                 onSelect={() => onSelectPerson(p)}
-                onRemove={() => handleRemoveMember(p)}
+                onRemove={readOnly ? undefined : () => onRemoveMember(p)}
               />
             ))}
           </div>
           {sortedExplicitMembers.length > MEMBER_LIST_LIMIT && (
-            <button onClick={() => setMembersExpanded((e) => !e)} style={styles.showMoreButton}>
+            <button onClick={onToggleMembersExpanded} style={styles.showMoreButton}>
               {membersExpanded ? '▾ Show fewer members' : `▸ Show all ${sortedExplicitMembers.length} members`}
             </button>
           )}
         </>
       )}
 
-      {suggestedMembers.length > 0 && (
+      {!readOnly && suggestedMembers.length > 0 && (
         <>
           <div style={styles.suggestionHeaderRow}>
             <p style={styles.eventOnlyLabel}>
@@ -610,10 +822,10 @@ export default function GroupDetail({
             </p>
             {visibleSuggestedMembers.length > 1 && (
               <div style={styles.suggestionActionRow}>
-                <button onClick={() => handleApproveAllSuggestions(visibleSuggestedMembers)} style={styles.addAllButton}>
+                <button onClick={() => onApproveAllSuggestions(visibleSuggestedMembers)} style={styles.addAllButton}>
                   ✓ Add all suggestions
                 </button>
-                <button onClick={() => handleDenyAllSuggestions(visibleSuggestedMembers)} style={styles.removeAllButton}>
+                <button onClick={() => onDenyAllSuggestions(visibleSuggestedMembers)} style={styles.removeAllButton}>
                   × Remove all suggestions
                 </button>
               </div>
@@ -624,8 +836,8 @@ export default function GroupDetail({
               <SuggestionChip
                 key={p.id}
                 person={p}
-                onApprove={() => handleAddMember(p)}
-                onDeny={() => handleDenySuggestion(p)}
+                onApprove={() => onAddMember(p)}
+                onDeny={() => onDenySuggestion(p)}
               />
             ))}
           </div>
@@ -634,14 +846,16 @@ export default function GroupDetail({
 
       <div style={styles.suggestionHeaderRow}>
         <h2 style={styles.membersHeading}>Associated Groups</h2>
-        <button onClick={openGroupPicker} style={styles.addGroupButton}>
-          + Associate a New Group
-        </button>
+        {!readOnly && (
+          <button onClick={onToggleGroupPicker} style={styles.addGroupButton}>
+            + Associate a New Group
+          </button>
+        )}
       </div>
 
       {showGroupPicker && (
         <div style={styles.groupPickerPanel}>
-          <SearchBox value={groupPickerSearch} onChange={setGroupPickerSearch} placeholder="Search groups…" />
+          <SearchBox value={groupPickerSearch} onChange={onGroupPickerSearchChange} placeholder="Search groups…" />
           {loadingPickableGroups ? (
             <p style={styles.empty}>Loading…</p>
           ) : filteredPickableGroups.length === 0 ? (
@@ -651,7 +865,7 @@ export default function GroupDetail({
           ) : (
             <div style={{ ...styles.chipRow, marginBottom: '0.5rem' }}>
               {filteredPickableGroups.map((g) => (
-                <GroupChip key={g.id} label={g.name} onClick={() => handleApproveGroupSuggestion(g)} />
+                <GroupChip key={g.id} label={g.name} onClick={() => onApproveGroupSuggestion(g)} />
               ))}
             </div>
           )}
@@ -667,18 +881,18 @@ export default function GroupDetail({
               key={g.id}
               group={g}
               onSelect={() => onSelectGroup(g)}
-              onRemove={() => handleRemoveAssociatedGroup(g)}
+              onRemove={readOnly ? undefined : () => onRemoveAssociatedGroup(g)}
             />
           ))}
         </div>
       )}
 
-      {suggestedAssociatedGroups.length > 0 && (
+      {!readOnly && suggestedAssociatedGroups.length > 0 && (
         <>
           <div style={styles.suggestionHeaderRow}>
             <p style={styles.eventOnlyLabel}>Possible associated groups — tap to add, or hover to dismiss</p>
             {suggestedAssociatedGroups.length > 1 && (
-              <button onClick={() => handleDenyAllGroupSuggestions(suggestedAssociatedGroups)} style={styles.removeAllButton}>
+              <button onClick={() => onDenyAllGroupSuggestions(suggestedAssociatedGroups)} style={styles.removeAllButton}>
                 × Remove all suggestions
               </button>
             )}
@@ -688,8 +902,8 @@ export default function GroupDetail({
               <GroupSuggestionChip
                 key={g.id}
                 group={g}
-                onApprove={() => handleApproveGroupSuggestion(g)}
-                onDeny={() => handleDenyGroupSuggestion(g)}
+                onApprove={() => onApproveGroupSuggestion(g)}
+                onDeny={() => onDenyGroupSuggestion(g)}
               />
             ))}
           </div>
@@ -702,7 +916,7 @@ export default function GroupDetail({
 
       <div style={styles.list}>
         {moments.map((moment) => {
-          const summary = summarize(moment.occasion, moment.raw_description)
+          const momentSummary = summarize(moment.occasion, moment.raw_description)
 
           const attendees = new Map<string, PersonRef>()
           for (const n of moment.notes ?? []) {
@@ -715,7 +929,7 @@ export default function GroupDetail({
 
           return (
             <div key={moment.id} style={styles.card}>
-              <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
+              <button onClick={() => onSelectEvent({ id: moment.id, summary: momentSummary })} style={styles.titleButton}>
                 {moment.occasion || 'Untitled moment'}
               </button>
               <p style={styles.meta}>
@@ -755,35 +969,39 @@ export default function GroupDetail({
       <div style={styles.notesHeaderRow}>
         <h2 style={styles.editHeading}>Notes</h2>
         {groupNotes.length > 0 && (
-          <button type="button" onClick={() => setNotesOpen((o) => !o)} style={styles.notesToggle}>
+          <button type="button" onClick={onToggleNotesOpen} style={styles.notesToggle}>
             {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
           </button>
         )}
       </div>
-      <p style={styles.chatHint}>Free-form context about this group — no event needed.</p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          submitGroupNote()
-        }}
-        style={styles.addNoteForm}
-      >
-        <AutoGrowTextarea
-          value={newNote}
-          onChange={setNewNote}
-          onEnter={submitGroupNote}
-          placeholder={`Add a note about ${name}…`}
-          style={styles.addNoteInput}
-          disabled={savingNote}
-        />
-        <VoiceInputButton
-          disabled={savingNote}
-          onTranscribed={(text) => setNewNote((prev) => (prev ? `${prev} ${text}` : text))}
-        />
-        <button type="submit" disabled={savingNote || !newNote.trim()} style={styles.addNoteButton}>
-          {savingNote ? '…' : 'Add'}
-        </button>
-      </form>
+      {!readOnly && (
+        <>
+          <p style={styles.chatHint}>Free-form context about this group — no event needed.</p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              onSubmitGroupNote()
+            }}
+            style={styles.addNoteForm}
+          >
+            <AutoGrowTextarea
+              value={newNote}
+              onChange={onNewNoteChange}
+              onEnter={onSubmitGroupNote}
+              placeholder={`Add a note about ${name}…`}
+              style={styles.addNoteInput}
+              disabled={savingNote}
+            />
+            <VoiceInputButton
+              disabled={savingNote}
+              onTranscribed={(text) => onNewNoteChange(newNote ? `${newNote} ${text}` : text)}
+            />
+            <button type="submit" disabled={savingNote || !newNote.trim()} style={styles.addNoteButton}>
+              {savingNote ? '…' : 'Add'}
+            </button>
+          </form>
+        </>
+      )}
 
       {notesOpen && groupNotes.length > 0 && (
         <div style={styles.notesList}>
@@ -791,81 +1009,74 @@ export default function GroupDetail({
             <GroupNoteCard
               key={note.id}
               note={note}
-              onEdit={handleEditGroupNote}
-              onDelete={handleDeleteGroupNote}
+              onEdit={readOnly ? undefined : onEditGroupNote}
+              onDelete={readOnly ? undefined : onDeleteGroupNote}
             />
           ))}
         </div>
       )}
 
-      <h2 style={styles.editHeading}>Edit this group</h2>
-      <p style={styles.chatHint}>Add or remove someone, tag or untag an event, or rename it — just tell me what to change.</p>
-      <UpdateGroupChat
-        groupId={groupId}
-        onSaved={({ rename }) => {
-          if (rename) {
-            setName(rename)
-            onRenamed?.(rename)
-          }
-          // Silent: this fires after every chat turn now (not just the final "done" turn), so a
-          // full loading-state flip here would unmount the in-progress chat mid-conversation.
-          loadMoments(true)
-          loadMembers()
-          loadSummary()
-          loadGroupNotes()
-        }}
-      />
+      {!readOnly && editChat && (
+        <>
+          <h2 style={styles.editHeading}>Edit this group</h2>
+          <p style={styles.chatHint}>Add or remove someone, tag or untag an event, or rename it — just tell me what to change.</p>
+          {editChat}
+        </>
+      )}
 
-      <div style={styles.dangerZone}>
-        <span style={styles.dangerHeading}>Group</span>
+      {!readOnly && (
+        <div style={styles.dangerZone}>
+          <span style={styles.dangerHeading}>Group</span>
 
-        {actionError && <p style={styles.actionErrorBanner}>{actionError}</p>}
+          {actionError && <p style={styles.actionErrorBanner}>{actionError}</p>}
 
-        {!deleteConfirming ? (
-          <div style={styles.dangerButtonRow}>
-            <button
-              type="button"
-              onClick={() => setDeleteConfirming(true)}
-              style={styles.dangerDeleteButton}
-              disabled={actionBusy}
-            >
-              Delete this group
-            </button>
-          </div>
-        ) : (
-          <div style={styles.suggestBanner}>
-            <span>Delete this group permanently? This removes its membership, notes, and event/group tags. This can't be undone.</span>
-            <div style={styles.suggestButtonRow}>
-              <button type="button" onClick={handleDeleteGroup} style={styles.dangerDeleteButton} disabled={actionBusy}>
-                {actionBusy ? 'Deleting…' : 'Yes, delete'}
-              </button>
+          {!deleteConfirming ? (
+            <div style={styles.dangerButtonRow}>
               <button
                 type="button"
-                onClick={() => setDeleteConfirming(false)}
-                style={styles.cancelButton}
+                onClick={onStartDelete}
+                style={styles.dangerDeleteButton}
                 disabled={actionBusy}
               >
-                Cancel
+                Delete this group
               </button>
             </div>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div style={styles.suggestBanner}>
+              <span>Delete this group permanently? This removes its membership, notes, and event/group tags. This can't be undone.</span>
+              <div style={styles.suggestButtonRow}>
+                <button type="button" onClick={onConfirmDelete} style={styles.dangerDeleteButton} disabled={actionBusy}>
+                  {actionBusy ? 'Deleting…' : 'Yes, delete'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelDelete}
+                  style={styles.cancelButton}
+                  disabled={actionBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 // One free-standing group note. Same hover-reveals-edit/delete pattern as PersonDetail.tsx's
 // NoteCard, minus any source label — a group note is always native to this page, so there's
-// nothing else to attribute it to.
+// nothing else to attribute it to. `onEdit`/`onDelete` omitted (demo read-only mode) simply never
+// shows the hover badges.
 function GroupNoteCard({
   note,
   onEdit,
   onDelete,
 }: {
   note: GroupNote
-  onEdit: (noteId: string, newContent: string) => void
-  onDelete: (noteId: string) => void
+  onEdit?: (noteId: string, newContent: string) => void
+  onDelete?: (noteId: string) => void
 }) {
   const [hovered, setHovered] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -877,7 +1088,7 @@ function GroupNoteCard({
   }
 
   function commitEdit() {
-    if (draft.trim()) onEdit(note.id, draft.trim())
+    if (draft.trim()) onEdit?.(note.id, draft.trim())
     setEditing(false)
   }
 
@@ -903,23 +1114,27 @@ function GroupNoteCard({
           {new Date(note.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
         </p>
       </div>
-      {hovered && (
+      {hovered && (onEdit || onDelete) && (
         <div style={styles.noteBadgeRow}>
-          <button onClick={startEditing} aria-label="Edit this note" style={styles.noteBadge}>
-            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
-            </svg>
-          </button>
-          <button onClick={() => onDelete(note.id)} aria-label="Delete this note" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
-            <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 6h18" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6" />
-              <path d="M14 11v6" />
-            </svg>
-          </button>
+          {onEdit && (
+            <button onClick={startEditing} aria-label="Edit this note" style={styles.noteBadge}>
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          )}
+          {onDelete && (
+            <button onClick={() => onDelete(note.id)} aria-label="Delete this note" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+              </svg>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -931,7 +1146,8 @@ function GroupNoteCard({
 // app. Hovering reveals a small trash badge in the corner, a separate control (not a swap of the
 // main chip's content) that removes them from the group — same pattern as SuggestionChip's "×"
 // below, chosen specifically because the earlier version (swapping the chip's own click action
-// and content on hover) caused a resize-driven hover flicker.
+// and content on hover) caused a resize-driven hover flicker. `onRemove` omitted (demo read-only
+// mode) simply never shows the hover badge.
 function MemberChip({
   person,
   onSelect,
@@ -939,7 +1155,7 @@ function MemberChip({
 }: {
   person: PersonRef
   onSelect: () => void
-  onRemove: () => void
+  onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
@@ -953,7 +1169,7 @@ function MemberChip({
       <button onClick={onSelect} style={styles.person}>
         {label}
       </button>
-      {hovered && (
+      {hovered && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -1018,7 +1234,8 @@ function SuggestionChip({
 
 // Confirmed associated group: clicking goes to that group's profile, same as any other chip.
 // Hovering reveals a trash badge that unlinks the association — same corner-badge pattern as
-// MemberChip above, reused here for groups instead of people.
+// MemberChip above, reused here for groups instead of people. `onRemove` omitted (demo read-only
+// mode) simply never shows the hover badge.
 function AssociatedGroupChip({
   group,
   onSelect,
@@ -1026,7 +1243,7 @@ function AssociatedGroupChip({
 }: {
   group: GroupRef
   onSelect: () => void
-  onRemove: () => void
+  onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
 
@@ -1037,7 +1254,7 @@ function AssociatedGroupChip({
       onMouseLeave={() => setHovered(false)}
     >
       <GroupChip label={group.name} onClick={onSelect} />
-      {hovered && (
+      {hovered && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -1150,6 +1367,18 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
     backgroundColor: '#FFF',
     color: '#666',
+    marginBottom: '0.75rem',
+  },
+  typeBadgeStatic: {
+    display: 'inline-block',
+    fontSize: '0.7rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+    color: '#8A6A1F',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #E6D6AC',
+    borderRadius: '999px',
+    padding: '0.2rem 0.6rem',
     marginBottom: '0.75rem',
   },
   familyTreeButton: {
