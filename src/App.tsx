@@ -146,6 +146,10 @@ export default function App() {
   const skipNextHistoryPush = useRef(false)
 
   useEffect(() => {
+    // Logged-out screens (Landing/Login) aren't part of this routing at all — skip so the
+    // address bar doesn't keep showing whatever authenticated page was open before sign-out.
+    if (!session) return
+
     sessionStorage.setItem(NAV_STORAGE_KEY, JSON.stringify({ view, navStack }))
 
     if (skipNextHistoryPush.current) {
@@ -156,7 +160,7 @@ export default function App() {
     if (path !== window.location.pathname) {
       window.history.pushState({ view, navStack }, '', path)
     }
-  }, [view, navStack])
+  }, [view, navStack, session])
 
   useEffect(() => {
     // Sync the CURRENT history entry's state on mount (a plain replace, not a new entry) so
@@ -194,6 +198,14 @@ export default function App() {
       if (event === 'SIGNED_IN' && session?.user) {
         ensureSelfPersonFromSignupMetadata(session.user.id, session.user.user_metadata ?? {})
         ensureStarterTags(session.user.id, session.user.user_metadata ?? {})
+      }
+      if (event === 'SIGNED_OUT') {
+        // Drop the stale authenticated route so a later login (possibly a different account on
+        // a shared device) starts fresh instead of resuming wherever this session left off.
+        setView('home')
+        setNavStack([])
+        sessionStorage.removeItem(NAV_STORAGE_KEY)
+        window.history.replaceState(null, '', '/')
       }
       checkOnboarding(session)
     })
