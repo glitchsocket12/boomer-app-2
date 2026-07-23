@@ -32,6 +32,7 @@ export default function SettingsPage({
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailSuccess, setEmailSuccess] = useState<string | null>(null)
 
+  const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [savingPassword, setSavingPassword] = useState(false)
@@ -81,6 +82,10 @@ export default function SettingsPage({
     e.preventDefault()
     setPasswordError(null)
     setPasswordSuccess(null)
+    if (!currentPassword) {
+      setPasswordError('Enter your current password.')
+      return
+    }
     if (!newPassword || newPassword.length < 6) {
       setPasswordError('Password must be at least 6 characters.')
       return
@@ -89,13 +94,30 @@ export default function SettingsPage({
       setPasswordError("Passwords don't match.")
       return
     }
+    if (!currentEmail) {
+      setPasswordError("Couldn't verify your account — please try again.")
+      return
+    }
     setSavingPassword(true)
+    // Supabase's updateUser() doesn't ask for the current password on its own — it trusts
+    // whatever session is already active. Re-authenticating here first is what actually enforces
+    // "you must know the current password to set a new one" (founder-requested, 2026-07-23).
+    const { error: verifyError } = await supabase.auth.signInWithPassword({
+      email: currentEmail,
+      password: currentPassword,
+    })
+    if (verifyError) {
+      setSavingPassword(false)
+      setPasswordError('Current password is incorrect.')
+      return
+    }
     const { error } = await supabase.auth.updateUser({ password: newPassword })
     setSavingPassword(false)
     if (error) {
       setPasswordError("Couldn't update your password — please try again.")
       return
     }
+    setCurrentPassword('')
     setNewPassword('')
     setConfirmPassword('')
     setPasswordSuccess('Password updated.')
@@ -149,6 +171,14 @@ export default function SettingsPage({
         <form onSubmit={handleUpdatePassword} style={styles.formColumn}>
           <input
             type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            placeholder="Current password…"
+            style={styles.input}
+            disabled={savingPassword}
+          />
+          <input
+            type="password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             placeholder="New password…"
@@ -166,7 +196,7 @@ export default function SettingsPage({
           <button
             type="submit"
             style={styles.actionButtonPrimary}
-            disabled={savingPassword || !newPassword || !confirmPassword}
+            disabled={savingPassword || !currentPassword || !newPassword || !confirmPassword}
           >
             {savingPassword ? '…' : 'Update password'}
           </button>
