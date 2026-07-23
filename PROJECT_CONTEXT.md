@@ -532,10 +532,19 @@ Every page listed above under `pages/` (Home/People/PersonDetail/Groups/GroupDet
 
 ```
 people        id, user_id, name (first), last_name?, nicknames? (comma-separated
-              "goes by" list, additive), key_facts jsonb?, key_facts_updated_at?,
-              is_self bool (default false, partial unique index per user_id — at most
-              one "this is me" profile; excluded from People list/search/Dunbar/
-              due-for-update, 2026-07-20), created_at
+              "goes by" list, additive, chat-only, never displayed), middle_name?,
+              goes_by_kind? ('first'/'middle'/'last'/'other', null = 'first'),
+              goes_by_other? (free-typed callsign, only set when goes_by_kind =
+              'other') — 2026-07-22, real form-edited "goes by" name shown on
+              PersonDetail (picks which of first/middle/last/other displays as
+              the person's name there — e.g. "Maverick Whitfield"; People list
+              stays name-only). middle_name/goes_by_other also fold into the same
+              nicknames-style lookup for search + AI chat resolution across
+              converse/update-moment/update-group/person-facts/add-fact. Choosing
+              "other" additionally writes a "Goes by X." note. key_facts jsonb?,
+              key_facts_updated_at?, is_self bool (default false, partial unique
+              index per user_id — at most one "this is me" profile; excluded from
+              People list/search/Dunbar/due-for-update, 2026-07-20), created_at
 relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partner —
               symmetric, stored once normalized person_a_id < person_b_id by uuid
               sort; parent — directional, person_a_id IS THE PARENT of person_b_id,
@@ -603,8 +612,8 @@ feedback_notes id, user_id, page_label?, element_label?, note, status ("open"/"d
 
 - **Auth:** sign up / log in. Email confirmation DISABLED for testing — must re-enable before real users.
 - **Home:** continuous chat (answer/capture/update/correct/group-tag per turn, multiple events per message, never dead-ends — suggests close matches or asks); clickable person/event/group chips on replies with canonical spellings; cached suggestion cards (tap = starts a real conversation); dashboard (People/Events/Groups/Notes counts — People/Events/Groups tiles clickable → jump to that tab, 2026-07-20; Notes tile has no page to link to, Dunbar card → DunbarDetail, Recall-assists card, monthly leaderboard → DueForUpdate). Known gap: the chat thread lives in component state — switching tabs loses it.
-- **People:** manual "add person" is a no-form blank shell (2026-07-20, matches Events/Groups — was a first+last form before), search (incl. nicknames), 5 sort options, count in heading.
-- **Person profile:** Key Facts (cached, ordered Parents→Spouse→Siblings→Children, exact-match chips), missing-category nudges, notes with hover edit/delete + source labels ("Added through: {event}" / "From: {Group}" / "From Home"), name-edit pencil (first/last name fields, 2026-07-20 — matches Event/Group rename pattern) plus fact bar (AI-classified, still the only path for nickname/birthday/anniversary), Associated Groups hover-untag + search-and-add picker (2026-07-20, matches EventDetail's Affiliated Groups — was read-only before), relationship + new-person + shared-parent + last-name suggestion banners, delete/merge profile (the SEARCHED-FOR record survives; merged-away names fold into nicknames; dependents notes/reminders/person_groups deleted and awaited before the person row, 2026-07-21 fix — matches GroupDetail's delete ordering, prevents an intermittent FK race).
+- **People:** manual "add person" is a no-form blank shell (2026-07-20, matches Events/Groups — was a first+last form before), search (incl. nicknames, middle name, and goes-by "other" name), 5 sort options, count in heading. List cards always show the legal first/last name (never the profile page's "goes by" display name).
+- **Person profile:** Key Facts (cached, ordered Parents→Spouse→Siblings→Children, exact-match chips), missing-category nudges, notes with hover edit/delete + source labels ("Added through: {event}" / "From: {Group}" / "From Home"), name-edit pencil (first/middle/last name fields + a "Goes by" dropdown picking which of first/middle/last/a typed "other" name displays as the person's name on this page, 2026-07-22 — replaces the name shown in the heading/breadcrumb/nudges outright, e.g. "Maverick Whitfield", not a subtitle; "other" also writes a "Goes by X." note) plus fact bar (AI-classified, still the only path for nickname/birthday/anniversary), Associated Groups hover-untag + search-and-add picker (2026-07-20, matches EventDetail's Affiliated Groups — was read-only before), relationship + new-person + shared-parent + last-name suggestion banners, delete/merge profile (the SEARCHED-FOR record survives; merged-away names fold into nicknames; dependents notes/reminders/person_groups deleted and awaited before the person row, 2026-07-21 fix — matches GroupDetail's delete ordering, prevents an intermittent FK race).
 - **Groups:** created conversationally OR via manual "add group" (blank shell, no form, 2026-07-20 — recurring affiliations, school/team/unit/workplace/circle, never one-off events); tiles with summary + capped chips; detail page per §3; membership = explicit only; suggestions from event attendance + associated-group rosters; symmetric confirmed group associations; whole-group delete (2026-07-20, the safety net the manual button needed — groups have no dedupe-by-name check the way `converse` does); **Group Types** (2026-07-20): fixed picker (Family/Friend group/School/Team/Work) on GroupDetail, nullable — sets `group_type` instantly, no save button; Groups page has a type filter dropdown + a badge on typed tiles. Manual "add group" now also adds the self person as a member (2026-07-20 fix — previously a group you created yourself, e.g. your own Family group, wouldn't show on "My page" since you weren't in its roster).
 - **Events:** browsable, sorted by real-date guess; detail per §3; AI summary regenerates on new detail (only once there's a description to summarize); delete/merge (searched-for survives; dependents notes/moment_groups deleted and awaited before the moment row, 2026-07-21 fix, same reasoning as PersonDetail above); group tagging + attendee tagging via chat OR direct search-and-add pickers on the event page (2026-07-20); manual "add event" button (2026-07-20) creates a blank shell and drops straight onto its detail page to build up from there — same "step by step" idea as manual "add person," extended to events/groups.
 - **Voice input** on every text box (record → Whisper → text dropped in for review, never auto-sends; no live captions — batch only). **Auto-grow textareas** everywhere.
