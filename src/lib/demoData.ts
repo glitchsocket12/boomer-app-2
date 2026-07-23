@@ -178,14 +178,15 @@ export function buildDemoDescendantTree(memberIds: string[]): TreeData {
 // same shape person-facts.ts's real AI output takes — hand-computed here since nothing in the
 // demo ever calls the API. A couple of people also get a hand-written 'other' fact for texture.
 const EXTRA_KEY_FACT: Partial<Record<string, string>> = {
+  gary: 'Retired in 2021 after 36 years at Frontier Industrial Supply — spent his last decade as Regional Operations Manager. Works two mornings a week at Ridgeline Hardware now, just to stay busy.',
   carol: 'Retired elementary school teacher — taught 2nd grade for 30 years.',
   mike: 'Works in commercial real estate, lives in Denver.',
   beth: 'Works in physical therapy, lives in San Diego.',
   danny: 'Firefighter here in Colorado Springs.',
   emma: 'Plays club soccer.',
   noah: 'Dinosaurs. All day, every day.',
-  frank: 'Met Gary in college — one of his oldest friends.',
-  priya: 'Sim instructor at Peak Aviation Academy.',
+  frank: "Met Gary at Frontier's management trainee program in 1985 — one of his oldest friends.",
+  priya: 'Part-time at Ridgeline Hardware, saving up for grad school.',
 }
 
 export function demoKeyFacts(personId: string): DemoKeyFact[] {
@@ -215,10 +216,10 @@ export const DEMO_GROUPS: DemoGroup[] = [
     memberIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'carlos', 'danny', 'emma', 'noah', 'sofia'],
   },
   {
-    id: 'squadron',
-    name: 'The Squadron',
+    id: 'crew',
+    name: 'The Loading Dock Lifers',
     group_type: 'Friend group',
-    summary: "Gary's old Air Force wingmen from his flying days — Frank, Steve, and Ray, still getting together decades later.",
+    summary: "Gary's oldest friends from his early years at Frontier Industrial Supply — Frank, Steve, and Ray, still getting together decades later.",
     memberIds: ['gary', 'frank', 'steve', 'ray'],
   },
   {
@@ -230,21 +231,24 @@ export const DEMO_GROUPS: DemoGroup[] = [
   },
   {
     id: 'work',
-    name: 'Peak Aviation Academy',
+    name: 'Ridgeline Hardware',
     group_type: 'Work',
-    summary: "Gary's part-time flight-sim instructor gig, alongside Sam and Priya.",
+    summary: "Gary's low-key part-time gig since retiring, a couple mornings a week, alongside Sam and Priya.",
     memberIds: ['gary', 'sam', 'priya'],
   },
 ]
 
-export const DEMO_GROUP_ASSOCIATIONS: [string, string][] = [['squadron', 'work']]
+export const DEMO_GROUP_ASSOCIATIONS: [string, string][] = [['crew', 'family']]
 
 export const DEMO_GROUP_NOTES: DemoGroupNote[] = [
   { id: 'gn1', groupId: 'family', content: 'Everyone pitches in on Thanksgiving now that there are grandkids running around — Carlos does the tamales, Carol does two full spreads.', created_at: '2025-11-20T00:00:00Z' },
-  { id: 'gn2', groupId: 'squadron', content: 'We try to get together at least once a year now. Getting harder to coordinate with everyone spread across three states.', created_at: '2026-01-10T00:00:00Z' },
+  { id: 'gn2', groupId: 'crew', content: 'We try to get together at least once a year now. Getting harder to coordinate with everyone spread across three states.', created_at: '2026-01-10T00:00:00Z' },
 ]
 
 // ---- Moments ----
+// Ordered newest-first. m1-m8 are within the last year (captured close to when they happened);
+// m9-m34 stretch back to 2011 so the Events list reads as a real long-term archive, not a fresh
+// account — per the founder's ask to show the "gets more useful the longer you use it" pitch.
 
 export const DEMO_MOMENTS: DemoMoment[] = [
   {
@@ -269,24 +273,24 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     event_date: '2026-05-02',
     raw_description:
       "Carol and I hit 40 years married. The kids put together a dinner at the house, and Frank and Steve came too. Someone made a toast that went on way too long — pretty sure it was Danny.",
-    summary: "Gary and Carol's 40th anniversary dinner at home with the whole family, plus old squadron buddies Frank and Steve.",
+    summary: "Gary and Carol's 40th anniversary dinner at home with the whole family, plus old friends from work, Frank and Steve.",
     created_at: '2026-05-02T00:00:00Z',
     attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'carlos', 'danny', 'frank', 'steve'],
-    groupIds: ['family', 'squadron'],
+    groupIds: ['family', 'crew'],
     tagIds: ['milestone', 'family'],
   },
   {
     id: 'm3',
-    occasion: 'Squadron Reunion Weekend',
+    occasion: 'Old Crew Reunion Weekend',
     location: 'Colorado Springs',
     when_text: 'This past spring',
     event_date: '2026-04-18',
     raw_description:
-      "Ray flew in from Baton Rouge — first time we've all been together in three years. Spent most of it at the hangar museum downtown telling the same stories we've told a hundred times already.",
-    summary: 'The Squadron reunited for the first time in three years, with Ray flying in from Baton Rouge for a weekend of old hangar stories.',
+      "Ray flew in from Baton Rouge — first time we've all been together in three years. Drove by the old distribution center, pointed out where things used to be, then went and got steaks and told the same stories we've told a hundred times already.",
+    summary: 'The old Frontier crew reunited for the first time in three years, with Ray flying in from Baton Rouge for a weekend of steaks and old warehouse stories.',
     created_at: '2026-04-18T00:00:00Z',
     attendeeIds: ['gary', 'frank', 'steve', 'ray'],
-    groupIds: ['squadron'],
+    groupIds: ['crew'],
     tagIds: ['reunion'],
   },
   {
@@ -333,13 +337,13 @@ export const DEMO_MOMENTS: DemoMoment[] = [
   },
   {
     id: 'm7',
-    occasion: 'Simulator Training Day',
-    location: 'Peak Aviation Academy',
+    occasion: 'New Register Training Day',
+    location: 'Ridgeline Hardware',
     when_text: 'Last fall',
     event_date: '2025-10-10',
     raw_description:
-      "Priya talked me into a friendly sim race during a slow training day. She beat me clean. Sam was there to witness the whole thing and has not let me forget it.",
-    summary: "Priya beat Gary in a friendly flight-sim race at work — Sam was there to see it and won't let it go.",
+      "Priya talked me into a race to see who could ring up a mock order faster on the new register system during a slow shift. She beat me clean. Sam was there to witness the whole thing and has not let me forget it.",
+    summary: "Priya beat Gary in a register speed contest during a slow shift at Ridgeline — Sam was there to see it and won't let it go.",
     created_at: '2025-10-10T00:00:00Z',
     attendeeIds: ['gary', 'priya', 'sam'],
     groupIds: ['work'],
@@ -359,6 +363,370 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     groupIds: ['golf'],
     tagIds: ['golf'],
   },
+  {
+    id: 'm9',
+    occasion: "Sofia's First Day of Preschool",
+    location: 'San Diego',
+    when_text: 'A couple years ago',
+    event_date: '2024-11-16',
+    raw_description:
+      "Sofia started preschool this week. Beth sent probably forty photos of her walking in with a backpack twice her size. She cried for exactly two minutes and then didn't look back once.",
+    summary: "Sofia started preschool in San Diego — a rough two minutes at drop-off, then she never looked back.",
+    created_at: '2024-11-16T00:00:00Z',
+    attendeeIds: ['beth', 'carlos', 'sofia'],
+    groupIds: ['family'],
+    tagIds: ['milestone'],
+  },
+  {
+    id: 'm10',
+    occasion: 'Noah Starts Kindergarten',
+    location: 'Denver',
+    when_text: 'A couple years ago',
+    event_date: '2024-08-19',
+    raw_description:
+      "Noah started kindergarten today. Mike said he walked in and immediately asked the teacher if she knew what a Spinosaurus was. She did not, apparently, but was a good sport about it.",
+    summary: "Noah started kindergarten in Denver, opening with a dinosaur pop quiz for his teacher.",
+    created_at: '2024-08-19T00:00:00Z',
+    attendeeIds: ['mike', 'jenna', 'noah'],
+    groupIds: ['family'],
+    tagIds: ['milestone'],
+  },
+  {
+    id: 'm11',
+    occasion: "Sunday Dinner — Danny's News",
+    location: 'Colorado Springs',
+    when_text: 'A couple years ago',
+    event_date: '2024-02-11',
+    raw_description:
+      "Danny came to Sunday dinner and actually brought someone. Carol nearly dropped the mashed potatoes. She's been trying to set him up for years and he goes and does it himself.",
+    summary: "Danny showed up to Sunday dinner with a date, to Carol's utter delight after years of matchmaking attempts.",
+    created_at: '2024-02-11T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'danny'],
+    groupIds: ['family'],
+    tagIds: ['family'],
+  },
+  {
+    id: 'm12',
+    occasion: "Emma's First Club Soccer Season",
+    location: 'Denver',
+    when_text: 'A few years ago',
+    event_date: '2023-09-09',
+    raw_description:
+      "Emma played her first club soccer game today. Nervous the whole car ride there, then scored in the first half and hasn't stopped talking about it since.",
+    summary: "Emma kicked off her first club soccer season with a goal in the first half — and hasn't stopped talking about it since.",
+    created_at: '2024-01-12T00:00:00Z',
+    attendeeIds: ['mike', 'jenna', 'emma'],
+    groupIds: ['family'],
+    tagIds: ['sports'],
+  },
+  {
+    id: 'm13',
+    occasion: 'First Shift at Ridgeline Hardware',
+    location: 'Colorado Springs',
+    when_text: 'A few years ago',
+    event_date: '2022-03-14',
+    raw_description:
+      "Started at Ridgeline Hardware today, a year into retirement and going a little stir-crazy at home. Sam showed me around, Priya had to explain the register three separate times. Feels good to have somewhere to be two mornings a week.",
+    summary: "Gary picked up a part-time gig at Ridgeline Hardware a year into retirement — Sam showed him around, Priya walked him through the register.",
+    created_at: '2024-01-12T00:00:00Z',
+    attendeeIds: ['gary', 'sam', 'priya'],
+    groupIds: ['work'],
+    tagIds: ['work'],
+  },
+  {
+    id: 'm14',
+    occasion: '35th Wedding Anniversary',
+    location: 'Colorado Springs',
+    when_text: 'About five years ago',
+    event_date: '2021-06-08',
+    raw_description:
+      "Carol and I hit 35 years. Kept it quiet this time, just dinner out, the two of us. Sometimes that's better than a whole production.",
+    summary: "Gary and Carol's 35th anniversary — a quiet dinner out, just the two of them.",
+    created_at: '2024-01-13T00:00:00Z',
+    attendeeIds: ['gary', 'carol'],
+    groupIds: ['family'],
+    tagIds: ['milestone', 'family'],
+  },
+  {
+    id: 'm15',
+    occasion: 'Sofia Ortiz Is Born',
+    location: 'San Diego',
+    when_text: 'About five years ago',
+    event_date: '2021-05-02',
+    raw_description:
+      "Beth and Carlos had their first — Sofia. Flew out to San Diego as soon as we could. Tiny and loud, in that order.",
+    summary: "Beth and Carlos welcomed their first child, Sofia, in San Diego — Gary and Carol flew out right away.",
+    created_at: '2024-01-13T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'beth', 'carlos', 'sofia'],
+    groupIds: ['family'],
+    tagIds: ['milestone', 'family'],
+  },
+  {
+    id: 'm16',
+    occasion: 'Retirement Party — 36 Years at Frontier',
+    location: 'Colorado Springs',
+    when_text: 'About five years ago',
+    event_date: '2021-02-26',
+    raw_description:
+      "Retired today after 36 years at Frontier. They threw a party at the warehouse — same building I started in back in '85. Frank and Steve drove in for it. Got a plaque and a watch I'll probably never wear, but the company was worth more than either.",
+    summary: "Gary retired after 36 years at Frontier Industrial Supply, celebrated at the same warehouse he started in back in 1985 — with Frank and Steve driving in for it.",
+    created_at: '2024-01-13T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'beth', 'danny', 'frank', 'steve'],
+    groupIds: ['family', 'crew'],
+    tagIds: ['work', 'milestone'],
+  },
+  {
+    id: 'm17',
+    occasion: 'A Quiet Thanksgiving',
+    location: 'Colorado Springs',
+    when_text: 'A few years back',
+    event_date: '2020-11-26',
+    raw_description:
+      "Kept it small this year — just the six of us. Missed having everyone around the table, but it was nice too, in its own way.",
+    summary: "A smaller-than-usual Thanksgiving at the Pembertons', just the immediate six — quieter, but its own kind of nice.",
+    created_at: '2024-01-14T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'carlos'],
+    groupIds: ['family'],
+    tagIds: ['holiday'],
+  },
+  {
+    id: 'm18',
+    occasion: "Noah's First Christmas Eve",
+    location: 'Denver',
+    when_text: 'Several years ago',
+    event_date: '2019-12-24',
+    raw_description:
+      "Drove up for Noah's first Christmas Eve. Three months old and slept through the whole thing while the rest of us tried to assemble a play kitchen at 11pm for Emma.",
+    summary: "Noah's first Christmas Eve in Denver — he slept through it while everyone else fought a play kitchen assembly at 11pm.",
+    created_at: '2024-01-14T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'emma', 'noah'],
+    groupIds: ['family'],
+    tagIds: ['holiday', 'family'],
+  },
+  {
+    id: 'm19',
+    occasion: 'Noah Pemberton Is Born',
+    location: 'Denver',
+    when_text: 'Several years ago',
+    event_date: '2019-09-03',
+    raw_description:
+      "Mike and Jenna's second — Noah. Emma was very serious about her new job as big sister. Held him for about ten seconds before deciding he was boring and going back to her toys.",
+    summary: "Mike and Jenna welcomed their second child, Noah — Emma took her new big-sister job very seriously, briefly.",
+    created_at: '2024-01-15T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'emma', 'noah'],
+    groupIds: ['family'],
+    tagIds: ['milestone', 'family'],
+  },
+  {
+    id: 'm20',
+    occasion: "Carol's Retirement — 30 Years Teaching",
+    location: 'Aurora',
+    when_text: 'Several years ago',
+    event_date: '2018-06-15',
+    raw_description:
+      "Carol retired today after 30 years teaching 2nd grade. Her classroom threw her a party, kids made cards, one kid cried harder than Carol did. She's taught half of Aurora how to read at this point.",
+    summary: "Carol retired after 30 years teaching 2nd grade in Aurora — her class threw her a card-and-cake send-off.",
+    created_at: '2024-01-15T00:00:00Z',
+    attendeeIds: ['gary', 'carol'],
+    groupIds: ['family'],
+    tagIds: ['work', 'milestone'],
+  },
+  {
+    id: 'm21',
+    occasion: 'Summer Trip to Tucson',
+    location: 'Tucson',
+    when_text: 'About nine years ago',
+    event_date: '2017-07-22',
+    raw_description:
+      "Took the whole crew down to Tucson to see Mom. First real family trip since Dad passed. She fussed over everyone and fed us way too much.",
+    summary: "A family trip to Tucson to see Peggy — the first big one since Walt passed, and she fed everyone way too much.",
+    created_at: '2024-01-16T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'peggy', 'mike', 'beth'],
+    groupIds: ['family'],
+    tagIds: ['family'],
+  },
+  {
+    id: 'm22',
+    occasion: 'Joining the Tuesday Foursome',
+    location: 'Patty Jewett Golf Course',
+    when_text: 'About nine years ago',
+    event_date: '2017-04-11',
+    raw_description:
+      "Steve talked me into filling in for his regular Tuesday game. Met Harold and Pete that morning — been a standing thing ever since.",
+    summary: "Gary joined Steve's Tuesday golf game as a fill-in, met Harold and Pete, and it's been a standing thing ever since.",
+    created_at: '2024-01-16T00:00:00Z',
+    attendeeIds: ['gary', 'steve', 'harold', 'pete'],
+    groupIds: ['golf'],
+    tagIds: ['golf'],
+  },
+  {
+    id: 'm23',
+    occasion: 'Emma Pemberton Is Born',
+    location: 'Denver',
+    when_text: 'About ten years ago',
+    event_date: '2016-09-14',
+    raw_description:
+      "Mike and Jenna's first — Emma. Drove up the same night. Mike looked like he hadn't slept in a week, which, fair.",
+    summary: "Mike and Jenna welcomed their first child, Emma — Gary and Carol drove up the same night to meet her.",
+    created_at: '2024-01-17T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'emma'],
+    groupIds: ['family'],
+    tagIds: ['milestone', 'family'],
+  },
+  {
+    id: 'm24',
+    occasion: 'Promoted to Regional Operations Manager',
+    location: 'Colorado Springs',
+    when_text: 'About ten years ago',
+    event_date: '2016-03-01',
+    raw_description:
+      "Got the call today — Regional Operations Manager, overseeing all three distribution centers. 31 years at Frontier to get here. Took Carol out to celebrate, she said it was about time.",
+    summary: "Gary was promoted to Regional Operations Manager at Frontier after 31 years, overseeing all three distribution centers.",
+    created_at: '2024-01-17T00:00:00Z',
+    attendeeIds: ['gary', 'carol'],
+    groupIds: ['family'],
+    tagIds: ['work', 'milestone'],
+  },
+  {
+    id: 'm25',
+    occasion: "Walt Pemberton's Memorial",
+    location: 'Tucson',
+    when_text: 'About eleven years ago',
+    event_date: '2015-10-19',
+    raw_description:
+      "Said goodbye to Dad today. Old guys from the machine shop showed up, some I hadn't seen in 20 years. Mom held it together better than the rest of us.",
+    summary: "The family gathered in Tucson for Walt's memorial — several of his old machine-shop coworkers came, and Peggy held it together better than anyone.",
+    created_at: '2024-01-18T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'peggy', 'diane', 'mike', 'beth', 'danny'],
+    groupIds: ['family'],
+    tagIds: ['family'],
+  },
+  {
+    id: 'm26',
+    occasion: 'Helping Danny Move',
+    location: 'Colorado Springs',
+    when_text: 'About eleven years ago',
+    event_date: '2015-06-06',
+    raw_description:
+      "Spent the whole Saturday helping Danny move into his first place. Mostly a couch, a mattress, and an alarming number of protein powder tubs.",
+    summary: "A Saturday spent helping Danny move into his first place — mostly a couch, a mattress, and a lot of protein powder.",
+    created_at: '2024-01-18T00:00:00Z',
+    attendeeIds: ['gary', 'danny'],
+    groupIds: ['family'],
+    tagIds: ['family'],
+  },
+  {
+    id: 'm27',
+    occasion: "Beth & Carlos's Wedding",
+    location: 'San Diego',
+    when_text: 'About twelve years ago',
+    event_date: '2014-08-23',
+    raw_description:
+      "Beth married Carlos today in San Diego. Carlos's family brought half the wedding's food themselves — tamales included, apparently he comes by that honestly. Great day.",
+    summary: "Beth and Carlos married in San Diego, with Carlos's family contributing half the spread — tamales included.",
+    created_at: '2024-01-19T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'beth', 'carlos', 'mike', 'jenna', 'danny'],
+    groupIds: ['family'],
+    tagIds: ['milestone', 'family'],
+  },
+  {
+    id: 'm28',
+    occasion: "Danny's Fire Academy Graduation",
+    location: 'Colorado Springs',
+    when_text: 'About twelve years ago',
+    event_date: '2014-05-30',
+    raw_description:
+      "Danny graduated the fire academy today. Sat there thinking about how he used to be scared of the vacuum cleaner as a kid. Now he runs into burning buildings for a living. Proud doesn't cover it.",
+    summary: "Danny graduated the fire academy — a long way from the kid who used to be scared of the vacuum cleaner.",
+    created_at: '2024-01-19T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'danny'],
+    groupIds: ['family'],
+    tagIds: ['work', 'milestone'],
+  },
+  {
+    id: 'm29',
+    occasion: "Mike & Jenna's Wedding",
+    location: 'Denver',
+    when_text: 'About thirteen years ago',
+    event_date: '2013-09-14',
+    raw_description:
+      "Mike married Jenna today in Denver. Frank gave a toast that somehow turned into a Sinatra bit. Wouldn't have expected anything less.",
+    summary: "Mike and Jenna married in Denver — Frank's toast, predictably, turned into a Sinatra bit.",
+    created_at: '2024-01-20T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'danny', 'frank'],
+    groupIds: ['family', 'crew'],
+    tagIds: ['milestone', 'family'],
+  },
+  {
+    id: 'm30',
+    occasion: 'Fishing Trip with Frank',
+    location: 'Eleven Mile Canyon',
+    when_text: 'About thirteen years ago',
+    event_date: '2013-06-15',
+    raw_description:
+      "Frank and I got out to the canyon for a couple days, just the two of us. Caught almost nothing. Talked about everything. Best trip in years.",
+    summary: "Gary and Frank spent a couple days fishing at Eleven Mile Canyon — caught almost nothing, talked about everything.",
+    created_at: '2024-01-20T00:00:00Z',
+    attendeeIds: ['gary', 'frank'],
+    groupIds: ['crew'],
+    tagIds: ['reunion'],
+  },
+  {
+    id: 'm31',
+    occasion: "Beth's PT School Graduation",
+    location: 'San Diego',
+    when_text: 'About thirteen years ago',
+    event_date: '2013-03-08',
+    raw_description:
+      "Beth graduated physical therapy school today. Flew out for it. She was always the one patching up her brothers growing up, so this tracks.",
+    summary: "Beth graduated physical therapy school in San Diego — fitting, given she'd been patching up her brothers since childhood.",
+    created_at: '2024-01-21T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'beth'],
+    groupIds: ['family'],
+    tagIds: ['milestone'],
+  },
+  {
+    id: 'm32',
+    occasion: 'The Deep-Fryer Thanksgiving',
+    location: 'Colorado Springs',
+    when_text: 'About fourteen years ago',
+    event_date: '2012-11-22',
+    raw_description:
+      "Carol decided to deep-fry the turkey this year. Nearly took out the back deck doing it. Turkey turned out great. Deck required some touch-up paint. Worth it, allegedly.",
+    summary: "Carol's first (and last) attempt at deep-frying the Thanksgiving turkey nearly took out the back deck — the turkey, at least, was great.",
+    created_at: '2024-01-21T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'beth', 'danny'],
+    groupIds: ['family'],
+    tagIds: ['holiday'],
+  },
+  {
+    id: 'm33',
+    occasion: "Mike's College Graduation",
+    location: 'Fort Collins',
+    when_text: 'About fourteen years ago',
+    event_date: '2012-08-11',
+    raw_description:
+      "Mike graduated today. Four years, one very expensive parking ticket saga I still don't fully understand, and he's out. Proud of him.",
+    summary: "Mike graduated college in Fort Collins — four years and one long-running parking-ticket saga later.",
+    created_at: '2024-01-22T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike'],
+    groupIds: ['family'],
+    tagIds: ['milestone'],
+  },
+  {
+    id: 'm34',
+    occasion: '25th Wedding Anniversary',
+    location: 'Colorado Springs',
+    when_text: 'About fifteen years ago',
+    event_date: '2011-09-13',
+    raw_description:
+      "Carol and I hit 25 years today. Kids put together a little backyard party. Feels like yesterday and forever ago at the same time.",
+    summary: "Gary and Carol's 25th wedding anniversary — a backyard party put together by the kids.",
+    created_at: '2024-01-22T00:00:00Z',
+    attendeeIds: ['gary', 'carol', 'mike', 'beth', 'danny'],
+    groupIds: ['family'],
+    tagIds: ['milestone', 'family'],
+  },
 ]
 
 // ---- Notes ----
@@ -374,61 +742,71 @@ function n(personId: string, content: string, created_at: string, momentId: stri
 export const DEMO_NOTES: DemoNote[] = [
   // Carol
   n('carol', 'Retired elementary school teacher, taught 2nd grade for 30 years in Aurora.', '2024-02-01T00:00:00Z'),
-  n('carol', "Keeps the family calendar. Somehow never misses a birthday. Married 40 years now — still not sure how she puts up with the callsign stories.", '2026-05-02T00:00:00Z', 'm2'),
+  n('carol', "Keeps the family calendar. Somehow never misses a birthday. Married 40 years now — still not sure how she puts up with the workplace stories.", '2026-05-02T00:00:00Z', 'm2'),
   n('carol', 'Makes a lemon bundt cake every single Thanksgiving. Non-negotiable.', '2025-11-27T00:00:00Z', 'm6'),
+  n('carol', 'Threw Gary a retirement party after 36 years at Frontier — same warehouse he started in back in 1985. Frank and Steve drove in for it.', '2024-01-13T00:00:00Z', 'm16'),
+  n('carol', 'Hit 25 years married to Gary back in 2011. The kids threw us a backyard party. Feels like yesterday and forever ago.', '2024-01-22T00:00:00Z', 'm34'),
   // Mike
   n('mike', 'Oldest. Lives in Denver with Jenna and the kids. Works in commercial real estate.', '2024-02-02T00:00:00Z'),
   n('mike', "Drove up to Emma's tournament and narrated the whole game like a broadcaster.", '2026-06-14T00:00:00Z', 'm1'),
   n('mike', 'Good with directions, bad with texting back. Runs in the family, I guess.', '2025-08-01T00:00:00Z'),
+  n('mike', 'Married Jenna in Denver in 2013. Frank\'s toast turned into a full Sinatra bit — should have seen that coming.', '2024-01-20T00:00:00Z', 'm29'),
+  n('mike', 'Emma was our first, born in 2016. Drove Gary and Carol crazy calling at 2am, but they came anyway.', '2024-01-17T00:00:00Z', 'm23'),
   // Jenna
   n('jenna', "Married to Mike. Went vegetarian last year, still catching myself offering her a burger.", '2025-11-27T00:00:00Z', 'm6'),
   n('jenna', "Great with the kids' school stuff — keeps track of everything better than either of us.", '2024-03-01T00:00:00Z'),
+  n('jenna', 'Noah was born in September 2019 — Emma took her new big-sister job very seriously, for about ten seconds.', '2024-01-15T00:00:00Z', 'm19'),
   // Beth
   n('beth', 'Middle kid. Lives in San Diego with Carlos and Sofia. Works in physical therapy.', '2024-02-02T00:00:00Z'),
   n('beth', "Planned Sofia's whole dinosaur birthday party herself, down to the cake.", '2026-03-01T00:00:00Z', 'm4'),
   n('beth', 'Calls every Sunday like clockwork. Best one for updates on Sofia.', '2025-06-01T00:00:00Z'),
+  n('beth', 'Sofia was born in San Diego in 2021 — flew Mom and Dad out the same week.', '2024-01-13T00:00:00Z', 'm15'),
   // Carlos
   n('carlos', 'Married to Beth. Makes tamales every Thanksgiving — whole production, starts two days early.', '2025-11-27T00:00:00Z', 'm6'),
   n('carlos', "Doesn't say much but will absolutely out-cook everyone in the family.", '2024-04-01T00:00:00Z'),
+  n('carlos', 'Married Beth in San Diego in 2014. My family brought half the food — tamales included. I come by it honestly.', '2024-01-19T00:00:00Z', 'm27'),
   // Danny
   n('danny', 'Youngest. Firefighter here in the Springs, lives ten minutes from us.', '2024-02-02T00:00:00Z'),
   n('danny', 'Single — not for lack of Carol trying to set him up.', '2025-01-01T00:00:00Z'),
   n('danny', "Comes by most Sundays. Easiest one to reach when I forget which weekend is whose.", '2025-05-01T00:00:00Z'),
+  n('danny', "Graduated the fire academy in 2014. Dad says I used to be scared of the vacuum cleaner. Not anymore, I guess.", '2024-01-19T00:00:00Z', 'm28'),
   // Emma
   n('emma', '10 years old. Plays club soccer, scored two goals in the tournament final.', '2026-06-14T00:00:00Z', 'm1'),
   n('emma', "Mike and Jenna's oldest. Sharp as a tack — already better at directions than her old man.", '2024-06-01T00:00:00Z'),
   // Noah
-  n('noah', 'Seven. Obsessed with dinosaurs — can name more of them than I can name airplanes.', '2024-06-01T00:00:00Z'),
+  n('noah', 'Seven. Obsessed with dinosaurs — can name more of them than I can name warehouse SKUs.', '2024-06-01T00:00:00Z'),
   n('noah', "Mike and Jenna's youngest. Was thrilled about Sofia's dinosaur party, took it as a personal win.", '2026-03-01T00:00:00Z', 'm4'),
   // Sofia
   n('sofia', "Just turned 5. Beth and Carlos's only one so far.", '2026-03-01T00:00:00Z', 'm4'),
   n('sofia', "Dinosaur-themed birthday party, thanks to Noah's influence. Big hit.", '2026-03-01T00:00:00Z', 'm4'),
   // Walt
-  n('walt', "My dad. Air Force ground crew, not a pilot himself, but he's where I got the bug.", '2024-07-01T00:00:00Z'),
+  n('walt', "My dad. Worked the floor at a machine shop for 35 years, retired as shift supervisor — where I learned how to run a warehouse.", '2024-07-01T00:00:00Z'),
   n('walt', 'Passed in 2015. Married to Peggy over 50 years.', '2024-07-01T00:00:00Z'),
   // Peggy
   n('peggy', 'My mom. 91, still sharp, in assisted living in Tucson now.', '2024-07-01T00:00:00Z'),
   n('peggy', "Just had her 91st birthday — whole family flew down. Still corrected three of my stories for accuracy.", '2026-02-08T00:00:00Z', 'm5'),
+  n('peggy', "Buried Walt in 2015, after more than 50 years married. Held up better than the rest of us, or at least pretended to.", '2024-01-18T00:00:00Z', 'm25'),
   // Diane
   n('diane', 'My older sister. 71, lives in Phoenix.', '2024-07-01T00:00:00Z'),
   n('diane', "Flew in for Mom's 91st. We tell the same three childhood stories every single time we're together.", '2026-02-08T00:00:00Z', 'm5'),
+  n('diane', "Flew in for Dad's memorial in 2015. Some of his old machine-shop guys showed up — hadn't seen some of them in 20 years.", '2024-01-18T00:00:00Z', 'm25'),
   // Linda
   n('linda', "Carol's sister. Lives in Ohio — we don't see her enough.", '2024-08-01T00:00:00Z'),
   // Frank
-  n('frank', "Sinatra Ibarra - horrible voice, perfect callsign. Tried to sing fly me to the moon at a bar on TDY, and he'll never live it down. Great fisherman. One of my best friends from college.", '2024-09-01T00:00:00Z'),
-  n('frank', 'Met in college, both commissioned around the same time, ended up in the same squadron. 40+ years of this now.', '2024-09-01T00:00:00Z'),
+  n('frank', "Sinatra Ibarra - horrible voice, perfect nickname. Tried to sing Fly Me to the Moon at the company holiday party, and he'll never live it down. Great fisherman. One of my best friends from work.", '2024-09-01T00:00:00Z'),
+  n('frank', "Met at Frontier's management trainee program in 1985, started within a few months of each other, ended up running branches in different states. 40+ years of this now.", '2024-09-01T00:00:00Z'),
   n('frank', 'Came to the 40th anniversary dinner. Still can\'t sing. Still tries.', '2026-05-02T00:00:00Z', 'm2'),
   // Steve
-  n('steve', "Boost Kowalski. Nicknamed for afterburner speed — ironically the guy who's never once been on time in 40 years.", '2024-09-01T00:00:00Z'),
+  n('steve', "Boost Kowalski. Nicknamed for how fast he could load a truck on the dock — ironically the guy who's never once been on time in 40 years.", '2024-09-01T00:00:00Z'),
   n('steve', "Got a hole-in-one at Tuesday golf and actually bought the round. First time he's ever paid for anything on schedule.", '2025-09-05T00:00:00Z', 'm8'),
   // Ray
   n('ray', "Poker Thibodeaux. Named for the card game, has never won a hand in his life. Still buys in every reunion.", '2024-09-01T00:00:00Z'),
-  n('ray', 'Flew in from Baton Rouge for the squadron reunion — first time in three years. Told the same hangar story twice in one weekend.', '2026-04-18T00:00:00Z', 'm3'),
+  n('ray', 'Flew in from Baton Rouge for the crew reunion — first time in three years. Told the same warehouse story twice in one weekend.', '2026-04-18T00:00:00Z', 'm3'),
   // Sam
-  n('sam', 'Works with me at Peak Aviation Academy. Runs the scheduling, keeps the whole place from falling apart.', '2024-10-01T00:00:00Z'),
-  n('sam', 'Witnessed Priya beat me in the sim. Has not let me forget it.', '2025-10-10T00:00:00Z', 'm7'),
+  n('sam', 'Works with me at Ridgeline Hardware. Runs the scheduling, keeps the whole place from falling apart.', '2024-10-01T00:00:00Z'),
+  n('sam', 'Witnessed Priya beat me at the register. Has not let me forget it.', '2025-10-10T00:00:00Z', 'm7'),
   // Priya
-  n('priya', 'Sim instructor at Peak Aviation, younger than my kids. Beat me in a sim race during a training day.', '2025-10-10T00:00:00Z', 'm7'),
+  n('priya', 'Works part-time at Ridgeline, younger than my kids. Beat me in a register speed contest during a slow shift.', '2025-10-10T00:00:00Z', 'm7'),
   // Harold
   n('harold', "Tuesday golf regular. Won't stop bringing up Steve's hole-in-one, and it's been weeks.", '2025-09-05T00:00:00Z', 'm8'),
   // Pete
@@ -466,11 +844,11 @@ export const DEMO_CHAT_SUGGESTIONS: DemoChatScriptEntry[] = [
     },
   },
   {
-    prompt: 'Ray flew in from Baton Rouge for the squadron reunion this weekend — first time in three years.',
-    keywords: ['ray', 'baton rouge', 'reunion', 'squadron'],
+    prompt: 'Ray flew in from Baton Rouge for the crew reunion this weekend — first time in three years.',
+    keywords: ['ray', 'baton rouge', 'reunion', 'crew'],
     kind: 'capture',
     reply: {
-      text: 'Got it — logged as a new memory under Squadron Reunion Weekend. Tagged Ray, Frank, and Steve.',
+      text: 'Got it — logged as a new memory under Old Crew Reunion Weekend. Tagged Ray, Frank, and Steve.',
       personIds: ['ray', 'frank', 'steve'],
       eventId: 'm3',
     },
@@ -509,7 +887,7 @@ export const DEMO_CHAT_SUGGESTIONS: DemoChatScriptEntry[] = [
     keywords: ['priya'],
     kind: 'recall',
     reply: {
-      text: "You raced her on the flight sim during a training day — she won, and you still haven't let it go.",
+      text: "You raced her at the register during a slow shift — she won, and you still haven't let it go.",
       personIds: ['priya'],
       eventId: 'm7',
     },

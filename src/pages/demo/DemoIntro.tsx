@@ -36,8 +36,8 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
             <h1 style={styles.title}>Welcome to Gary's Boomer</h1>
             <p style={styles.body}>
               You're about to spend a few minutes in a fake account — Gary Pemberton, a retired
-              fighter pilot who's been using Boomer for a few years. He's got 21 people, 4 groups,
-              and 8 memories on file.
+              operations manager who's been using Boomer for years. He's got 21 people, 4 groups,
+              and 34 memories on file, some going back over a decade.
             </p>
             <p style={styles.body}>
               Nothing here is real, but everything works exactly like your own account would.
@@ -61,7 +61,7 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           <>
             <h1 style={styles.title}>People — everyone, straight, without the work</h1>
             <p style={styles.body}>
-              Gary knows 21 people: kids, grandkids, in-laws, old Air Force buddies, his Tuesday
+              Gary knows 21 people: kids, grandkids, in-laws, his old crew from work, his Tuesday
               golf foursome. Open anyone's profile and Boomer already has the key facts and how
               they connect — Gary never had to organize any of it himself.
             </p>
@@ -72,9 +72,9 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           <>
             <h1 style={styles.title}>Events — the moments worth keeping</h1>
             <p style={styles.body}>
-              Anniversary dinners, birthdays, a squadron reunion — the stuff worth remembering has
-              a real home here, organized by date, instead of buried in old texts and photos
-              nobody reopens.
+              Anniversary dinners, birthdays, a reunion with his oldest work friends — the stuff
+              worth remembering has a real home here, organized by date, instead of buried in old
+              texts and photos nobody reopens.
             </p>
           </>
         )}
@@ -83,9 +83,9 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           <>
             <h1 style={styles.title}>Groups — tag once, not one at a time</h1>
             <p style={styles.body}>
-              The whole Pemberton family, the squadron, the golf foursome — group people once, and
-              every future event or note can tag the whole group at once instead of person by
-              person.
+              The whole Pemberton family, his old crew from work, the golf foursome — group people
+              once, and every future event or note can tag the whole group at once instead of
+              person by person.
             </p>
           </>
         )}
