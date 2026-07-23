@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
@@ -41,30 +41,74 @@ type Crumb =
 
 const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
 
+const CRUMB_TYPES = [
+  'person',
+  'group',
+  'event',
+  'dunbar',
+  'nudges',
+  'manageTags',
+  'circle',
+  'familyTree',
+  'settings',
+  'about',
+  'privacy',
+]
+
 // Where-you-are is plain React state, so a browser refresh used to reset to Home.
 // Persist it per browser tab (sessionStorage) so refreshing stays on the current page.
 const NAV_STORAGE_KEY = 'boomer-nav'
+
+// Address bar mirror of {view, navStack} — /:tab, or /:crumbType/:crumbId chained per crumb
+// (crumbs replace the tab entirely while any are pushed, matching how `content` already ignores
+// `view` whenever navStack is non-empty). This is a DISPLAY/back-button aid, not the source of
+// truth for a same-tab refresh — sessionStorage (full crumb objects, real labels) still owns
+// that. Real full-fidelity restore for browser Back/Forward comes from history.state (see
+// popstate handling below); this function only reconstructs the lossy fallback for a case with
+// no history.state to read — a freshly pasted/shared link, or sessionStorage cleared mid-session.
+function buildPath(view: Tab, navStack: Crumb[]): string {
+  if (navStack.length === 0) return view === 'home' ? '/' : `/${view}`
+  return navStack.map((c) => `/${c.type}/${encodeURIComponent(c.id)}`).join('')
+}
+
+function parseNavFromPath(pathname: string): { view: Tab; navStack: Crumb[] } | null {
+  const segments = pathname.split('/').filter(Boolean)
+  if (segments.length === 0) return { view: 'home', navStack: [] }
+  if (segments.length === 1 && segments[0] in TAB_LABELS) {
+    return { view: segments[0] as Tab, navStack: [] }
+  }
+  const navStack: Crumb[] = []
+  for (let i = 0; i + 1 < segments.length; i += 2) {
+    const type = segments[i]
+    const id = decodeURIComponent(segments[i + 1])
+    if (!CRUMB_TYPES.includes(type)) return null
+    // Labels can't be recovered from a bare URL — every detail page already re-fetches its own
+    // data by id, so this only affects the breadcrumb/back-button TEXT in this fallback path,
+    // not whether the page itself loads correctly.
+    navStack.push({ type, id, label: id } as unknown as Crumb)
+  }
+  return navStack.length > 0 ? { view: 'home', navStack } : null
+}
 
 function restoreNav(): { view: Tab; navStack: Crumb[] } {
   const fallback = { view: 'home' as Tab, navStack: [] as Crumb[] }
   try {
     const raw = sessionStorage.getItem(NAV_STORAGE_KEY)
-    if (!raw) return fallback
-    const parsed = JSON.parse(raw)
-    if (!(parsed.view in TAB_LABELS)) return fallback
-    const stack = Array.isArray(parsed.navStack)
-      ? parsed.navStack.filter(
-          (c: Crumb) =>
-            c &&
-            ['person', 'group', 'event', 'dunbar', 'nudges', 'manageTags', 'circle', 'familyTree', 'settings', 'about', 'privacy'].includes(c.type) &&
-            typeof c.id === 'string' &&
-            typeof c.label === 'string'
-        )
-      : []
-    return { view: parsed.view, navStack: stack }
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed.view in TAB_LABELS) {
+        const stack = Array.isArray(parsed.navStack)
+          ? parsed.navStack.filter(
+              (c: Crumb) => c && CRUMB_TYPES.includes(c.type) && typeof c.id === 'string' && typeof c.label === 'string'
+            )
+          : []
+        return { view: parsed.view, navStack: stack }
+      }
+    }
   } catch {
-    return fallback
+    // fall through to the URL-based fallback below
   }
+  return parseNavFromPath(window.location.pathname) ?? fallback
 }
 
 export default function App() {
@@ -79,10 +123,47 @@ export default function App() {
   const [onboardingPending, setOnboardingPending] = useState<boolean | null>(null)
   const [view, setView] = useState<Tab>(() => restoreNav().view)
   const [navStack, setNavStack] = useState<Crumb[]>(() => restoreNav().navStack)
+  // Guards against re-pushing a history entry for a state change that itself came FROM a
+  // popstate (browser Back/Forward) — otherwise every Back press would immediately push a
+  // matching Forward entry right back on top of it.
+  const skipNextHistoryPush = useRef(false)
 
   useEffect(() => {
     sessionStorage.setItem(NAV_STORAGE_KEY, JSON.stringify({ view, navStack }))
+
+    if (skipNextHistoryPush.current) {
+      skipNextHistoryPush.current = false
+      return
+    }
+    const path = buildPath(view, navStack)
+    if (path !== window.location.pathname) {
+      window.history.pushState({ view, navStack }, '', path)
+    }
   }, [view, navStack])
+
+  useEffect(() => {
+    // Sync the CURRENT history entry's state on mount (a plain replace, not a new entry) so
+    // Back/Forward has full-fidelity state to restore from immediately, not just whatever the
+    // very first render's [view, navStack] effect above would otherwise push.
+    window.history.replaceState({ view, navStack }, '', buildPath(view, navStack))
+
+    function handlePopState(e: PopStateEvent) {
+      skipNextHistoryPush.current = true
+      const state = e.state as { view?: Tab; navStack?: Crumb[] } | null
+      if (state?.view) {
+        setView(state.view)
+        setNavStack(Array.isArray(state.navStack) ? state.navStack : [])
+      } else {
+        const parsed = parseNavFromPath(window.location.pathname)
+        setView(parsed?.view ?? 'home')
+        setNavStack(parsed?.navStack ?? [])
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
