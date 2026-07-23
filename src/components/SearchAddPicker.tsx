@@ -11,11 +11,18 @@ export default function SearchAddPicker({
   items,
   placeholder,
   onSelect,
+  onCreateNew,
+  createLabel,
   emptyText,
 }: {
   items: Item[]
   placeholder: string
   onSelect: (item: Item) => void
+  // Optional: when supplied, a "+ Add ..." button renders alongside the results (or in place of
+  // the empty state) so a growing/learning vocabulary (e.g. tags) can be extended inline instead
+  // of being limited to whatever's already on file.
+  onCreateNew?: (query: string) => void
+  createLabel?: (query: string) => string
   emptyText?: string
 }) {
   const [query, setQuery] = useState('')
@@ -27,7 +34,7 @@ export default function SearchAddPicker({
       <SearchBox value={query} onChange={setQuery} placeholder={placeholder} />
       {q && (
         <div style={styles.resultsList}>
-          {results.length === 0 ? (
+          {results.length === 0 && !onCreateNew ? (
             <p style={styles.empty}>{emptyText ?? `No matches for "${query}".`}</p>
           ) : (
             results.map((item) => (
@@ -43,6 +50,18 @@ export default function SearchAddPicker({
                 {item.label}
               </button>
             ))
+          )}
+          {onCreateNew && (
+            <button
+              type="button"
+              onClick={() => {
+                onCreateNew(query.trim())
+                setQuery('')
+              }}
+              style={styles.createButton}
+            >
+              {createLabel ? createLabel(query.trim()) : `+ Add "${query.trim()}"`}
+            </button>
           )}
         </div>
       )}
@@ -72,4 +91,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
   },
   empty: { color: '#999', fontSize: '0.85rem', fontStyle: 'italic', margin: 0 },
+  createButton: {
+    textAlign: 'left',
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px dashed #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
 }

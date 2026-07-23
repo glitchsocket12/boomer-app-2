@@ -237,7 +237,13 @@ src/
 │   │                            sticky year headers (2026, 2025, ...; float at
 │   │                            top of viewport until next year's section
 │   │                            arrives, 2026-07-21); manual "add event"
-│   │                            (blank shell, no form) → lands on its detail page
+│   │                            (blank shell, no form) → lands on its detail page;
+│   │                            tag filter dropdown (item 28/34, 2026-07-22) — a
+│   │                            growing picklist computed from distinct tags
+│   │                            actually applied (`useMemo`, not a hardcoded list
+│   │                            like `GROUP_TYPES`), membership filter (`tags.
+│   │                            includes(tagFilter)`) since tags are multi-valued,
+│   │                            plus a "No tags yet" option
 │   ├── EventDetail.tsx        — AI summary (gated: only auto-generates once
 │   │                            raw_description has content), editable description,
 │   │                            who-was-there (hover-untag, non-destructive) +
@@ -245,7 +251,15 @@ src/
 │   │                            group rosters, Affiliated Groups (hover-untag,
 │   │                            non-destructive) + search-and-add picker,
 │   │                            collapsed notes, maps link (+", CO"
-│   │                            hardcoded), rename, delete/merge, update chat
+│   │                            hardcoded), rename, delete/merge, update chat;
+│   │                            Tags section (item 28, 2026-07-22) — manual tag/
+│   │                            untag via `SearchAddPicker`'s new `onCreateNew`
+│   │                            prop (type a name, get an inline "+ Add ... as a
+│   │                            new tag" affordance when it doesn't already exist,
+│   │                            case-insensitive reuse when it does), local
+│   │                            `TagChip` (hover-reveal-remove, non-destructive —
+│   │                            same pattern as `AffiliatedGroupChip`). Backed by
+│   │                            new `tags`/`moment_tags` tables (§6)
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
 │   ├── Circle.tsx              — "My page" (item 32, REAL as of 2026-07-20, replaced
@@ -401,7 +415,12 @@ the container.
 │   ├── RefreshButton.tsx      — spinning refresh icon
 │   ├── SearchBox.tsx          — client-side list filter
 │   ├── SearchAddPicker.tsx    — type-to-search + tap-to-add from a list (used for
-│   │                            EventDetail's attendee/group-tag pickers)
+│   │                            EventDetail's attendee/group-tag pickers). Optional
+│   │                            `onCreateNew`/`createLabel` props (item 28,
+│   │                            2026-07-22, additive — existing callers unaffected)
+│   │                            add an inline "+ Add ..." create affordance,
+│   │                            borrowed from RelationshipAddPicker's create-button
+│   │                            block, for a growing vocabulary like tags
 │   ├── Chips.tsx              — PersonChip (green) / GroupChip (gold) / EventChip
 │   │                            (blue) — shared visual language everywhere
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)
@@ -428,7 +447,7 @@ the container.
 
 | Function | Purpose |
 |---|---|
-| `converse` | **The main unified brain** (Home). Per turn decides: answer question / capture new moment(s — `moments` array, multiple per turn supported) / update moment / rename placeholder / name+nickname corrections / create+tag groups / relationship signals / logs recall attempts to `search_log`. Knows the self person (`is_self`) and their known relationships (`_shared/selfContext.ts`) so "my mom"/"my parents" resolve without a named subject (2026-07-20). Quirk: model occasionally replies in prose instead of the JSON envelope — falls back to showing that prose as the reply. |
+| `converse` | **The main unified brain** (Home). Per turn decides: answer question / capture new moment(s — `moments` array, multiple per turn supported) / update moment / rename placeholder / name+nickname corrections / create+tag groups / create+tag tags / relationship signals / logs recall attempts to `search_log`. AI-suggested tags (item 28, 2026-07-22): each moment entry's `moment_tags: string[]` is resolved via `findOrCreateTagId()` — the same find-by-name-or-create pattern as `moment_groups`/`findOrCreateGroupId`, capped at 1-3 tags per moment with an explicit "prefer reusing an existing tag over coining a near-duplicate" instruction (both live in the fully-static `stableInstructions` tier, so this cost nothing extra to cache; the tags roster itself lives in the 1-hour roster tier alongside the groups roster). `update-moment`'s `add_tags` deliberately NOT added yet (see §8 item 28 — holding the AI surface to one entry point until real usage confirms the vocabulary stays clean). Knows the self person (`is_self`) and their known relationships (`_shared/selfContext.ts`) so "my mom"/"my parents" resolve without a named subject (2026-07-20). Quirk: model occasionally replies in prose instead of the JSON envelope — falls back to showing that prose as the reply. |
 | `add-fact` | Classifies fact-bar text: name/nickname update, birthday/anniversary (upserts `reminders`), or plain note. Group inference (`group_signal`, high=auto/medium=ask). Relationship handling via `_shared/relationships.ts`. A fact typed on the self profile's own page already resolves "my X" correctly with no special-casing (the subject is always whichever profile is being viewed). |
 | `update-moment` | Event chat. Saves per turn (not on "done"), has full people+events rosters, `moment_field_updates` (when/where/title), `add_groups`, relationship signals, self-person "my X" resolution (2026-07-20). |
 | `update-group` | Group chat: rename, members, tag/untag events, member facts (tagged `source_group_id`), relationship signals, self-person "my X" resolution (2026-07-20). Saves per turn. |
@@ -501,6 +520,17 @@ person_groups person_id + group_id (PK) — THE definition of membership (explic
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
               string sort), created_at
 moment_groups moment_id + group_id (PK)
+tags          id, user_id, name, created_at — item 28/34 (2026-07-22), manual + AI-
+              suggested event tags. unique index on (user_id, lower(name)) — case-
+              insensitive dedup so "Milestone"/"milestone" can't fork into two
+              filter entries. Deliberately NOT the dormant `moments.details` jsonb
+              or a `text[]` column — neither gives a canonical tag identity for
+              cross-event reuse/dedup the way a real table does (mirrors why
+              `groups`/`moment_groups` is a real table, not a text array on
+              `moments`). `details` itself untouched, still dormant for writes.
+moment_tags   moment_id + tag_id (PK), index on tag_id (reverse lookup, e.g. future
+              search/co-occurrence features) — join table, same shape as
+              moment_groups
 search_log    id, user_id, query_text, matched bool, created_at — one row per
               genuine recall attempt in Home; powers "Recall assists this month"
 home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts cache
@@ -523,6 +553,7 @@ feedback_notes id, user_id, page_label?, element_label?, note, status ("open"/"d
 - **Cross-navigation:** any person/group/event mention anywhere is a chip → detail page, with breadcrumb trail; refresh restores location (sessionStorage).
 - **Search boxes** on People/Events/Groups (client-side).
 - **"My page" + real family tree + relationships table** (item 32, 2026-07-20 — see §3/§4/§6): a real `is_self` flag + `relationships` table replace the note-text-only inference that used to be the sole source of family data. Circle.tsx ("My page") is real (onboarding to flag/create the self person, live circle grid, "+" writes real facts). FamilyTree.tsx works for ANY person, not just the self person, walking the relationships table live. `person-facts` Key Facts linking and `converse`/`update-moment`/`update-group`'s "my mom/dad" resolution both read the same table now — the "all work together" ask is done, not just the tree UI.
+- **Event tags** (items 28 + 34, 2026-07-22 — see §3/§4/§6): manual tag/untag on EventDetail (create-or-reuse picker + hover-remove chip) and AI-suggested tagging via `converse` (capture-time only, capped 1-3/moment, reuse-biased), backed by new `tags`/`moment_tags` tables. Events page has a tag filter dropdown, growing from tags actually applied (not a fixed list). Verified live end-to-end against the real account (create, cross-event reuse, non-destructive untag, filter, AI auto-tag), test data cleaned up after. `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred — see §8 item 28.
 - Demo persona seed data exists ("John & Jane Doe", ~18 people/~22 moments — fake, handwritten UUIDs; don't pattern-match on it).
 
 ## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
@@ -543,13 +574,13 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both). Concretely blocks auto-linking a new spouse as a parent of the other spouse's existing kids (step-parent case) — deliberately left manual-only in item 40 pending this. Real example on file: Andy Volin (deceased) was married to Andi Volin, who's since remarried to Michael Galchinsky.
 26. Ratings/thumbs feedback loop (tunes suggestions; does not retrain the model).
 27. Photo gallery for real (upload/Supabase Storage/tagging; placeholder shipped). True camera-roll sync needs the native iPhone app.
-28. Manual + AI-suggested tags on events (schema change).
+28. ~~Manual + AI-suggested tags on events~~ — **DONE 2026-07-22** (schema: new `tags`/`moment_tags` tables, see §6). Manual create-or-reuse picker + hover-remove chip on EventDetail; AI-suggested via `converse` only for v1 (capped 1-3 tags/moment, reuse-biased instruction) — `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred until real usage confirms the vocabulary stays clean, not scope-cut for any other reason. Verified live end-to-end against the real account (manual create/reuse/persist/untag, AI auto-tag via Home chat correctly created and applied a new "vacation" tag with no manual step), test data cleaned up after. Pairs with item 34's filter, same schema change powers both.
 29. Search within GroupDetail; People filter (criteria undecided).
 30. AI/"fuzzy" semantic search (likely merges into 14).
 31. **"Memory lane" curated media feed** — requested 2026-07-19. A scrollable, media-driven feed surfacing curated memories (vs. today's specific-lookup mode only); best outcome likely needs real event photos, so probably sequences after item 27 (photo gallery). Already named as a target query mode in §9's product philosophy, just not built yet.
 32. ~~User's own profile~~ — **DONE 2026-07-20.** Real `is_self` flag + `relationships` table (shared source of truth for family links), real "My page" (`Circle.tsx`) + real family tree (`FamilyTree.tsx`, works for any person), `person-facts` linking and "my mom/dad" resolution both read the same table — see §3/§4/§6/§7. Full build story in PROJECT_HISTORY §15. Still-open UX questions, not yet resolved: (a) empty relationship categories on "Your circle" shown as invite-to-add vs. hidden until populated. ~~(b) a family tree for a group you're NOT a member of~~ — **RESOLVED 2026-07-21**, see item 41. ~~(c) "+" always targets a tier's first branch when a tier has more than one~~ — **FIXED 2026-07-20**, see item 37.
 33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
-34. **Filterable "View" by event category on the Events page** — requested 2026-07-19. Founder's concern: as event volume grows, big events (weddings) get buried among day-to-day notes (a phone call), so a picklist of categories to narrow the list is needed. Categories would come from a learning/growing list derived from events actually added, not a fixed hardcoded set. Pairs with item 28 (manual + AI-suggested tags on events) — likely the same schema change powers both the tags and this filter view.
+34. ~~Filterable "View" by event category on the Events page~~ — **DONE 2026-07-22.** Shipped together with item 28: a tag filter dropdown on Events.tsx, growing from distinct tags actually applied (`useMemo`, not a fixed hardcoded set, per the founder's original ask), membership-based (a moment can carry more than one tag) rather than the single-value equality Groups.tsx's type filter uses, plus a "No tags yet" option. Verified live: option list matches tags in use, filtering narrows correctly.
 35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later.
 37. ~~Family tree bug scan~~ — **DONE 2026-07-20**, three wire-connection follow-ups **2026-07-21/22**, layout engine rewrite **2026-07-22** (item 39), same-day live-bug fix **2026-07-22**: Kids tier now also positions relative to its own parents' tier above (`layoutRelativeToParent`) instead of independently centering on the canvas — root-gen is now the only independently-laid-out tier — fixing left-clipping on wide trees and grandchildren rendering off-anchor. One reported "missing grandparent marriage line" turned out to be a real data gap (no `spouse` relationship on file), not a bug — flagged to founder, not auto-fixed. **2026-07-21 fix, confirmed live:** the root's own siblings were the one place in `familyTree.ts` still built as a bare name list with no spouse lookup — every other role (root's own spouse, aunts/uncles, cousins, kids) already attached in-law spouses. A married sibling's spouse now shows up with a marriage line too; verified against Jake's real tree (Josh Volin + Faith Volin).
 
@@ -644,5 +675,6 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - Fix classes of bugs, not instances: `converse`'s siblings (`update-moment`/`update-group`) have repeatedly harbored the same bug (JSON fences, max_tokens, silent errors, missing rosters) — when one function gets a reliability fix, check them all. Same for the two independent name-resolution paths (`relationships.ts` and `person-facts`).
 - **A confident match and a confirmed suggestion must write the exact same both-sides notes** — `relationships.ts`'s direct-write path did, but `RelationshipSuggestions.tsx`'s confirm handlers only ever wrote onto the newly linked/created person, never back onto the subject, until fixed 2026-07-20 (found via the Sucre-brothers inconsistent-siblings report: whichever profile the fact was typed on could end up with nothing). Any new relationship-suggestion type needs the same both-sides write, not just the "obvious" direction.
 - **A "does this note already exist" dedupe check must match the EXACT deterministic text, never a loose "mentions this name + a family-shaped keyword" heuristic** — the loose version (`relationships.ts`, fixed 2026-07-20) false-positived on the SUBJECT's own original sentence (e.g. "Her siblings are Clare, Bridget, and Patrick" already contains "Clare" + the word "siblings"), silently blocking the subject from ever getting their OWN reciprocal note while everyone else correctly got theirs pointing back at them — found via the Berzins-family report, where Caroline (the one person who'd actually typed the fact) was the one left incomplete, not her siblings.
+- **A `.select()` embedding a table that doesn't exist yet fails the WHOLE query, not just that one field** — adding `moment_tags(tags(...))` to Events.tsx/EventDetail.tsx's existing moments query, before the item-28 migration had been run, turned "no tags yet" into "Events page shows zero events" (PostgREST returns `data: null` for the entire row set, and the existing `?? []` fallback silently swallows that into an empty list, same silent-failure shape as the RLS guard above). Caught before push by testing directly against the live schema (`supabase.from(...).select(...)` via the browser console) rather than trusting `npm run build`, which can't see this. Any new embed on an existing, page-critical query needs the migration confirmed live FIRST — don't push code that adds a new embed until the table it joins actually exists in production.
 - **Display text derived from a navigation-time prop (breadcrumb label) goes stale the moment the underlying record is renamed mid-visit** — `PersonDetail.tsx` had every nudge/fact-bar/banner string keyed off the `personName` prop instead of the freshly-loaded `person` state, invisible until the manual "add person" flow (2026-07-20) made same-visit renames the common case instead of the rare one. Any page with an in-place rename control needs its own display text to track live state, not what it was called when you navigated in.
 - **A blank-shell record's cached AI summary can be generated against its placeholder name/content before it's ever filled in** — `GroupDetail.tsx`'s rename didn't invalidate the cached summary (only membership changes did), so a manually-created group (2026-07-20) could get summarized as "New group" and stay that way forever. Any manual-create-then-fill-in flow needs its rename/edit paths to invalidate the same caches the AI-driven paths already do.

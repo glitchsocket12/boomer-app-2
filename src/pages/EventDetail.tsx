@@ -12,6 +12,7 @@ import { sortByLastName } from '../lib/people'
 
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
+type TagRef = { id: string; name: string }
 type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null; source: string | null }
 type OtherEvent = { id: string; occasion: string | null; raw_description: string }
 
@@ -26,6 +27,7 @@ type MomentDetail = {
   created_at: string
   notes: NoteWithPerson[]
   moment_groups: { groups: GroupRef | null }[]
+  moment_tags: { tags: TagRef | null }[]
   dismissed_person_ids: string[] | null
 }
 
@@ -64,6 +66,7 @@ export default function EventDetail({
   const [savingDescription, setSavingDescription] = useState(false)
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
+  const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
 
   useEffect(() => {
     loadMoment()
@@ -81,12 +84,14 @@ export default function EventDetail({
   // are small (one account's own data), so an eager fetch per page view matches the pattern
   // already used for the merge-event picker below.
   async function loadPickerLists() {
-    const [peopleRes, groupsRes] = await Promise.all([
+    const [peopleRes, groupsRes, tagsRes] = await Promise.all([
       supabase.from('people').select('id, name, last_name').order('name'),
       supabase.from('groups').select('id, name').order('name'),
+      supabase.from('tags').select('id, name').order('name'),
     ])
     setAllPeople((peopleRes.data as PersonRef[]) ?? [])
     setAllGroupsList((groupsRes.data as GroupRef[]) ?? [])
+    setAllTagsList((tagsRes.data as TagRef[]) ?? [])
   }
 
   async function loadMoment(silent = false) {
@@ -94,7 +99,7 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), dismissed_person_ids'
+        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), moment_tags(tags(id, name)), dismissed_person_ids'
       )
       .eq('id', eventId)
       .single()
@@ -141,6 +146,48 @@ export default function EventDetail({
   // reasoning as handleRemoveAttendee above. The group itself and its own roster are untouched.
   async function handleUntagGroup(groupId: string) {
     await supabase.from('moment_groups').delete().eq('moment_id', eventId).eq('group_id', groupId)
+    await loadMoment(true)
+  }
+
+  async function handleTagMoment(tagId: string) {
+    await supabase
+      .from('moment_tags')
+      .upsert({ moment_id: eventId, tag_id: tagId }, { onConflict: 'moment_id,tag_id', ignoreDuplicates: true })
+    await loadMoment(true)
+  }
+
+  // Reuse an existing tag (case-insensitive, matching the DB's own case-insensitive unique
+  // index) instead of creating a near-duplicate. If two rapid creates of the same brand-new name
+  // race each other, the unique index rejects the loser's insert — look the winner up by name
+  // rather than surfacing an error for what the user experiences as one successful action.
+  async function handleCreateAndTagMoment(name: string) {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const existing = allTagsList.find((t) => t.name.toLowerCase() === trimmed.toLowerCase())
+    if (existing) {
+      await handleTagMoment(existing.id)
+      return
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const { data, error } = await supabase.from('tags').insert({ name: trimmed, user_id: user?.id }).select('id, name').single()
+    if (error || !data) {
+      const { data: found } = await supabase.from('tags').select('id, name').ilike('name', trimmed).maybeSingle()
+      if (found) {
+        setAllTagsList((prev) => (prev.some((t) => t.id === found.id) ? prev : [...prev, found]))
+        await handleTagMoment(found.id)
+      }
+      return
+    }
+    setAllTagsList((prev) => [...prev, data])
+    await handleTagMoment(data.id)
+  }
+
+  // Untagging is pure detachment from moment_tags, not deletion — the tag itself stays on file
+  // for reuse on other events, same non-destructive reasoning as handleUntagGroup above.
+  async function handleUntagMoment(tagId: string) {
+    await supabase.from('moment_tags').delete().eq('moment_id', eventId).eq('tag_id', tagId)
     await loadMoment(true)
   }
 
@@ -322,6 +369,10 @@ export default function EventDetail({
     .map((mg) => mg.groups)
     .filter((g): g is GroupRef => g !== null)
 
+  const tags = (moment.moment_tags ?? [])
+    .map((mt) => mt.tags)
+    .filter((t): t is TagRef => t !== null)
+
   const dismissedIds = new Set(moment.dismissed_person_ids ?? [])
   const suggestedAttendees = new Map<string, PersonRef>()
   for (const g of groups) {
@@ -419,6 +470,28 @@ export default function EventDetail({
         placeholder="Tag this event to a group…"
         onSelect={(item) => handleTagGroup(item.id)}
         emptyText="No groups match."
+      />
+
+      <h2 style={styles.subheading}>Tags</h2>
+      {tags.length > 0 && (
+        <>
+          <p style={styles.chatHint}>What kind of thing this was — hover a tag to untag it from this event.</p>
+          <div style={styles.chipRow}>
+            {tags.map((t) => (
+              <TagChip key={t.id} tag={t} onRemove={() => handleUntagMoment(t.id)} />
+            ))}
+          </div>
+        </>
+      )}
+      <SearchAddPicker
+        items={allTagsList
+          .filter((t) => !tags.some((tagged) => tagged.id === t.id))
+          .map((t) => ({ id: t.id, label: t.name }))}
+        placeholder="Tag this event (e.g. milestone, vacation)…"
+        onSelect={(item) => handleTagMoment(item.id)}
+        onCreateNew={(name) => handleCreateAndTagMoment(name)}
+        createLabel={(q) => `+ Add "${q}" as a new tag`}
+        emptyText="No tags match."
       />
 
       {editingDescription ? (
@@ -751,6 +824,30 @@ function AffiliatedGroupChip({
   )
 }
 
+// Tags have no detail page of their own to navigate to (unlike person/group chips), so this is
+// display-only plus the same hover-reveal-remove-badge affordance as the other chips on this page.
+function TagChip({ tag, onRemove }: { tag: TagRef; onRemove: () => void }) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <span style={styles.tagChip}>#{tag.name}</span>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Untag ${tag.name} from this event`}
+          style={styles.cornerBadge}
+        >
+          {TRASH_ICON}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // The main chip approves (adds them to Who Was There) on click, same as before. Hovering reveals
 // a small "×" badge in the corner — a separate control, so denying doesn't resize the main chip
 // and can't flicker, matching GroupDetail.tsx's SuggestionChip pattern.
@@ -911,6 +1008,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: '50%',
     backgroundColor: '#B08B2E',
     flexShrink: 0,
+  },
+  tagChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: '0.88rem',
+    padding: '0.35rem 0.8rem',
+    borderRadius: '999px',
+    border: '1px solid #9A968A',
+    backgroundColor: '#F4F3EE',
+    color: '#605C50',
+    fontFamily: 'Georgia, serif',
   },
   badgeWrapper: { position: 'relative', display: 'inline-block' },
   cornerBadge: {

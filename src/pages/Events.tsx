@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate, formatMonthYear } from '../lib/dates'
@@ -17,6 +17,7 @@ type Moment = {
   created_at: string
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: { id: string; name: string } | null }[]
+  moment_tags: { tags: { id: string; name: string } | null }[]
 }
 
 export default function Events({
@@ -31,6 +32,7 @@ export default function Events({
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [tagFilter, setTagFilter] = useState('all')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
@@ -43,7 +45,7 @@ export default function Events({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, event_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name))'
+        'id, occasion, location, when_text, event_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name)), moment_tags(tags(id, name))'
       )
 
     const sorted = ((data as unknown as Moment[]) ?? []).sort(
@@ -88,6 +90,19 @@ export default function Events({
     onSelectEvent({ id: data.id, summary: 'Untitled moment' })
   }
 
+  // Growing picklist, not a hardcoded list like GROUP_TYPES — the founder wants categories
+  // derived from tags actually applied, so this is just the distinct set in use. Memoized so it
+  // doesn't recompute on every keystroke of the search box below (only when moments changes).
+  const distinctTags = useMemo(() => {
+    const names = new Set<string>()
+    for (const m of moments) {
+      for (const mt of m.moment_tags ?? []) {
+        if (mt.tags) names.add(mt.tags.name)
+      }
+    }
+    return [...names].sort()
+  }, [moments])
+
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
   const decoratedMoments = moments.map((moment) => {
@@ -101,16 +116,22 @@ export default function Events({
     const groups = (moment.moment_groups ?? [])
       .map((mg) => mg.groups)
       .filter((g): g is { id: string; name: string } => g !== null)
+    const tags = (moment.moment_tags ?? [])
+      .map((mt) => mt.tags)
+      .filter((t): t is { id: string; name: string } => t !== null)
 
-    return { moment, attendees, summary, groups }
+    return { moment, attendees, summary, groups, tags }
   })
 
   const query = search.trim().toLowerCase()
-  const filteredMoments = decoratedMoments.filter(({ moment, attendees, summary, groups }) => {
+  const filteredMoments = decoratedMoments.filter(({ moment, attendees, summary, groups, tags }) => {
+    if (tagFilter === 'untagged' && tags.length > 0) return false
+    if (tagFilter !== 'all' && tagFilter !== 'untagged' && !tags.some((t) => t.name === tagFilter)) return false
     if (!query) return true
     const attendeeNames = Array.from(attendees.values()).map((p) => `${p.name} ${p.last_name ?? ''}`)
     const groupNames = groups.map((g) => g.name)
-    const haystack = [moment.occasion, moment.location, summary, ...attendeeNames, ...groupNames]
+    const tagNames = tags.map((t) => t.name)
+    const haystack = [moment.occasion, moment.location, summary, ...attendeeNames, ...groupNames, ...tagNames]
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
@@ -145,11 +166,31 @@ export default function Events({
       )}
 
       {moments.length > 0 && (
-        <SearchBox value={search} onChange={setSearch} placeholder="Search events…" />
+        <div style={styles.searchRow}>
+          <SearchBox value={search} onChange={setSearch} placeholder="Search events…" />
+          {distinctTags.length > 0 && (
+            <select
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+              style={styles.tagFilterSelect}
+              aria-label="Filter by tag"
+            >
+              <option value="all">All tags</option>
+              <option value="untagged">No tags yet</option>
+              {distinctTags.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       )}
 
       {moments.length > 0 && filteredMoments.length === 0 && (
-        <p style={styles.empty}>No events match "{search}".</p>
+        <p style={styles.empty}>
+          {query ? `No events match "${search}".` : 'No events have this tag yet.'}
+        </p>
       )}
 
       <div style={styles.list}>
@@ -213,6 +254,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
   },
   addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1rem' },
+  searchRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-start', marginBottom: '1.5rem' },
+  tagFilterSelect: {
+    flexShrink: 0,
+    fontSize: '1rem',
+    padding: '0.65rem 0.75rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    fontFamily: 'Georgia, serif',
+    backgroundColor: '#FFF',
+    color: '#2E2E2E',
+  },
   empty: { color: '#777' },
   list: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   yearHeading: {

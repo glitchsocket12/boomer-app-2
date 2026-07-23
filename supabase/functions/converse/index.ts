@@ -63,6 +63,7 @@ serve(async (req) => {
       .select("moment_id, group_id")
       .order("moment_id")
       .order("group_id")
+    const { data: tags } = await supabaseClient.from("tags").select("id, name").order("id")
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
@@ -100,6 +101,13 @@ serve(async (req) => {
       idByGroupName[g.name.toLowerCase()] = g.id
     }
 
+    const tagNameById: Record<string, string> = {}
+    const idByTagName: Record<string, string> = {}
+    for (const t of tags ?? []) {
+      tagNameById[t.id] = t.name
+      idByTagName[t.name.toLowerCase()] = t.id
+    }
+
     const groupMemberNamesById: Record<string, string[]> = {}
     for (const pg of personGroups ?? []) {
       const personName = nameById[pg.person_id]
@@ -129,6 +137,8 @@ serve(async (req) => {
     const groupsContext = (groups ?? [])
       .map((g: any) => `${g.name} (members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"})`)
       .join("\n")
+
+    const tagsContext = (tags ?? []).map((t: any) => t.name).join(", ")
 
     const peopleRoster = (people ?? [])
       .map((p: any) => {
@@ -163,6 +173,8 @@ A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, 
 - Don't invent a group from a passing mention of a place or a single unaffiliated event. Only tag a group when the user's own framing is about a recurring school/team/unit/organization, not a one-time location.
 - Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in that entry's "moment_groups" rather than waiting for a second, more explicit mention.
 
+A TAG is completely different from a group: it describes WHAT KIND of thing a moment was (e.g. "milestone," "vacation," "medical," "tradition," "reunion"), not WHO it's affiliated with. Never put the same word in both "moment_groups" and "moment_tags" for one entry — a Pop Warner story gets "Pop Warner" as a group (who/what recurring affiliation) and, separately, maybe "milestone" as a tag (what kind of thing it was), only if it genuinely reads as a big/notable moment. When a moment's content clearly suggests a kind of event worth categorizing this way, add 1-3 tags to that entry's "moment_tags" — never more than 3, and always prefer reusing an exact (case-insensitive) match from the tags already created (shown below) over coining a new, similar-but-different one (e.g. reuse "milestone" rather than adding "big milestone" or "major milestone" as a separate tag). If nothing about the moment clearly fits an existing or obviously-new category, leave "moment_tags" empty rather than forcing one.
+
 Each time the user writes something, figure out what they're doing:
 - If they're asking a broad question about a PERSON (like "tell me about Steve"), pull together everything recorded about that person across ALL their moments and notes into one summary — don't require an exact match to a single moment.
 - If they're asking about a GROUP (like "tell me about my Pop Warner team" or "who was at the Academy with me"), pull together the group's members and every moment tagged to it.
@@ -179,7 +191,7 @@ Each time the user writes something, figure out what they're doing:
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
@@ -204,6 +216,8 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
 
     const rosterContext = `Here are the groups already created:
 ${groupsContext || "(none yet)"}
+
+Here are the tags already created: ${tagsContext || "(none yet)"}
 
 Here is everyone already recorded, by full name where a last name is known:
 ${peopleRoster || "(none yet)"}${selfInstruction}`
@@ -369,9 +383,39 @@ ${context || "(none recorded yet)"}`
       return null
     }
 
+    // Same find-by-name-or-create pattern as findOrCreateGroupId, but tags have a real
+    // case-insensitive unique index (unlike groups.name), so a same-name insert can genuinely
+    // fail on a concurrent create — fall back to looking the winner up by name instead of
+    // silently dropping this tag.
+    async function findOrCreateTagId(name: string): Promise<string | null> {
+      const key = name.toLowerCase()
+      if (idByTagName[key]) return idByTagName[key]
+      const { data: newTag, error } = await supabaseClient
+        .from("tags")
+        .insert({ user_id: user.id, name })
+        .select()
+        .single()
+      if (newTag) {
+        idByTagName[key] = newTag.id
+        tagNameById[newTag.id] = newTag.name
+        return newTag.id
+      }
+      if (error) {
+        const { data: existing } = await supabaseClient.from("tags").select("id, name").ilike("name", name).maybeSingle()
+        if (existing) {
+          idByTagName[key] = existing.id
+          tagNameById[existing.id] = existing.name
+          return existing.id
+        }
+      }
+      return null
+    }
+
     // Any group tagged or created this turn — shown to the user as a clickable chip,
     // same as a new/updated moment or person, so they can jump straight to it.
     const taggedGroups = new Map<string, string>()
+    // Any tag applied or created this turn — same "shown back to the user" reasoning as groups.
+    const taggedTags = new Map<string, string>()
     // Every moment touched this turn (created or updated) — a single message can now describe
     // several distinct events at once, so this is a list rather than one moment ID.
     const touchedMomentIds = new Set<string>()
@@ -420,6 +464,16 @@ ${context || "(none recorded yet)"}`
           taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
         }
       }
+
+      for (const tagName of momentEntry.moment_tags ?? []) {
+        const tagId = await findOrCreateTagId(tagName)
+        if (tagId) {
+          await supabaseClient
+            .from("moment_tags")
+            .upsert({ moment_id: momentId, tag_id: tagId }, { onConflict: "moment_id,tag_id", ignoreDuplicates: true })
+          taggedTags.set(tagId, tagNameById[tagId] ?? tagName)
+        }
+      }
     }
 
     for (const tag of parsed.person_group_tags ?? []) {
@@ -443,6 +497,7 @@ ${context || "(none recorded yet)"}`
       .filter(Boolean)
 
     const taggedGroupRefs = [...taggedGroups.entries()].map(([id, name]) => ({ id, name }))
+    const taggedTagRefs = [...taggedTags.entries()].map(([id, name]) => ({ id, name }))
 
     // Only log genuine recall attempts, not new captures/corrections/idle chat — powers the
     // Home dashboard's "Recall assists this month" stat.
@@ -463,6 +518,7 @@ ${context || "(none recorded yet)"}`
         people: relevantPeople,
         momentIds: [...touchedMomentIds],
         groups: taggedGroupRefs,
+        tags: taggedTagRefs,
         relationshipSuggestions: familyResult.relationshipSuggestions,
         newPersonSuggestions: familyResult.newPersonSuggestions,
       }),
