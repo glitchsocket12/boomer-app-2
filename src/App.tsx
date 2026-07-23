@@ -222,7 +222,13 @@ export default function App() {
   }
 
   function pushCrumb(crumb: Crumb) {
-    setNavStack((s) => [...s, crumb])
+    setNavStack((s) => {
+      const existingIndex = s.findIndex((c) => c.type === crumb.type && c.id === crumb.id)
+      if (existingIndex !== -1) {
+        return [...s.slice(0, existingIndex), crumb]
+      }
+      return [...s, crumb]
+    })
   }
 
   function popCrumb() {
