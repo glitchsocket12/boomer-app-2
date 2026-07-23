@@ -389,8 +389,10 @@ export default function FamilyTree({
   const allPlaced = layouts.flatMap((l) => l.placed)
   const minX = allPlaced.length > 0 ? Math.min(...allPlaced.map((p) => p.x)) : 0
   const maxX = allPlaced.length > 0 ? Math.max(...allPlaced.map((p) => p.x + p.w)) : 0
-  const shift = 40 - minX
-  const canvasWidth = Math.max(CANVAS_W, maxX - minX + 80)
+  const contentWidth = maxX - minX
+  const fitsDefaultCanvas = contentWidth + 80 <= CANVAS_W
+  const canvasWidth = fitsDefaultCanvas ? CANVAS_W : contentWidth + 80
+  const shift = fitsDefaultCanvas ? (CANVAS_W - contentWidth) / 2 - minX : 40 - minX
   const height = TIER_Y_START + TIER_Y_STEP * (tiers.length - 1) + BOX_H + 40
   const startXs = tiers.map(() => shift)
   const allShownIds = tiers.flatMap((t) =>
@@ -498,15 +500,6 @@ export default function FamilyTree({
 
       <div style={styles.svgScroll}>
       <svg width={canvasWidth} height={height} viewBox={`0 0 ${canvasWidth} ${height}`} style={styles.svg}>
-        {tiers.map((tier, i) => {
-          const y = TIER_Y_START + TIER_Y_STEP * i
-          return (
-            <text key={tier.label + i} x={40} y={y + 26} fontSize="12" fill="#999" fontFamily="Georgia, serif">
-              {tier.label}
-            </text>
-          )
-        })}
-
         {tiers.slice(0, -1).map((_tierAbove, i) => {
           const yAbove = TIER_Y_START + TIER_Y_STEP * i
           const yBelow = TIER_Y_START + TIER_Y_STEP * (i + 1)

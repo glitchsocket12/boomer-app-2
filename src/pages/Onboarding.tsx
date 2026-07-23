@@ -304,6 +304,12 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           <>
             <h1 style={styles.title}>Build your family tree</h1>
             <p style={styles.body}>
+              We start here because it's the fastest way to show you how Boomer actually works: everyone gets
+              their own profile, and family is the clearest, most natural group there is. Once you see it click
+              with people you already know by heart, the same idea carries over to friends, coworkers, and
+              everyone else.
+            </p>
+            <p style={styles.body}>
               Add your spouse, kids, siblings, and parents to start — then keep going if you can: grandparents,
               cousins, in-laws. There's no limit on how far back or how far out you go, and the more you add,
               the more useful your family tree (and the rest of Boomer) becomes.

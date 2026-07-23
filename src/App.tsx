@@ -97,12 +97,27 @@ export default function App() {
       setOnboardingPending(false)
       return
     }
-    if (session.user.user_metadata?.onboarding_complete) {
+    const meta = session.user.user_metadata ?? {}
+    if (meta.onboarding_complete) {
       setOnboardingPending(false)
       return
     }
+    // Once onboarding has actually started, trust that sticky server-side flag instead of
+    // re-deriving from the people count below — Stage 2 (the tree) writes real people rows
+    // partway through, so "zero non-self people" stops being a valid signal the moment the
+    // user adds their first relative, well before they've finished or skipped onboarding.
+    // Without this, a tab getting backgrounded and remounted mid-onboarding would silently and
+    // permanently boot the user to Home instead of resuming onboarding.
+    if (meta.onboarding_started) {
+      setOnboardingPending(true)
+      return
+    }
     const { count } = await supabase.from('people').select('id', { count: 'exact', head: true }).eq('is_self', false)
-    setOnboardingPending((count ?? 0) === 0)
+    const shouldStart = (count ?? 0) === 0
+    setOnboardingPending(shouldStart)
+    if (shouldStart) {
+      await supabase.auth.updateUser({ data: { onboarding_started: true } })
+    }
   }
 
   function goToTab(tab: Tab) {

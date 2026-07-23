@@ -169,6 +169,20 @@ src/
 │   │                            a disposable test account (`onboarding.verify.test@
 │   │                            example.com` — not yet deleted, needs founder cleanup via
 │   │                            the Supabase dashboard, no admin access from this session).
+│   │                            Second pass (2026-07-22, founder click-through bugs): tree-stage
+│   │                            copy now explains WHY onboarding starts with family (profiles +
+│   │                            groups are the core ideas, family is the clearest way to show
+│   │                            them). Bigger fix: `onboardingPending` used to be re-derived from
+│   │                            "zero non-self people" on every check, but Stage 2 writes a real
+│   │                            person row the moment you add one relative — so a tab getting
+│   │                            backgrounded/discarded and remounted mid-onboarding would silently
+│   │                            and permanently drop the user to Home, `onboarding_complete` never
+│   │                            set, no way back in. Fixed via a second sticky auth-metadata flag,
+│   │                            `onboarding_started` (App.tsx's `checkOnboarding`), set the first
+│   │                            time onboarding is shown and trusted on every later check instead
+│   │                            of re-deriving from the people count. Verified live against the
+│   │                            onboarding test account: added a parent mid-flow, hard-reloaded,
+│   │                            confirmed onboarding still resumed instead of dropping to Home.
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
@@ -335,7 +349,19 @@ src/
 │                                 match. `TreePerson` gained an optional `side: 'a'|'b'` carried
 │                                 through every tier-building loop, including the item-42
 │                                 arbitrary-depth ancestor/descendant extensions. Verified live
-│                                 against Jake Volin's and Mark Berzins's real trees.
+│                                 against Jake Volin's and Mark Berzins's real trees. Layout fix
+│                                 2026-07-22 (founder click-through bugs): the whole-tree shift used
+│                                 to always pin the leftmost node to x=40 rather than center it,
+│                                 so any tree narrower than the fixed 680px canvas (the common case
+│                                 for a new/small tree, e.g. during onboarding) sat jammed against
+│                                 the left edge — now centers within the canvas whenever content
+│                                 fits, falling back to the old left-pinned/scrollable behavior only
+│                                 for trees wider than the canvas. Also removed the gray tier-label
+│                                 text ("Parents"/"Kids"/"Grandparents"/etc., drawn at a fixed x=40)
+│                                 entirely, per founder ask — it was also what a newly-added node
+│                                 visually covered, same root cause as the left-pin bug. Verified
+│                                 live: added a parent during onboarding, confirmed centered layout
+│                                 and no covered/overlapping text.
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
