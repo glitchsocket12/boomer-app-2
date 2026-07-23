@@ -374,7 +374,12 @@ src/
 │                                 live with disposable test people (deleted after, incl. one stray
 │                                 note left on Jake Volin's own profile from a temporary test-child
 │                                 link): suggestion appeared correctly, decline left no trace, accept
-│                                 produced a real marriage line on reload.
+│                                 produced a real marriage line on reload. Page container widened
+2026-07-22 (founder-reported): styles.page maxWidth 600px to 1200px
+(other pages' 600px reading width is deliberate and unchanged) so the
+SVG tree canvas isn't squeezed into a narrow column on desktop; svg
+style also centers via margin 0 auto when the tree is narrower than
+the container.
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):

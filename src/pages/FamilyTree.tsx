@@ -757,7 +757,7 @@ function RemoveChip({ name, relLabel, onRemove }: { name: string; relLabel: stri
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '1rem 1.5rem 3rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '1200px', margin: '0 auto', padding: '1rem 1.5rem 3rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
     border: 'none',
@@ -771,7 +771,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   contextLine: { fontSize: '0.85rem', color: '#888', marginBottom: '1rem' },
   svgScroll: { overflowX: 'auto', margin: '0 -1.5rem', padding: '0 1.5rem' },
-  svg: { display: 'block' },
+  svg: { display: 'block', margin: '0 auto' },
   addRow: { display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '1.25rem', alignItems: 'flex-start' },
   addItem: { display: 'flex', alignItems: 'center', gap: '0.4rem' },
   addLabel: { fontSize: '0.8rem', color: '#999' },
