@@ -17,6 +17,7 @@ import Circle from './pages/Circle'
 import FamilyTree from './pages/FamilyTree'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
+import FeedbackWidget from './components/FeedbackWidget'
 
 type Tab = 'home' | 'people' | 'events' | 'groups'
 type Crumb =
@@ -152,6 +153,7 @@ export default function App() {
 
   const current = navStack[navStack.length - 1] ?? null
   const parentLabel = navStack.length >= 2 ? navStack[navStack.length - 2].label : TAB_LABELS[view]
+  const feedbackPageLabel = current?.label ?? TAB_LABELS[view]
 
   const breadcrumbItems =
     navStack.length > 0
@@ -297,6 +299,8 @@ export default function App() {
       {breadcrumbItems && <Breadcrumb items={breadcrumbItems} />}
 
       <ErrorBoundary key={current ? `${current.type}-${current.id}` : view}>{content}</ErrorBoundary>
+
+      <FeedbackWidget pageLabel={feedbackPageLabel} />
     </div>
   )
 }

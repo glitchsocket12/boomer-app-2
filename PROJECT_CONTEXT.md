@@ -359,10 +359,19 @@ src/
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)
 │   ├── Breadcrumb.tsx         — trail for App.tsx's navStack
 │   ├── RelationshipSuggestions.tsx — shared suggestion-banner UI (all 4 surfaces)
-│   └── DevOnboardingReset.tsx — (2026-07-22) "Testing tools" link on Home, renders null unless
-│                                signed in as the onboarding test account (see lib/
-│                                resetOnboarding.ts); expands to a type-RESET-to-confirm panel,
-│                                then reloads straight into Onboarding.tsx
+│   ├── DevOnboardingReset.tsx — (2026-07-22) "Testing tools" link on Home, renders null unless
+│   │                            signed in as the onboarding test account (see lib/
+│   │                            resetOnboarding.ts); expands to a type-RESET-to-confirm panel,
+│   │                            then reloads straight into Onboarding.tsx
+│   └── FeedbackWidget.tsx     — (2026-07-22) floating "💬 Feedback" toggle, mounted in App.tsx
+│                                for any signed-in user. Click-to-pin: toggle on, hover highlights
+│                                the element under the cursor, click intercepts (capture-phase,
+│                                preventDefault/stopPropagation so the real app doesn't navigate)
+│                                and opens a small composer instead; saves to `feedback_notes`
+│                                (page label + a best-effort text description of the element +
+│                                the note) via `lib/feedback.ts`. Badge shows open-note count,
+│                                click it to list/mark-done/delete. Needs the migration in §10
+│                                run before it actually persists.
 ```
 
 `App.tsx` is the traffic controller: auth state, first-run onboarding gate (`onboardingPending`/`checkOnboarding()` — see Onboarding.tsx above), tab nav (Home/People/Events/Groups), a generic `navStack: Crumb[]` breadcrumb stack any page can push person/group/event crumbs onto, persisted to sessionStorage (`boomer-nav`) so refresh stays put. Voice input + AutoGrowTextarea are on every conversational text box (Home, event chat, group chat, fact bar).
@@ -447,6 +456,9 @@ moment_groups moment_id + group_id (PK)
 search_log    id, user_id, query_text, matched bool, created_at — one row per
               genuine recall attempt in Home; powers "Recall assists this month"
 home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts cache
+feedback_notes id, user_id, page_label?, element_label?, note, status ("open"/"done",
+              default "open"), created_at — click-to-comment feedback widget (§3
+              FeedbackWidget.tsx); not yet created live, see §10 pending migration
 ```
 
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
@@ -549,6 +561,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - ~~Self missing from groups created before the 2026-07-20 auto-add-self fix~~ — **backfilled 2026-07-20**: one-off script (authenticated as the real `jakevolin@gmail.com` account, RLS-respecting) added the self person to all 22 pre-existing groups that were missing them (only "Volin Family" already had self as a member). Cached group summaries were deliberately NOT invalidated by this backfill, to avoid a 22-call regeneration cost spike (CLAUDE.md rule 3) — a summary will just read as slightly stale until it's naturally refreshed.
 - Email confirmation must be re-enabled (with a proper redirect URL) before real users.
 - **Founder cleanup needed: disposable test account `onboarding.verify.test@example.com`** — created 2026-07-22 to verify the new onboarding experience end-to-end (signup → tree → groups → Home). Fully isolated by RLS from real data, but this session has no Supabase auth-admin access to delete it — needs removing via the dashboard.
+- **Founder needs to run a SQL migration: `feedback_notes` table (item — click-to-comment feedback widget, 2026-07-22)** — `supabase/migrations_manual/2026-07-22-feedback-notes.sql`, paste into the Supabase SQL Editor. Until this runs, the widget's save silently no-ops (insert fails, swallowed) — UI flow itself is verified working (toggle/highlight/click-intercept/composer, see FeedbackWidget.tsx).
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.
 
