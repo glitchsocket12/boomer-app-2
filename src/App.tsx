@@ -116,7 +116,11 @@ export default function App() {
     const shouldStart = (count ?? 0) === 0
     setOnboardingPending(shouldStart)
     if (shouldStart) {
-      await supabase.auth.updateUser({ data: { onboarding_started: true } })
+      // Silent-failure house bug (see PROJECT_CONTEXT §12): this write is the whole reason the
+      // sticky flag works at all — if it silently fails, the next load falls right back through
+      // to this same "zero people" re-derivation, which is exactly what it exists to avoid.
+      const { error } = await supabase.auth.updateUser({ data: { onboarding_started: true } })
+      if (error) console.error('Failed to persist onboarding_started', error)
     }
   }
 

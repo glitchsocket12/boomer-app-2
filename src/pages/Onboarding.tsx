@@ -110,7 +110,12 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   async function markOnboardingComplete() {
-    await supabase.auth.updateUser({ data: { onboarding_complete: true } })
+    // Silent-failure house bug (see PROJECT_CONTEXT §12): onComplete() below fires regardless of
+    // whether this write actually reached the server, so a failure here used to be invisible —
+    // the user would appear to land on Home fine, then get routed straight back into onboarding
+    // on their very next fresh login since the server never actually recorded completion.
+    const { error } = await supabase.auth.updateUser({ data: { onboarding_complete: true } })
+    if (error) console.error('Failed to persist onboarding_complete', error)
   }
 
   async function skipEverything() {

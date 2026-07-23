@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import SearchBox from './SearchBox'
 
 type PersonOption = { id: string; label: string }
@@ -40,8 +40,21 @@ export default function RelationshipAddPicker({
   const q = query.trim().toLowerCase()
   const results = q ? people.filter((p) => !excludeIds.includes(p.id) && p.label.toLowerCase().includes(q)).slice(0, 8) : []
 
+  // Hitting Enter after typing a name should commit it, same as clicking — an exact (case-
+  // insensitive) match against someone already on file selects them, otherwise it's treated as a
+  // new person, same as clicking "+ Add ... as a new person".
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    const trimmed = query.trim()
+    if (!trimmed) return
+    const exact = results.find((p) => p.label.toLowerCase() === trimmed.toLowerCase())
+    if (exact) onSelectExisting(exact)
+    else onCreateNew(trimmed)
+    close()
+  }
+
   return (
-    <div style={styles.picker}>
+    <form onSubmit={handleSubmit} style={styles.picker}>
       <SearchBox value={query} onChange={setQuery} placeholder={placeholder} />
       {q && (
         <div style={styles.options}>
@@ -73,7 +86,7 @@ export default function RelationshipAddPicker({
       <button type="button" onClick={close} style={styles.cancel}>
         Cancel
       </button>
-    </div>
+    </form>
   )
 }
 

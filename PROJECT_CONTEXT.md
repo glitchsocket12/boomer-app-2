@@ -361,13 +361,30 @@ src/
 │                                 entirely, per founder ask — it was also what a newly-added node
 │                                 visually covered, same root cause as the left-pin bug. Verified
 │                                 live: added a parent during onboarding, confirmed centered layout
-│                                 and no covered/overlapping text.
+│                                 and no covered/overlapping text. Suggestion feature 2026-07-22
+│                                 (founder-reported): adding a person as a second "Parent"/
+│                                 "Grandparent" (any `category: 'parents'` add) used to leave them
+│                                 unlinked to the child's other already-known parent — no marriage
+│                                 line, since nothing ever recorded them as a couple. `addRelationship`
+│                                 now checks (`getRelationshipsForPerson`, relationshipsTable.ts) for
+│                                 any other parent of the same child not yet linked as spouse/partner
+│                                 to the new one, and offers a "suggest, don't assert" banner ("Are X
+│                                 and Y married or partners?") — accept writes a real spouse
+│                                 relationship (`linkRelationship`), decline writes nothing. Verified
+│                                 live with disposable test people (deleted after, incl. one stray
+│                                 note left on Jake Volin's own profile from a temporary test-child
+│                                 link): suggestion appeared correctly, decline left no trace, accept
+│                                 produced a real marriage line on reload.
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
 │   │                              search everyone on file, or type a name that matches no
 │   │                              one to create a brand-new person, both wired through
-│   │                              writeRelationship.ts
+│   │                              writeRelationship.ts. Enter-to-submit (2026-07-22, founder
+│   │                              ask — clicking felt too hands-on): wrapped in a `<form>`,
+│   │                              Enter commits the typed name (exact match selects the
+│   │                              existing person, otherwise creates new), same outcome as
+│   │                              clicking either option.
 │   ├── ErrorBoundary.tsx      — per-tab crash containment; friendly fallback
 │   │                            (reload button, raw error tucked behind a
 │   │                            "Technical details" toggle)

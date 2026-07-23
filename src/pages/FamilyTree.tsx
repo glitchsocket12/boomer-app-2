@@ -19,6 +19,7 @@ import {
   type TreeSide,
 } from '../lib/familyTree'
 import { linkRelationship, createAndLinkRelationship, unlinkRelationship, type CircleCategory } from '../lib/writeRelationship'
+import { getRelationshipsForPerson } from '../lib/relationshipsTable'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 
 const TRASH_ICON = (
@@ -256,6 +257,7 @@ function layoutRelativeToParent(
 }
 
 type RemoveTarget = { category: CircleCategory; label: string; subjectId: string; subjectName: string; targetId: string; targetName: string }
+type SpouseSuggestion = { aId: string; aName: string; bId: string; bName: string }
 
 export default function FamilyTree({
   personId,
@@ -278,6 +280,7 @@ export default function FamilyTree({
   const [allPeople, setAllPeople] = useState<{ id: string; label: string }[]>([])
   const [removeConfirm, setRemoveConfirm] = useState<RemoveTarget | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [spouseSuggestions, setSpouseSuggestions] = useState<SpouseSuggestion[]>([])
 
   useEffect(() => {
     load()
@@ -286,6 +289,7 @@ export default function FamilyTree({
 
   async function load() {
     setLoading(true)
+    setSpouseSuggestions([])
     const [{ data: { user } }, { data: everyone }, tree] = await Promise.all([
       supabase.auth.getUser(),
       supabase.from('people').select('id, name, last_name'),
@@ -295,6 +299,28 @@ export default function FamilyTree({
     setAllPeople((everyone ?? []).map((p) => ({ id: p.id, label: p.last_name ? `${p.name} ${p.last_name}` : p.name })))
     setData(tree)
     setLoading(false)
+  }
+
+  // A person just recorded as a parent of subjectId might well be the spouse/partner of subjectId's
+  // OTHER already-known parent(s) — a very common traditional-family shape (two parents = usually a
+  // couple) that otherwise requires a separate manual trip into that parent's own tree to link.
+  // Suggest it instead of asserting it: only offered when subjectId already has another parent on
+  // file who isn't already linked to the new one, and declining writes nothing at all.
+  async function suggestSpouseLinks(subjectId: string, newParentId: string, newParentName: string) {
+    const subjectRel = await getRelationshipsForPerson(subjectId)
+    const otherParentIds = subjectRel.parentIds.filter((id) => id !== newParentId)
+    if (otherParentIds.length === 0) return
+    const newParentRel = await getRelationshipsForPerson(newParentId)
+    const alreadyLinked = new Set([...newParentRel.spouseIds, ...newParentRel.partnerIds])
+    const candidates = otherParentIds.filter((id) => !alreadyLinked.has(id))
+    if (candidates.length === 0) return
+    const suggestions = candidates.map((id) => ({
+      aId: id,
+      aName: allPeople.find((p) => p.id === id)?.label ?? 'the other parent',
+      bId: newParentId,
+      bName: newParentName,
+    }))
+    setSpouseSuggestions((prev) => [...prev, ...suggestions])
   }
 
   // Explicit add slots rather than one-per-tier: a person can have more than one parent, so
@@ -308,15 +334,38 @@ export default function FamilyTree({
     newName?: string
   ) {
     if (!data) return
+    let targetId: string | undefined
+    let targetName: string | undefined
     if (existing) {
       await linkRelationship(userId, category, subjectId, subjectName, existing.id, existing.label)
+      targetId = existing.id
+      targetName = existing.label
     } else if (newName?.trim()) {
-      await createAndLinkRelationship(userId, category, subjectId, subjectName, newName.trim())
+      const created = await createAndLinkRelationship(userId, category, subjectId, subjectName, newName.trim())
+      if (!created) return
+      targetId = created.id
+      targetName = created.name
     } else {
       return
     }
+    if (category === 'parents' && targetId && targetName) {
+      await suggestSpouseLinks(subjectId, targetId, targetName)
+    }
     const refreshed = await buildFamilyTree(data.rootId)
     setData(refreshed)
+  }
+
+  async function acceptSpouseSuggestion(s: SpouseSuggestion) {
+    setSpouseSuggestions((prev) => prev.filter((x) => x !== s))
+    await linkRelationship(userId, 'spouse', s.aId, s.aName, s.bId, s.bName)
+    if (data) {
+      const refreshed = await buildFamilyTree(data.rootId)
+      setData(refreshed)
+    }
+  }
+
+  function declineSpouseSuggestion(s: SpouseSuggestion) {
+    setSpouseSuggestions((prev) => prev.filter((x) => x !== s))
   }
 
   // A relationship added in the wrong spot (wrong person, wrong category) needs to be fully
@@ -661,6 +710,22 @@ export default function FamilyTree({
         </div>
       )}
 
+      {spouseSuggestions.map((s) => (
+        <div key={`${s.aId}:${s.bId}`} style={styles.suggestBanner}>
+          <span>
+            Are {s.aName} and {s.bName} married or partners? Both are on file as parents of the same person.
+          </span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={() => acceptSpouseSuggestion(s)} style={styles.suggestYesButton}>
+              Yes, link them
+            </button>
+            <button type="button" onClick={() => declineSpouseSuggestion(s)} style={styles.suggestNoButton}>
+              No thanks
+            </button>
+          </div>
+        </div>
+      ))}
+
       <p style={styles.legend}>{legendText}</p>
     </div>
   )
@@ -756,6 +821,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginTop: '1rem',
   },
   suggestButtonRow: { display: 'flex', gap: '0.5rem' },
+  suggestYesButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
   suggestNoButton: {
     fontSize: '0.85rem',
     padding: '0.4rem 0.85rem',
