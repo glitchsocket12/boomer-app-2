@@ -55,6 +55,11 @@ const CRUMB_TYPES = [
   'privacy',
 ]
 
+// Crumb types that are single fixed pages rather than records with a real id (their `id` is
+// just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
+// segment for these, not a `/type/id` pair.
+const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'circle', 'settings', 'about', 'privacy'])
+
 // Where-you-are is plain React state, so a browser refresh used to reset to Home.
 // Persist it per browser tab (sessionStorage) so refreshing stays on the current page.
 const NAV_STORAGE_KEY = 'boomer-nav'
@@ -67,8 +72,10 @@ const NAV_STORAGE_KEY = 'boomer-nav'
 // popstate handling below); this function only reconstructs the lossy fallback for a case with
 // no history.state to read — a freshly pasted/shared link, or sessionStorage cleared mid-session.
 function buildPath(view: Tab, navStack: Crumb[]): string {
-  if (navStack.length === 0) return view === 'home' ? '/' : `/${view}`
-  return navStack.map((c) => `/${c.type}/${encodeURIComponent(c.id)}`).join('')
+  if (navStack.length === 0) return `/${view}`
+  return navStack
+    .map((c) => (SINGLETON_CRUMB_TYPES.has(c.type) ? `/${c.type}` : `/${c.type}/${encodeURIComponent(c.id)}`))
+    .join('')
 }
 
 function parseNavFromPath(pathname: string): { view: Tab; navStack: Crumb[] } | null {
@@ -78,14 +85,24 @@ function parseNavFromPath(pathname: string): { view: Tab; navStack: Crumb[] } | 
     return { view: segments[0] as Tab, navStack: [] }
   }
   const navStack: Crumb[] = []
-  for (let i = 0; i + 1 < segments.length; i += 2) {
+  let i = 0
+  while (i < segments.length) {
     const type = segments[i]
-    const id = decodeURIComponent(segments[i + 1])
     if (!CRUMB_TYPES.includes(type)) return null
+    if (SINGLETON_CRUMB_TYPES.has(type)) {
+      // Labels can't be recovered from a bare URL (see below) — singleton pages don't have a
+      // separate id segment to fall back on either, so reuse the type as both.
+      navStack.push({ type, id: type, label: type } as unknown as Crumb)
+      i += 1
+      continue
+    }
+    if (i + 1 >= segments.length) return null
+    const id = decodeURIComponent(segments[i + 1])
     // Labels can't be recovered from a bare URL — every detail page already re-fetches its own
     // data by id, so this only affects the breadcrumb/back-button TEXT in this fallback path,
     // not whether the page itself loads correctly.
     navStack.push({ type, id, label: id } as unknown as Crumb)
+    i += 2
   }
   return navStack.length > 0 ? { view: 'home', navStack } : null
 }
