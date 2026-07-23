@@ -50,6 +50,26 @@ src/
 │   │                            `jakevolin@gmail.com` — that account has 413 real people/706
 │   │                            notes, confirmed live 2026-07-22, so it's unsuitable as a wipe
 │   │                            target despite being the usual browser-verification login.
+│   ├── ensureStarterTags.ts    — (item 28 follow-up, 2026-07-22) seeds 10 generic
+│   │                            starter tags (Milestone, Vacation, Biking,
+│   │                            Weddings, Parties, Workouts, Birthdays, Holidays,
+│   │                            Reunions, Trips) so a new/existing account's tag
+│   │                            picker isn't empty on day one. Guarded by a sticky
+│   │                            `tags_seeded` auth-metadata flag (same pattern as
+│   │                            `onboarding_complete`) checked BEFORE inserting —
+│   │                            not a blind insert — so it never resurrects the
+│   │                            starter set for someone who deliberately deleted
+│   │                            all their tags later, and is safe to run against
+│   │                            an account that already has some matching names.
+│   │                            Called from App.tsx's `onAuthStateChange` on
+│   │                            `SIGNED_IN` only, same call site as
+│   │                            `ensureSelfFromSignup.ts` below. Verified live: ran
+│   │                            on the real `jakevolin@gmail.com` account's next
+│   │                            real sign-in, inserted all 10 (no prior tags
+│   │                            existed except one the AI had already created —
+│   │                            "Phone Calls" — from real production usage
+│   │                            post-deploy, correctly left untouched/not
+│   │                            duplicated).
 │   └── ensureSelfFromSignup.ts — (2026-07-22) turns sign-up's auth user_metadata
 │                                (first_name/last_name/birthday) into a real self `people`
 │                                row + Birthday `reminders` row, so a new signup skips
@@ -243,7 +263,10 @@ src/
 │   │                            actually applied (`useMemo`, not a hardcoded list
 │   │                            like `GROUP_TYPES`), membership filter (`tags.
 │   │                            includes(tagFilter)`) since tags are multi-valued,
-│   │                            plus a "No tags yet" option
+│   │                            plus a "No tags yet" option. "Manage tags →" link
+│   │                            (item 28 follow-up, 2026-07-22) under the heading,
+│   │                            always visible (not gated on any tag being applied
+│   │                            yet) → `ManageTags.tsx`
 │   ├── EventDetail.tsx        — AI summary (gated: only auto-generates once
 │   │                            raw_description has content), editable description,
 │   │                            who-was-there (hover-untag, non-destructive) +
@@ -259,9 +282,30 @@ src/
 │   │                            case-insensitive reuse when it does), local
 │   │                            `TagChip` (hover-reveal-remove, non-destructive —
 │   │                            same pattern as `AffiliatedGroupChip`). Backed by
-│   │                            new `tags`/`moment_tags` tables (§6)
+│   │                            new `tags`/`moment_tags` tables (§6). Follow-up
+│   │                            same day: picker uses `browseAll` (shows the full
+│   │                            tag list, alphabetically, the moment you focus the
+│   │                            box — no need to already know/remember what's on
+│   │                            file) and both the picker's item list and the
+│   │                            currently-applied tag chips are explicitly
+│   │                            `.sort((a,b)=>a.name.localeCompare(b.name))`'d at
+│   │                            render time (not relied on from fetch/insert
+│   │                            order) so alphabetical holds regardless of when a
+│   │                            tag was created
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
+│   ├── ManageTags.tsx         — (item 28 follow-up, 2026-07-22) reached via "Manage
+│   │                            tags →" link on Events.tsx (App.tsx `manageTags`
+│   │                            crumb, same simple link-launched-detail-page
+│   │                            pattern as DunbarDetail/DueForUpdate above). Full
+│   │                            alphabetical list of every tag with a live usage
+│   │                            count (`moment_tags` embed, counted client-side);
+│   │                            add (duplicate-name guarded), inline rename
+│   │                            (updates everywhere instantly — tags have no
+│   │                            denormalized copies elsewhere), delete with a
+│   │                            confirm banner that states how many events it'll
+│   │                            be removed from (cascades via the `moment_tags`
+│   │                            FK, no extra cleanup code needed)
 │   ├── Circle.tsx              — "My page" (item 32, REAL as of 2026-07-20, replaced
 │   │                             CircleMock.tsx): self header (name, birthday/
 │   │                             anniversary, "Edit your profile →" into PersonDetail),
@@ -413,14 +457,26 @@ the container.
 │   ├── AutoGrowTextarea.tsx   — grows to 160px then scrolls; Enter sends
 │   ├── PhotoGallery.tsx       — DISPLAY-ONLY placeholder tiles (no real photos)
 │   ├── RefreshButton.tsx      — spinning refresh icon
-│   ├── SearchBox.tsx          — client-side list filter
+│   ├── SearchBox.tsx          — client-side list filter. Optional `onFocus`/`onBlur`
+│   │                            props (item 28 follow-up, 2026-07-22, additive)
+│   │                            passed straight through to the input, so a picker
+│   │                            built on top can react to focus state
 │   ├── SearchAddPicker.tsx    — type-to-search + tap-to-add from a list (used for
 │   │                            EventDetail's attendee/group-tag pickers). Optional
 │   │                            `onCreateNew`/`createLabel` props (item 28,
 │   │                            2026-07-22, additive — existing callers unaffected)
 │   │                            add an inline "+ Add ..." create affordance,
 │   │                            borrowed from RelationshipAddPicker's create-button
-│   │                            block, for a growing vocabulary like tags
+│   │                            block, for a growing vocabulary like tags. Optional
+│   │                            `browseAll` prop (2026-07-22 follow-up, default
+│   │                            false — people/group pickers unaffected): focusing
+│   │                            the input shows the FULL item list immediately
+│   │                            (not just after typing), so a bounded vocabulary
+│   │                            like tags can be browsed/recognized rather than
+│   │                            recalled from memory — caller is responsible for
+│   │                            passing `items` pre-sorted (EventDetail's tags
+│   │                            picker sorts alphabetically). Blur close is
+│   │                            delayed 150ms so a click on a result registers first.
 │   ├── Chips.tsx              — PersonChip (green) / GroupChip (gold) / EventChip
 │   │                            (blue) — shared visual language everywhere
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)
@@ -553,7 +609,7 @@ feedback_notes id, user_id, page_label?, element_label?, note, status ("open"/"d
 - **Cross-navigation:** any person/group/event mention anywhere is a chip → detail page, with breadcrumb trail; refresh restores location (sessionStorage).
 - **Search boxes** on People/Events/Groups (client-side).
 - **"My page" + real family tree + relationships table** (item 32, 2026-07-20 — see §3/§4/§6): a real `is_self` flag + `relationships` table replace the note-text-only inference that used to be the sole source of family data. Circle.tsx ("My page") is real (onboarding to flag/create the self person, live circle grid, "+" writes real facts). FamilyTree.tsx works for ANY person, not just the self person, walking the relationships table live. `person-facts` Key Facts linking and `converse`/`update-moment`/`update-group`'s "my mom/dad" resolution both read the same table now — the "all work together" ask is done, not just the tree UI.
-- **Event tags** (items 28 + 34, 2026-07-22 — see §3/§4/§6): manual tag/untag on EventDetail (create-or-reuse picker + hover-remove chip) and AI-suggested tagging via `converse` (capture-time only, capped 1-3/moment, reuse-biased), backed by new `tags`/`moment_tags` tables. Events page has a tag filter dropdown, growing from tags actually applied (not a fixed list). Verified live end-to-end against the real account (create, cross-event reuse, non-destructive untag, filter, AI auto-tag), test data cleaned up after. `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred — see §8 item 28.
+- **Event tags** (items 28 + 34, 2026-07-22 — see §3/§4/§6): manual tag/untag on EventDetail (create-or-reuse picker, browse-all-on-focus, hover-remove chip) and AI-suggested tagging via `converse` (capture-time only, capped 1-3/moment, reuse-biased), backed by new `tags`/`moment_tags` tables. Events page has a tag filter dropdown (growing from tags actually applied) plus a "Manage tags →" link to `ManageTags.tsx` for a full add/rename/delete view with usage counts. 10 generic starter tags auto-seed once per account. Alphabetical order enforced at render time everywhere tags list (picker, chips, filter, Manage Tags), independent of creation order. Verified live end-to-end against the real account, test data cleaned up after. `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred — see §8 item 28.
 - Demo persona seed data exists ("John & Jane Doe", ~18 people/~22 moments — fake, handwritten UUIDs; don't pattern-match on it).
 
 ## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
@@ -574,7 +630,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both). Concretely blocks auto-linking a new spouse as a parent of the other spouse's existing kids (step-parent case) — deliberately left manual-only in item 40 pending this. Real example on file: Andy Volin (deceased) was married to Andi Volin, who's since remarried to Michael Galchinsky.
 26. Ratings/thumbs feedback loop (tunes suggestions; does not retrain the model).
 27. Photo gallery for real (upload/Supabase Storage/tagging; placeholder shipped). True camera-roll sync needs the native iPhone app.
-28. ~~Manual + AI-suggested tags on events~~ — **DONE 2026-07-22** (schema: new `tags`/`moment_tags` tables, see §6). Manual create-or-reuse picker + hover-remove chip on EventDetail; AI-suggested via `converse` only for v1 (capped 1-3 tags/moment, reuse-biased instruction) — `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred until real usage confirms the vocabulary stays clean, not scope-cut for any other reason. Verified live end-to-end against the real account (manual create/reuse/persist/untag, AI auto-tag via Home chat correctly created and applied a new "vacation" tag with no manual step), test data cleaned up after. Pairs with item 34's filter, same schema change powers both.
+28. ~~Manual + AI-suggested tags on events~~ — **DONE 2026-07-22** (schema: new `tags`/`moment_tags` tables, see §6). Manual create-or-reuse picker + hover-remove chip on EventDetail; AI-suggested via `converse` only for v1 (capped 1-3 tags/moment, reuse-biased instruction) — `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred until real usage confirms the vocabulary stays clean, not scope-cut for any other reason. Verified live end-to-end against the real account (manual create/reuse/persist/untag, AI auto-tag via Home chat correctly created and applied a new "vacation" tag with no manual step), test data cleaned up after. Pairs with item 34's filter, same schema change powers both. **Same-day follow-up (founder-requested):** the tag picker now browses the full alphabetical list on focus instead of requiring you to already know a tag's exact spelling (`SearchAddPicker`'s new `browseAll` prop); 10 generic starter tags auto-seed once per account (`ensureStarterTags.ts`, guarded so it can't resurrect a deliberately-emptied list); new `ManageTags.tsx` page (linked from Events) lists every tag with usage counts and lets you add/rename/delete outside the context of any one event. Verified live: starter seed fired correctly on the real account's next sign-in (10/10 inserted, left a pre-existing AI-created "Phone Calls" tag alone rather than duplicating), rename/add/delete all confirmed against real + disposable test tags, alphabetical order holds everywhere (picker, chips, filter, Manage Tags list) regardless of creation order.
 29. Search within GroupDetail; People filter (criteria undecided).
 30. AI/"fuzzy" semantic search (likely merges into 14).
 31. **"Memory lane" curated media feed** — requested 2026-07-19. A scrollable, media-driven feed surfacing curated memories (vs. today's specific-lookup mode only); best outcome likely needs real event photos, so probably sequences after item 27 (photo gallery). Already named as a target query mode in §9's product philosophy, just not built yet.

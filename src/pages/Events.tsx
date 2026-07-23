@@ -24,10 +24,12 @@ export default function Events({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  onManageTags,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onManageTags: () => void
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
@@ -157,6 +159,9 @@ export default function Events({
           {creating ? '…' : '+ Add Event'}
         </button>
       </div>
+      <button type="button" onClick={onManageTags} style={styles.manageTagsLink}>
+        Manage tags →
+      </button>
       {createError && <p style={styles.addErrorText}>{createError}</p>}
 
       {moments.length === 0 && (
@@ -254,6 +259,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
   },
   addErrorText: { color: '#B04A3B', fontSize: '0.9rem', marginBottom: '1rem' },
+  manageTagsLink: {
+    display: 'inline-block',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '0.9rem',
+    cursor: 'pointer',
+    padding: 0,
+    marginBottom: '1rem',
+    fontFamily: 'Georgia, serif',
+  },
   searchRow: { display: 'flex', gap: '0.75rem', alignItems: 'flex-start', marginBottom: '1.5rem' },
   tagFilterSelect: {
     flexShrink: 0,

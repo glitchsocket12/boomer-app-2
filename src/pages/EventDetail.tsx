@@ -372,6 +372,7 @@ export default function EventDetail({
   const tags = (moment.moment_tags ?? [])
     .map((mt) => mt.tags)
     .filter((t): t is TagRef => t !== null)
+    .sort((a, b) => a.name.localeCompare(b.name))
 
   const dismissedIds = new Set(moment.dismissed_person_ids ?? [])
   const suggestedAttendees = new Map<string, PersonRef>()
@@ -484,14 +485,16 @@ export default function EventDetail({
         </>
       )}
       <SearchAddPicker
-        items={allTagsList
+        items={[...allTagsList]
           .filter((t) => !tags.some((tagged) => tagged.id === t.id))
+          .sort((a, b) => a.name.localeCompare(b.name))
           .map((t) => ({ id: t.id, label: t.name }))}
         placeholder="Tag this event (e.g. milestone, vacation)…"
         onSelect={(item) => handleTagMoment(item.id)}
         onCreateNew={(name) => handleCreateAndTagMoment(name)}
         createLabel={(q) => `+ Add "${q}" as a new tag`}
         emptyText="No tags match."
+        browseAll
       />
 
       {editingDescription ? (

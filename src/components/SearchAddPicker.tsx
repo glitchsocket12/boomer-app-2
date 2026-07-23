@@ -14,6 +14,7 @@ export default function SearchAddPicker({
   onCreateNew,
   createLabel,
   emptyText,
+  browseAll = false,
 }: {
   items: Item[]
   placeholder: string
@@ -24,18 +25,35 @@ export default function SearchAddPicker({
   onCreateNew?: (query: string) => void
   createLabel?: (query: string) => string
   emptyText?: string
+  // When true, focusing the input shows the full item list (alphabetical order is the caller's
+  // responsibility — sort `items` before passing them in) even before typing, so a bounded,
+  // learnable vocabulary (e.g. tags) can be browsed instead of requiring you to already remember
+  // what's there. Default false preserves the existing type-to-reveal behavior everywhere else
+  // (people/group pickers), which intentionally stays out of the way until you search.
+  browseAll?: boolean
 }) {
   const [query, setQuery] = useState('')
+  const [focused, setFocused] = useState(false)
   const q = query.trim().toLowerCase()
-  const results = q ? items.filter((item) => item.label.toLowerCase().includes(q)).slice(0, 8) : []
+  const browsing = browseAll && focused && !q
+  const results = browsing ? items : q ? items.filter((item) => item.label.toLowerCase().includes(q)).slice(0, 8) : []
+  const showList = browsing || !!q
 
   return (
     <div>
-      <SearchBox value={query} onChange={setQuery} placeholder={placeholder} />
-      {q && (
+      <SearchBox
+        value={query}
+        onChange={setQuery}
+        placeholder={placeholder}
+        onFocus={() => setFocused(true)}
+        // Delayed so a click on a result/create button (which blurs the input first) still
+        // registers before the list disappears out from under it.
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+      />
+      {showList && (
         <div style={styles.resultsList}>
-          {results.length === 0 && !onCreateNew ? (
-            <p style={styles.empty}>{emptyText ?? `No matches for "${query}".`}</p>
+          {results.length === 0 && !(onCreateNew && q) ? (
+            <p style={styles.empty}>{emptyText ?? (browsing ? 'Nothing yet.' : `No matches for "${query}".`)}</p>
           ) : (
             results.map((item) => (
               <button
@@ -51,7 +69,7 @@ export default function SearchAddPicker({
               </button>
             ))
           )}
-          {onCreateNew && (
+          {onCreateNew && q && (
             <button
               type="button"
               onClick={() => {

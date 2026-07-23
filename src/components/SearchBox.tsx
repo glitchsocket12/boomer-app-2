@@ -6,16 +6,22 @@ export default function SearchBox({
   value,
   onChange,
   placeholder,
+  onFocus,
+  onBlur,
 }: {
   value: string
   onChange: (value: string) => void
   placeholder: string
+  onFocus?: () => void
+  onBlur?: () => void
 }) {
   return (
     <input
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onFocus={onFocus}
+      onBlur={onBlur}
       placeholder={placeholder}
       style={styles.input}
     />

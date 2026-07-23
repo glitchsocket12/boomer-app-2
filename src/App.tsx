@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import { ensureSelfPersonFromSignupMetadata } from './lib/ensureSelfFromSignup'
+import { ensureStarterTags } from './lib/ensureStarterTags'
 import Onboarding from './pages/Onboarding'
 import Home from './pages/Home'
 import People from './pages/People'
@@ -13,6 +14,7 @@ import EventDetail from './pages/EventDetail'
 import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
+import ManageTags from './pages/ManageTags'
 import Circle from './pages/Circle'
 import FamilyTree from './pages/FamilyTree'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -26,6 +28,7 @@ type Crumb =
   | { type: 'event'; id: string; label: string }
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
+  | { type: 'manageTags'; id: string; label: string }
   | { type: 'circle'; id: string; label: string }
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
 
@@ -46,7 +49,7 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
       ? parsed.navStack.filter(
           (c: Crumb) =>
             c &&
-            ['person', 'group', 'event', 'dunbar', 'nudges', 'circle', 'familyTree'].includes(c.type) &&
+            ['person', 'group', 'event', 'dunbar', 'nudges', 'manageTags', 'circle', 'familyTree'].includes(c.type) &&
             typeof c.id === 'string' &&
             typeof c.label === 'string'
         )
@@ -85,6 +88,7 @@ export default function App() {
       setSession(session)
       if (event === 'SIGNED_IN' && session?.user) {
         ensureSelfPersonFromSignupMetadata(session.user.id, session.user.user_metadata ?? {})
+        ensureStarterTags(session.user.id, session.user.user_metadata ?? {})
       }
       checkOnboarding(session)
     })
@@ -237,6 +241,8 @@ export default function App() {
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
       />
     )
+  } else if (current?.type === 'manageTags') {
+    content = <ManageTags onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'circle') {
     content = (
       <Circle
@@ -282,6 +288,7 @@ export default function App() {
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
             onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+            onManageTags={() => pushCrumb({ type: 'manageTags', id: 'manageTags', label: 'Manage Tags' })}
           />
         )}
         {view === 'groups' && (
