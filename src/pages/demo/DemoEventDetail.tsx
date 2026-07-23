@@ -1,5 +1,5 @@
 import { EventDetailView, type MomentDetail } from '../EventDetail'
-import { DEMO_MOMENTS, DEMO_PEOPLE, DEMO_GROUPS } from '../../lib/demoData'
+import { DEMO_MOMENTS, DEMO_PEOPLE, DEMO_GROUPS, DEMO_TAGS } from '../../lib/demoData'
 
 export default function DemoEventDetail({
   eventId,
@@ -34,7 +34,10 @@ export default function DemoEventDetail({
       const g = DEMO_GROUPS.find((gg) => gg.id === gid)!
       return { groups: { id: g.id, name: g.name } }
     }),
-    moment_tags: [],
+    moment_tags: m.tagIds.map((tid) => {
+      const t = DEMO_TAGS.find((tt) => tt.id === tid)!
+      return { tags: { id: t.id, name: t.name } }
+    }),
     dismissed_person_ids: [],
   }
 

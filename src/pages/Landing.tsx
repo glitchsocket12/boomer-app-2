@@ -2,6 +2,7 @@ const NAV_ITEMS: { id: string; label: string }[] = [
   { id: 'what-is-boomer', label: 'What is Boomer?' },
   { id: 'not-social-media', label: 'Not another social network' },
   { id: 'how-it-works', label: 'How it works' },
+  { id: 'try-it-now', label: 'Try it live' },
   { id: 'who-its-for', label: "Who it's for" },
   { id: 'privacy', label: 'Just yours' },
   { id: 'get-started', label: 'Get started' },
@@ -41,9 +42,14 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
             </a>
           ))}
         </div>
-        <button onClick={() => onAuthClick('login')} style={styles.loginButton}>
-          Log in
-        </button>
+        <div style={styles.navActions}>
+          <button onClick={() => onAuthClick('demo')} style={styles.navDemoButton}>
+            Free demo
+          </button>
+          <button onClick={() => onAuthClick('login')} style={styles.loginButton}>
+            Log in
+          </button>
+        </div>
       </nav>
 
       <section style={{ ...styles.section, ...styles.hero }}>
@@ -102,6 +108,9 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
             </tbody>
           </table>
         </div>
+        <button onClick={() => onAuthClick('demo')} style={styles.inlineDemoLink}>
+          See it for yourself — no signup needed. →
+        </button>
       </section>
 
       <section id="how-it-works" style={styles.section}>
@@ -122,15 +131,32 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         </ul>
       </section>
 
-      <section id="who-its-for" style={{ ...styles.section, ...styles.altBg }}>
+      <section id="try-it-now" style={{ ...styles.section, ...styles.altBg }}>
+        <div style={styles.demoCallout}>
+          <span style={styles.demoEyebrow}>No account. No scheduled call. No commitment.</span>
+          <p style={styles.demoHeadline}>Click in and look around for yourself.</p>
+          <p style={styles.body}>
+            Explore a fully filled-out sample profile — real people, real events, real
+            groups — exactly as Boomer looks once you've been using it for a while.
+          </p>
+          <button onClick={() => onAuthClick('demo')} style={styles.demoButton}>
+            See a live demo →
+          </button>
+        </div>
+      </section>
+
+      <section id="who-its-for" style={styles.section}>
         <p style={styles.body}>
           For people who care enough to want to remember — big extended families, friends
           you see twice a year, anyone who's frozen mid-conversation trying to recall a name
           or how two people are related.
         </p>
+        <button onClick={() => onAuthClick('demo')} style={styles.inlineDemoLink}>
+          Sound like you? Take a look around. →
+        </button>
       </section>
 
-      <section id="privacy" style={styles.section}>
+      <section id="privacy" style={{ ...styles.section, ...styles.altBg }}>
         <p style={styles.body}>
           Nobody but you can see what's here — no public profile, no feed, no ads. Boomer's
           AI reads your notes only to organize them; everything is encrypted in transit and
@@ -138,7 +164,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         </p>
       </section>
 
-      <section id="get-started" style={{ ...styles.section, ...styles.altBg }}>
+      <section id="get-started" style={styles.section}>
         <p style={styles.body}>
           About a minute, no credit card — just start telling Boomer about your people.
         </p>
@@ -150,10 +176,6 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
           <button onClick={() => onAuthClick('login')} style={styles.tile}>
             <span style={styles.tileEyebrow}>Already have an account?</span>
             <span style={styles.tileAction}>Log in</span>
-          </button>
-          <button onClick={() => onAuthClick('demo')} style={styles.tile}>
-            <span style={styles.tileEyebrow}>Just want to look around?</span>
-            <span style={styles.tileAction}>See a live demo</span>
           </button>
         </div>
       </section>
@@ -197,6 +219,18 @@ const styles: { [key: string]: React.CSSProperties } = {
     textDecoration: 'none',
     fontSize: '0.95rem',
     borderBottom: '1px solid transparent',
+  },
+  navActions: { display: 'flex', alignItems: 'center', gap: '0.6rem' },
+  navDemoButton: {
+    color: '#FFFFFF',
+    backgroundColor: '#2E4034',
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    padding: '0.4rem 1rem',
+    borderRadius: '999px',
+    border: '1px solid #2E4034',
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
   },
   loginButton: {
     color: '#2E4034',
@@ -252,6 +286,56 @@ const styles: { [key: string]: React.CSSProperties } = {
     textDecoration: 'underline',
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
+  },
+  inlineDemoLink: {
+    display: 'block',
+    margin: '1.5rem auto 0',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '1rem',
+    fontWeight: 700,
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    textAlign: 'center',
+  },
+  demoCallout: {
+    textAlign: 'center',
+    maxWidth: '600px',
+    margin: '0 auto',
+    padding: '2.5rem 2rem',
+    backgroundColor: '#F7F5F2',
+    border: '1px solid rgba(46,64,52,0.2)',
+    borderRadius: '14px',
+  },
+  demoEyebrow: {
+    display: 'block',
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    color: '#5A5A5A',
+    marginBottom: '0.75rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.03em',
+  },
+  demoHeadline: {
+    fontSize: '1.75rem',
+    fontWeight: 700,
+    color: '#2E4034',
+    margin: '0 0 1rem',
+  },
+  demoButton: {
+    display: 'inline-block',
+    fontSize: '1.15rem',
+    fontWeight: 700,
+    padding: '0.8rem 1.9rem',
+    borderRadius: '8px',
+    backgroundColor: 'transparent',
+    color: '#2E4034',
+    border: '2px solid #2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    marginTop: '0.5rem',
   },
   body: {
     fontSize: '1.1rem',

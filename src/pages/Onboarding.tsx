@@ -15,7 +15,7 @@ import FamilyTree from './FamilyTree'
 
 type SelfPerson = { id: string; name: string; last_name: string | null }
 type PersonOption = { id: string; label: string }
-type Stage = 'welcome' | 'tree' | 'familyGroupOffer' | 'groups' | 'handoff'
+type Stage = 'welcome' | 'tree' | 'familyGroupOffer' | 'groups' | 'guide' | 'handoff'
 
 // Family is covered by the tree step itself (item 41's existing Family-group/tree pairing) —
 // these are the next-highest-leverage clusters per the gameplan's "juice for the squeeze" ranking.
@@ -31,6 +31,7 @@ const STAGE_DOT_INDEX: Record<Stage, number> = {
   tree: 1,
   familyGroupOffer: 1,
   groups: 2,
+  guide: 3,
   handoff: 3,
 }
 const STAGE_DOT_LABELS = ['Welcome', 'Family', 'Groups', 'Done']
@@ -182,7 +183,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
 
   function confirmGroupTypes() {
     if (selectedGroupTypes.length === 0) {
-      setStage('handoff')
+      setStage('guide')
       return
     }
     setGroupQueue(selectedGroupTypes)
@@ -242,7 +243,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
     setGroupQueue(rest)
     setCurrentGroupName('')
     setCurrentGroupMembers('')
-    if (rest.length === 0) setStage('handoff')
+    if (rest.length === 0) setStage('guide')
   }
 
   const dotIndex = STAGE_DOT_INDEX[stage]
@@ -410,7 +411,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
               <button onClick={confirmGroupTypes} style={styles.primaryButton}>
                 Continue →
               </button>
-              <button onClick={() => setStage('handoff')} style={styles.skipLink}>
+              <button onClick={() => setStage('guide')} style={styles.skipLink}>
                 Skip groups
               </button>
             </div>
@@ -448,6 +449,42 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
               </button>
               <button onClick={skipCurrentGroup} style={styles.secondaryButton} disabled={savingGroup}>
                 Skip this one
+              </button>
+            </div>
+          </>
+        )}
+
+        {selfPerson && stage === 'guide' && (
+          <>
+            <h1 style={styles.title}>Here's how Boomer works</h1>
+            <ul style={styles.featureList}>
+              <li style={styles.featureItem}>
+                <strong>Home</strong> is the chat. Type or tap the mic and just talk — Boomer
+                sorts out who you're talking about. Quick counts and a couple of AI-suggested
+                things worth capturing live here too.
+              </li>
+              <li style={styles.featureItem}>
+                <strong>People</strong> — everyone Boomer knows about gets their own page: key
+                facts, notes, and how they connect to others.
+              </li>
+              <li style={styles.featureItem}>
+                <strong>Events</strong> — moments worth remembering (a dinner, a call, a trip),
+                organized by date.
+              </li>
+              <li style={styles.featureItem}>
+                <strong>Groups</strong> — clusters of people (family, friends, work) so you can
+                tag a whole group at once instead of one person at a time.
+              </li>
+            </ul>
+            <p style={styles.body}>
+              You can always add more, any time — just by talking to it.
+            </p>
+            <div style={styles.buttonRow}>
+              <button onClick={() => setStage('handoff')} style={styles.primaryButton}>
+                Continue →
+              </button>
+              <button onClick={skipEverything} style={styles.skipLink}>
+                Skip
               </button>
             </div>
           </>
@@ -498,6 +535,15 @@ const styles: { [key: string]: React.CSSProperties } = {
   dotLabel: { fontSize: '0.7rem', color: '#999' },
   title: { fontSize: '1.8rem', color: '#2E4034', margin: '0 0 1rem' },
   body: { fontSize: '1rem', color: '#444', lineHeight: 1.6, marginBottom: '1.25rem' },
+  featureList: {
+    listStyle: 'none',
+    padding: 0,
+    margin: '0 0 1.25rem',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '1rem',
+  },
+  featureItem: { fontSize: '1rem', color: '#444', lineHeight: 1.6 },
   buttonRow: { display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap', marginTop: '0.5rem' },
   primaryButton: {
     fontSize: '1.05rem',

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { EventsView, type Moment } from '../Events'
-import { DEMO_MOMENTS, DEMO_PEOPLE, DEMO_GROUPS } from '../../lib/demoData'
+import { DEMO_MOMENTS, DEMO_PEOPLE, DEMO_GROUPS, DEMO_TAGS } from '../../lib/demoData'
 
 const ALL_MOMENTS: Moment[] = DEMO_MOMENTS.map((m) => ({
   id: m.id,
@@ -18,8 +18,15 @@ const ALL_MOMENTS: Moment[] = DEMO_MOMENTS.map((m) => ({
     const g = DEMO_GROUPS.find((gg) => gg.id === gid)!
     return { groups: { id: g.id, name: g.name } }
   }),
-  moment_tags: [],
+  moment_tags: m.tagIds.map((tid) => {
+    const t = DEMO_TAGS.find((tt) => tt.id === tid)!
+    return { tags: { id: t.id, name: t.name } }
+  }),
 }))
+
+// Matches how the real Events.tsx container derives it: the distinct set of tag names actually
+// in use, sorted — not a hardcoded list.
+const DISTINCT_TAGS: string[] = [...new Set(DEMO_TAGS.map((t) => t.name))].sort()
 
 export default function DemoEvents({
   onSelectPerson,
@@ -36,7 +43,7 @@ export default function DemoEvents({
   return (
     <EventsView
       moments={ALL_MOMENTS}
-      distinctTags={[]}
+      distinctTags={DISTINCT_TAGS}
       search={search}
       onSearchChange={setSearch}
       tagFilter={tagFilter}

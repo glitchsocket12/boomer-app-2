@@ -51,7 +51,20 @@ export type DemoMoment = {
   created_at: string
   attendeeIds: string[]
   groupIds: string[]
+  tagIds: string[]
 }
+
+export type DemoTag = { id: string; name: string }
+
+export const DEMO_TAGS: DemoTag[] = [
+  { id: 'sports', name: 'Sports' },
+  { id: 'milestone', name: 'Milestone' },
+  { id: 'family', name: 'Family' },
+  { id: 'reunion', name: 'Reunion' },
+  { id: 'holiday', name: 'Holiday' },
+  { id: 'work', name: 'Work' },
+  { id: 'golf', name: 'Golf' },
+]
 
 export type DemoReminder = { personId: string; label: 'Birthday' | 'Anniversary'; month: number; day: number }
 
@@ -246,6 +259,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2026-06-14T00:00:00Z',
     attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'emma', 'noah'],
     groupIds: ['family'],
+    tagIds: ['sports'],
   },
   {
     id: 'm2',
@@ -259,6 +273,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2026-05-02T00:00:00Z',
     attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'carlos', 'danny', 'frank', 'steve'],
     groupIds: ['family', 'squadron'],
+    tagIds: ['milestone', 'family'],
   },
   {
     id: 'm3',
@@ -272,6 +287,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2026-04-18T00:00:00Z',
     attendeeIds: ['gary', 'frank', 'steve', 'ray'],
     groupIds: ['squadron'],
+    tagIds: ['reunion'],
   },
   {
     id: 'm4',
@@ -285,6 +301,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2026-03-01T00:00:00Z',
     attendeeIds: ['gary', 'carol', 'beth', 'carlos', 'sofia', 'mike', 'jenna', 'emma', 'noah'],
     groupIds: ['family'],
+    tagIds: ['milestone'],
   },
   {
     id: 'm5',
@@ -298,6 +315,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2026-02-08T00:00:00Z',
     attendeeIds: ['gary', 'carol', 'peggy', 'diane', 'mike', 'beth'],
     groupIds: ['family'],
+    tagIds: ['milestone'],
   },
   {
     id: 'm6',
@@ -311,6 +329,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2025-11-27T00:00:00Z',
     attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'carlos', 'danny', 'emma', 'noah', 'sofia'],
     groupIds: ['family'],
+    tagIds: ['holiday'],
   },
   {
     id: 'm7',
@@ -324,6 +343,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2025-10-10T00:00:00Z',
     attendeeIds: ['gary', 'priya', 'sam'],
     groupIds: ['work'],
+    tagIds: ['work'],
   },
   {
     id: 'm8',
@@ -337,6 +357,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
     created_at: '2025-09-05T00:00:00Z',
     attendeeIds: ['gary', 'steve', 'harold', 'pete'],
     groupIds: ['golf'],
+    tagIds: ['golf'],
   },
 ]
 

@@ -116,6 +116,15 @@ src/
 │   │                            mode opens which screen lives in App.tsx's `authView`
 │   │                            state (`'landing' | 'login' | 'signup'`), not Landing.tsx
 │   │                            itself — Landing only fires the callback.
+│   │                            Pass 4 (2026-07-23, founder feedback — demo entry point was
+│   │                            buried as one of 3 equal tiles at the bottom): added a
+│   │                            dedicated `#try-it-now` section (between How it works and
+│   │                            Who it's for, own nav link) plus a "Free demo" button in the
+│   │                            sticky nav next to Log in, plus two more inline demo-link CTAs
+│   │                            (end of the comparison table, end of Who it's for). Removed the
+│   │                            redundant demo tile from Get Started (now just Sign up / Log
+│   │                            in). Section bg alternation re-threaded (privacy → altBg,
+│   │                            get-started → plain) to keep it after the insert.
 │   ├── Login.tsx              — combined sign up / log in. Takes `initialSignUp` (which
 │   │                            tile/button was clicked sets the starting mode) and
 │   │                            `onBack` (returns to Landing) props, both
@@ -203,6 +212,11 @@ src/
 │   │                            of re-deriving from the people count. Verified live against the
 │   │                            onboarding test account: added a parent mid-flow, hard-reloaded,
 │   │                            confirmed onboarding still resumed instead of dropping to Home.
+│   │                            (2026-07-23) New `guide` stage inserted between Groups and the
+│   │                            final handoff — one-paragraph-per-feature explainer (Home/People/
+│   │                            Events/Groups), shares dot-index 3 ("Done") with handoff. All
+│   │                            prior "jump to handoff" paths (empty group selection, empty group
+│   │                            queue, "Skip groups") now land here first instead.
 │   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
@@ -622,7 +636,7 @@ feedback_notes id, user_id, page_label?, element_label?, note, status ("open"/"d
 - **"My page" + real family tree + relationships table** (item 32, 2026-07-20 — see §3/§4/§6): a real `is_self` flag + `relationships` table replace the note-text-only inference that used to be the sole source of family data. Circle.tsx ("My page") is real (onboarding to flag/create the self person, live circle grid, "+" writes real facts). FamilyTree.tsx works for ANY person, not just the self person, walking the relationships table live. `person-facts` Key Facts linking and `converse`/`update-moment`/`update-group`'s "my mom/dad" resolution both read the same table now — the "all work together" ask is done, not just the tree UI.
 - **Event tags** (items 28 + 34, 2026-07-22 — see §3/§4/§6): manual tag/untag on EventDetail (create-or-reuse picker, browse-all-on-focus, hover-remove chip) and AI-suggested tagging via `converse` (capture-time only, capped 1-3/moment, reuse-biased), backed by new `tags`/`moment_tags` tables. Events page has a tag filter dropdown (growing from tags actually applied) plus a "Manage tags →" link to `ManageTags.tsx` for a full add/rename/delete view with usage counts. 10 generic starter tags auto-seed once per account. Alphabetical order enforced at render time everywhere tags list (picker, chips, filter, Manage Tags), independent of creation order. Verified live end-to-end against the real account, test data cleaned up after. `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred — see §8 item 28.
 - Demo persona seed data exists ("John & Jane Doe", ~18 people/~22 moments — fake, handwritten UUIDs; don't pattern-match on it) — separate from the item below, and not used by it.
-- **"See a live demo" public landing-page demo** (2026-07-23): a "Gary Pemberton" persona (21 people, 4 groups, 8 moments — wholly original, no real person/IP) hardcoded in `src/lib/demoData.ts`, click-through via `authView === 'demo'` → `DemoShell` (see §3). Zero Supabase/Edge Function calls anywhere in the demo, by design (CLAUDE.md rule 3 — a public, unauthenticated surface must not be able to run up API cost); the Home chat is scripted (fixed prompts/replies) rather than calling `converse`.
+- **"See a live demo" public landing-page demo** (2026-07-23): a "Gary Pemberton" persona (21 people, 4 groups, 8 moments — wholly original, no real person/IP) hardcoded in `src/lib/demoData.ts`, click-through via `authView === 'demo'` → `DemoShell` (see §3). Zero Supabase/Edge Function calls anywhere in the demo, by design (CLAUDE.md rule 3 — a public, unauthenticated surface must not be able to run up API cost); the Home chat is scripted (fixed prompts/replies) rather than calling `converse`. Multiple entry points on Landing.tsx now (see §3 Pass 4). Each of the 8 moments now also carries 1-2 tags (`DEMO_TAGS`, 7 total: Sports/Milestone/Family/Reunion/Holiday/Work/Golf) — was missing entirely until a founder click-through caught it; the demo's Events tag filter and EventDetail tag chips now work like the real app's.
 
 ## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
 
