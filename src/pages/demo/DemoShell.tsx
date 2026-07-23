@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Breadcrumb from '../../components/Breadcrumb'
+import DemoIntro from './DemoIntro'
 import DemoHome from './DemoHome'
 import DemoPeople from './DemoPeople'
 import DemoPersonDetail from './DemoPersonDetail'
@@ -23,8 +24,13 @@ const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events
 // from the static src/lib/demoData.ts dataset. No auth, no Supabase, no Edge Functions — every
 // Demo* container below renders the real *View components with `readOnly` set.
 export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; onSignUp: () => void }) {
+  const [introSeen, setIntroSeen] = useState(false)
   const [view, setView] = useState<Tab>('home')
   const [navStack, setNavStack] = useState<Crumb[]>([])
+
+  if (!introSeen) {
+    return <DemoIntro onFinish={() => setIntroSeen(true)} />
+  }
 
   function goToTab(tab: Tab) {
     setView(tab)
