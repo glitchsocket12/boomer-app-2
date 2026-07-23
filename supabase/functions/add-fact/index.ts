@@ -54,7 +54,9 @@ serve(async (req) => {
     const { data: existingGroups } = await supabaseClient.from("groups").select("id, name")
     const groupsRoster = (existingGroups ?? []).map((g) => g.name).join(", ")
 
-    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name, nicknames")
+    const { data: allPeople } = await supabaseClient
+      .from("people")
+      .select("id, name, last_name, nicknames, middle_name, goes_by_other")
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
     const lastNameById: Record<string, string | null> = {}
@@ -76,8 +78,11 @@ serve(async (req) => {
       idByName[fullName.toLowerCase()] = p.id
       lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
-      for (const nickname of (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)) {
-        claimKey(nickname.toLowerCase(), p.id)
+      const altNames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      if (p.middle_name) altNames.push(String(p.middle_name).trim())
+      if (p.goes_by_other) altNames.push(String(p.goes_by_other).trim())
+      for (const altName of altNames) {
+        claimKey(altName.toLowerCase(), p.id)
       }
     }
     for (const key of ambiguousKeys) delete idByName[key]

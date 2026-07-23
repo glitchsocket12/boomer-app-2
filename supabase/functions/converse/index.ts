@@ -46,7 +46,10 @@ serve(async (req) => {
     // calls — which reshuffles this text and breaks the prompt-cache prefix match on every turn
     // even when nothing changed (see the cache_control breakpoint below, and CLAUDE.md's
     // "serialize deterministically" rule).
-    const { data: people } = await supabaseClient.from("people").select("id, name, last_name, nicknames, is_self").order("id")
+    const { data: people } = await supabaseClient
+      .from("people")
+      .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+      .order("id")
     const { data: moments } = await supabaseClient
       .from("moments")
       .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
@@ -68,6 +71,11 @@ serve(async (req) => {
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
     const nicknamesById: Record<string, string[]> = {}
+    // Separate from nicknamesById (which stays a mirror of the raw `nicknames` column, since it's
+    // also the base the nickname_updates merge below writes back to) — this additionally folds in
+    // a middle name/callsign, for name-resolution and roster display only, so those never get
+    // persisted into the nicknames column themselves.
+    const altNamesById: Record<string, string[]> = {}
     const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — otherwise two
     // different people sharing one (e.g. two "Bob"s, or two people who both go by "Bob") would
@@ -90,7 +98,14 @@ serve(async (req) => {
       claimKey(p.name.toLowerCase(), p.id)
       const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
-      for (const nickname of nicknames) claimKey(nickname.toLowerCase(), p.id)
+      // A middle name/callsign the founder picked as this person's "goes by" name (or just kept
+      // on file without making it the display name) resolves the same way a chat-derived
+      // nickname does — same lookup key, same roster hint, same disambiguation guard.
+      const altNames = [...nicknames]
+      if (p.middle_name) altNames.push(String(p.middle_name).trim())
+      if (p.goes_by_other) altNames.push(String(p.goes_by_other).trim())
+      if (altNames.length > 0) altNamesById[p.id] = altNames
+      for (const altName of altNames) claimKey(altName.toLowerCase(), p.id)
     }
     for (const key of ambiguousKeys) delete idByName[key]
 
@@ -142,8 +157,8 @@ serve(async (req) => {
 
     const peopleRoster = (people ?? [])
       .map((p: any) => {
-        const nicknames = nicknamesById[p.id]
-        return nicknames ? `${nameById[p.id]} (also goes by: ${nicknames.join(", ")})` : nameById[p.id]
+        const altNames = altNamesById[p.id]
+        return altNames ? `${nameById[p.id]} (also goes by: ${altNames.join(", ")})` : nameById[p.id]
       })
       .join(", ")
 

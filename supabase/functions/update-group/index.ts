@@ -49,7 +49,9 @@ serve(async (req) => {
       .eq("id", groupId)
       .single()
 
-    const { data: allPeople } = await supabaseClient.from("people").select("id, name, last_name, nicknames, is_self")
+    const { data: allPeople } = await supabaseClient
+      .from("people")
+      .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
     const { data: allMoments } = await supabaseClient.from("moments").select("id, occasion, raw_description")
 
     const fullName = (p: { name: string; last_name: string | null }) =>
@@ -78,6 +80,10 @@ serve(async (req) => {
       lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
       const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      // A middle name/callsign the founder set on the profile resolves the same way a nickname
+      // does — read-only lookup here, so folding it straight into the same list is safe.
+      if (p.middle_name) nicknames.push(String(p.middle_name).trim())
+      if (p.goes_by_other) nicknames.push(String(p.goes_by_other).trim())
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
       for (const nickname of nicknames) claimKey(nickname.toLowerCase(), p.id)
     }

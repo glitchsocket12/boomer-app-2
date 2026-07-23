@@ -31,7 +31,7 @@ serve(async (req) => {
     const [{ data: person }, { data: notes }, { data: allPeople }] = await Promise.all([
       supabaseClient.from("people").select("name, last_name, key_facts").eq("id", personId).single(),
       supabaseClient.from("notes").select("id, content").eq("person_id", personId).order("created_at", { ascending: true }),
-      supabaseClient.from("people").select("id, name, last_name, nicknames"),
+      supabaseClient.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other"),
     ])
 
     // Serve the cached facts unless the caller explicitly asks to regenerate (token-efficiency
@@ -74,8 +74,11 @@ serve(async (req) => {
       nameById[p.id] = fullName
       idByName[fullName.toLowerCase()] = p.id
       claimKey(p.name.toLowerCase(), p.id)
-      for (const nickname of (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)) {
-        claimKey(nickname.toLowerCase(), p.id)
+      const altNames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      if (p.middle_name) altNames.push(String(p.middle_name).trim())
+      if (p.goes_by_other) altNames.push(String(p.goes_by_other).trim())
+      for (const altName of altNames) {
+        claimKey(altName.toLowerCase(), p.id)
       }
     }
     for (const key of ambiguousKeys) delete idByName[key]
