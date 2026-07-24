@@ -453,7 +453,14 @@ src/
 (other pages' 600px reading width is deliberate and unchanged) so the
 SVG tree canvas isn't squeezed into a narrow column on desktop; svg
 style also centers via margin 0 auto when the tree is narrower than
-the container.
+the container. Death/divorce/remarriage (2026-07-24, founder ask — see PROJECT_HISTORY.md):
+deceased person renders muted grey + "†", any union with a deceased or divorced party renders
+its marriage line dashed (`isUnionEnded` in familyTree.ts) — no structural change, since a
+person having multiple spouses (remarriage) already rendered fine. PersonDetail.tsx "Mark as
+deceased"/"Undo" control; FamilyTree.tsx "Mark a marriage as ended" (divorce only — death is
+read off the person's own deceased_date, not a separate flag). `relationshipLabels.ts`
+(mirrored in selfContext.ts for the AI prompt) derives step-parent/step-sibling/half-sibling
+labels from the graph, no new relationship kind needed.
 │   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
 │   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
 │   │                            only, not app-navigation shortcuts (a "My page" link was cut
@@ -582,7 +589,9 @@ people        id, user_id, name (first), last_name?, nicknames? (comma-separated
               "other" additionally writes a "Goes by X." note. key_facts jsonb?,
               key_facts_updated_at?, is_self bool (default false, partial unique
               index per user_id — at most one "this is me" profile; excluded from
-              People list/search/Dunbar/due-for-update, 2026-07-20), created_at
+              People list/search/Dunbar/due-for-update, 2026-07-20), deceased_date?
+              (2026-07-24, presence = deceased; PersonDetail "Mark as deceased"
+              control), created_at
 relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partner —
               symmetric, stored once normalized person_a_id < person_b_id by uuid
               sort; parent — directional, person_a_id IS THE PARENT of person_b_id,
@@ -602,6 +611,10 @@ relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partne
               gives it to the rest of the siblings as well. Retroactive backfill
               for pre-existing data run 2026-07-21 (`migrations_manual/
               2026-07-21-family-clique-backfill.sql`, 165 → 177 relationship rows).
+              ended_reason? (2026-07-24, spouse/partner only, only value is
+              'divorce' — death is read off the person's own deceased_date instead,
+              so there's one place to record each fact; see FamilyTree.tsx entry
+              below for how this renders).
 moments       id, user_id, raw_description (user's words only — never assistant
               turns), summary? (AI cache), occasion?, location?, when_text?
               (free-text, kept verbatim), event_date? (AI best-guess real date,
@@ -711,15 +724,15 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 **Items 46–53 came in via the click-to-comment feedback widget (§3 FeedbackWidget.tsx), founder session 2026-07-23, folded in here instead of living only in the `feedback_notes` table — marked done in the widget once captured below:**
 
-46. Rename the Home "Notes" stat tile to "Datapoints" — founder's framing: not just a note count, but a summary across notes/contacts/events/groups meant to show how much the app is assisting memory beyond the ~150 Dunbar cap. Quick copy/label change first pass; broader "datapoints" reframing (what else counts, how it's computed) is the bigger open question.
-47. Dunbar's-tiers widget on Home — show the actual names of who's in each tier ("Intimate circle 5 of 5: ...") instead of just a count, to make it feel more dynamic/personal.
+46. ~~Rename the Home "Notes" stat tile to "Datapoints"~~ — **DONE 2026-07-24.** Copy-only change (`Home.tsx`); underlying count query untouched. Broader "datapoints" reframing (what else counts, how it's computed) stays open. Verified live.
+47. ~~Dunbar's-tiers widget on Home~~ — **DONE 2026-07-24.** `DunbarDetail.tsx` now shows real names (most-recently-added first) within each cumulative tier slice, not just a count — still the existing cumulative-bucket model, not real per-person tier assignment (founder-confirmed scope). Verified live against the real account.
 48. New Calendar feature — nav button placed next to Groups; ships first as a mockup placeholder page. Auto-populates from dates already on people's profiles/events. Must be filterable by tag — founder specifically doesn't want a calendar cluttered with reminders from a two-year-old phone call.
 49. ~~Add a "Settings" button next to Log out~~ — **DONE 2026-07-23.** Scoped down with the founder to account + AI settings only (email/password change, chat-tone preference) plus About and Privacy/data-policy links — explicitly not a place for app-interface shortcuts. `SettingsPage.tsx`/`About.tsx`/`Privacy.tsx` (see §3), `user_settings` table (see §6), `converse` roster-tier read (see §4/§5). About/Privacy are placeholder pages — real copy for both still needs to be drafted together with the founder, not invented unilaterally. Verified live against the founder's real account: email/tone sections render correctly, chat tone persists and visibly changes `converse` reply style (tested "direct"), password change round-tripped (changed, logged in with the new one, reverted to original) — email-change form intentionally not tested live against the real account (low-risk code path, same `supabase.auth.updateUser()` already proven for password, but founder chose not to risk it on the real login for this pass).
 54. ~~Email-change verification code~~ — **DONE 2026-07-23** (code side; Supabase Dashboard step still pending, see §10). `SettingsPage.tsx`: after "Update email," the page now asks for a 6-digit code (`supabase.auth.verifyOtp({ type: 'email_change' })`) sent to the **new** address only (founder decided against also codeing the old address — logging into Settings already proves identity; the new-email code just confirms it's real/reachable) before the change takes effect, with resend/cancel. UI verified live (pending state, wrong-code error, cancel) against the founder's real account using a fake address — never completed against a real inbox, so the actual code-delivery email hasn't been seen yet.
 50. Home page engagement — founder wants the "Most reinforced this month" area (and Home generally) to prompt the user to confirm/add value back into the model: "is this person in group X?", "confirm this relationship", "suggested tags for this event." Explicitly a brainstorm ask, not a spec — related to item 15's relationship-aware smarts and item 26's ratings loop.
-51. EventDetail "Affiliated Groups" section — formatting should match how Groups.tsx handles adding additional groups; currently wastes space when a moment has none. Same treatment for tags: click-to-reveal rather than always-visible. Also pick one term, "Affiliated" or "Associated" groups, and use it consistently.
-52. Event dates — use an exact date when one is known instead of vague guidance text; vague text (e.g. "late February 2018") is fine specifically when no exact date exists. Flagged live on the VCIC Competition event.
-53. `converse` chat voice bug — the AI writes in first person but refers to the founder in third person in the same reply, flagged live on the VCIC Competition event note. Needs an explicit voice instruction in the prompt (pairs with item 33's "You" vs "User" phrasing fix).
+51. ~~EventDetail "Affiliated Groups" section~~ — **DONE 2026-07-24.** `EventDetail.tsx`'s groups and tags pickers are now collapsed behind toggle buttons ("+ Associate a New Group" / "+ Add a Tag"), mirroring `GroupDetail.tsx`'s pattern, instead of always-visible; empty states now show "No groups/tags at this time" rather than wasting space. Standardized on "Associated Groups" terminology (matches `GroupDetail.tsx`/`PersonDetail.tsx`; `update-moment`'s prompt text updated too) — `AffiliatedGroupChip` renamed to `AssociatedGroupChip`. PersonDetail's own heading left untouched this pass to avoid colliding with a concurrent session's in-progress deceased/divorce work on that file. Verified live (VCIC Competition event): toggle opens/closes the picker correctly.
+52. ~~Event dates~~ — **DONE 2026-07-24.** `EventDetail.tsx` and `Events.tsx` now prefer the exact `event_date` over vague `when_text` when both exist (new shared helpers in `lib/dates.ts`: `formatFullDate`, `formatEventWhen`); `when_text` still shows when no exact date is on file. Verified live: VCIC Competition now shows "February 24, 2018" instead of "late February 2018."
+53. ~~`converse` chat voice bug~~ — **DONE 2026-07-24.** Added an explicit VOICE instruction to `converse`'s stable system prompt (`stableInstructions`, static/deterministic — doesn't affect the prompt cache prefix) telling the model to always address the founder as "you" in reply text, never by their own name or as "User." Deployed via `npx supabase functions deploy converse`. Verified live: re-asked about the VCIC Competition note, reply now reads "...Daniel Book allegedly shoved you and you slipped down a muddy hill" instead of naming the founder in third person. Noted in passing, not fixed: replies sometimes leak the internal `[MOMENT_ID: ...]` tag into user-facing text — flagged as a separate follow-up, not in scope here.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 

@@ -34,6 +34,7 @@ export type PersonRow = {
   middle_name: string | null
   goes_by_kind: 'first' | 'middle' | 'last' | 'other' | null
   goes_by_other: string | null
+  deceased_date?: string | null
 }
 
 // Which of first/middle/last/other actually displays as this person's name on their profile —
@@ -157,6 +158,9 @@ export default function PersonDetail({
   const [otherPeople, setOtherPeople] = useState<OtherPerson[]>([])
   const [mergeCandidate, setMergeCandidate] = useState<OtherPerson | null>(null)
   const [lastNameSuggestion, setLastNameSuggestion] = useState<{ lastName: string; sourceName: string } | null>(null)
+  const [editingDeceased, setEditingDeceased] = useState(false)
+  const [deceasedDateInput, setDeceasedDateInput] = useState('')
+  const [savingDeceased, setSavingDeceased] = useState(false)
 
   useEffect(() => {
     setLastNameSuggestion(null)
@@ -257,7 +261,7 @@ export default function PersonDetail({
       supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
       supabase
         .from('people')
-        .select('name, last_name, middle_name, goes_by_kind, goes_by_other')
+        .select('name, last_name, middle_name, goes_by_kind, goes_by_other, deceased_date')
         .eq('id', personId)
         .single(),
     ])
@@ -405,6 +409,7 @@ export default function PersonDetail({
       middle_name: trimmedMiddle,
       goes_by_kind: finalGoesByKind,
       goes_by_other: trimmedGoesByOther,
+      deceased_date: person.deceased_date,
     }
     setPerson(updatedPerson)
     setEditingName(false)
@@ -413,6 +418,29 @@ export default function PersonDetail({
       await loadData()
       loadFacts(true)
     }
+  }
+
+  // Deceased is a standalone fact, independent of the name-edit form above — marking it doesn't
+  // touch name/goes-by fields, and undoing it (a mistaken entry) just clears the date rather than
+  // requiring a full profile edit.
+  async function saveDeceased() {
+    if (!person) return
+    setSavingDeceased(true)
+    const dateValue = deceasedDateInput.trim() || null
+    const { error } = await supabase.from('people').update({ deceased_date: dateValue }).eq('id', personId)
+    setSavingDeceased(false)
+    if (error) return
+    setPerson({ ...person, deceased_date: dateValue })
+    setEditingDeceased(false)
+  }
+
+  async function clearDeceased() {
+    if (!person) return
+    setSavingDeceased(true)
+    const { error } = await supabase.from('people').update({ deceased_date: null }).eq('id', personId)
+    setSavingDeceased(false)
+    if (error) return
+    setPerson({ ...person, deceased_date: null })
   }
 
   async function confirmSuggestedGroup() {
@@ -600,6 +628,17 @@ export default function PersonDetail({
       onGoesByOtherInputChange={setGoesByOtherInput}
       onSaveName={handleSaveName}
       onCancelEditName={() => setEditingName(false)}
+      editingDeceased={editingDeceased}
+      deceasedDateInput={deceasedDateInput}
+      savingDeceased={savingDeceased}
+      onStartEditDeceased={() => {
+        setDeceasedDateInput(person?.deceased_date ?? '')
+        setEditingDeceased(true)
+      }}
+      onDeceasedDateInputChange={setDeceasedDateInput}
+      onSaveDeceased={saveDeceased}
+      onCancelEditDeceased={() => setEditingDeceased(false)}
+      onClearDeceased={clearDeceased}
       newFact={newFact}
       onNewFactChange={setNewFact}
       saving={saving}
@@ -685,6 +724,14 @@ export function PersonDetailView({
   onGoesByOtherInputChange = () => {},
   onSaveName = () => {},
   onCancelEditName = () => {},
+  editingDeceased = false,
+  deceasedDateInput = '',
+  savingDeceased = false,
+  onStartEditDeceased = () => {},
+  onDeceasedDateInputChange = () => {},
+  onSaveDeceased = () => {},
+  onCancelEditDeceased = () => {},
+  onClearDeceased = () => {},
   newFact = '',
   onNewFactChange = () => {},
   saving = false,
@@ -758,6 +805,14 @@ export function PersonDetailView({
   onGoesByOtherInputChange?: (v: string) => void
   onSaveName?: (e: FormEvent) => void
   onCancelEditName?: () => void
+  editingDeceased?: boolean
+  deceasedDateInput?: string
+  savingDeceased?: boolean
+  onStartEditDeceased?: () => void
+  onDeceasedDateInputChange?: (v: string) => void
+  onSaveDeceased?: () => void
+  onCancelEditDeceased?: () => void
+  onClearDeceased?: () => void
   newFact?: string
   onNewFactChange?: (v: string) => void
   saving?: boolean
@@ -882,6 +937,39 @@ export function PersonDetailView({
         <div style={styles.headingRow}>
           <h1 style={styles.heading}>{fullName}</h1>
           {!readOnly && <EditButton label="Edit name" onClick={onStartEditName} />}
+        </div>
+      )}
+
+      {!readOnly && !loading && person && (
+        <div style={styles.deceasedRow}>
+          {editingDeceased ? (
+            <>
+              <input
+                type="date"
+                value={deceasedDateInput}
+                onChange={(e) => onDeceasedDateInputChange(e.target.value)}
+                style={styles.deceasedDateInput}
+                autoFocus
+              />
+              <button type="button" onClick={onSaveDeceased} disabled={savingDeceased} style={styles.saveButton}>
+                {savingDeceased ? '…' : 'Save'}
+              </button>
+              <button type="button" onClick={onCancelEditDeceased} style={styles.cancelButton}>
+                Cancel
+              </button>
+            </>
+          ) : person.deceased_date ? (
+            <>
+              <span style={styles.deceasedLabel}>† Deceased{person.deceased_date ? ` (${person.deceased_date})` : ''}</span>
+              <button type="button" onClick={onClearDeceased} disabled={savingDeceased} style={styles.textLinkButton}>
+                Undo
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={onStartEditDeceased} style={styles.textLinkButton}>
+              Mark as deceased
+            </button>
+          )}
         </div>
       )}
 
@@ -1436,6 +1524,26 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   goesByCaption: { fontSize: '0.78rem', color: '#999', margin: 0 },
   nameButtonRow: { display: 'flex', gap: '0.5rem' },
+  deceasedRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem', flexWrap: 'wrap' },
+  deceasedLabel: { fontSize: '0.85rem', color: '#888' },
+  deceasedDateInput: {
+    fontSize: '0.9rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E4034',
+    padding: '0.3rem 0.4rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+  },
+  textLinkButton: {
+    background: 'none',
+    border: 'none',
+    color: '#6B4E9E',
+    fontSize: '0.85rem',
+    cursor: 'pointer',
+    padding: 0,
+    textDecoration: 'underline',
+    fontFamily: 'Georgia, serif',
+  },
   saveButton: {
     fontSize: '0.9rem',
     padding: '0.5rem 0.9rem',

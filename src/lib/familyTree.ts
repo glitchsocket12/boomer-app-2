@@ -13,7 +13,21 @@ export type TreePersonKind = 'focal' | 'direct' | 'extended'
 // spouse/siblings/kids aren't sided (both sides converge on the root), and root's own further
 // descendants (grandchildren+) aren't sided either (they're root's own line, not a side branch).
 export type TreeSide = 'a' | 'b'
-export type TreePerson = { id: string; name: string; kind: TreePersonKind; parentId?: string; side?: TreeSide }
+// deceased: true if this person has a deceased_date on file — rendered as a muted/marked node,
+// but otherwise left in their normal tree position (they're still the blood connector for any
+// kids, so they're never hidden or special-cased structurally).
+// endedWithAnchor: true if THIS person's marriage/partnership to the union's own `a` (not to
+// whichever chain-neighbor they're drawn next to) has ended, by divorce or by either party's
+// death — only ever set on a TreePerson used as a Union's spouse, never on `a` itself.
+export type TreePerson = {
+  id: string
+  name: string
+  kind: TreePersonKind
+  parentId?: string
+  side?: TreeSide
+  deceased?: boolean
+  endedWithAnchor?: boolean
+}
 export type Union = { a: TreePerson; spouses: TreePerson[] }
 // leftExtended/rightExtended hold a person's own siblings (aunts/uncles), each as their own
 // mini-union (the sibling + their spouse, if any) — kept on the same side as the parent they
@@ -42,6 +56,21 @@ export type Graph = {
   childrenOf: Map<string, string[]>
   spousesOf: Map<string, string[]>
   siblingsOf: Map<string, string[]>
+  deceasedIds: Set<string>
+  // Keyed by unionKey(a, b) — a spouse/partner pair whose relationship row has ended_reason set
+  // (divorce). Death isn't stored here; isUnionEnded also checks deceasedIds directly.
+  endedPairs: Set<string>
+}
+
+function unionKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`
+}
+
+// A union between a and b reads as ended if it was explicitly ended (divorce) OR either party has
+// since died — a widowed-then-remarried person's earlier marriage doesn't need a separate divorce
+// flag, the death alone is enough to mute that line.
+export function isUnionEnded(g: Graph, a: string, b: string): boolean {
+  return g.endedPairs.has(unionKey(a, b)) || g.deceasedIds.has(a) || g.deceasedIds.has(b)
 }
 
 function push(map: Map<string, string[]>, key: string, value: string) {
@@ -54,21 +83,24 @@ async function loadGraph(): Promise<Graph> {
   // Ordered by created_at so which parent/spouse ends up "first" (primaryParentId, the tree's
   // connector-line anchor) is stable across reloads instead of depending on unspecified row order.
   const [{ data: people }, { data: rels }] = await Promise.all([
-    supabase.from('people').select('id, name, last_name, is_self'),
-    supabase.from('relationships').select('person_a_id, person_b_id, kind').order('created_at'),
+    supabase.from('people').select('id, name, last_name, is_self, deceased_date'),
+    supabase.from('relationships').select('person_a_id, person_b_id, kind, ended_reason').order('created_at'),
   ])
 
   const nameById = new Map<string, string>()
   let selfId: string | null = null
+  const deceasedIds = new Set<string>()
   for (const p of people ?? []) {
     nameById.set(p.id, p.last_name ? `${p.name} ${p.last_name}` : p.name)
     if (p.is_self) selfId = p.id
+    if (p.deceased_date) deceasedIds.add(p.id)
   }
 
   const parentsOf = new Map<string, string[]>()
   const childrenOf = new Map<string, string[]>()
   const spousesOf = new Map<string, string[]>()
   const siblingsOf = new Map<string, string[]>()
+  const endedPairs = new Set<string>()
   for (const r of rels ?? []) {
     if (r.kind === 'parent') {
       push(parentsOf, r.person_b_id, r.person_a_id)
@@ -76,16 +108,17 @@ async function loadGraph(): Promise<Graph> {
     } else if (r.kind === 'spouse' || r.kind === 'partner') {
       push(spousesOf, r.person_a_id, r.person_b_id)
       push(spousesOf, r.person_b_id, r.person_a_id)
+      if (r.ended_reason) endedPairs.add(unionKey(r.person_a_id, r.person_b_id))
     } else if (r.kind === 'sibling') {
       push(siblingsOf, r.person_a_id, r.person_b_id)
       push(siblingsOf, r.person_b_id, r.person_a_id)
     }
   }
-  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf }
+  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs }
 }
 
 function node(g: Graph, id: string, kind: TreePersonKind, parentId: string | undefined, side?: TreeSide): TreePerson {
-  return { id, name: g.nameById.get(id) ?? 'Unknown', kind, parentId, side }
+  return { id, name: g.nameById.get(id) ?? 'Unknown', kind, parentId, side, deceased: g.deceasedIds.has(id) }
 }
 
 // Which of the root's two parents (by position in the root's own flat parent list, not position
@@ -167,7 +200,7 @@ function groupIntoBranches(
     const spouseIds = (g.spousesOf.get(id) ?? []).filter((sid) => ids.includes(sid) && !seen.has(sid))
     const spouses = spouseIds.map((sid) => {
       seen.add(sid)
-      return node(g, sid, kind, parentIdFn(sid), side)
+      return { ...node(g, sid, kind, parentIdFn(sid), side), endedWithAnchor: isUnionEnded(g, id, sid) }
     })
     branches.push({ union: { a, spouses }, leftExtended: [], rightExtended: [], siblings: [] })
   }
@@ -178,7 +211,10 @@ function groupIntoBranches(
 // parent-child connector code can never draw a false ancestor line through them — they only ever
 // show up via the marriage line next to their spouse.
 function inLawSpouses(g: Graph, personId: string, kind: TreePersonKind, side?: TreeSide): TreePerson[] {
-  return (g.spousesOf.get(personId) ?? []).map((sid) => node(g, sid, kind, undefined, side))
+  return (g.spousesOf.get(personId) ?? []).map((sid) => ({
+    ...node(g, sid, kind, undefined, side),
+    endedWithAnchor: isUnionEnded(g, personId, sid),
+  }))
 }
 
 // A kid can be legitimately recorded as the child of either parent — whoever happened to be
@@ -357,10 +393,13 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   // family tree", the Family circle card, or re-centering by clicking a node) — every ego-mode tree
   // is inherently "focused" on its root, so the root is always the focal (purple) person. isSelfRoot
   // is unrelated to that now — it only decides the "You" tier label below.
-  const rootNode: TreePerson = { id: rootId, name: rootName, kind: 'focal', parentId: rootAnchor }
+  const rootNode: TreePerson = { id: rootId, name: rootName, kind: 'focal', parentId: rootAnchor, deceased: g.deceasedIds.has(rootId) }
   // Show every spouse/partner on file, not just the first — remarriage/widowed-and-remarried
   // shouldn't silently drop a spouse from the tree.
-  const spouseNodes: TreePerson[] = rootSpouses.map((id) => node(g, id, 'direct', undefined))
+  const spouseNodes: TreePerson[] = rootSpouses.map((id) => ({
+    ...node(g, id, 'direct', undefined),
+    endedWithAnchor: isUnionEnded(g, rootId, id),
+  }))
   const siblingNodes: TreePerson[] = rootSiblings.map((id) => node(g, id, 'direct', rootAnchor))
   // Each sibling's own spouse rides along as an in-law (no parentId — same treatment as the root's
   // own spouse, aunts/uncles, cousins, and kids) so a married sibling gets a marriage line too,

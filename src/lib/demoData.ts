@@ -199,7 +199,9 @@ export function buildDemoGraph(): Graph {
       push(siblingsOf, r.b, r.a)
     }
   }
-  return { nameById, selfId: 'gary', parentsOf, childrenOf, spousesOf, siblingsOf }
+  // Static demo dataset has no deceased/divorced people on file — empty sets, same as "none
+  // recorded" for a real user.
+  return { nameById, selfId: 'gary', parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds: new Set(), endedPairs: new Set() }
 }
 
 export function buildDemoFamilyTree(rootId: string): TreeData {

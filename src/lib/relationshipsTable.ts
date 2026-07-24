@@ -38,6 +38,26 @@ export async function removeRelationship(
   await supabase.from('relationships').delete().eq('person_a_id', personA).eq('person_b_id', personB).eq('kind', kind)
 }
 
+// Sets/clears ended_reason on a spouse/partner pair (divorce) — kept as its own function rather
+// than routed through upsertRelationship since it updates an existing row's status column instead
+// of inserting a new relationship row. Pass null to clear (e.g. an accidental mark, or reconciling
+// a mistaken entry) without deleting the underlying spouse/partner relationship itself.
+export async function setRelationshipEndedReason(
+  aId: string | undefined | null,
+  bId: string | undefined | null,
+  kind: 'spouse' | 'partner',
+  reason: 'divorce' | null
+): Promise<void> {
+  if (!aId || !bId || aId === bId) return
+  const [personA, personB] = aId < bId ? [aId, bId] : [bId, aId]
+  await supabase
+    .from('relationships')
+    .update({ ended_reason: reason })
+    .eq('person_a_id', personA)
+    .eq('person_b_id', personB)
+    .eq('kind', kind)
+}
+
 export type PersonRelationships = {
   spouseIds: string[]
   partnerIds: string[]

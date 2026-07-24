@@ -19,7 +19,7 @@ import {
   type TreeSide,
 } from '../lib/familyTree'
 import { linkRelationship, createAndLinkRelationship, unlinkRelationship, type CircleCategory } from '../lib/writeRelationship'
-import { getRelationshipsForPerson } from '../lib/relationshipsTable'
+import { getRelationshipsForPerson, setRelationshipEndedReason } from '../lib/relationshipsTable'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 
 const TRASH_ICON = (
@@ -258,6 +258,10 @@ function layoutRelativeToParent(
 
 type RemoveTarget = { category: CircleCategory; label: string; subjectId: string; subjectName: string; targetId: string; targetName: string }
 type SpouseSuggestion = { aId: string; aName: string; bId: string; bName: string }
+// Divorce keeps the relationship row (unlike RemoveTarget, which deletes it) — only the root's own
+// CURRENT spouses/partners are offered this, one hop out isn't handled here for the same reason
+// RemoveTarget isn't (see confirmRemove's comment).
+type DivorceTarget = { targetId: string; targetName: string; label: string }
 
 export default function FamilyTree({
   personId,
@@ -281,6 +285,8 @@ export default function FamilyTree({
   const [removeConfirm, setRemoveConfirm] = useState<RemoveTarget | null>(null)
   const [removing, setRemoving] = useState(false)
   const [spouseSuggestions, setSpouseSuggestions] = useState<SpouseSuggestion[]>([])
+  const [divorceConfirm, setDivorceConfirm] = useState<DivorceTarget | null>(null)
+  const [divorcing, setDivorcing] = useState(false)
 
   useEffect(() => {
     load()
@@ -389,6 +395,18 @@ export default function FamilyTree({
     setRemoveConfirm(null)
   }
 
+  // Divorce keeps the relationship row and both spouses in the tree — only their marriage line's
+  // style changes (dashed instead of solid, same visual treatment a deceased spouse already gets).
+  async function confirmDivorce() {
+    if (!data || !divorceConfirm) return
+    setDivorcing(true)
+    await setRelationshipEndedReason(data.rootId, divorceConfirm.targetId, 'spouse', 'divorce')
+    const refreshed = await buildFamilyTree(data.rootId)
+    setData(refreshed)
+    setDivorcing(false)
+    setDivorceConfirm(null)
+  }
+
   if (loading || !data) {
     return (
       <div style={styles.page}>
@@ -414,6 +432,11 @@ export default function FamilyTree({
       spouseSuggestions={spouseSuggestions}
       onAcceptSpouseSuggestion={acceptSpouseSuggestion}
       onDeclineSpouseSuggestion={declineSpouseSuggestion}
+      divorceConfirm={divorceConfirm}
+      divorcing={divorcing}
+      onRequestDivorce={setDivorceConfirm}
+      onConfirmDivorce={confirmDivorce}
+      onCancelDivorce={() => setDivorceConfirm(null)}
     />
   )
 }
@@ -440,6 +463,11 @@ export function FamilyTreeView({
   spouseSuggestions = [],
   onAcceptSpouseSuggestion = () => {},
   onDeclineSpouseSuggestion = () => {},
+  divorceConfirm = null,
+  divorcing = false,
+  onRequestDivorce = () => {},
+  onConfirmDivorce = () => {},
+  onCancelDivorce = () => {},
 }: {
   data: TreeData
   onBack: () => void
@@ -458,6 +486,11 @@ export function FamilyTreeView({
   removing?: boolean
   onRequestRemove?: (target: RemoveTarget) => void
   onConfirmRemove?: () => void
+  divorceConfirm?: DivorceTarget | null
+  divorcing?: boolean
+  onRequestDivorce?: (target: DivorceTarget) => void
+  onConfirmDivorce?: () => void
+  onCancelDivorce?: () => void
   onCancelRemove?: () => void
   spouseSuggestions?: SpouseSuggestion[]
   onAcceptSpouseSuggestion?: (s: SpouseSuggestion) => void
@@ -587,6 +620,21 @@ export function FamilyTreeView({
         })),
       ]
 
+  // Divorce is offered separately from Remove — it keeps the relationship row and both people in
+  // the tree (only the marriage line's style changes), so it only makes sense for a CURRENT spouse
+  // (endedWithAnchor already true means it's a former spouse, by death or an earlier divorce, and
+  // doesn't need marking again).
+  const divorceSlots: (DivorceTarget & { key: string })[] = readOnly
+    ? []
+    : data.rootDirect.spouses
+        .filter((p) => !p.endedWithAnchor)
+        .map((p) => ({
+          key: `div-spouse-${p.id}`,
+          targetId: p.id,
+          targetName: p.name,
+          label: `Mark ${data.rootName} and ${p.name} as divorced?`,
+        }))
+
   // Plain-language legend, dynamic since which colors actually appear depends on the data (a
   // one-parent person only has one side to name, a group's descendants-mode tree has neither
   // purple nor sides at all).
@@ -692,17 +740,23 @@ export function FamilyTreeView({
             return unions.flatMap((union) => {
               const chain = [union.a, ...union.spouses]
               const side = union.a.side
-              const lines: { x1: number; x2: number; y: number; color: string; opacity: number }[] = []
+              const lines: { x1: number; x2: number; y: number; color: string; opacity: number; ended: boolean }[] = []
               for (let k = 0; k < chain.length - 1; k++) {
                 const leftPlaced = layout.placed.find((p) => p.person === chain[k])
                 const rightPlaced = layout.placed.find((p) => p.person === chain[k + 1])
                 if (!leftPlaced || !rightPlaced) continue
+                // endedWithAnchor on chain[k+1] is always relative to union.a, not to chain[k] —
+                // but since every spouse's real marriage IS to `a` (a hub-spoke model; the chain is
+                // only a layout convenience), that's the right status for the segment drawn here
+                // regardless of position in the chain.
+                const ended = Boolean(chain[k + 1].endedWithAnchor)
                 lines.push({
                   x1: startX + leftPlaced.x + leftPlaced.w,
                   x2: startX + rightPlaced.x,
                   y: y + BOX_H / 2,
                   color: side ? SIDE_COLORS[side].border : '#CCC',
                   opacity: side ? 0.6 : 1,
+                  ended,
                 })
               }
               return lines
@@ -712,21 +766,37 @@ export function FamilyTreeView({
           return (
             <g key={tier.label + i}>
               {marriageLines.map((l, li) => (
-                <line key={li} x1={l.x1} y1={l.y} x2={l.x2} y2={l.y} stroke={l.color} strokeOpacity={l.opacity} strokeWidth={1} />
+                <line
+                  key={li}
+                  x1={l.x1}
+                  y1={l.y}
+                  x2={l.x2}
+                  y2={l.y}
+                  stroke={l.color}
+                  strokeOpacity={l.opacity}
+                  strokeWidth={1}
+                  strokeDasharray={l.ended ? '4 3' : undefined}
+                />
               ))}
               {layout.placed.map((p) => {
                 const c = colorsFor(p.person)
                 const clickable = mode === 'descendants' ? true : p.person.id !== data.rootId
                 const x = startX + p.x
+                // Deceased: muted grey instead of the usual kind/side color, plus a small dagger —
+                // still in their normal tree position, just visually marked, not hidden or moved.
+                const fill = p.person.deceased ? '#F2F2F2' : c.fill
+                const border = p.person.deceased ? '#AAAAAA' : c.border
+                const textColor = p.person.deceased ? '#888888' : c.text
                 return (
                   <g
                     key={p.person.id}
                     onClick={clickable ? () => onSelectTree(p.person.id, `${p.person.name}'s family tree`) : undefined}
                     style={{ cursor: clickable ? 'pointer' : 'default' }}
                   >
-                    <rect x={x} y={y} width={p.w} height={BOX_H} rx={6} fill={c.fill} stroke={c.border} strokeWidth={1} />
-                    <text x={x + p.w / 2} y={y + 27} textAnchor="middle" fontSize="14" fontFamily="Georgia, serif" fill={c.text}>
+                    <rect x={x} y={y} width={p.w} height={BOX_H} rx={6} fill={fill} stroke={border} strokeWidth={1} />
+                    <text x={x + p.w / 2} y={y + 27} textAnchor="middle" fontSize="14" fontFamily="Georgia, serif" fill={textColor}>
                       {p.person.name}
+                      {p.person.deceased ? ' †' : ''}
                       {clickable ? ' ›' : ''}
                     </text>
                   </g>
@@ -773,6 +843,31 @@ export function FamilyTreeView({
               {removing ? 'Removing…' : 'Yes, remove'}
             </button>
             <button type="button" onClick={onCancelRemove} style={styles.suggestNoButton} disabled={removing}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {divorceSlots.length > 0 && (
+        <div style={styles.removeSection}>
+          <span style={styles.addLabel}>Mark a marriage as ended:</span>
+          <div style={styles.addRow}>
+            {divorceSlots.map((slot) => (
+              <RemoveChip key={slot.key} name={slot.targetName} relLabel="divorced" onRemove={() => onRequestDivorce(slot)} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {divorceConfirm && (
+        <div style={styles.suggestBanner}>
+          <span>{divorceConfirm.label} They'll both stay on the tree — the marriage line just shows as ended.</span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={onConfirmDivorce} style={styles.dangerDeleteButton} disabled={divorcing}>
+              {divorcing ? 'Saving…' : 'Yes, mark divorced'}
+            </button>
+            <button type="button" onClick={onCancelDivorce} style={styles.suggestNoButton} disabled={divorcing}>
               Cancel
             </button>
           </div>

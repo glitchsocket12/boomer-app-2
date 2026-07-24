@@ -37,5 +37,31 @@ export async function buildSelfInstruction(
     const names = ids.map((id) => nameById[id]).filter(Boolean)
     return names.length > 0 ? names.join(", ") : "none on file yet"
   }
-  return `\n\nThe app's user is themselves recorded in this app as "${self.name}". When they refer to their OWN relative with "my"/"our" and name no other specific subject (e.g. "my mom is Amy", "my brother Josh", "we visited my parents"), treat "${self.name}" as the "subject" in family_signals, exactly as if they'd said "${self.name}'s mom is Amy." You can also use this to directly answer questions like "who are my parents" or "what's my brother's name" from what's already known. Known relationships already on file for ${self.name} — parents: ${describe(rel.parentIds)}; spouse/partner: ${describe([...rel.spouseIds, ...rel.partnerIds])}; siblings: ${describe(rel.siblingIds)}; kids: ${describe(rel.childIds)}.`
+
+  // Step-parent/step-sibling (death/divorce/remarriage backlog item): only surfaces once a
+  // parent's OTHER union is on file, so most users cost nothing extra here — bounded to one query
+  // per known parent (almost always 0-2), not a full graph walk, since this is a per-request tier
+  // and can't afford building the whole relationships graph on every converse call.
+  const stepParentNames = new Set<string>()
+  const stepSiblingNames = new Set<string>()
+  for (const parentId of rel.parentIds) {
+    const parentRel = await getRelationshipsForPerson(supabaseClient, parentId)
+    for (const spouseId of [...parentRel.spouseIds, ...parentRel.partnerIds]) {
+      if (rel.parentIds.includes(spouseId)) continue // the OTHER known parent, not a step-parent
+      const name = nameById[spouseId]
+      if (name) stepParentNames.add(name)
+      const spouseRel = await getRelationshipsForPerson(supabaseClient, spouseId)
+      for (const childId of spouseRel.childIds) {
+        if (childId === self.id || rel.childIds.includes(childId)) continue
+        const childName = nameById[childId]
+        if (childName) stepSiblingNames.add(childName)
+      }
+    }
+  }
+  const stepText =
+    stepParentNames.size > 0 || stepSiblingNames.size > 0
+      ? ` Step-parent(s): ${stepParentNames.size > 0 ? [...stepParentNames].join(", ") : "none on file"}; step-sibling(s): ${stepSiblingNames.size > 0 ? [...stepSiblingNames].join(", ") : "none on file"}.`
+      : ""
+
+  return `\n\nThe app's user is themselves recorded in this app as "${self.name}". When they refer to their OWN relative with "my"/"our" and name no other specific subject (e.g. "my mom is Amy", "my brother Josh", "we visited my parents"), treat "${self.name}" as the "subject" in family_signals, exactly as if they'd said "${self.name}'s mom is Amy." You can also use this to directly answer questions like "who are my parents" or "what's my brother's name" from what's already known. Known relationships already on file for ${self.name} — parents: ${describe(rel.parentIds)}; spouse/partner: ${describe([...rel.spouseIds, ...rel.partnerIds])}; siblings: ${describe(rel.siblingIds)}; kids: ${describe(rel.childIds)}.${stepText}`
 }
