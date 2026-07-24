@@ -32,6 +32,13 @@ export default function SettingsPage({
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailSuccess, setEmailSuccess] = useState<string | null>(null)
 
+  // Once a change is requested, we hold the pending address and ask for the code
+  // Supabase emails to it before the change actually takes effect.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null)
+  const [verifyCode, setVerifyCode] = useState('')
+  const [verifyingEmail, setVerifyingEmail] = useState(false)
+  const [resendingEmail, setResendingEmail] = useState(false)
+
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -74,8 +81,50 @@ export default function SettingsPage({
       setEmailError("Couldn't update your email — please try again.")
       return
     }
+    setPendingEmail(trimmed)
     setNewEmail('')
-    setEmailSuccess('Email update requested — check your inbox if a confirmation is needed.')
+    setVerifyCode('')
+  }
+
+  async function handleVerifyEmailCode(e: FormEvent) {
+    e.preventDefault()
+    if (!pendingEmail || !verifyCode.trim()) return
+    setVerifyingEmail(true)
+    setEmailError(null)
+    const { error } = await supabase.auth.verifyOtp({
+      email: pendingEmail,
+      token: verifyCode.trim(),
+      type: 'email_change',
+    })
+    setVerifyingEmail(false)
+    if (error) {
+      setEmailError("That code didn't work — check it and try again.")
+      return
+    }
+    setPendingEmail(null)
+    setVerifyCode('')
+    await loadCurrentUser()
+    setEmailSuccess('Email updated.')
+  }
+
+  async function handleResendEmailCode() {
+    if (!pendingEmail) return
+    setResendingEmail(true)
+    setEmailError(null)
+    const { error } = await supabase.auth.updateUser({ email: pendingEmail })
+    setResendingEmail(false)
+    if (error) {
+      setEmailError("Couldn't resend the code — please try again.")
+      return
+    }
+    setEmailSuccess('Sent a new code.')
+  }
+
+  function handleCancelEmailChange() {
+    setPendingEmail(null)
+    setVerifyCode('')
+    setEmailError(null)
+    setEmailSuccess(null)
   }
 
   async function handleUpdatePassword(e: FormEvent) {
@@ -149,19 +198,52 @@ export default function SettingsPage({
       <section style={styles.section}>
         <h2 style={styles.sectionHeading}>Email</h2>
         {currentEmail && <p style={styles.body}>Current: {currentEmail}</p>}
-        <form onSubmit={handleUpdateEmail} style={styles.form}>
-          <input
-            type="email"
-            value={newEmail}
-            onChange={(e) => setNewEmail(e.target.value)}
-            placeholder="New email address…"
-            style={styles.input}
-            disabled={savingEmail}
-          />
-          <button type="submit" style={styles.actionButtonPrimary} disabled={savingEmail || !newEmail.trim()}>
-            {savingEmail ? '…' : 'Update email'}
-          </button>
-        </form>
+        {pendingEmail ? (
+          <>
+            <p style={styles.body}>We sent a code to {pendingEmail}. Enter it below to confirm the change.</p>
+            <form onSubmit={handleVerifyEmailCode} style={styles.form}>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={verifyCode}
+                onChange={(e) => setVerifyCode(e.target.value)}
+                placeholder="6-digit code…"
+                style={styles.input}
+                disabled={verifyingEmail}
+              />
+              <button type="submit" style={styles.actionButtonPrimary} disabled={verifyingEmail || !verifyCode.trim()}>
+                {verifyingEmail ? '…' : 'Confirm'}
+              </button>
+            </form>
+            <div style={styles.form}>
+              <button
+                type="button"
+                onClick={handleResendEmailCode}
+                style={styles.linkRow}
+                disabled={resendingEmail}
+              >
+                {resendingEmail ? 'Resending…' : 'Resend code'}
+              </button>
+              <button type="button" onClick={handleCancelEmailChange} style={styles.linkRow}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={handleUpdateEmail} style={styles.form}>
+            <input
+              type="email"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="New email address…"
+              style={styles.input}
+              disabled={savingEmail}
+            />
+            <button type="submit" style={styles.actionButtonPrimary} disabled={savingEmail || !newEmail.trim()}>
+              {savingEmail ? '…' : 'Update email'}
+            </button>
+          </form>
+        )}
         {emailError && <p style={styles.errorText}>{emailError}</p>}
         {emailSuccess && <p style={styles.successText}>{emailSuccess}</p>}
       </section>
