@@ -9,6 +9,7 @@ import Onboarding from './pages/Onboarding'
 import Home from './pages/Home'
 import People from './pages/People'
 import Events from './pages/Events'
+import Calendar from './pages/Calendar'
 import Groups from './pages/Groups'
 import GroupDetail from './pages/GroupDetail'
 import EventDetail from './pages/EventDetail'
@@ -25,7 +26,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 import FeedbackWidget from './components/FeedbackWidget'
 
-type Tab = 'home' | 'people' | 'events' | 'groups'
+type Tab = 'home' | 'people' | 'events' | 'calendar' | 'groups'
 type AuthView = 'landing' | 'login' | 'signup' | 'demo'
 type Crumb =
   | { type: 'person'; id: string; label: string }
@@ -40,7 +41,7 @@ type Crumb =
   | { type: 'about'; id: string; label: string }
   | { type: 'privacy'; id: string; label: string }
 
-const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
+const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', calendar: 'Calendar', groups: 'Groups' }
 
 const CRUMB_TYPES = [
   'person',
@@ -476,6 +477,12 @@ export default function App() {
             onManageTags={() => pushCrumb({ type: 'manageTags', id: 'manageTags', label: 'Manage Tags' })}
           />
         )}
+        {view === 'calendar' && (
+          <Calendar
+            onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+            onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+          />
+        )}
         {view === 'groups' && (
           <Groups
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
@@ -500,6 +507,7 @@ export default function App() {
           </button>
           <button onClick={() => goToTab('people')} style={{ marginRight: '0.5rem' }}>People</button>
           <button onClick={() => goToTab('events')} style={{ marginRight: '0.5rem' }}>Events</button>
+          <button onClick={() => goToTab('calendar')} style={{ marginRight: '0.5rem' }}>Calendar</button>
           <button onClick={() => goToTab('groups')}>Groups</button>
         </div>
         <div>

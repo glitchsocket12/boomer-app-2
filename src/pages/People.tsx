@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
+import { daysUntilNextOccurrence } from '../lib/dates'
 import { GroupChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 
@@ -32,17 +33,6 @@ const SORT_LABELS: { value: SortMode; label: string }[] = [
   { value: 'relevance', label: 'Most notes' },
   { value: 'timely', label: 'Upcoming dates' },
 ]
-
-// Next occurrence of a month/day reminder (birthday, anniversary) from today, wrapping
-// into next year once this year's date has already passed — used to surface people with
-// a birthday/anniversary coming up soonest under the "Upcoming dates" sort.
-function daysUntilNextOccurrence(month: number, day: number): number {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  let next = new Date(today.getFullYear(), month - 1, day)
-  if (next < today) next = new Date(today.getFullYear() + 1, month - 1, day)
-  return Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-}
 
 function nearestUpcomingDays(person: Person): number {
   const days = (person.reminders ?? []).map((r) => daysUntilNextOccurrence(r.month, r.day))

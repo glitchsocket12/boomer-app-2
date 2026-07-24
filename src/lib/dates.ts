@@ -16,3 +16,20 @@ export function formatEventWhen(moment: { event_date: string | null; when_text: 
   if (moment.when_text) return moment.when_text
   return formatMonthYear(moment)
 }
+
+// Next occurrence of a month/day reminder (birthday, anniversary) from today, wrapping into
+// next year once this year's date has already passed.
+export function nextOccurrenceDate(month: number, day: number): Date {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  let next = new Date(today.getFullYear(), month - 1, day)
+  if (next < today) next = new Date(today.getFullYear() + 1, month - 1, day)
+  return next
+}
+
+export function daysUntilNextOccurrence(month: number, day: number): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const next = nextOccurrenceDate(month, day)
+  return Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+}

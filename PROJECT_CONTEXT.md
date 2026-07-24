@@ -283,6 +283,25 @@ src/
 │   │                            (item 28 follow-up, 2026-07-22) under the heading,
 │   │                            always visible (not gated on any tag being applied
 │   │                            yet) → `ManageTags.tsx`
+│   ├── Calendar.tsx           — (2026-07-24, item 48 phase 1) new nav tab. Upcoming
+│   │                            list (next 8 moments + reminder next-occurrences,
+│   │                            soonest first) + a real month grid below (prev/
+│   │                            next nav, today highlighted, each day showing an
+│   │                            actual tile with a truncated event title, not just
+│   │                            a dot — "+N more" when a day has multiple). Reads
+│   │                            existing `moments`/`reminders`, no new tables. Tag
+│   │                            filter chips (same distinct-tags-in-use pattern as
+│   │                            Events.tsx) narrow the moment tiles/list; reminders
+│   │                            always show (no tag concept for them). Tile click →
+│   │                            EventDetail; reminder click → PersonDetail. Phase 1
+│   │                            of a larger gameplanned feature (calendar-source
+│   │                            connection via pasted secret iCal URLs, AI import/
+│   │                            suggestion pipeline, review UI, Home tie-in) — see
+│   │                            plan file `i-want-to-gameplan-cuddly-wilkinson.md`
+│   │                            (not checked into the repo) for the full design;
+│   │                            those phases are NOT built yet. `nextOccurrenceDate`/
+│   │                            `daysUntilNextOccurrence` moved from People.tsx into
+│   │                            `lib/dates.ts` so both pages share one implementation.
 │   ├── EventDetail.tsx        — AI summary (gated: only auto-generates once
 │   │                            raw_description has content), editable description,
 │   │                            who-was-there (hover-untag, non-destructive) +
@@ -728,7 +747,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 46. ~~Rename the Home "Notes" stat tile to "Datapoints"~~ — **DONE 2026-07-24.** Copy-only change (`Home.tsx`); underlying count query untouched. Broader "datapoints" reframing (what else counts, how it's computed) stays open. Verified live.
 47. ~~Dunbar's-tiers widget on Home~~ — **DONE 2026-07-24.** `DunbarDetail.tsx` now shows real names (most-recently-added first) within each cumulative tier slice, not just a count — still the existing cumulative-bucket model, not real per-person tier assignment (founder-confirmed scope). Verified live against the real account.
-48. New Calendar feature — nav button placed next to Groups; ships first as a mockup placeholder page. Auto-populates from dates already on people's profiles/events. Must be filterable by tag — founder specifically doesn't want a calendar cluttered with reminders from a two-year-old phone call.
+48. New Calendar feature — **phase 1 DONE 2026-07-24** (see §3 Calendar.tsx entry): nav tab with an upcoming list + real month grid, tag-filterable, auto-populated from existing moments/reminders, no mockup/placeholder needed since it reads real data directly. Verified live against the founder's real account (month nav, tag filter narrowing to zero on a tag with no July events, tile click → correct EventDetail, reminder click → correct PersonDetail). Remaining phases from the gameplan (not yet built): calendar-source connection (paste a calendar's secret iCal URL, choose which calendar(s) to include — deliberately not full Google OAuth account access), an AI import/suggestion pipeline reading those feeds with a founder-editable tag list (reusing the existing `tags` system, not a hardcoded enum) guiding what counts as suggestion-worthy, a review-before-insert UI, and a Home-page nudge surfacing pending suggestions. Full design in plan file `i-want-to-gameplan-cuddly-wilkinson.md` (not checked into the repo).
 49. ~~Add a "Settings" button next to Log out~~ — **DONE 2026-07-23.** Scoped down with the founder to account + AI settings only (email/password change, chat-tone preference) plus About and Privacy/data-policy links — explicitly not a place for app-interface shortcuts. `SettingsPage.tsx`/`About.tsx`/`Privacy.tsx` (see §3), `user_settings` table (see §6), `converse` roster-tier read (see §4/§5). About/Privacy are placeholder pages — real copy for both still needs to be drafted together with the founder, not invented unilaterally. Verified live against the founder's real account: email/tone sections render correctly, chat tone persists and visibly changes `converse` reply style (tested "direct"), password change round-tripped (changed, logged in with the new one, reverted to original) — email-change form intentionally not tested live against the real account (low-risk code path, same `supabase.auth.updateUser()` already proven for password, but founder chose not to risk it on the real login for this pass).
 54. ~~Email-change verification code~~ — **DONE 2026-07-23** (code side; Supabase Dashboard step still pending, see §10). `SettingsPage.tsx`: after "Update email," the page now asks for a 6-digit code (`supabase.auth.verifyOtp({ type: 'email_change' })`) sent to the **new** address only (founder decided against also codeing the old address — logging into Settings already proves identity; the new-email code just confirms it's real/reachable) before the change takes effect, with resend/cancel. UI verified live (pending state, wrong-code error, cancel) against the founder's real account using a fake address — never completed against a real inbox, so the actual code-delivery email hasn't been seen yet.
 50. Home page engagement — founder wants the "Most reinforced this month" area (and Home generally) to prompt the user to confirm/add value back into the model: "is this person in group X?", "confirm this relationship", "suggested tags for this event." Explicitly a brainstorm ask, not a spec — related to item 15's relationship-aware smarts and item 26's ratings loop.
