@@ -1,13 +1,3 @@
-const NAV_ITEMS: { id: string; label: string }[] = [
-  { id: 'what-is-boomer', label: 'What is Boomer?' },
-  { id: 'not-social-media', label: 'Not another social network' },
-  { id: 'how-it-works', label: 'How it works' },
-  { id: 'try-it-now', label: 'Try it live' },
-  { id: 'who-its-for', label: "Who it's for" },
-  { id: 'privacy', label: 'Just yours' },
-  { id: 'get-started', label: 'Get started' },
-]
-
 const COMPARISON_ROWS: { feature: string; boomer: boolean; social: boolean; journal: boolean; crm: boolean }[] = [
   { feature: 'Private — no public profile', boomer: true, social: false, journal: true, crm: true },
   { feature: 'No feed / no algorithm', boomer: true, social: false, journal: true, crm: true },
@@ -35,13 +25,6 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         <button onClick={scrollToTop} style={styles.navBrand}>
           Boomer
         </button>
-        <div style={styles.navLinks}>
-          {NAV_ITEMS.map((item) => (
-            <a key={item.id} href={`#${item.id}`} style={styles.navLink}>
-              {item.label}
-            </a>
-          ))}
-        </div>
         <div style={styles.navActions}>
           <button onClick={() => onAuthClick('demo')} style={styles.navDemoButton}>
             Free demo
@@ -57,9 +40,9 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         <p style={styles.heroSubtitle}>
           Remember who matters to you — even if you accidentally forgot.
         </p>
-        <a href="#get-started" style={styles.heroButton}>
+        <button onClick={() => onAuthClick('signup')} style={styles.heroButton}>
           Start remembering
-        </a>
+        </button>
         <button onClick={() => onAuthClick('demo')} style={styles.heroDemoLink}>
           Just want to look around? See a live demo →
         </button>
@@ -213,13 +196,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
     cursor: 'pointer',
   },
-  navLinks: { display: 'flex', flexWrap: 'wrap', gap: '1rem' },
-  navLink: {
-    color: '#2E4034',
-    textDecoration: 'none',
-    fontSize: '0.95rem',
-    borderBottom: '1px solid transparent',
-  },
   navActions: { display: 'flex', alignItems: 'center', gap: '0.6rem' },
   navDemoButton: {
     color: '#FFFFFF',
@@ -275,6 +251,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#2E4034',
     color: '#FFFFFF',
     textDecoration: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
   },
   heroDemoLink: {
     display: 'block',
