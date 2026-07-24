@@ -58,9 +58,9 @@ export default function Privacy({ onBack, backLabel }: { onBack: () => void; bac
         <h2 style={styles.sectionHeading}>Your controls</h2>
         <p style={styles.body}>
           You can update your email or password anytime in Settings. We don't yet have a
-          self-serve "delete everything" button — until we do, email{' '}
-          <a href="mailto:jake.volin@gmail.com" style={styles.link}>jake.volin@gmail.com</a>{' '}
-          and we'll delete your account and all your data by hand.
+          self-serve "delete everything" button — until we do, use the Feedback button (bottom
+          right of any screen) to request it, and we'll delete your account and all your data
+          by hand.
         </p>
       </section>
 
@@ -98,9 +98,8 @@ export default function Privacy({ onBack, backLabel }: { onBack: () => void; bac
       <section style={styles.section}>
         <h2 style={styles.sectionHeading}>Questions</h2>
         <p style={styles.body}>
-          Email{' '}
-          <a href="mailto:jake.volin@gmail.com" style={styles.link}>jake.volin@gmail.com</a>{' '}
-          with anything about how your data is handled — you'll hear back from a real person.
+          Use the Feedback button (bottom right of any screen) with anything about how your
+          data is handled — you'll hear back from a real person.
         </p>
       </section>
     </div>
@@ -131,5 +130,4 @@ const styles: { [key: string]: React.CSSProperties } = {
   body: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5, margin: 0 },
   list: { margin: '0.5rem 0 0', paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   listItem: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5 },
-  link: { color: '#2E4034' },
 }
