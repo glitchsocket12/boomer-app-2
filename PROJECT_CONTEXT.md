@@ -87,10 +87,12 @@ src/
 ├── pages/
 │   ├── Landing.tsx            — public marketing page (2026-07-22), now what `!session`
 │   │                            renders in App.tsx instead of bare Login.tsx: single
-│   │                            scrolling page with anchor nav (What is Boomer? / Not
-│   │                            another social network incl. a Boomer-vs-social-media/
-│   │                            journaling-apps/CRM comparison table / How it works /
-│   │                            Who it's for / Just yours (privacy) / Get started),
+│   │                            scrolling page (What is Boomer? / Not another social
+│   │                            network incl. a Boomer-vs-social-media/journaling-apps/
+│   │                            CRM comparison table / How it works / Who it's for /
+│   │                            Just yours (privacy) / Get started); top nav anchor-link
+│   │                            row removed 2026-07-23 (cluttered, founder call) — nav
+│   │                            is now just brand + Free demo/Log in buttons,
 │   │                            embeds Login.tsx unchanged as the Get Started section's
 │   │                            form. Reuses Login.tsx's sage/cream/Georgia styling, no
 │   │                            new visual system. Privacy copy deliberately does NOT
