@@ -121,14 +121,62 @@ function node(g: Graph, id: string, kind: TreePersonKind, parentId: string | und
   return { id, name: g.nameById.get(id) ?? 'Unknown', kind, parentId, side, deceased: g.deceasedIds.has(id) }
 }
 
-// Which of the root's two parents (by position in the root's own flat parent list, not position
+// Which of the root's two parent-side couples (by couple position in parentCouples, not position
 // within a spouse-paired branch — a branch can hold just one parent when divorced/separated
 // parents were never linked to each other via a spouse relationship on file, and idx-within-branch
 // would then wrongly put every parent's lineage on the same side) a given parentId's lineage sits
-// on. Alternates by index parity so a 3rd+ parent on file (e.g. adoptive + biological) lands on one
-// of the two existing colors instead of crashing or inventing a 3rd.
-function sideOfParent(rootParents: string[], parentId: string): TreeSide {
-  return rootParents.indexOf(parentId) % 2 === 0 ? 'a' : 'b'
+// on. Alternates by couple-index parity so a 3rd+ parent/couple on file (e.g. adoptive + biological)
+// lands on one of the two existing colors instead of crashing or inventing a 3rd.
+function sideOfParent(parentCouples: string[][], parentId: string): TreeSide {
+  return parentCouples.findIndex((couple) => couple.includes(parentId)) % 2 === 0 ? 'a' : 'b'
+}
+
+// Groups a flat list of ids into couples (an id and its spouse, if the spouse is also in the
+// list, collapse into one couple) preserving first-appearance order — used to assign tree "side"
+// by couple rather than by raw list position, so inserting an inferred spouse-parent right after
+// their partner doesn't flip the parity and land them on the wrong side.
+function groupIntoCouples(g: Graph, ids: string[]): string[][] {
+  const seen = new Set<string>()
+  const couples: string[][] = []
+  for (const id of ids) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const spouseId = (g.spousesOf.get(id) ?? []).find((sid) => ids.includes(sid) && !seen.has(sid))
+    if (spouseId) {
+      seen.add(spouseId)
+      couples.push([id, spouseId])
+    } else {
+      couples.push([id])
+    }
+  }
+  return couples
+}
+
+// A parent-fact recorded against only one half of a couple (e.g. a kid's "parent" row points at
+// the in-law spouse, not the blood relative) would otherwise cut off everything upstream of the
+// blood side — grandparents, aunts/uncles, cousins — for that kid's own tree, even though the
+// other direction (that blood relative's OWN tree) already finds the kid fine via
+// childrenOfEither's spouse-inclusion. Expanding recorded parents to include their spouses here
+// makes the two directions symmetric. `rootParents`/`rootParentNodes` stay unexpanded — they
+// drive the "remove this relationship" UI, and there's nothing to remove for an inferred parent.
+// Only a DECEASED spouse of a recorded parent counts as a possible missing blood connector — a
+// still-living spouse is presumptively a step-parent/in-law (most often a remarriage after the
+// recorded parent was widowed) with no bearing on this kid's own lineage, and inferring them would
+// drag an unrelated branch into the tree. A now-deceased spouse, by contrast, is very plausibly the
+// actual blood parent whose own "parent" fact just never got re-recorded once the surviving spouse
+// remarried — exactly the shape of the Andy Volin / Andi Romagnoli / Michael Galchinsky case this
+// was written for. An explicitly-divorced pairing (endedPairs) is excluded either way.
+function expandParentsWithSpouses(g: Graph, parents: string[]): string[] {
+  const result = [...parents]
+  for (const id of parents) {
+    for (const spouseId of g.spousesOf.get(id) ?? []) {
+      if (result.includes(spouseId)) continue
+      if (!g.deceasedIds.has(spouseId)) continue
+      if (g.endedPairs.has(unionKey(id, spouseId))) continue
+      result.push(spouseId)
+    }
+  }
+  return result
 }
 
 function primaryParentId(g: Graph, personId: string): string | undefined {
@@ -383,6 +431,12 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   const isSelfRoot = g.selfId === rootId
 
   const rootParents = g.parentsOf.get(rootId) ?? []
+  // Recorded parents plus their spouses — see expandParentsWithSpouses's comment for why: a
+  // parent-fact recorded against only the in-law half of a couple would otherwise cut off the
+  // blood side's grandparents/aunts/uncles/cousins entirely. Only used for tree-walking below;
+  // rootParentNodes (the "remove this relationship" list) stays on the unexpanded rootParents.
+  const treeParents = expandParentsWithSpouses(g, rootParents)
+  const parentCouples = groupIntoCouples(g, treeParents)
   const rootSpouses = g.spousesOf.get(rootId) ?? []
   const rootSiblings = (g.siblingsOf.get(rootId) ?? []).filter((id) => id !== rootId)
   const rootChildren = childrenOfEither(g, rootId)
@@ -421,17 +475,17 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   // normal family-tree diagram instead of pooling everyone on one side. Those siblings' kids
   // (cousins) — with their own spouses and kids, if any — are slotted into the root's own
   // generation tier and the Kids tier respectively, on the matching side.
-  const parentBranches = groupIntoBranches(g, rootParents, 'direct', (id) => primaryParentId(g, id))
+  const parentBranches = groupIntoBranches(g, treeParents, 'direct', (id) => primaryParentId(g, id))
   const leftCousinBranches: TreeBranch[] = []
   const rightCousinBranches: TreeBranch[] = []
   const extraKidsBranches: TreeBranch[] = []
   for (const branch of parentBranches) {
     const branchIds = [branch.union.a.id, ...branch.union.spouses.map((s) => s.id)]
     branchIds.forEach((parentId) => {
-      // Side is keyed off this parent's position in the ROOT's own flat parent list (sideOfParent),
-      // not position within this branch — see sideOfParent's comment for why idx-within-branch was
-      // wrong for divorced/separated parents never linked to each other on file.
-      const side = sideOfParent(rootParents, parentId)
+      // Side is keyed off which couple this parent belongs to (sideOfParent), not position within
+      // this branch — see sideOfParent's comment for why idx-within-branch was wrong for divorced/
+      // separated parents never linked to each other on file.
+      const side = sideOfParent(parentCouples, parentId)
       const extendedSide = side === 'a' ? branch.leftExtended : branch.rightExtended
       const cousinSide = side === 'a' ? leftCousinBranches : rightCousinBranches
       const parentAnchor = primaryParentId(g, parentId)
@@ -467,8 +521,8 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   // SAME rootParent) ---
   const sideAGpIds: string[] = []
   const sideBGpIds: string[] = []
-  for (const parentId of rootParents) {
-    const side = sideOfParent(rootParents, parentId)
+  for (const parentId of treeParents) {
+    const side = sideOfParent(parentCouples, parentId)
     const bucket = side === 'a' ? sideAGpIds : sideBGpIds
     for (const gpId of g.parentsOf.get(parentId) ?? []) {
       if (!bucket.includes(gpId)) bucket.push(gpId)

@@ -481,7 +481,13 @@ row on every profile (founder feedback 2026-07-24 — a permanent prompt read as
 FamilyTree.tsx "Mark a marriage as ended" (divorce only — death is
 read off the person's own deceased_date, not a separate flag). `relationshipLabels.ts`
 (mirrored in selfContext.ts for the AI prompt) derives step-parent/step-sibling/half-sibling
-labels from the graph, no new relationship kind needed.
+labels from the graph, no new relationship kind needed. `buildFamilyTreeFromGraph` (familyTree.ts,
+2026-07-24 fix) infers a second ego-tree parent from a recorded parent's DECEASED spouse (not a
+still-living one, to avoid pulling in an unrelated remarriage partner) — otherwise a kid whose
+"parent" fact was recorded only against the in-law half of a couple loses the entire blood side
+(grandparents/aunts/uncles/cousins) when the blood parent later dies and the survivor remarries;
+found via Sam Volin's tree going blank-ish after Andy Volin (Sam's actual father) died and his
+widow Andi Romagnoli remarried Michael Galchinsky. Full story: PROJECT_HISTORY.md.
 │   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
 │   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
 │   │                            only, not app-navigation shortcuts (a "My page" link was cut
