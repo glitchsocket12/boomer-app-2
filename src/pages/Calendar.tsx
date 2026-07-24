@@ -35,9 +35,11 @@ function fullName(p: { name: string; last_name: string | null }): string {
 export default function Calendar({
   onSelectPerson,
   onSelectEvent,
+  onOpenCalendarSettings,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onOpenCalendarSettings: () => void
 }) {
   const [moments, setMoments] = useState<MomentRow[]>([])
   const [people, setPeople] = useState<PersonRow[]>([])
@@ -167,14 +169,33 @@ export default function Calendar({
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate()
+  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate()
   const firstWeekday = new Date(viewYear, viewMonth, 1).getDay()
   const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   const isToday = (day: number) =>
     viewYear === today.getFullYear() && viewMonth === today.getMonth() && day === today.getDate()
 
+  // Always exactly 6 rows (42 cells), padded with the tail of the previous month and the head of
+  // the next — a real month can be 4-6 rows, and letting the grid's own height vary with that
+  // shifts everything below it (or the whole viewport, if scrolled near the bottom) between
+  // months. Fixed height means clicking Previous/Next repeatedly never moves a tile out from
+  // under a follow-up click, same fix Google/Apple Calendar use.
+  const leadingCount = firstWeekday
+  const trailingCount = 42 - leadingCount - daysInMonth
+  const gridCells = [
+    ...Array.from({ length: leadingCount }, (_, i) => ({ day: daysInPrevMonth - leadingCount + 1 + i, inMonth: false })),
+    ...Array.from({ length: daysInMonth }, (_, i) => ({ day: i + 1, inMonth: true })),
+    ...Array.from({ length: trailingCount }, (_, i) => ({ day: i + 1, inMonth: false })),
+  ]
+
   return (
     <div style={styles.page}>
-      <h1 style={styles.heading}>Calendar</h1>
+      <div style={styles.headingRow}>
+        <h1 style={styles.heading}>Calendar</h1>
+        <button onClick={onOpenCalendarSettings} style={styles.settingsLink}>
+          Calendar settings →
+        </button>
+      </div>
 
       {distinctTags.length > 0 && (
         <div style={styles.chipRow}>
@@ -240,14 +261,18 @@ export default function Calendar({
         </div>
 
         <div style={styles.monthGrid}>
-          {Array.from({ length: firstWeekday }).map((_, i) => (
-            <div key={`pad-${i}`} />
-          ))}
-          {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
+          {gridCells.map(({ day, inMonth }, i) => {
+            if (!inMonth) {
+              return (
+                <div key={i} style={styles.dayCellMuted}>
+                  <p style={styles.dayNumberMuted}>{day}</p>
+                </div>
+              )
+            }
             const items = dayTiles.get(day) ?? []
             const [first, ...rest] = items
             return (
-              <div key={day} style={isToday(day) ? styles.dayCellToday : styles.dayCell}>
+              <div key={i} style={isToday(day) ? styles.dayCellToday : styles.dayCell}>
                 <p style={isToday(day) ? styles.dayNumberToday : styles.dayNumber}>{day}</p>
                 {first && (
                   <button onClick={first.onClick} style={styles.dayTile} title={first.title}>
@@ -272,7 +297,17 @@ export default function Calendar({
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '840px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
-  heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 1rem' },
+  headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
+  settingsLink: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '0.9rem',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+  },
   chipRow: { display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' },
   tagChip: {
     fontSize: '0.85rem',
@@ -351,6 +386,8 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   dayNumber: { fontSize: '0.78rem', color: '#555', textAlign: 'right', margin: '0 0.15rem 0.2rem 0' },
   dayNumberToday: { fontSize: '0.78rem', color: '#2E4034', fontWeight: 'bold', textAlign: 'right', margin: '0 0.15rem 0.2rem 0' },
+  dayCellMuted: { minWidth: 0, overflow: 'hidden', minHeight: '4.2rem', padding: '0.2rem' },
+  dayNumberMuted: { fontSize: '0.78rem', color: '#CCC', textAlign: 'right', margin: '0 0.15rem 0.2rem 0' },
   dayTile: {
     display: 'block',
     width: '100%',

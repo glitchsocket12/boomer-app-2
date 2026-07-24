@@ -19,11 +19,13 @@ export default function SettingsPage({
   backLabel,
   onOpenAbout,
   onOpenPrivacy,
+  onOpenCalendarSettings,
 }: {
   onBack: () => void
   backLabel: string
   onOpenAbout: () => void
   onOpenPrivacy: () => void
+  onOpenCalendarSettings: () => void
 }) {
   const [currentEmail, setCurrentEmail] = useState<string | null>(null)
 
@@ -307,6 +309,9 @@ export default function SettingsPage({
       </section>
 
       <section style={styles.section}>
+        <button onClick={onOpenCalendarSettings} style={styles.linkRow}>
+          Calendar settings →
+        </button>
         <button onClick={onOpenAbout} style={styles.linkRow}>
           About Boomer →
         </button>

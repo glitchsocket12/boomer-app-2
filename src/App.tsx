@@ -19,6 +19,7 @@ import DueForUpdate from './pages/DueForUpdate'
 import ManageTags from './pages/ManageTags'
 import Circle from './pages/Circle'
 import SettingsPage from './pages/SettingsPage'
+import CalendarSettings from './pages/CalendarSettings'
 import About from './pages/About'
 import Privacy from './pages/Privacy'
 import FamilyTree from './pages/FamilyTree'
@@ -38,6 +39,7 @@ type Crumb =
   | { type: 'circle'; id: string; label: string }
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
   | { type: 'settings'; id: string; label: string }
+  | { type: 'calendarSettings'; id: string; label: string }
   | { type: 'about'; id: string; label: string }
   | { type: 'privacy'; id: string; label: string }
 
@@ -53,6 +55,7 @@ const CRUMB_TYPES = [
   'circle',
   'familyTree',
   'settings',
+  'calendarSettings',
   'about',
   'privacy',
 ]
@@ -60,7 +63,7 @@ const CRUMB_TYPES = [
 // Crumb types that are single fixed pages rather than records with a real id (their `id` is
 // just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
 // segment for these, not a `/type/id` pair.
-const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'circle', 'settings', 'about', 'privacy'])
+const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'circle', 'settings', 'calendarSettings', 'about', 'privacy'])
 
 const AUTH_VIEWS = new Set<AuthView>(['landing', 'login', 'signup', 'demo'])
 
@@ -443,8 +446,11 @@ export default function App() {
         backLabel={parentLabel}
         onOpenAbout={() => pushCrumb({ type: 'about', id: 'about', label: 'About' })}
         onOpenPrivacy={() => pushCrumb({ type: 'privacy', id: 'privacy', label: 'Privacy' })}
+        onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
       />
     )
+  } else if (current?.type === 'calendarSettings') {
+    content = <CalendarSettings onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'about') {
     content = <About onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'privacy') {
@@ -481,6 +487,7 @@ export default function App() {
           <Calendar
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+            onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
           />
         )}
         {view === 'groups' && (
