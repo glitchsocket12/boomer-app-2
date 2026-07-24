@@ -464,9 +464,16 @@ the container.
 │   ├── About.tsx               — (2026-07-23) placeholder page reached from Settings — real
 │   │                            copy (item 23's "I don't want it to be bullshit" honesty ask)
 │   │                            still to be drafted with the founder
-│   └── Privacy.tsx             — (2026-07-23) placeholder page reached from Settings — real
-│                                privacy/data policy still to be drafted with the founder, not
-│                                invented unilaterally
+│   └── Privacy.tsx             — (2026-07-23) real privacy/data policy copy (drafted with
+│                                founder, no longer a placeholder): what's collected, how the
+│                                AI uses it, named sub-processors (Supabase/Vercel/Anthropic/
+│                                OpenAI), honest security-tier framing (encrypted in transit/
+│                                at rest today; true E2E encryption is roadmap-only, in tension
+│                                with AI reading content), account deletion today = email
+│                                request (no self-serve button yet), and a specific "Coming
+│                                soon" list (self-serve delete, data export, published security
+│                                write-up, E2E research, consent-gated call-transcript import if
+│                                that ships)
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
