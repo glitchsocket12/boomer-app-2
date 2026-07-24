@@ -26,6 +26,7 @@ import Breadcrumb from './components/Breadcrumb'
 import FeedbackWidget from './components/FeedbackWidget'
 
 type Tab = 'home' | 'people' | 'events' | 'groups'
+type AuthView = 'landing' | 'login' | 'signup' | 'demo'
 type Crumb =
   | { type: 'person'; id: string; label: string }
   | { type: 'group'; id: string; label: string }
@@ -59,6 +60,17 @@ const CRUMB_TYPES = [
 // just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
 // segment for these, not a `/type/id` pair.
 const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'circle', 'settings', 'about', 'privacy'])
+
+const AUTH_VIEWS = new Set<AuthView>(['landing', 'login', 'signup', 'demo'])
+
+// Logged-out screens (Landing/Login/Signup/Demo) live at their own /:authView path, parsed the
+// same lossy way as buildPath/parseNavFromPath below — real state restore comes from
+// history.state where available (see popstate handling), this is just the fallback for a fresh
+// direct load/link.
+function parseAuthViewFromPath(pathname: string): AuthView | null {
+  const first = pathname.split('/').filter(Boolean)[0]
+  return first && AUTH_VIEWS.has(first as AuthView) ? (first as AuthView) : null
+}
 
 // Where-you-are is plain React state, so a browser refresh used to reset to Home.
 // Persist it per browser tab (sessionStorage) so refreshing stays on the current page.
@@ -131,7 +143,7 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
 export default function App() {
   const [session, setSession] = useState<any>(null)
   const [checkingSession, setCheckingSession] = useState(true)
-  const [authView, setAuthView] = useState<'landing' | 'login' | 'signup' | 'demo'>('landing')
+  const [authView, setAuthView] = useState<AuthView>(() => parseAuthViewFromPath(window.location.pathname) ?? 'landing')
   // null = still checking, true = show the standalone onboarding experience instead of the app
   // shell. Gated on two signals together: the account hasn't already finished/skipped onboarding
   // (auth user_metadata, set by Onboarding.tsx on completion) AND it doesn't already have real
@@ -146,39 +158,64 @@ export default function App() {
   const skipNextHistoryPush = useRef(false)
 
   useEffect(() => {
-    // Logged-out screens (Landing/Login) aren't part of this routing at all — skip so the
-    // address bar doesn't keep showing whatever authenticated page was open before sign-out.
-    if (!session) return
-
-    sessionStorage.setItem(NAV_STORAGE_KEY, JSON.stringify({ view, navStack }))
+    // Still resolving auth — we don't yet know whether to treat this as logged-out (authView)
+    // or logged-in (view/navStack) routing, so leave whatever path a direct load/refresh arrived
+    // on untouched rather than guessing and clobbering a legitimate deep link.
+    if (checkingSession) return
 
     if (skipNextHistoryPush.current) {
       skipNextHistoryPush.current = false
       return
     }
-    const path = buildPath(view, navStack)
-    if (path !== window.location.pathname) {
-      window.history.pushState({ view, navStack }, '', path)
+
+    let path: string
+    if (!session) {
+      path = `/${authView}`
+    } else if (onboardingPending) {
+      path = '/onboarding'
+    } else {
+      sessionStorage.setItem(NAV_STORAGE_KEY, JSON.stringify({ view, navStack }))
+      path = buildPath(view, navStack)
     }
-  }, [view, navStack, session])
+    if (path !== window.location.pathname) {
+      window.history.pushState({ authView, view, navStack }, '', path)
+    }
+  }, [checkingSession, session, authView, onboardingPending, view, navStack])
 
   useEffect(() => {
-    // Sync the CURRENT history entry's state on mount (a plain replace, not a new entry) so
-    // Back/Forward has full-fidelity state to restore from immediately, not just whatever the
-    // very first render's [view, navStack] effect above would otherwise push.
-    window.history.replaceState({ view, navStack }, '', buildPath(view, navStack))
+    // Sync the CURRENT history entry's state on mount (a plain replace of STATE only, not the
+    // path) so Back/Forward has full-fidelity state to restore from immediately, not just
+    // whatever the effect above would otherwise push once auth resolves. Deliberately leaves
+    // window.location.pathname exactly as loaded — session hasn't resolved yet at mount time, so
+    // rewriting the path here could clobber a legitimate authenticated deep link before we know
+    // whether the visitor is actually logged in.
+    const authFromPath = parseAuthViewFromPath(window.location.pathname)
+    const parsedApp = parseNavFromPath(window.location.pathname)
+    const state = authFromPath
+      ? { authView: authFromPath }
+      : { view: parsedApp?.view ?? view, navStack: parsedApp?.navStack ?? navStack }
+    window.history.replaceState(state, '', window.location.pathname)
 
     function handlePopState(e: PopStateEvent) {
       skipNextHistoryPush.current = true
-      const state = e.state as { view?: Tab; navStack?: Crumb[] } | null
+      const state = e.state as { authView?: AuthView; view?: Tab; navStack?: Crumb[] } | null
+      if (state?.authView) {
+        setAuthView(state.authView)
+        return
+      }
       if (state?.view) {
         setView(state.view)
         setNavStack(Array.isArray(state.navStack) ? state.navStack : [])
-      } else {
-        const parsed = parseNavFromPath(window.location.pathname)
-        setView(parsed?.view ?? 'home')
-        setNavStack(parsed?.navStack ?? [])
+        return
       }
+      const authFromPathNow = parseAuthViewFromPath(window.location.pathname)
+      if (authFromPathNow) {
+        setAuthView(authFromPathNow)
+        return
+      }
+      const parsed = parseNavFromPath(window.location.pathname)
+      setView(parsed?.view ?? 'home')
+      setNavStack(parsed?.navStack ?? [])
     }
 
     window.addEventListener('popstate', handlePopState)
@@ -204,8 +241,11 @@ export default function App() {
         // a shared device) starts fresh instead of resuming wherever this session left off.
         setView('home')
         setNavStack([])
+        setAuthView('landing')
         sessionStorage.removeItem(NAV_STORAGE_KEY)
-        window.history.replaceState(null, '', '/')
+        // Replace (not push) so Back doesn't return to the authenticated trail post-logout.
+        skipNextHistoryPush.current = true
+        window.history.replaceState({ authView: 'landing' }, '', '/landing')
       }
       checkOnboarding(session)
     })
@@ -290,7 +330,13 @@ export default function App() {
     if (authView === 'demo') {
       return <DemoShell onExit={() => setAuthView('landing')} onSignUp={() => setAuthView('signup')} />
     }
-    return <Login initialSignUp={authView === 'signup'} onBack={() => setAuthView('landing')} />
+    return (
+      <Login
+        isSignUp={authView === 'signup'}
+        onToggleMode={() => setAuthView(authView === 'signup' ? 'login' : 'signup')}
+        onBack={() => setAuthView('landing')}
+      />
+    )
   }
 
   if (onboardingPending === null) {

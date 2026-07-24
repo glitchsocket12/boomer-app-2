@@ -24,10 +24,12 @@ function calculateAge(birthdayISO: string) {
 }
 
 export default function Login({
-  initialSignUp = false,
+  isSignUp,
+  onToggleMode,
   onBack,
 }: {
-  initialSignUp?: boolean
+  isSignUp: boolean
+  onToggleMode: () => void
   onBack?: () => void
 }) {
   const [firstName, setFirstName] = useState('')
@@ -36,12 +38,11 @@ export default function Login({
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [isSignUp, setIsSignUp] = useState(initialSignUp)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
   function toggleMode() {
-    setIsSignUp(!isSignUp)
+    onToggleMode()
     setMessage('')
   }
 
