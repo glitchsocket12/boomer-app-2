@@ -64,6 +64,7 @@ export const DEMO_TAGS: DemoTag[] = [
   { id: 'holiday', name: 'Holiday' },
   { id: 'work', name: 'Work' },
   { id: 'golf', name: 'Golf' },
+  { id: 'catchup', name: 'Catch-up' },
 ]
 
 export type DemoReminder = { personId: string; label: 'Birthday' | 'Anniversary'; month: number; day: number }
@@ -77,7 +78,7 @@ export type DemoKeyFact = {
 
 // ---- People ----
 
-export const DEMO_PEOPLE: DemoPerson[] = [
+const CORE_PEOPLE: DemoPerson[] = [
   { id: 'gary', name: 'Gary', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: true, created_at: '2024-01-05T00:00:00Z' },
   { id: 'carol', name: 'Carol', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-05T00:00:00Z' },
   { id: 'mike', name: 'Mike', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-06T00:00:00Z' },
@@ -99,6 +100,22 @@ export const DEMO_PEOPLE: DemoPerson[] = [
   { id: 'priya', name: 'Priya', last_name: 'Nair', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-10T00:00:00Z' },
   { id: 'harold', name: 'Harold', last_name: 'Jennings', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-11T00:00:00Z' },
   { id: 'pete', name: 'Pete', last_name: 'Alvarez', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-11T00:00:00Z' },
+  { id: 'rosa', name: 'Rosa', last_name: 'Ibarra', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-09T00:00:00Z' },
+  { id: 'kevin_ibarra', name: 'Kevin', last_name: 'Ibarra', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-09T00:00:00Z' },
+  { id: 'julie_ibarra', name: 'Julie', last_name: 'Ibarra', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-09T00:00:00Z' },
+  { id: 'donna', name: 'Donna', last_name: 'Kowalski', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-09T00:00:00Z' },
+  { id: 'yvonne', name: 'Yvonne', last_name: 'Thibodeaux', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-09T00:00:00Z' },
+  { id: 'barbara', name: 'Barbara', last_name: 'Jennings', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-11T00:00:00Z' },
+  { id: 'ed', name: 'Ed', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'ruth_kessler', name: 'Ruth', last_name: 'Kessler', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'tom_p_cousin', name: 'Tom', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'karen_kessler', name: 'Karen', last_name: 'Kessler', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'arthur_merritt', name: 'Arthur', last_name: 'Merritt', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'denise_merritt', name: 'Denise', last_name: 'Merritt', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'jean_whitfield', name: 'Jean', last_name: 'Whitfield', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'robert_whitfield', name: 'Robert', last_name: 'Whitfield', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'doug_reyes', name: 'Doug', last_name: 'Reyes', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
+  { id: 'alex_reyes', name: 'Alex', last_name: 'Reyes', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-08T00:00:00Z' },
 ]
 
 export function demoPersonName(id: string): string {
@@ -133,6 +150,28 @@ const DEMO_RELATIONSHIPS: Rel[] = [
   { a: 'peggy', b: 'diane', kind: 'parent' },
   { a: 'gary', b: 'diane', kind: 'sibling' },
   { a: 'carol', b: 'linda', kind: 'sibling' },
+  { a: 'frank', b: 'rosa', kind: 'spouse' },
+  { a: 'frank', b: 'kevin_ibarra', kind: 'parent' },
+  { a: 'rosa', b: 'kevin_ibarra', kind: 'parent' },
+  { a: 'frank', b: 'julie_ibarra', kind: 'parent' },
+  { a: 'rosa', b: 'julie_ibarra', kind: 'parent' },
+  { a: 'steve', b: 'donna', kind: 'spouse' },
+  { a: 'ray', b: 'yvonne', kind: 'spouse' },
+  { a: 'harold', b: 'barbara', kind: 'spouse' },
+  { a: 'walt', b: 'ed', kind: 'sibling' },
+  { a: 'walt', b: 'ruth_kessler', kind: 'sibling' },
+  { a: 'ed', b: 'tom_p_cousin', kind: 'parent' },
+  { a: 'ruth_kessler', b: 'karen_kessler', kind: 'parent' },
+  { a: 'peggy', b: 'arthur_merritt', kind: 'sibling' },
+  { a: 'arthur_merritt', b: 'denise_merritt', kind: 'parent' },
+  { a: 'jean_whitfield', b: 'robert_whitfield', kind: 'spouse' },
+  { a: 'jean_whitfield', b: 'carol', kind: 'parent' },
+  { a: 'robert_whitfield', b: 'carol', kind: 'parent' },
+  { a: 'jean_whitfield', b: 'linda', kind: 'parent' },
+  { a: 'robert_whitfield', b: 'linda', kind: 'parent' },
+  { a: 'linda', b: 'doug_reyes', kind: 'spouse' },
+  { a: 'linda', b: 'alex_reyes', kind: 'parent' },
+  { a: 'doug_reyes', b: 'alex_reyes', kind: 'parent' },
 ]
 
 export function buildDemoGraph(): Graph {
@@ -250,7 +289,7 @@ export const DEMO_GROUP_NOTES: DemoGroupNote[] = [
 // m9-m34 stretch back to 2011 so the Events list reads as a real long-term archive, not a fresh
 // account — per the founder's ask to show the "gets more useful the longer you use it" pitch.
 
-export const DEMO_MOMENTS: DemoMoment[] = [
+const CORE_MOMENTS: DemoMoment[] = [
   {
     id: 'm1',
     occasion: "Emma's Soccer Tournament",
@@ -275,7 +314,7 @@ export const DEMO_MOMENTS: DemoMoment[] = [
       "Carol and I hit 40 years married. The kids put together a dinner at the house, and Frank and Steve came too. Someone made a toast that went on way too long — pretty sure it was Danny.",
     summary: "Gary and Carol's 40th anniversary dinner at home with the whole family, plus old friends from work, Frank and Steve.",
     created_at: '2026-05-02T00:00:00Z',
-    attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'carlos', 'danny', 'frank', 'steve'],
+    attendeeIds: ['gary', 'carol', 'mike', 'jenna', 'beth', 'carlos', 'danny', 'frank', 'steve', 'rosa', 'donna'],
     groupIds: ['family', 'crew'],
     tagIds: ['milestone', 'family'],
   },
@@ -739,7 +778,7 @@ function n(personId: string, content: string, created_at: string, momentId: stri
   return { id: `note${noteSeq}`, personId, content, created_at, momentId, source: momentId ? null : 'home', sourceGroupId: null }
 }
 
-export const DEMO_NOTES: DemoNote[] = [
+const CORE_NOTES: DemoNote[] = [
   // Carol
   n('carol', 'Retired elementary school teacher, taught 2nd grade for 30 years in Aurora.', '2024-02-01T00:00:00Z'),
   n('carol', "Keeps the family calendar. Somehow never misses a birthday. Married 40 years now — still not sure how she puts up with the workplace stories.", '2026-05-02T00:00:00Z', 'm2'),
@@ -811,7 +850,340 @@ export const DEMO_NOTES: DemoNote[] = [
   n('harold', "Tuesday golf regular. Won't stop bringing up Steve's hole-in-one, and it's been weeks.", '2025-09-05T00:00:00Z', 'm8'),
   // Pete
   n('pete', 'Rounds out the Tuesday foursome. Quietest of the four, somehow always wins the bets anyway.', '2024-11-01T00:00:00Z'),
+
+  // ---- Event-coverage notes ----
+  // Brings every original moment up to a few notes from different attendees instead of one or
+  // zero, and demonstrates that notes get added to an event well after the fact as people
+  // remember more (created_at dated later than the moment itself).
+  n('noah', "Basically became the game's unofficial announcer — even the other team's parents were laughing.", '2026-06-14T00:00:00Z', 'm1'),
+  n('danny', 'Gave the toast. Went on longer than it should have — in my defense, forty years is a lot of material.', '2026-05-02T00:00:00Z', 'm2'),
+  n('steve', 'Came for the anniversary dinner. Managed to show up on time for once.', '2026-05-02T00:00:00Z', 'm2'),
+  n('danny', "Still owe everyone an apology for how long that anniversary toast ran. No regrets though.", '2026-06-01T00:00:00Z', 'm2'),
+  n('frank', 'First time the four of us were all together in three years. Felt like no time had passed.', '2026-04-18T00:00:00Z', 'm3'),
+  n('steve', "Drove by the old distribution center with everyone — half of it's a self-storage place now.", '2026-04-18T00:00:00Z', 'm3'),
+  n('ray', 'Keep thinking back to that reunion weekend — already trying to plan the next one before three more years go by.', '2026-06-01T00:00:00Z', 'm3'),
+  n('carlos', "Stayed out of Beth's way on the party planning entirely. Smart move.", '2026-03-01T00:00:00Z', 'm4'),
+  n('carol', "Flew down for Peggy's 91st. She still remembers everyone's names better than I do.", '2026-02-08T00:00:00Z', 'm5'),
+  n('danny', "Showed up hungry, like always. Carol's lemon bundt cake didn't stand a chance.", '2025-11-27T00:00:00Z', 'm6'),
+  n('carol', 'Still have leftover tamale requests coming in from the grandkids two months later. Carlos may have started a tradition he regrets.', '2026-01-15T00:00:00Z', 'm6'),
+  n('pete', "Watched the whole hole-in-one from the next tee over. Steve hasn't stopped talking about it since.", '2025-09-05T00:00:00Z', 'm8'),
+  n('beth', 'Sofia started preschool this week. Sent about forty photos of her walking in with a backpack twice her size.', '2024-11-16T00:00:00Z', 'm9'),
+  n('sofia', 'Cried for about two minutes at drop-off, then never looked back.', '2024-11-16T00:00:00Z', 'm9'),
+  n('mike', 'Noah started kindergarten today. Walked in and immediately quizzed the teacher on Spinosaurus facts.', '2024-08-19T00:00:00Z', 'm10'),
+  n('noah', "Asked my teacher if she knew what a Spinosaurus was. She didn't. I told her anyway.", '2024-08-19T00:00:00Z', 'm10'),
+  n('carol', "Danny brought a date to Sunday dinner. Nearly dropped the mashed potatoes — I've been trying to set him up for years.", '2024-02-11T00:00:00Z', 'm11'),
+  n('danny', 'Brought someone to Sunday dinner for once. Mom about lost it.', '2024-02-11T00:00:00Z', 'm11'),
+  n('jenna', "Emma's first club soccer game. Nervous the whole ride there, then scored in the first half.", '2023-09-09T00:00:00Z', 'm12'),
+  n('emma', "Scored in my first club game. Haven't stopped talking about it since.", '2023-09-09T00:00:00Z', 'm12'),
+  n('sam', 'Showed Gary around on his first shift. Took him three tries to figure out the register.', '2022-03-14T00:00:00Z', 'm13'),
+  n('priya', 'Had to explain the register to Gary three separate times his first shift. Patient guy, slow learner on that one.', '2022-03-14T00:00:00Z', 'm13'),
+  n('carol', "35 years married. Kept it quiet this time — just dinner out, the two of us. Sometimes that's better.", '2021-06-08T00:00:00Z', 'm14'),
+  n('carlos', "Sofia was born. Tiny and loud, in that order. Flew Beth's parents out as soon as we could.", '2021-05-02T00:00:00Z', 'm15'),
+  n('frank', "Drove in for Gary's retirement party. Same warehouse we both started in back in '85 — hard to wrap your head around.", '2021-02-26T00:00:00Z', 'm16'),
+  n('mike', "Meant to add this ages ago — Dad still has that retirement watch in the box. Wears the plaque's spot on the wall more than the watch.", '2022-05-10T00:00:00Z', 'm16'),
+  n('carol', 'Kept Thanksgiving small that year — just the six of us. Missed having everyone around the table, but it had its own kind of nice.', '2020-11-26T00:00:00Z', 'm17'),
+  n('jenna', "Noah's first Christmas Eve. Three months old, slept through the whole thing while we fought a play kitchen at 11pm.", '2019-12-24T00:00:00Z', 'm18'),
+  n('mike', "Noah was born. Emma took her new big-sister job very seriously — for about ten seconds.", '2019-09-03T00:00:00Z', 'm19'),
+  n('carol', 'Retired after 30 years teaching 2nd grade. My classroom threw me a party — cards, cake, one kid cried harder than I did.', '2018-06-15T00:00:00Z', 'm20'),
+  n('peggy', 'The whole crew came down to Tucson to see me. First real trip since Walt passed. I fed everyone way too much, per usual.', '2017-07-22T00:00:00Z', 'm21'),
+  n('steve', "Talked Gary into filling in for our Tuesday game. Nine years later he's still showing up.", '2017-04-11T00:00:00Z', 'm22'),
+  n('jenna', "Emma was born. Mike drove up the same night looking like he hadn't slept in a week — fair, honestly.", '2016-09-14T00:00:00Z', 'm23'),
+  n('carol', 'Gary made Regional Operations Manager after 31 years. Took me out to celebrate. About time, I told him.', '2016-03-01T00:00:00Z', 'm24'),
+  n('mike', "Dad's memorial in Tucson. Some of his old machine-shop guys showed up — hadn't seen a few of them in twenty years.", '2015-10-19T00:00:00Z', 'm25'),
+  n('diane', "Still think about Dad's memorial sometimes when I'm cleaning out boxes — found a photo from the machine shop guys last month.", '2024-09-01T00:00:00Z', 'm25'),
+  n('danny', 'Dad helped me move into my first place. Mostly a couch, a mattress, and way too much protein powder.', '2015-06-06T00:00:00Z', 'm26'),
+  n('beth', 'Married Carlos in San Diego. His family brought half the food themselves — tamales included. Great day.', '2014-08-23T00:00:00Z', 'm27'),
+  n('carol', "Danny graduated the fire academy. Sat there thinking about him being scared of the vacuum cleaner as a kid. Proud doesn't cover it.", '2014-05-30T00:00:00Z', 'm28'),
+  n('frank', "Gave the toast at Mike and Jenna's wedding. Somehow turned into a full Sinatra bit. Wouldn't expect anything less from me.", '2013-09-14T00:00:00Z', 'm29'),
+  n('frank', 'Got out to Eleven Mile Canyon with Gary for a couple days. Caught almost nothing, talked about everything. Best trip in years.', '2013-06-15T00:00:00Z', 'm30'),
+  n('beth', 'Graduated PT school. Flew out for it. Made sense, honestly — I was always the one patching up my brothers growing up.', '2013-03-08T00:00:00Z', 'm31'),
+  n('carol', "Decided to deep-fry the turkey that year. Nearly took out the back deck doing it. Turkey turned out great, for what it's worth.", '2012-11-22T00:00:00Z', 'm32'),
+  n('mike', "Graduated college today. Four years, one very expensive parking ticket saga, and I'm out.", '2012-08-11T00:00:00Z', 'm33'),
+  n('mike', 'Mom and Dad hit 25 years. We put together a little backyard party for them.', '2011-09-13T00:00:00Z', 'm34'),
+
+  // ---- Friends' families ----
+  n('frank', "Married to Rosa going on 38 years. Two kids — Kevin's out in Austin in IT, Julie's still local, teaches middle school.", '2024-09-01T00:00:00Z'),
+  n('steve', "Married to Donna. She's the one who actually keeps him on time for things — golf being the notable exception.", '2024-09-01T00:00:00Z'),
+  n('ray', 'Married to Yvonne, both still down in Baton Rouge. Empty nesters now.', '2024-09-01T00:00:00Z'),
+  n('harold', 'Married to Barbara. Not much of a golfer herself, but she puts up with his stories about it.', '2024-09-01T00:00:00Z'),
+  n('rosa', "Frank's wife. Married almost 38 years now. Retired a couple years back, the two of them travel more these days.", '2024-09-01T00:00:00Z'),
+  n('rosa', 'Came to the 40th anniversary dinner with Frank.', '2026-05-02T00:00:00Z', 'm2'),
+  n('kevin_ibarra', "Frank and Rosa's son. Out in Austin, works in IT.", '2024-09-01T00:00:00Z'),
+  n('julie_ibarra', "Frank and Rosa's daughter. Still local, teaches middle school here in the Springs.", '2024-09-01T00:00:00Z'),
+  n('donna', "Steve's wife. Keeps him on schedule better than 40 years of golf ever did.", '2024-09-01T00:00:00Z'),
+  n('donna', 'Came to the 40th anniversary dinner with Steve.', '2026-05-02T00:00:00Z', 'm2'),
+  n('yvonne', "Ray's wife, still in Baton Rouge with him. Not much of a flyer — stayed home for the crew reunion weekend.", '2026-04-18T00:00:00Z'),
+  n('barbara', "Harold's wife. Good sport about the golf stories, mostly.", '2024-09-01T00:00:00Z'),
+
+  // ---- Extended family ----
+  n('ed', "Walt's younger brother. Worked construction his whole life, lives out in Nebraska now.", '2024-07-01T00:00:00Z'),
+  n('ruth_kessler', "Walt's sister. Married name Kessler. The two of them talked every Sunday like clockwork, back when he was alive.", '2024-07-01T00:00:00Z'),
+  n('tom_p_cousin', "Ed's son, my cousin on Dad's side. Exchanges a Christmas card, not much else these days.", '2024-07-01T00:00:00Z'),
+  n('karen_kessler', "Ruth's daughter, my cousin. Came to Dad's memorial years back — haven't seen her since.", '2024-07-01T00:00:00Z'),
+  n('arthur_merritt', "Mom's brother. Lives in Flagstaff, still calls her every week.", '2024-07-01T00:00:00Z'),
+  n('denise_merritt', "Arthur's daughter, my cousin. Met her a handful of times growing up.", '2024-07-01T00:00:00Z'),
+  n('jean_whitfield', "Carol's mom. In her late 80s now, still lives on her own outside Dayton.", '2024-08-01T00:00:00Z'),
+  n('robert_whitfield', "Carol's dad. Retired postal worker. Tells the same three stories every visit, and we let him.", '2024-08-01T00:00:00Z'),
+  n('doug_reyes', "Linda's husband, Carol's brother-in-law. Good guy, terrible about returning phone calls.", '2024-08-01T00:00:00Z'),
+  n('alex_reyes', "Linda and Doug's son, Carol's nephew. Somewhere in Ohio, not totally sure where anymore.", '2024-08-01T00:00:00Z'),
 ]
+
+// ---- Generated long-tail roster ----
+// A large, low-effort "long tail" of acquaintances, generated from small reusable name/detail
+// pools instead of hand-typed one by one — deterministic (index-based, not Math.random, so the
+// roster is stable across reloads), still zero API calls, still fully static. This is what makes
+// the roster read like a real long-used contact list: a small circle you know everything about
+// (above), a long tail you know one thing about (below) — most with a single short note, some
+// paired with a small, low-effort event (a call, running into someone) rather than a big gathering.
+
+// Sizes are deliberately coprime (41, 43) with the index formulas below, so the (first, last)
+// pairing has a combined period of lcm(41,43) = 1763 — far past the ~180 generated people, which
+// guarantees no two generated people end up with the exact same full name.
+const GEN_FIRST_NAMES = [
+  'Larry', 'Dennis', 'Sharon', 'Nancy', 'Wayne', 'Gloria', 'Russell', 'Marilyn', 'Kenneth', 'Judith',
+  'Gerald', 'Phyllis', 'Roger', 'Sandra', 'Dale', 'Connie', 'Norman', 'Arlene', 'Stanley', 'Bonnie',
+  'Melvin', 'Dorothy', 'Herbert', 'Shirley', 'Clarence', 'Joyce', 'Eugene', 'Marlene', 'Vernon', 'Darlene',
+  'Leroy', 'Wanda', 'Wallace', 'Eileen', 'Curtis', 'Yolanda', 'Bernard', 'Faye', 'Milton', 'Rosemary',
+  'Harriet',
+]
+
+const GEN_LAST_NAMES = [
+  'Hendricks', 'Corwin', 'Delgado', 'Franzen', 'Osei', 'Pruitt', 'Bhatt', 'Callahan', 'Nakamura', 'Voss',
+  'Lindqvist', 'Marchetti', 'Okafor', 'Tran', 'Blevins', 'Sorensen', 'Aldridge', 'Beaumont', 'Castellano', 'Dunleavy',
+  'Escobedo', 'Farrow', 'Guzman', 'Holloway', 'Ibsen', 'Jarrett', 'Kaminski', 'Larkin', 'Mercado', 'Novak',
+  'Ostrander', 'Radford', 'Quintero', 'Rutledge', 'Sabatini', 'Trombley', 'Underhill', 'Vasquez', 'Winfield', 'Yoshida',
+  'Whitlock', 'Zamora', 'Abernathy',
+]
+
+// Short, generic "quick capture" content — doubles as both the paired event's only note and the
+// person's profile note, so nothing gets written twice.
+const GENERIC_CATCHUP_CONTENT = [
+  "Hadn't talked in months — still doing well, asked about the grandkids.",
+  'Quick one, just checking in. Same as always.',
+  'Caught up for a few minutes — nothing new, which is its own kind of good news.',
+  'Talked for twenty minutes longer than either of us meant to.',
+  'Said hello, traded the usual weather complaints, kept moving.',
+  'Good to hear a voice instead of a text for once.',
+  'Asked about Carol, asked about the grandkids — same as it goes.',
+  "Quick hello, promised to actually get together soon. We'll see.",
+  'Caught each other up on the last few months in about five minutes flat.',
+  'Good talk. Should do it more than twice a year.',
+  'Ran into them completely by accident — small town, some days.',
+  'Nothing major, just good to check in.',
+  'Talked mostly about the weather and a little about everything else.',
+  "Hadn't seen them in a while — good to catch up.",
+  'Quick exchange, but always good to hear from them.',
+]
+
+type GenCategoryConfig = {
+  key: string
+  count: number
+  tag: string | null
+  pairFraction: number
+  eventOccasions: string[]
+  bioTemplates: string[]
+}
+
+const GEN_CATEGORIES: GenCategoryConfig[] = [
+  {
+    key: 'coworker',
+    count: 55,
+    tag: 'work',
+    pairFraction: 0.55,
+    eventOccasions: [
+      'Phone call with {name}', '{name} called to catch up', 'Ran into {name} at the old Frontier reunion lunch', 'Coffee with {name}',
+    ],
+    bioTemplates: [
+      "Worked the loading dock with him at the Colorado Springs branch in the late '80s.",
+      'Ran the Pueblo branch for a few years while Gary was still starting out.',
+      'Trained under him when he made Regional Operations Manager.',
+      'Drove long-haul for Frontier out of the Denver depot — crossed paths at the warehouse Christmas parties for years.',
+      "Worked inventory with him in the '90s — sharpest count-sheet in the building.",
+      "One of the old warehouse crew, came up through the ranks together in the '80s.",
+      'Covered his shift more times than either of them can count.',
+      'Retired a few years before Gary did. Still gets a Christmas card.',
+      'Worked the front counter at the Springs branch — knew every regular customer by name.',
+      "Ran forklift training for new hires, Gary included, back in '86.",
+      'Transferred to the Tucson branch in the 90s — they still swap calls a couple times a year.',
+      'Worked nights on the dock for years. Different shift, same crew.',
+      'One of the sales reps — used to argue with Gary about quarterly numbers every year.',
+      "Started the same week as Gary in '85. Didn't stay as long, but they overlapped a decade.",
+      "HR at the Springs branch for 20-some years. Knew everyone's business.",
+      'Ran the safety trainings every January without fail.',
+      'Worked the counter alongside him before transferring to the Pueblo branch.',
+      'One of the old dispatch guys — kept the whole operation running on time.',
+      'Retired the same year as Gary. Different departments, same send-off party.',
+      "Worked under him after the promotion. Good years, by all accounts.",
+    ],
+  },
+  {
+    key: 'neighbor',
+    count: 35,
+    tag: 'catchup',
+    pairFraction: 0.55,
+    eventOccasions: [
+      'Saw {name} in the driveway', 'Chatted with {name} over the fence', '{name} stopped by', 'Ran into {name} out walking',
+    ],
+    bioTemplates: [
+      'Lived two doors down for close to fifteen years. Great with the sprinkler system, terrible with the leaf blower timing.',
+      'Neighbor from the old house on Cresta Road — still trades tomatoes from the garden every summer.',
+      'Across the street for years. Used to watch the house when they traveled.',
+      'Lived next door when the kids were small. Their kids grew up together.',
+      'Retired Air Force, moved in down the block a few years back. Good guy for sprinkler-system advice.',
+      'Walks the same route every morning. They wave, sometimes stop and talk.',
+      "Used to organize the block's Fourth of July cookout every year.",
+      'Helped shovel the driveway more winters than either of them can count.',
+      'Moved in a few years back. Brought over a plate of cookies, been friendly ever since.',
+      'Lived across the cul-de-sac. Their dogs are better friends than they are.',
+      'Neighbor from way back — one of the last of the original families still on the street.',
+      "Keeps an eye on the mail when they're out of town.",
+      "Runs the neighborhood watch group. Knows everyone's business, in a good way.",
+      'Lived next door before moving to be closer to their kids. Still gets a call now and then.',
+      'Good for a fence-line chat on Saturday mornings.',
+      'Retired teacher down the street. Trades books with Carol.',
+      'New family on the block. Still learning names.',
+      'Lived behind them for a decade. Good fence, good neighbors.',
+    ],
+  },
+  {
+    key: 'schoolparent',
+    count: 35,
+    tag: 'catchup',
+    pairFraction: 0.55,
+    eventOccasions: [
+      "Ran into {name} at Emma's game", 'Quick chat with {name} at pickup', '{name} texted about the schedule', 'Saw {name} at the school event',
+    ],
+    bioTemplates: [
+      "Emma's soccer coach for two seasons. Tough but fair, kids loved her.",
+      "Noah's kindergarten teacher — the one who fielded the dinosaur questions.",
+      'Another soccer parent — sat next to Gary and Carol in the stands more Saturdays than not.',
+      "Sofia's preschool teacher in San Diego.",
+      "Coached Danny's Little League team, years back.",
+      "Mike's high school buddy's mom. Still sends a Christmas card.",
+      "Ran the snack schedule for Emma's team like a military operation.",
+      "Beth's PT school classmate. Reconnected years later when Sofia was born.",
+      "One of the other grandparents at Emma's tournaments — they trade seats every game.",
+      "Noah's soccer carpool — takes turns with Mike and Jenna most weeks.",
+      "Danny's old baseball coach. Still shows up to alumni games.",
+      "Emma's club team manager. Keeps the whole schedule from falling apart.",
+      "Sofia's dance teacher. Beth swears by her.",
+      'Another parent from the old neighborhood school, back when the kids were small.',
+      "Noah's school librarian — apparently knows more dinosaur facts than Noah does.",
+      "Coached Mike's Pop Warner team decades ago. Still runs into him around town.",
+      "One of Beth's PTA co-chairs, years back.",
+      "Emma's teammate's dad. Good for a sideline chat during the boring stretches.",
+    ],
+  },
+  {
+    key: 'community',
+    count: 35,
+    tag: 'catchup',
+    pairFraction: 0.55,
+    eventOccasions: [
+      'Coffee with {name}', 'Saw {name} at the Tuesday breakfast', 'Ran into {name} at the farmers market', 'Quick chat with {name} after church',
+    ],
+    bioTemplates: [
+      'From the Tuesday morning coffee group at the diner on Nevada Ave.',
+      'Volunteers together at the food bank a couple Saturdays a month.',
+      "Fellow retiree from the neighborhood men's breakfast group.",
+      "Met through Carol's book club spouses' dinners.",
+      'From the community garden plot next to theirs.',
+      'Usher at church together for years.',
+      'Runs the Saturday farmers market stand Carol always stops at.',
+      "From the VFW hall. Gary goes for the pancake breakfasts, not much else.",
+      "Met volunteering at the elementary school's fall festival.",
+      "From Carol's quilting group. The spouses ended up friendly too.",
+      'Bartends at the place they get breakfast on Sundays. Knows the order by heart.',
+      "From the community center's woodworking shop, Wednesday mornings.",
+      'Ran into each other at the gym for years before actually learning names.',
+      "From the annual neighborhood association meeting. Mostly complains about the same pothole every year.",
+      'Fellow member of the Tuesday walking group around the lake.',
+      "From Danny's fire station. One of the other guys' parents.",
+      'Met through a mutual friend at a retirement party years ago, stayed in touch.',
+      "From the library's used book sale. See each other every spring.",
+    ],
+  },
+  {
+    key: 'distantfamily',
+    count: 20,
+    tag: null,
+    pairFraction: 0,
+    eventOccasions: [],
+    bioTemplates: [
+      "Second cousin on Gary's side. Hasn't seen her in probably twenty years, but she's on the Christmas card list.",
+      "Carol's cousin from Ohio, same side as Linda. See them maybe once a decade at a funeral or wedding.",
+      "Walt's cousin. Showed up at the memorial, hadn't seen him in years before that.",
+      "Distant relative on Peggy's side. The family tree gets fuzzy past this point.",
+      "Carol's second cousin once removed. Honestly can't keep the math straight.",
+      "One of Gary's cousins from his dad's side, lives out east. Exchanges a Christmas card, not much else.",
+      "Peggy's cousin. Comes up at reunions, otherwise not much contact.",
+      "Married into the family on Carol's side. Met at Linda's wedding, that's about it.",
+      "Someone's cousin — possibly Gary's, possibly Carol's. Nobody's fully sure anymore.",
+      "Extended family from Walt's side, out in Nebraska. Trade Christmas cards, that's the whole relationship.",
+      "Carol's cousin's husband. Met exactly once, at a wedding.",
+      "Gary's mother's side, several times removed. Shows up in old photo albums, not much else.",
+      'Distant cousin who reached out on one of those genealogy sites a few years back.',
+      "Peggy's niece by marriage. Lovely, sees her never.",
+      "Family friend who got absorbed into 'cousin' status decades ago. Nobody remembers the actual connection.",
+      "Carol's uncle's stepdaughter, if the family tree is to be believed.",
+    ],
+  },
+]
+
+function genDate(i: number, seed: number): string {
+  const year = 2012 + ((i * 7 + seed) % 15)
+  const month = 1 + ((i * 3 + seed) % 12)
+  const day = 1 + ((i * 5 + seed) % 28)
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00Z`
+}
+
+function buildGeneratedRoster(): { people: DemoPerson[]; notes: DemoNote[]; moments: DemoMoment[] } {
+  const people: DemoPerson[] = []
+  const notes: DemoNote[] = []
+  const moments: DemoMoment[] = []
+  let nameCursor = 0
+
+  for (const cat of GEN_CATEGORIES) {
+    const pairCount = Math.ceil(cat.count * cat.pairFraction)
+    for (let i = 0; i < cat.count; i++) {
+      const first = GEN_FIRST_NAMES[nameCursor % GEN_FIRST_NAMES.length]
+      const last = GEN_LAST_NAMES[(nameCursor * 3 + 7) % GEN_LAST_NAMES.length]
+      nameCursor++
+      const id = `g_${cat.key}_${i}`
+      const createdAt = genDate(i, cat.key.length)
+      people.push({
+        id, name: first, last_name: last, middle_name: null, goes_by_kind: null, goes_by_other: null,
+        nicknames: null, is_self: false, created_at: createdAt,
+      })
+
+      const isPaired = i < pairCount && cat.tag
+      if (isPaired) {
+        const occasionTemplate = cat.eventOccasions[i % cat.eventOccasions.length]
+        const occasion = occasionTemplate.replace('{name}', first)
+        const content = GENERIC_CATCHUP_CONTENT[(i + cat.key.length) % GENERIC_CATCHUP_CONTENT.length]
+        const eventDate = genDate(i, cat.key.length + 5)
+        const momentId = `gm_${cat.key}_${i}`
+        moments.push({
+          id: momentId, occasion, location: null, when_text: null, event_date: eventDate,
+          raw_description: content, summary: content, created_at: eventDate,
+          attendeeIds: [id], groupIds: [], tagIds: [cat.tag as string],
+        })
+        notes.push({ id: `gn_${cat.key}_${i}`, personId: id, content, created_at: eventDate, momentId, source: null, sourceGroupId: null })
+      } else {
+        const content = cat.bioTemplates[i % cat.bioTemplates.length]
+        notes.push({ id: `gn_${cat.key}_${i}`, personId: id, content, created_at: createdAt, momentId: null, source: 'home', sourceGroupId: null })
+      }
+    }
+  }
+
+  return { people, notes, moments }
+}
+
+const GENERATED_ROSTER = buildGeneratedRoster()
+
+export const DEMO_PEOPLE: DemoPerson[] = [...CORE_PEOPLE, ...GENERATED_ROSTER.people]
+export const DEMO_MOMENTS: DemoMoment[] = [...CORE_MOMENTS, ...GENERATED_ROSTER.moments]
+export const DEMO_NOTES: DemoNote[] = [...CORE_NOTES, ...GENERATED_ROSTER.notes]
 
 // ---- Reminders (Birthday/Anniversary — powers the People "Upcoming dates" sort) ----
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { DEMO_PEOPLE, DEMO_MOMENTS, DEMO_GROUPS } from '../../lib/demoData'
 
 type Stage = 'welcome' | 'home' | 'people' | 'events' | 'groups'
 
@@ -9,6 +10,10 @@ const STAGE_DOT_LABELS = ['Welcome', 'Home', 'People', 'Events', 'Groups']
 // time visitor gets zero context otherwise (dropped straight into a fully-populated fake
 // account). Mirrors Onboarding.tsx's stage/card/dot pattern, but uses DemoShell's own palette
 // (this file has no relation to real onboarding — nothing here writes anything, ever).
+const PEOPLE_COUNT = DEMO_PEOPLE.filter((p) => !p.is_self).length
+const MOMENT_COUNT = DEMO_MOMENTS.length
+const GROUP_COUNT = DEMO_GROUPS.length
+
 export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
   const [stage, setStage] = useState<Stage>('welcome')
   const stageIndex = STAGE_ORDER.indexOf(stage)
@@ -36,8 +41,8 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
             <h1 style={styles.title}>Welcome to Gary's Boomer</h1>
             <p style={styles.body}>
               You're about to spend a few minutes in a fake account — Gary Pemberton, a retired
-              operations manager who's been using Boomer for years. He's got 21 people, 4 groups,
-              and 34 memories on file, some going back over a decade.
+              operations manager who's been using Boomer for years. He's got {PEOPLE_COUNT} people,{' '}
+              {GROUP_COUNT} groups, and {MOMENT_COUNT} memories on file, some going back over a decade.
             </p>
             <p style={styles.body}>
               Nothing here is real, but everything works exactly like your own account would.
@@ -61,9 +66,10 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           <>
             <h1 style={styles.title}>People — everyone, straight, without the work</h1>
             <p style={styles.body}>
-              Gary knows 21 people: kids, grandkids, in-laws, his old crew from work, his Tuesday
-              golf foursome. Open anyone's profile and Boomer already has the key facts and how
-              they connect — Gary never had to organize any of it himself.
+              Gary knows {PEOPLE_COUNT} people: kids, grandkids, in-laws, his old crew from work, his
+              Tuesday golf foursome, decades of coworkers and neighbors. Open anyone's profile and
+              Boomer already has the key facts and how they connect — Gary never had to organize
+              any of it himself.
             </p>
           </>
         )}
