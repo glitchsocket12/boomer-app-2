@@ -19,7 +19,7 @@ export default function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
 
 const styles: { [key: string]: React.CSSProperties } = {
   nav: {
-    maxWidth: '600px',
+    maxWidth: '840px',
     margin: '0 auto',
     padding: '0.75rem 1.5rem 0',
     fontFamily: 'Georgia, serif',

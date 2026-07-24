@@ -1136,7 +1136,7 @@ export function PersonDetailView({
       {notes.length > 0 && (
         <>
           <div style={styles.notesHeaderRow}>
-            <h2 style={styles.subheading}>Notes</h2>
+            <h2 style={styles.subheading}>Notes ({notes.length})</h2>
             <button type="button" onClick={onToggleNotesOpen} style={styles.notesToggle}>
               {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
             </button>
@@ -1444,7 +1444,7 @@ function NoteCard({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '840px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif' },
   backButton: {
     background: 'none',
     border: 'none',
@@ -1626,7 +1626,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 0',
     zIndex: 20,
   },
-  stickyBarInner: { maxWidth: '600px', margin: '0 auto', padding: '0 1.5rem' },
+  stickyBarInner: { maxWidth: '840px', margin: '0 auto', padding: '0 1.5rem' },
   addForm: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem' },
   addInput: { flex: 1, fontSize: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #CCC' },
   addButton: {

@@ -441,7 +441,7 @@ export function HomeView({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
+  page: { maxWidth: '840px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.5rem', textAlign: 'center' },
   emptyState: { color: '#777', textAlign: 'center', marginTop: '1rem' },
   statsRow: { display: 'flex', gap: '0.75rem', marginTop: '1.25rem' },
@@ -599,7 +599,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 0',
     zIndex: 20,
   },
-  stickyBarInner: { maxWidth: '600px', margin: '0 auto', padding: '0 1.5rem' },
+  stickyBarInner: { maxWidth: '840px', margin: '0 auto', padding: '0 1.5rem' },
   inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.75rem' },
   input: { flex: 1, fontSize: '1.1rem', padding: '0.65rem', borderRadius: '8px', border: '1px solid #CCC' },
   button: {

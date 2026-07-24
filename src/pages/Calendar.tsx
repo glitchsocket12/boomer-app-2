@@ -271,7 +271,7 @@ export default function Calendar({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '600px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '840px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
   heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 1rem' },
   chipRow: { display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' },
   tagChip: {
@@ -336,11 +336,13 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#2E4034',
     cursor: 'pointer',
   },
-  weekdayRow: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '0.35rem' },
+  weekdayRow: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '2px', marginBottom: '0.35rem' },
   weekdayLabel: { fontSize: '0.72rem', color: '#999', textAlign: 'center' },
-  monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' },
-  dayCell: { minHeight: '4.2rem', padding: '0.2rem', borderRadius: '6px', backgroundColor: '#F7F5F2' },
+  monthGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '2px' },
+  dayCell: { minWidth: 0, overflow: 'hidden', minHeight: '4.2rem', padding: '0.2rem', borderRadius: '6px', backgroundColor: '#F7F5F2' },
   dayCellToday: {
+    minWidth: 0,
+    overflow: 'hidden',
     minHeight: '4.2rem',
     padding: '0.2rem',
     borderRadius: '6px',
@@ -352,6 +354,9 @@ const styles: { [key: string]: React.CSSProperties } = {
   dayTile: {
     display: 'block',
     width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
     fontSize: '0.68rem',
     padding: '0.15rem 0.3rem',
     borderRadius: '4px',
