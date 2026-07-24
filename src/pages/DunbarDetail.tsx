@@ -5,7 +5,9 @@ const DUNBAR_LIMIT = 150
 
 // Dunbar's own layered model. Nested/cumulative, not exclusive buckets — since v1 doesn't do
 // per-person tier assignment (see PROJECT_CONTEXT.md), each bar shows how the person's total
-// count "fills" that tier as if everyone counted toward it up to its own cap.
+// count "fills" that tier as if everyone counted toward it up to its own cap. The names shown
+// per tier are just the most-recently-added people within that cumulative slice, not a real
+// tier assignment — swap this out if per-person tier tracking ever gets built.
 const TIERS = [
   { label: 'Intimate circle', size: 5 },
   { label: 'Close friends', size: 15 },
@@ -14,13 +16,18 @@ const TIERS = [
 
 export default function DunbarDetail({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
   const [totalPeople, setTotalPeople] = useState<number | null>(null)
+  const [people, setPeople] = useState<{ id: string; name: string }[]>([])
 
   useEffect(() => {
     supabase
       .from('people')
-      .select('id', { count: 'exact', head: true })
+      .select('id, name, created_at')
       .eq('is_self', false)
-      .then(({ count }) => setTotalPeople(count ?? 0))
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        setPeople(data ?? [])
+        setTotalPeople(data?.length ?? 0)
+      })
   }, [])
 
   return (
@@ -43,6 +50,7 @@ export default function DunbarDetail({ onBack, backLabel }: { onBack: () => void
             {TIERS.map((tier) => {
               const filled = Math.min(totalPeople, tier.size)
               const pct = (filled / tier.size) * 100
+              const names = people.slice(0, filled).map((p) => p.name)
               return (
                 <div key={tier.label} style={styles.tierRow}>
                   <div style={styles.tierLabelRow}>
@@ -52,6 +60,9 @@ export default function DunbarDetail({ onBack, backLabel }: { onBack: () => void
                   <div style={styles.track}>
                     <div style={{ ...styles.fill, width: `${pct}%` }} />
                   </div>
+                  {names.length > 0 && (
+                    <p style={styles.tierNames}>{names.join(', ')}</p>
+                  )}
                 </div>
               )
             })}
@@ -115,6 +126,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   tierLabelRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' },
   tierLabel: { fontSize: '0.92rem', color: '#333' },
   tierCount: { fontSize: '0.85rem', color: '#888' },
+  tierNames: { fontSize: '0.85rem', color: '#666', margin: '0.4rem 0 0', lineHeight: 1.4 },
   track: { height: '8px', borderRadius: '999px', backgroundColor: '#EFEDE7', overflow: 'hidden' },
   fill: { height: '100%', borderRadius: '999px', backgroundColor: '#5C8A6C' },
   fillOverflow: { backgroundColor: '#B08B2E' },

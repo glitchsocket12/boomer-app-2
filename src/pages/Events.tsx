@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
-import { eventSortDate, formatMonthYear } from '../lib/dates'
+import { eventSortDate, formatEventWhen } from '../lib/dates'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 
@@ -286,7 +286,7 @@ export function EventsView({
                     {moment.occasion || 'Untitled moment'}
                   </button>
                   <p style={styles.meta}>
-                    {[formatMonthYear(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
+                    {[formatEventWhen(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
                   </p>
 
                   {attendees.size === 0 ? (

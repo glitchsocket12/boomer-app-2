@@ -300,7 +300,7 @@ export function HomeView({
               </button>
               <div style={styles.statTile}>
                 <div style={styles.statNumber}>{stats.notes}</div>
-                <div style={styles.statLabel}>Notes</div>
+                <div style={styles.statLabel}>Datapoints</div>
               </div>
             </div>
           )}

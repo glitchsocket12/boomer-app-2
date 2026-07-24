@@ -8,6 +8,7 @@ import SearchAddPicker from '../components/SearchAddPicker'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import VoiceInputButton from '../components/VoiceInputButton'
 import { summarize } from '../lib/summarize'
+import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
@@ -21,6 +22,7 @@ export type MomentDetail = {
   occasion: string | null
   location: string | null
   when_text: string | null
+  event_date: string | null
   raw_description: string
   summary: string | null
   details: Record<string, string> | null
@@ -99,7 +101,7 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), moment_tags(tags(id, name)), dismissed_person_ids'
+        'id, occasion, location, when_text, event_date, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), moment_tags(tags(id, name)), dismissed_person_ids'
       )
       .eq('id', eventId)
       .single()
@@ -512,6 +514,9 @@ export function EventDetailView({
   actionError?: string | null
   updateChat?: ReactNode
 }) {
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
+  const [tagPickerOpen, setTagPickerOpen] = useState(false)
+
   const attendees = new Map<string, PersonRef>()
   for (const n of moment.notes ?? []) {
     if (n.people) attendees.set(n.people.id, n.people)
@@ -593,10 +598,12 @@ export function EventDetailView({
         </div>
       )}
       <p style={styles.meta}>
-        {moment.when_text || moment.location ? (
+        {moment.event_date || moment.when_text || moment.location ? (
           <>
-            {moment.when_text}
-            {moment.when_text && moment.location && ' · '}
+            {moment.event_date
+              ? new Date(moment.event_date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
+              : moment.when_text}
+            {(moment.event_date || moment.when_text) && moment.location && ' · '}
             {moment.location && (
               <a
                 href={mapsUrl!}
@@ -609,19 +616,26 @@ export function EventDetailView({
             )}
           </>
         ) : (
-          new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
+          formatFullDate(moment)
         )}
       </p>
 
-      <h2 style={styles.subheading}>Affiliated Groups</h2>
-      {groups.length > 0 && (
+      <div style={styles.suggestionHeaderRow}>
+        <h2 style={styles.subheading}>Associated Groups</h2>
+        {!readOnly && (
+          <button onClick={() => setGroupPickerOpen((v) => !v)} style={styles.addButton}>
+            + Associate a New Group
+          </button>
+        )}
+      </div>
+      {groups.length > 0 ? (
         <>
           <p style={styles.chatHint}>
             {readOnly ? 'Tap a group for its profile.' : 'Tap a group for its profile, or hover to untag it from this event.'}
           </p>
           <div style={styles.chipRow}>
             {groups.map((g) => (
-              <AffiliatedGroupChip
+              <AssociatedGroupChip
                 key={g.id}
                 group={g}
                 onSelect={() => onSelectGroup(g)}
@@ -630,20 +644,31 @@ export function EventDetailView({
             ))}
           </div>
         </>
+      ) : (
+        <p style={styles.empty}>No groups at this time.</p>
       )}
-      {!readOnly && (
-        <SearchAddPicker
-          items={allGroupsList
-            .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-            .map((g) => ({ id: g.id, label: g.name }))}
-          placeholder="Tag this event to a group…"
-          onSelect={(item) => onTagGroup(item.id)}
-          emptyText="No groups match."
-        />
+      {!readOnly && groupPickerOpen && (
+        <div style={styles.pickerPanel}>
+          <SearchAddPicker
+            items={allGroupsList
+              .filter((g) => !groups.some((tagged) => tagged.id === g.id))
+              .map((g) => ({ id: g.id, label: g.name }))}
+            placeholder="Tag this event to a group…"
+            onSelect={(item) => onTagGroup(item.id)}
+            emptyText="No groups match."
+          />
+        </div>
       )}
 
-      {(tags.length > 0 || !readOnly) && <h2 style={styles.subheading}>Tags</h2>}
-      {tags.length > 0 && (
+      <div style={styles.suggestionHeaderRow}>
+        <h2 style={styles.subheading}>Tags</h2>
+        {!readOnly && (
+          <button onClick={() => setTagPickerOpen((v) => !v)} style={styles.addButton}>
+            + Add a Tag
+          </button>
+        )}
+      </div>
+      {tags.length > 0 ? (
         <>
           <p style={styles.chatHint}>
             {readOnly ? 'What kind of thing this was.' : 'What kind of thing this was — hover a tag to untag it from this event.'}
@@ -654,20 +679,24 @@ export function EventDetailView({
             ))}
           </div>
         </>
+      ) : (
+        <p style={styles.empty}>No tags yet.</p>
       )}
-      {!readOnly && (
-        <SearchAddPicker
-          items={[...allTagsList]
-            .filter((t) => !tags.some((tagged) => tagged.id === t.id))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((t) => ({ id: t.id, label: t.name }))}
-          placeholder="Tag this event (e.g. milestone, vacation)…"
-          onSelect={(item) => onTagMoment(item.id)}
-          onCreateNew={(name) => onCreateAndTagMoment(name)}
-          createLabel={(q) => `+ Add "${q}" as a new tag`}
-          emptyText="No tags match."
-          browseAll
-        />
+      {!readOnly && tagPickerOpen && (
+        <div style={styles.pickerPanel}>
+          <SearchAddPicker
+            items={[...allTagsList]
+              .filter((t) => !tags.some((tagged) => tagged.id === t.id))
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((t) => ({ id: t.id, label: t.name }))}
+            placeholder="Tag this event (e.g. milestone, vacation)…"
+            onSelect={(item) => onTagMoment(item.id)}
+            onCreateNew={(name) => onCreateAndTagMoment(name)}
+            createLabel={(q) => `+ Add "${q}" as a new tag`}
+            emptyText="No tags match."
+            browseAll
+          />
+        </div>
       )}
 
       {editingDescription ? (
@@ -759,7 +788,7 @@ export function EventDetailView({
       {!readOnly && suggestedAttendees.size > 0 && (
         <>
           <div style={styles.suggestionHeaderRow}>
-            <h2 style={{ ...styles.subheading, margin: 0 }}>Also from the affiliated group?</h2>
+            <h2 style={{ ...styles.subheading, margin: 0 }}>Also from the associated group?</h2>
             {suggestedAttendees.size > 1 && (
               <button
                 onClick={() => onDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
@@ -979,7 +1008,7 @@ function AttendeeChip({
 // that untags the group from this event — same corner-badge pattern as AttendeeChip above,
 // reused here for groups instead of people (matching GroupDetail.tsx's AssociatedGroupChip).
 // `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
-function AffiliatedGroupChip({
+function AssociatedGroupChip({
   group,
   onSelect,
   onRemove,
@@ -1145,6 +1174,28 @@ const styles: { [key: string]: React.CSSProperties } = {
   subheading: { fontSize: '1.2rem', color: '#2E4034', margin: '1.5rem 0 0.5rem 0' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
   suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
+  addButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.3rem',
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '8px',
+    border: '1px solid #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  pickerPanel: {
+    backgroundColor: '#FFF',
+    border: '1px solid #E0E0E0',
+    borderRadius: '10px',
+    padding: '0.85rem 0.85rem 0.25rem',
+    marginBottom: '1rem',
+  },
+  empty: { fontSize: '0.9rem', color: '#888', margin: '0 0 1rem 0' },
   removeAllButton: {
     fontSize: '0.85rem',
     background: 'none',
