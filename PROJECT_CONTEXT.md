@@ -456,8 +456,10 @@ style also centers via margin 0 auto when the tree is narrower than
 the container. Death/divorce/remarriage (2026-07-24, founder ask — see PROJECT_HISTORY.md):
 deceased person renders muted grey + "†", any union with a deceased or divorced party renders
 its marriage line dashed (`isUnionEnded` in familyTree.ts) — no structural change, since a
-person having multiple spouses (remarriage) already rendered fine. PersonDetail.tsx "Mark as
-deceased"/"Undo" control; FamilyTree.tsx "Mark a marriage as ended" (divorce only — death is
+person having multiple spouses (remarriage) already rendered fine. PersonDetail.tsx's "Mark as
+deceased"/"Undo" control lives inside the name-edit form (pencil icon) only, not as a persistent
+row on every profile (founder feedback 2026-07-24 — a permanent prompt read as a downer).
+FamilyTree.tsx "Mark a marriage as ended" (divorce only — death is
 read off the person's own deceased_date, not a separate flag). `relationshipLabels.ts`
 (mirrored in selfContext.ts for the AI prompt) derives step-parent/step-sibling/half-sibling
 labels from the graph, no new relationship kind needed.
@@ -591,7 +593,7 @@ people        id, user_id, name (first), last_name?, nicknames? (comma-separated
               index per user_id — at most one "this is me" profile; excluded from
               People list/search/Dunbar/due-for-update, 2026-07-20), deceased_date?
               (2026-07-24, presence = deceased; PersonDetail "Mark as deceased"
-              control), created_at
+              control lives inside the name-edit form, not a standalone row), created_at
 relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partner —
               symmetric, stored once normalized person_a_id < person_b_id by uuid
               sort; parent — directional, person_a_id IS THE PARENT of person_b_id,

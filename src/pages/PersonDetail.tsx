@@ -158,7 +158,6 @@ export default function PersonDetail({
   const [otherPeople, setOtherPeople] = useState<OtherPerson[]>([])
   const [mergeCandidate, setMergeCandidate] = useState<OtherPerson | null>(null)
   const [lastNameSuggestion, setLastNameSuggestion] = useState<{ lastName: string; sourceName: string } | null>(null)
-  const [editingDeceased, setEditingDeceased] = useState(false)
   const [deceasedDateInput, setDeceasedDateInput] = useState('')
   const [savingDeceased, setSavingDeceased] = useState(false)
 
@@ -420,9 +419,9 @@ export default function PersonDetail({
     }
   }
 
-  // Deceased is a standalone fact, independent of the name-edit form above — marking it doesn't
-  // touch name/goes-by fields, and undoing it (a mistaken entry) just clears the date rather than
-  // requiring a full profile edit.
+  // Deceased is a standalone fact saved independently of name/goes-by, but surfaced only inside
+  // the name-edit form (pencil icon) rather than as its own always-visible row — a permanent
+  // "Mark as deceased" prompt on every profile read as a downer (founder feedback, 2026-07-24).
   async function saveDeceased() {
     if (!person) return
     setSavingDeceased(true)
@@ -431,7 +430,6 @@ export default function PersonDetail({
     setSavingDeceased(false)
     if (error) return
     setPerson({ ...person, deceased_date: dateValue })
-    setEditingDeceased(false)
   }
 
   async function clearDeceased() {
@@ -619,6 +617,7 @@ export default function PersonDetail({
         setMiddleNameInput(person?.middle_name ?? '')
         setGoesByKind(person?.goes_by_kind ?? 'first')
         setGoesByOtherInput(person?.goes_by_other ?? '')
+        setDeceasedDateInput(person?.deceased_date ?? '')
         setEditingName(true)
       }}
       onFirstNameInputChange={setFirstNameInput}
@@ -628,16 +627,10 @@ export default function PersonDetail({
       onGoesByOtherInputChange={setGoesByOtherInput}
       onSaveName={handleSaveName}
       onCancelEditName={() => setEditingName(false)}
-      editingDeceased={editingDeceased}
       deceasedDateInput={deceasedDateInput}
       savingDeceased={savingDeceased}
-      onStartEditDeceased={() => {
-        setDeceasedDateInput(person?.deceased_date ?? '')
-        setEditingDeceased(true)
-      }}
       onDeceasedDateInputChange={setDeceasedDateInput}
       onSaveDeceased={saveDeceased}
-      onCancelEditDeceased={() => setEditingDeceased(false)}
       onClearDeceased={clearDeceased}
       newFact={newFact}
       onNewFactChange={setNewFact}
@@ -724,13 +717,10 @@ export function PersonDetailView({
   onGoesByOtherInputChange = () => {},
   onSaveName = () => {},
   onCancelEditName = () => {},
-  editingDeceased = false,
   deceasedDateInput = '',
   savingDeceased = false,
-  onStartEditDeceased = () => {},
   onDeceasedDateInputChange = () => {},
   onSaveDeceased = () => {},
-  onCancelEditDeceased = () => {},
   onClearDeceased = () => {},
   newFact = '',
   onNewFactChange = () => {},
@@ -805,13 +795,10 @@ export function PersonDetailView({
   onGoesByOtherInputChange?: (v: string) => void
   onSaveName?: (e: FormEvent) => void
   onCancelEditName?: () => void
-  editingDeceased?: boolean
   deceasedDateInput?: string
   savingDeceased?: boolean
-  onStartEditDeceased?: () => void
   onDeceasedDateInputChange?: (v: string) => void
   onSaveDeceased?: () => void
-  onCancelEditDeceased?: () => void
   onClearDeceased?: () => void
   newFact?: string
   onNewFactChange?: (v: string) => void
@@ -924,6 +911,31 @@ export function PersonDetailView({
               We'll save this as a note on {firstNameInput.trim() || 'their'}'s profile!
             </p>
           )}
+          {person && (
+            <div style={styles.deceasedRow}>
+              {person.deceased_date ? (
+                <>
+                  <span style={styles.deceasedLabel}>† Deceased ({person.deceased_date})</span>
+                  <button type="button" onClick={onClearDeceased} disabled={savingDeceased} style={styles.textLinkButton}>
+                    Undo
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={styles.deceasedLabel}>Deceased:</span>
+                  <input
+                    type="date"
+                    value={deceasedDateInput}
+                    onChange={(e) => onDeceasedDateInputChange(e.target.value)}
+                    style={styles.deceasedDateInput}
+                  />
+                  <button type="button" onClick={onSaveDeceased} disabled={savingDeceased} style={styles.textLinkButton}>
+                    {savingDeceased ? '…' : 'Mark as deceased'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
           <div style={styles.nameButtonRow}>
             <button type="submit" disabled={savingName || !firstNameInput.trim()} style={styles.saveButton}>
               {savingName ? '…' : 'Save'}
@@ -937,39 +949,6 @@ export function PersonDetailView({
         <div style={styles.headingRow}>
           <h1 style={styles.heading}>{fullName}</h1>
           {!readOnly && <EditButton label="Edit name" onClick={onStartEditName} />}
-        </div>
-      )}
-
-      {!readOnly && !loading && person && (
-        <div style={styles.deceasedRow}>
-          {editingDeceased ? (
-            <>
-              <input
-                type="date"
-                value={deceasedDateInput}
-                onChange={(e) => onDeceasedDateInputChange(e.target.value)}
-                style={styles.deceasedDateInput}
-                autoFocus
-              />
-              <button type="button" onClick={onSaveDeceased} disabled={savingDeceased} style={styles.saveButton}>
-                {savingDeceased ? '…' : 'Save'}
-              </button>
-              <button type="button" onClick={onCancelEditDeceased} style={styles.cancelButton}>
-                Cancel
-              </button>
-            </>
-          ) : person.deceased_date ? (
-            <>
-              <span style={styles.deceasedLabel}>† Deceased{person.deceased_date ? ` (${person.deceased_date})` : ''}</span>
-              <button type="button" onClick={onClearDeceased} disabled={savingDeceased} style={styles.textLinkButton}>
-                Undo
-              </button>
-            </>
-          ) : (
-            <button type="button" onClick={onStartEditDeceased} style={styles.textLinkButton}>
-              Mark as deceased
-            </button>
-          )}
         </div>
       )}
 
