@@ -612,7 +612,11 @@ Full story: PROJECT_HISTORY.md.
                                 attendees share it, via EITHER formal `person_groups` roster
                                 membership OR having attended one past event tagged to that group
                                 (the looser, attendance-based signal exists because founders don't
-                                always formally roster every regular).
+                                always formally roster every regular). Accepting a candidate now
+                                immediately adds the new event to the shared existing-events list, so
+                                the next candidate's "might already be on file" banner and manual
+                                merge-search see it right away — previously needed a page reload
+                                (2026-07-25 fix).
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):

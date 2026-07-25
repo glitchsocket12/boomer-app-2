@@ -195,6 +195,13 @@ export default function ImportReview({
     setAllTagsList((prev) => (prev.some((t) => t.id === tag.id) ? prev : [...prev, tag]))
   }
 
+  // Keeps the shared existingMoments list current so a just-accepted event is immediately
+  // available as a merge/save-as-note target for the *next* candidate reviewed — without this,
+  // it only showed up after a full page reload re-ran load()'s moments query.
+  function handleMomentCreated(moment: ExistingMoment) {
+    setExistingMoments((prev) => (prev.some((m) => m.id === moment.id) ? prev : [moment, ...prev]))
+  }
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -220,6 +227,7 @@ export default function ImportReview({
             allPeopleList={allPeopleList}
             calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
             onTagCreated={handleTagCreated}
+            onMomentCreated={handleMomentCreated}
             onSelectEvent={onSelectEvent}
             onResolved={() => handleResolved(c.id)}
           />
@@ -237,6 +245,7 @@ function CandidateCard({
   allPeopleList,
   calendarSourceLabel,
   onTagCreated,
+  onMomentCreated,
   onSelectEvent,
   onResolved,
 }: {
@@ -247,6 +256,7 @@ function CandidateCard({
   allPeopleList: PersonRef[]
   calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
+  onMomentCreated: (moment: ExistingMoment) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onResolved: () => void
 }) {
@@ -417,6 +427,17 @@ function CandidateCard({
       .from('moment_import_candidates')
       .update({ status: 'accepted', reviewed_at: new Date().toISOString() })
       .eq('id', candidate.id)
+
+    onMomentCreated({
+      id: newMoment.id,
+      occasion: occasion || null,
+      location: location || null,
+      when_text: eventDate ? formatDateRange(eventDate, eventEndDate || null) : null,
+      event_date: eventDate || null,
+      event_end_date: eventEndDate || null,
+      raw_description: candidate.raw_description ?? '',
+      created_at: newMoment.created_at,
+    })
 
     setSaving(false)
     setSavedResult({ kind: 'created', momentId: newMoment.id, label: summarize(occasion, candidate.raw_description ?? '') })
