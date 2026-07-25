@@ -24,9 +24,32 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
 
   const [removingId, setRemovingId] = useState<string | null>(null)
 
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const [syncResult, setSyncResult] = useState<string | null>(null)
+
   useEffect(() => {
     load()
   }, [])
+
+  async function handleSync() {
+    setSyncing(true)
+    setSyncError(null)
+    setSyncResult(null)
+    const { data, error } = await supabase.functions.invoke('scan-calendar-sources', { body: {} })
+    setSyncing(false)
+    if (error) {
+      setSyncError("Couldn't sync right now — please try again.")
+      return
+    }
+    const added = data?.candidatesAdded ?? 0
+    setSyncResult(
+      added > 0
+        ? `Found ${added} event${added === 1 ? '' : 's'} — check the Calendar page to review.`
+        : "All synced — nothing new found."
+    )
+    load()
+  }
 
   async function load() {
     setLoading(true)
@@ -94,7 +117,16 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
       </p>
 
       <section style={styles.section}>
-        <h2 style={styles.sectionHeading}>Connected calendars</h2>
+        <div style={styles.sectionHeadingRow}>
+          <h2 style={styles.sectionHeading}>Connected calendars</h2>
+          {sources.length > 0 && (
+            <button onClick={handleSync} style={styles.syncButton} disabled={syncing}>
+              {syncing ? 'Syncing…' : 'Sync now'}
+            </button>
+          )}
+        </div>
+        {syncResult && <p style={styles.successText}>{syncResult}</p>}
+        {syncError && <p style={styles.errorText}>{syncError}</p>}
         {loading ? (
           <p style={styles.body}>Loading…</p>
         ) : sources.length === 0 ? (
@@ -183,7 +215,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '1rem 1.1rem',
     marginBottom: '1rem',
   },
-  sectionHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem' },
+  sectionHeadingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.5rem' },
+  sectionHeading: { fontSize: '1.1rem', color: '#2E4034', margin: 0 },
+  syncButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '8px',
+    border: '1px solid #2E4034',
+    backgroundColor: '#FFF',
+    color: '#2E4034',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    fontFamily: 'Georgia, serif',
+  },
+  successText: { color: '#3A7A4A', fontSize: '0.85rem', margin: '0 0 0.75rem' },
   body: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5, margin: '0 0 0.75rem' },
   sourceList: { display: 'flex', flexDirection: 'column', gap: '0.5rem' },
   sourceRow: {
