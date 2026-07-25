@@ -621,20 +621,30 @@ function CandidateCard({
           <div style={styles.suggestionHeaderRow}>
             <span>Also from the associated group?</span>
             {suggestedFromGroups.length > 1 && (
-              <button
-                type="button"
-                onClick={() =>
-                  setDismissedGroupSuggestionIds((prev) => {
-                    const next = new Set(prev)
-                    for (const p of suggestedFromGroups) next.add(p.id)
-                    return next
-                  })
-                }
-                style={styles.removeAllButton}
-                disabled={saving}
-              >
-                × Remove all suggestions
-              </button>
+              <div style={styles.suggestButtonRow}>
+                <button
+                  type="button"
+                  onClick={() => setManualPeople((prev) => [...prev, ...suggestedFromGroups])}
+                  style={styles.addAllButton}
+                  disabled={saving}
+                >
+                  + Add all
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDismissedGroupSuggestionIds((prev) => {
+                      const next = new Set(prev)
+                      for (const p of suggestedFromGroups) next.add(p.id)
+                      return next
+                    })
+                  }
+                  style={styles.removeAllButton}
+                  disabled={saving}
+                >
+                  × Remove all suggestions
+                </button>
+              </div>
             )}
           </div>
           <p style={styles.chatHint}>Tap a name to add them, or hover to dismiss.</p>
@@ -1001,6 +1011,16 @@ const styles: { [key: string]: React.CSSProperties } = {
   // behaves the same wherever it appears in the app.
   suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: '#8A7A4A' },
+  addAllButton: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
   removeAllButton: {
     fontSize: '0.85rem',
     background: 'none',
