@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import DemoShell from './pages/demo/DemoShell'
 import { ensureSelfPersonFromSignupMetadata } from './lib/ensureSelfFromSignup'
 import { ensureStarterTags } from './lib/ensureStarterTags'
+import { ensureUserTimeZone } from './lib/ensureUserTimeZone'
 import Onboarding from './pages/Onboarding'
 import Home from './pages/Home'
 import People from './pages/People'
@@ -242,6 +243,7 @@ export default function App() {
       if (event === 'SIGNED_IN' && session?.user) {
         ensureSelfPersonFromSignupMetadata(session.user.id, session.user.user_metadata ?? {})
         ensureStarterTags(session.user.id, session.user.user_metadata ?? {})
+        ensureUserTimeZone(session.user.id, session.user.user_metadata ?? {})
       }
       if (event === 'SIGNED_OUT') {
         // Drop the stale authenticated route so a later login (possibly a different account on

@@ -8,7 +8,8 @@ import {
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
-import { buildChatToneInstruction } from "../_shared/userSettings.ts"
+import { buildChatToneInstruction, getUserTimeZone } from "../_shared/userSettings.ts"
+import { isoDateInTimeZone, fullDateInTimeZone } from "../_shared/tz.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -163,9 +164,6 @@ serve(async (req) => {
       })
       .join(", ")
 
-    const todayString = new Date().toDateString()
-    const todayIso = new Date().toISOString().slice(0, 10)
-
     // Stable instructions ONLY — no interpolated data of any kind. This exact string is
     // byte-identical across every user/session/turn, so it forms a prefix-cache breakpoint
     // that can be reused indefinitely (see CLAUDE.md's token/billing efficiency rule: "stable
@@ -234,6 +232,7 @@ When capturing a brand-new moment, also work out your best-guess ACTUAL calendar
     const selfInfo = findSelfPerson(people, nameById)
     const selfInstruction = await buildSelfInstruction(supabaseClient, selfInfo, nameById)
     const chatToneInstruction = await buildChatToneInstruction(supabaseClient, user.id)
+    const userTimeZone = await getUserTimeZone(supabaseClient, user.id)
 
     const rosterContext = `Here are the groups already created:
 ${groupsContext || "(none yet)"}
@@ -251,8 +250,12 @@ ${context || "(none recorded yet)"}`
 
     // Truly per-turn: changes once a day, and previously sat at the FRONT of one combined dynamic
     // block, which invalidated the whole thing daily for no reason. Kept last and uncached — it's
-    // a few tokens, nothing to gain from a breakpoint here.
-    const todayContext = `Today's date is ${todayString} (${todayIso}).`
+    // a few tokens, nothing to gain from a breakpoint here. Computed in the user's own time zone
+    // (not the Edge Function's server UTC clock) — otherwise "today" rolls over at UTC midnight,
+    // which is late afternoon/evening across the US, and anything logged as happening "today" in
+    // the evening gets resolved to tomorrow's date.
+    const now = new Date()
+    const todayContext = `Today's date is ${fullDateInTimeZone(now, userTimeZone)} (${isoDateInTimeZone(now, userTimeZone)}).`
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",

@@ -8,6 +8,8 @@ import {
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
+import { getUserTimeZone } from "../_shared/userSettings.ts"
+import { isoDateInTimeZone } from "../_shared/tz.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -124,7 +126,10 @@ serve(async (req) => {
       .map((n: any) => `${nameById[n.person_id] ?? "someone"}: ${n.content}`)
       .join("; ") || "none"}`
 
-    const todayIso = new Date().toISOString().slice(0, 10)
+    // Computed in the user's own time zone, not the Edge Function's server UTC clock — see the
+    // matching comment in converse/index.ts.
+    const userTimeZone = await getUserTimeZone(supabaseClient, user.id)
+    const todayIso = isoDateInTimeZone(new Date(), userTimeZone)
 
     // Stable instructions ONLY — no interpolated data, so this exact string is byte-identical
     // across every moment/user/turn and forms a widely-reusable prefix-cache breakpoint (see

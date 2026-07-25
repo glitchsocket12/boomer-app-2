@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { parseIcs, icsDateToIsoDate, type IcsEvent } from "../_shared/ics.ts"
+import { getUserTimeZone } from "../_shared/userSettings.ts"
+import { isoDateInTimeZone } from "../_shared/tz.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,6 +11,11 @@ const corsHeaders = {
 
 const BATCH_SIZE = 30
 const MAX_AGE_YEARS = 3
+// Caps how many batches ONE invocation processes, so a big backlog (a fresh calendar connection
+// can easily be 1000+ events) can't run the Edge Function past its execution timeout. Whatever's
+// left over just gets picked up by the next run — manual "Sync now" or the next scheduled cron —
+// since anything already written is in seenUids and won't be reprocessed.
+const MAX_BATCHES_PER_RUN = 8
 
 // Stable, zero-interpolation instructions — identical every batch, every user, every run. Its
 // own cache_control breakpoint per CLAUDE.md's caching rules.
@@ -35,7 +42,8 @@ type Candidate = {
 
 async function callExtraction(
   batch: IcsEvent[],
-  tagGuidance: string
+  tagGuidance: string,
+  userTimeZone: string
 ): Promise<{ index: number; include: boolean; occasion: string; location: string | null; when_text: string; notes: string }[]> {
   const batchData = JSON.stringify(
     batch.map((e, i) => ({
@@ -43,7 +51,7 @@ async function callExtraction(
       summary: e.summary,
       description: e.description,
       location: e.location,
-      when: e.dtstart ? (e.dtstartIsDateOnly ? icsDateToIsoDate(e.dtstart) : e.dtstart) : null,
+      when: e.dtstart ? icsDateToIsoDate(e.dtstart, userTimeZone) : null,
       recurring: e.isRecurring,
     }))
   )
@@ -57,7 +65,7 @@ async function callExtraction(
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 4096,
+      max_tokens: 6000,
       system: [
         { type: "text", text: stableInstructions, cache_control: { type: "ephemeral", ttl: "1h" } },
         { type: "text", text: tagGuidance, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -107,6 +115,8 @@ async function scanUser(
   const sources = sourcesRes.data ?? []
   if (sources.length === 0) return { sourcesScanned: 0, candidatesAdded: 0 }
 
+  const userTimeZone = await getUserTimeZone(supabase, userId)
+
   const seenUids = new Set((existingRes.data ?? []).map((r: any) => r.ical_uid))
 
   // Same name/nickname-matching approach as update-moment/index.ts — ambiguous keys (two people
@@ -138,12 +148,14 @@ async function scanUser(
 
   const cutoff = new Date()
   cutoff.setFullYear(cutoff.getFullYear() - MAX_AGE_YEARS)
-  const cutoffIso = cutoff.toISOString().slice(0, 10)
+  const cutoffIso = isoDateInTimeZone(cutoff, userTimeZone)
 
   let candidatesAdded = 0
   let sourcesScanned = 0
+  let batchesProcessed = 0
 
   for (const source of sources) {
+    if (batchesProcessed >= MAX_BATCHES_PER_RUN) break
     try {
       const response = await fetch(source.ical_url)
       if (!response.ok) {
@@ -154,8 +166,15 @@ async function scanUser(
       const parsedEvents = parseIcs(text)
 
       // Dedupe within this feed by UID (a recurring series' override instances share the master's
-      // UID) and apply the cheap pre-AI filters from the gameplan: skip cancelled, skip anything
-      // older than the cutoff, skip already-seen, skip solo/no-recurrence logistics.
+      // UID) and apply only the cheap, UNAMBIGUOUS pre-AI filters: skip cancelled, skip anything
+      // older than the cutoff, skip already-seen. Deliberately NOT filtering on attendee count or
+      // recurrence anymore — that first cut assumed people use Google's formal guest/RSVP feature
+      // for social events, but most personal calendars don't (a live test against a real 1,060-
+      // event calendar showed real gatherings like "Camping Trip w/ Liam and Ben" or "Harris'
+      // Friendsgiving" have zero formal ATTENDEE lines and no RRULE, so they were being dropped
+      // before the AI ever saw them). Classifying "is this worth suggesting" is exactly what the
+      // AI step below is for; a cheap keyword-shaped pre-filter can't do that job reliably, so
+      // let every non-cancelled, in-range event through and let the batched Claude call decide.
       const byUid = new Map<string, IcsEvent>()
       for (const e of parsedEvents) byUid.set(e.uid, e)
 
@@ -163,18 +182,31 @@ async function scanUser(
       for (const e of byUid.values()) {
         if (e.status === "CANCELLED") continue
         if (seenUids.has(e.uid)) continue
-        const isoDate = e.dtstart ? icsDateToIsoDate(e.dtstart) : null
+        const isoDate = e.dtstart ? icsDateToIsoDate(e.dtstart, userTimeZone) : null
         if (isoDate && isoDate < cutoffIso) continue
-        const hasOtherAttendees = e.attendees.length > 1
-        if (!hasOtherAttendees && !e.isRecurring) continue
         candidates.push(e)
       }
 
+      // Chunk into batches first, capped by however many batches this run has left, then fire
+      // them at Claude CONCURRENTLY (not one at a time) — a real backlog can be 30+ batches, and
+      // running them sequentially was slow enough to blow past the Edge Function's execution
+      // timeout partway through (confirmed live: an 8-batch sequential run still timed out).
+      // Concurrent calls still benefit from the cache_control breakpoints once the first response
+      // has written the cache entry for this run's stable/tag-guidance prefix.
+      const batchChunks: IcsEvent[][] = []
       for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-        const batch = candidates.slice(i, i + BATCH_SIZE)
-        const results = await callExtraction(batch, tagGuidance)
+        if (batchesProcessed + batchChunks.length >= MAX_BATCHES_PER_RUN) break
+        batchChunks.push(candidates.slice(i, i + BATCH_SIZE))
+      }
+      const fullyProcessed = batchChunks.length >= Math.ceil(candidates.length / BATCH_SIZE) || candidates.length === 0
+      batchesProcessed += batchChunks.length
 
-        const rows: Candidate[] = []
+      const batchResultSets = await Promise.all(batchChunks.map((batch) => callExtraction(batch, tagGuidance, userTimeZone)))
+
+      const rows: Candidate[] = []
+      for (let bi = 0; bi < batchChunks.length; bi++) {
+        const batch = batchChunks[bi]
+        const results = batchResultSets[bi]
         for (const r of results) {
           if (!r.include) continue
           const event = batch[r.index]
@@ -198,23 +230,28 @@ async function scanUser(
             occasion: r.occasion ?? null,
             location: r.location ?? event.location ?? null,
             when_text: r.when_text ?? null,
-            event_date: event.dtstart ? icsDateToIsoDate(event.dtstart) : null,
+            event_date: event.dtstart ? icsDateToIsoDate(event.dtstart, userTimeZone) : null,
             raw_description: r.notes ?? event.description ?? null,
             suggested_people: suggestedPeople,
             source_recurrence_id: event.isRecurring ? event.uid : null,
           })
         }
-
-        if (rows.length > 0) {
-          const { error } = await supabase
-            .from("moment_import_candidates")
-            .upsert(rows, { onConflict: "user_id,ical_uid", ignoreDuplicates: true })
-          if (!error) candidatesAdded += rows.length
-          else console.error("Failed to upsert candidates", error.message)
-        }
       }
 
-      await supabase.from("calendar_sources").update({ last_synced_at: new Date().toISOString(), last_sync_error: null }).eq("id", source.id)
+      if (rows.length > 0) {
+        const { error } = await supabase
+          .from("moment_import_candidates")
+          .upsert(rows, { onConflict: "user_id,ical_uid", ignoreDuplicates: true })
+        if (!error) candidatesAdded += rows.length
+        else console.error("Failed to upsert candidates", error.message)
+      }
+
+      // Only mark this source fully synced (and clear the timestamp's staleness) once every
+      // candidate batch for it actually ran — an incomplete pass (hit MAX_BATCHES_PER_RUN)
+      // deliberately leaves last_synced_at alone so the next run keeps going, not skips ahead.
+      if (fullyProcessed) {
+        await supabase.from("calendar_sources").update({ last_synced_at: new Date().toISOString(), last_sync_error: null }).eq("id", source.id)
+      }
       sourcesScanned++
     } catch (error) {
       console.error("Error scanning calendar source", source.id, String(error))

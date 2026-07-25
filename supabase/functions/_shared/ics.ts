@@ -1,8 +1,12 @@
 // Minimal RFC5545 (iCalendar) VEVENT parser — extracts only the fields the calendar-import
 // pipeline needs (UID, SUMMARY, DESCRIPTION, LOCATION, DTSTART, STATUS, RECURRENCE-ID, RRULE
-// presence, ATTENDEE). Not a full spec implementation (no timezone database, no property values
-// besides these), deliberately — every calendar host (Google, Apple, Outlook) emits these fields
-// in the same simple forms, and pulling in a full ICS library for this would be overkill.
+// presence, ATTENDEE). Not a full spec implementation (no property values besides these),
+// deliberately — every calendar host (Google, Apple, Outlook) emits these fields in the same
+// simple forms, and pulling in a full ICS library for this would be overkill. icsDateToIsoDate
+// below does use the platform's real IANA tz database (via Intl) for the one case that actually
+// needs it — a UTC-stamped DTSTART.
+
+import { isoDateInTimeZone } from "./tz.ts"
 
 export type IcsAttendee = { name: string | null; email: string | null }
 
@@ -126,10 +130,19 @@ export function parseIcs(text: string): IcsEvent[] {
   return events
 }
 
-// DTSTART shows up as "20260803" (date-only), "20260803T140000" (floating local time), or
-// "20260803T140000Z" (UTC) — the pipeline only needs a sortable calendar date, not exact time,
-// so this just pulls YYYY-MM-DD regardless of which form it's in.
-export function icsDateToIsoDate(dtstart: string): string | null {
+// DTSTART shows up as "20260803" (date-only), "20260803T140000" (floating local time, no
+// timezone attached — conventionally read as whoever's viewing it, so the date portion is already
+// the intended wall date), or "20260803T140000Z" (UTC). The pipeline only needs a sortable
+// calendar date, not exact time — for the first two forms that's just the leading YYYY-MM-DD, but
+// a UTC timestamp has to be converted into the given IANA time zone first, or an evening event
+// (UTC midnight falls in the afternoon/evening across the US) lands one day late.
+export function icsDateToIsoDate(dtstart: string, timeZone = "UTC"): string | null {
+  const utcMatch = dtstart.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/)
+  if (utcMatch) {
+    const [, y, mo, d, h, mi, s] = utcMatch
+    const instant = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)))
+    return isoDateInTimeZone(instant, timeZone)
+  }
   const match = dtstart.match(/^(\d{4})(\d{2})(\d{2})/)
   if (!match) return null
   return `${match[1]}-${match[2]}-${match[3]}`

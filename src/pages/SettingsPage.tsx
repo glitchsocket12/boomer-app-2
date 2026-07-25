@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { buildTimeZoneOptions, detectBrowserTimeZone } from '../lib/timezones'
 
 type ChatTone = 'warm' | 'direct' | 'playful' | 'formal'
 
@@ -52,6 +53,13 @@ export default function SettingsPage({
   const [savingTone, setSavingTone] = useState(false)
   const [toneSaved, setToneSaved] = useState(false)
 
+  const [timeZone, setTimeZone] = useState<string | null>(null)
+  const [savingTimeZone, setSavingTimeZone] = useState(false)
+  const [timeZoneSaved, setTimeZoneSaved] = useState(false)
+  // Always includes whatever's currently selected, even if it's a zone this browser's own list
+  // happens to omit — see buildTimeZoneOptions' own comment.
+  const timeZoneOptions = useMemo(() => buildTimeZoneOptions(timeZone), [timeZone])
+
   useEffect(() => {
     loadCurrentUser()
   }, [])
@@ -64,10 +72,14 @@ export default function SettingsPage({
 
     const { data } = await supabase
       .from('user_settings')
-      .select('chat_tone')
+      .select('chat_tone, time_zone')
       .eq('user_id', user?.id)
       .maybeSingle()
     setChatTone((data?.chat_tone as ChatTone) ?? 'warm')
+    // Falls back to the browser's own zone only for DISPLAY when nothing's saved yet (e.g. the
+    // post-signin auto-detect hasn't landed) — picking an option here doesn't save until the
+    // user actually changes the dropdown, at which point handleSelectTimeZone persists it.
+    setTimeZone(data?.time_zone ?? detectBrowserTimeZone())
   }
 
   async function handleUpdateEmail(e: FormEvent) {
@@ -191,6 +203,23 @@ export default function SettingsPage({
     setTimeout(() => setToneSaved(false), 2000)
   }
 
+  async function handleSelectTimeZone(zone: string) {
+    setTimeZone(zone)
+    setSavingTimeZone(true)
+    setTimeZoneSaved(false)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (user) {
+      await supabase
+        .from('user_settings')
+        .upsert({ user_id: user.id, time_zone: zone, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+    }
+    setSavingTimeZone(false)
+    setTimeZoneSaved(true)
+    setTimeout(() => setTimeZoneSaved(false), 2000)
+  }
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -306,6 +335,28 @@ export default function SettingsPage({
           ))}
         </div>
         {toneSaved && <p style={styles.successText}>Saved</p>}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.sectionHeading}>Time zone</h2>
+        <p style={styles.body}>
+          Used to figure out what "today" means for anything you log — so an event still lands on the
+          right date even if it's evening where you are.
+        </p>
+        <select
+          value={timeZone ?? ''}
+          onChange={(e) => handleSelectTimeZone(e.target.value)}
+          disabled={savingTimeZone}
+          style={styles.input}
+          aria-label="Time zone"
+        >
+          {timeZoneOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        {timeZoneSaved && <p style={styles.successText}>Saved</p>}
       </section>
 
       <section style={styles.section}>

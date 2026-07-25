@@ -30,3 +30,15 @@ export async function buildChatToneInstruction(
   const instruction = TONE_INSTRUCTIONS[tone] ?? TONE_INSTRUCTIONS.warm
   return `\n\n${instruction}`
 }
+
+// Defaults to UTC (the old, always-server-time behavior) when a user has no time_zone on file
+// yet — pre-existing accounts before this feature shipped, or the rare race before
+// ensureUserTimeZone.ts's post-signin auto-detect lands. Settings lets it be corrected any time.
+export async function getUserTimeZone(supabaseClient: MinimalSupabaseClient, userId: string): Promise<string> {
+  const { data } = await supabaseClient
+    .from("user_settings")
+    .select("time_zone")
+    .eq("user_id", userId)
+    .maybeSingle()
+  return data?.time_zone ?? "UTC"
+}
