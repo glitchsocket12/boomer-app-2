@@ -32,6 +32,9 @@ export type TreePerson = {
   side?: TreeSide
   deceased?: boolean
   endedWithAnchor?: boolean
+  // Divorce specifically, never death — only set on rootDirect.spouses, where it drives the
+  // "mark ended"/"undo" controls (a death-caused ending isn't something the UI should offer to undo).
+  endedByDivorce?: boolean
   relationLabel?: string
 }
 export type Union = { a: TreePerson; spouses: TreePerson[] }
@@ -504,6 +507,7 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   const spouseNodes: TreePerson[] = rootSpouses.map((id) => ({
     ...node(g, id, 'direct', undefined),
     endedWithAnchor: isUnionEnded(g, rootId, id),
+    endedByDivorce: g.endedPairs.has(unionKey(rootId, id)),
   }))
   const siblingNodes: TreePerson[] = rootSiblings.map((id) => node(g, id, 'direct', rootAnchor))
   // Each sibling's own spouse rides along as an in-law (no parentId — same treatment as the root's

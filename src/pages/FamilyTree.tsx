@@ -287,6 +287,7 @@ export default function FamilyTree({
   const [spouseSuggestions, setSpouseSuggestions] = useState<SpouseSuggestion[]>([])
   const [divorceConfirm, setDivorceConfirm] = useState<DivorceTarget | null>(null)
   const [divorcing, setDivorcing] = useState(false)
+  const [undoingDivorceId, setUndoingDivorceId] = useState<string | null>(null)
 
   useEffect(() => {
     load()
@@ -407,6 +408,17 @@ export default function FamilyTree({
     setDivorceConfirm(null)
   }
 
+  // No confirm banner here, unlike confirmDivorce — this is a correction, not a destructive step,
+  // same treatment PersonDetail.tsx gives "Undo" on the deceased-date field.
+  async function undoDivorce(targetId: string) {
+    if (!data) return
+    setUndoingDivorceId(targetId)
+    await setRelationshipEndedReason(data.rootId, targetId, 'spouse', null)
+    const refreshed = await buildFamilyTree(data.rootId)
+    setData(refreshed)
+    setUndoingDivorceId(null)
+  }
+
   if (loading || !data) {
     return (
       <div style={styles.page}>
@@ -437,6 +449,8 @@ export default function FamilyTree({
       onRequestDivorce={setDivorceConfirm}
       onConfirmDivorce={confirmDivorce}
       onCancelDivorce={() => setDivorceConfirm(null)}
+      onUndoDivorce={undoDivorce}
+      undoingDivorceId={undoingDivorceId}
     />
   )
 }
@@ -468,6 +482,8 @@ export function FamilyTreeView({
   onRequestDivorce = () => {},
   onConfirmDivorce = () => {},
   onCancelDivorce = () => {},
+  onUndoDivorce = () => {},
+  undoingDivorceId = null,
 }: {
   data: TreeData
   onBack: () => void
@@ -491,6 +507,8 @@ export function FamilyTreeView({
   onRequestDivorce?: (target: DivorceTarget) => void
   onConfirmDivorce?: () => void
   onCancelDivorce?: () => void
+  onUndoDivorce?: (targetId: string) => void
+  undoingDivorceId?: string | null
   onCancelRemove?: () => void
   spouseSuggestions?: SpouseSuggestion[]
   onAcceptSpouseSuggestion?: (s: SpouseSuggestion) => void
@@ -634,6 +652,14 @@ export function FamilyTreeView({
           targetName: p.name,
           label: `Mark ${data.rootName} and ${p.name} as divorced?`,
         }))
+
+  // Spouses already marked ended by divorce specifically (not death — see endedByDivorce's comment
+  // in familyTree.ts) get an "Undo" link instead of the "mark ended" link above.
+  const endedSlots: { key: string; targetId: string; targetName: string }[] = readOnly
+    ? []
+    : data.rootDirect.spouses
+        .filter((p) => p.endedByDivorce)
+        .map((p) => ({ key: `ended-spouse-${p.id}`, targetId: p.id, targetName: p.name }))
 
   // Plain-language legend, dynamic since which colors actually appear depends on the data (a
   // one-parent person only has one side to name, a group's descendants-mode tree has neither
@@ -866,7 +892,30 @@ export function FamilyTreeView({
           <span style={styles.addLabel}>Mark a marriage as ended:</span>
           <div style={styles.addRow}>
             {divorceSlots.map((slot) => (
-              <RemoveChip key={slot.key} name={slot.targetName} relLabel="divorced" onRemove={() => onRequestDivorce(slot)} />
+              <button key={slot.key} type="button" onClick={() => onRequestDivorce(slot)} style={styles.textLinkButton}>
+                Mark {slot.targetName}'s marriage to {data.rootName} as ended
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {endedSlots.length > 0 && (
+        <div style={styles.removeSection}>
+          <span style={styles.addLabel}>Marked as ended:</span>
+          <div style={styles.addRow}>
+            {endedSlots.map((slot) => (
+              <span key={slot.key} style={styles.endedRow}>
+                {slot.targetName}
+                <button
+                  type="button"
+                  onClick={() => onUndoDivorce(slot.targetId)}
+                  disabled={undoingDivorceId === slot.targetId}
+                  style={styles.textLinkButton}
+                >
+                  {undoingDivorceId === slot.targetId ? '…' : 'Undo'}
+                </button>
+              </span>
             ))}
           </div>
         </div>
@@ -965,6 +1014,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.3rem 0.7rem',
   },
   removeChipRel: { color: '#999', fontSize: '0.78rem' },
+  // Plain action link — not a status chip — so "mark this ended" and "undo" both read as things
+  // you can DO, not as a state you're removing (see RemoveChip's trash-icon pattern above, which
+  // is right for destructive removal but was confusingly reused for divorce before this).
+  textLinkButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    textDecoration: 'underline',
+    fontSize: '0.85rem',
+    fontFamily: 'Georgia, serif',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  endedRow: { display: 'inline-flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.85rem', color: '#2E4034' },
   cornerBadge: {
     position: 'absolute',
     top: '-8px',

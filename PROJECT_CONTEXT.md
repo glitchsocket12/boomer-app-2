@@ -486,7 +486,15 @@ person having multiple spouses (remarriage) already rendered fine. PersonDetail.
 deceased"/"Undo" control lives inside the name-edit form (pencil icon) only, not as a persistent
 row on every profile (founder feedback 2026-07-24 — a permanent prompt read as a downer).
 FamilyTree.tsx "Mark a marriage as ended" (divorce only — death is
-read off the person's own deceased_date, not a separate flag). `relationshipLabels.ts`
+read off the person's own deceased_date, not a separate flag). **UX fix 2026-07-25** (founder-flagged:
+looked like an already-divorced status you'd undo via trash icon, backwards from the actual effect):
+the divorce control is now a plain text link ("Mark X's marriage to Y as ended"), not the same
+hover-trash chip used for destructive "Remove a relationship" — and a formerly-missing "Undo" link
+(no confirm step, matches PersonDetail's deceased/Undo pattern) now appears once a marriage is marked
+ended, since `ended_reason` was always nullable but had no UI path back to null. `endedByDivorce`
+(familyTree.ts, `rootDirect.spouses` only) tracks divorce specifically, separate from the
+death-inclusive `endedWithAnchor`, so a death-ended union never gets an (incorrect) undo link.
+`relationshipLabels.ts`
 (mirrored in selfContext.ts for the AI prompt) derives step-parent/step-sibling/half-sibling
 labels from the graph, no new relationship kind needed. `buildFamilyTreeFromGraph` (familyTree.ts,
 2026-07-24 fix) infers a second ego-tree parent from a recorded parent's DECEASED spouse (not a
