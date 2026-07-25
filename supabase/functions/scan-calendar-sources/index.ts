@@ -32,8 +32,10 @@ Don't guess at dates — the exact start/end date is already known from the cale
 
 "suggested_group": at most one group this event clearly belongs to, from the EXISTING groups roster given separately below — copy its name EXACTLY. A group is a recurring, ongoing affiliation (a school, team, workplace, military unit, or friend circle), not a one-off detail. Only set this when the event title/description clearly signals that recurring affiliation (e.g. an event named after a known group). Never invent a new group name here — use null if nothing in the roster clearly fits.
 
+"mentioned_people": specific individuals named directly in the title or description (e.g. "Sid and Kate's wedding" → ["Sid", "Kate"]; "Catching up with Connor Chavez" → ["Connor Chavez"]) — first name alone is fine if that's all the title gives. Don't include the calendar owner, generic roles ("the team", "family"), or places/things that aren't a person's name. These get cross-checked separately against the founder's own people — you don't need the roster for this field, just pull out whatever names are actually written in the text. Empty array if no one is named.
+
 Respond with ONLY a JSON array, one object per input event in the same order, in this exact shape and nothing else — no preamble, no markdown fences:
-[{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null"}]`
+[{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"]}]`
 
 type Candidate = {
   user_id: string
@@ -65,6 +67,7 @@ async function callExtraction(
     notes: string
     suggested_tags: string[]
     suggested_group: string | null
+    mentioned_people: string[]
   }[]
 > {
   const batchData = JSON.stringify(
@@ -129,7 +132,7 @@ async function scanUser(
 ): Promise<{ sourcesScanned: number; candidatesAdded: number }> {
   const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes] = await Promise.all([
     supabase.from("calendar_sources").select("id, ical_url, label").eq("user_id", userId),
-    supabase.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other").eq("user_id", userId),
+    supabase.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self").eq("user_id", userId),
     supabase.from("tags").select("name").eq("user_id", userId),
     supabase.from("groups").select("id, name").eq("user_id", userId),
     supabase.from("moment_import_candidates").select("ical_uid").eq("user_id", userId),
@@ -163,10 +166,98 @@ async function scanUser(
   }
   for (const key of ambiguousKeys) delete idByName[key]
 
+  const selfPersonId = (peopleRes.data ?? []).find((p: any) => p.is_self)?.id ?? null
+
   const tagNames = (tagsRes.data ?? []).map((t: any) => t.name)
   const idByGroupName: Record<string, string> = {}
   for (const g of groupsRes.data ?? []) idByGroupName[String(g.name).toLowerCase()] = g.id
   const groupNames = (groupsRes.data ?? []).map((g: any) => g.name)
+
+  // Group affiliation, for the "two+ resolved attendees share a group" inference below (e.g. a
+  // wedding whose bride and groom both trace to "East High" gets that group suggested even
+  // though nothing in the event's own text names it). Two signals, unioned per person: formal
+  // person_groups roster membership, AND having attended even one past event tagged to that
+  // group — confirmed live that founders don't always formally roster every regular (Kate
+  // Mitchell had attended an "East High School"-tagged wedding without ever being added to that
+  // group's roster), so roster-only would've missed exactly the case this is meant to catch.
+  // Both queries are scoped via this user's own GROUP ids (from groupsRes, already `.eq("user_id",
+  // userId)`-filtered) rather than via `.in("person_id", <every person>)` — with 400+ people on a
+  // real account that IN-list got long enough to silently misbehave through the Edge Function's
+  // outbound fetch (no error surfaced, just empty data) even though the identical query worked
+  // fine from a browser; filtering by the founder's own (far smaller) group roster instead sidesteps
+  // that and is equally correct, since person_groups/moment_groups rows are meaningless without a
+  // group_id that traces back to this user anyway.
+  const allGroupIds = (groupsRes.data ?? []).map((g: any) => g.id)
+  const [personGroupsRes, momentGroupsRes] = await Promise.all([
+    allGroupIds.length > 0
+      ? supabase.from("person_groups").select("person_id, group_id").in("group_id", allGroupIds)
+      : Promise.resolve({ data: [] as { person_id: string; group_id: string }[], error: null }),
+    supabase.from("moment_groups").select("moment_id, group_id, moments!inner(user_id)").eq("moments.user_id", userId),
+  ])
+  if (personGroupsRes.error) console.error("Failed to load person_groups", personGroupsRes.error.message)
+  if (momentGroupsRes.error) console.error("Failed to load moment_groups", momentGroupsRes.error.message)
+  const groupIdsByPerson: Record<string, Set<string>> = {}
+  for (const pg of personGroupsRes.data ?? []) {
+    ;(groupIdsByPerson[pg.person_id] ??= new Set()).add(pg.group_id)
+  }
+  const groupIdsByMoment: Record<string, string[]> = {}
+  for (const mg of momentGroupsRes.data ?? []) {
+    ;(groupIdsByMoment[mg.moment_id] ??= []).push(mg.group_id)
+  }
+  const groupTaggedMomentIds = Object.keys(groupIdsByMoment)
+  const attendanceRes =
+    groupTaggedMomentIds.length > 0
+      ? await supabase.from("notes").select("person_id, moment_id").in("moment_id", groupTaggedMomentIds).not("person_id", "is", null)
+      : { data: [] as { person_id: string; moment_id: string }[], error: null }
+  if (attendanceRes.error) console.error("Failed to load notes for group-attendance inference", attendanceRes.error.message)
+  for (const n of attendanceRes.data ?? []) {
+    for (const gid of groupIdsByMoment[n.moment_id!] ?? []) {
+      ;(groupIdsByPerson[n.person_id] ??= new Set()).add(gid)
+    }
+  }
+
+  // Requires 2+ resolved people in common (not just 1) so a group doesn't get suggested purely
+  // because one attendee happens to belong to it — the signal is that multiple people ALREADY
+  // known to be attending also share a recurring affiliation, same bar a human would use.
+  function groupsSharedByMultiple(candidatePersonIds: string[]): string[] {
+    const counts = new Map<string, number>()
+    for (const pid of candidatePersonIds) {
+      for (const gid of groupIdsByPerson[pid] ?? []) {
+        counts.set(gid, (counts.get(gid) ?? 0) + 1)
+      }
+    }
+    return [...counts.entries()].filter(([, count]) => count >= 2).map(([gid]) => gid)
+  }
+
+  // Bare first names are routinely ambiguous (e.g. three different "Kate"s on file) and get
+  // dropped from idByName entirely (see ambiguousKeys above) rather than risk tagging the wrong
+  // person. This recovers exactly the case a human would resolve instantly: if the event ALSO
+  // resolved a different person (e.g. "Sid", uniquely), and that person has a `relationships` row
+  // (spouse/partner/etc.) to exactly one of the ambiguous same-name candidates, that's who's
+  // meant — confirmed live (Sid Torrigino + Kate Mitchell are on file as spouses).
+  const ambiguousNameToIds: Record<string, string[]> = {}
+  for (const p of peopleRes.data ?? []) {
+    const first = String(p.name).trim().toLowerCase()
+    if (!first) continue
+    ;(ambiguousNameToIds[first] ??= []).push(p.id)
+  }
+  for (const name of Object.keys(ambiguousNameToIds)) {
+    if (ambiguousNameToIds[name].length < 2) delete ambiguousNameToIds[name]
+  }
+  const relatedIds: Record<string, Set<string>> = {}
+  if (Object.keys(ambiguousNameToIds).length > 0) {
+    const { data: relRows } = await supabase.from("relationships").select("person_a_id, person_b_id").eq("user_id", userId)
+    for (const r of relRows ?? []) {
+      ;(relatedIds[r.person_a_id] ??= new Set()).add(r.person_b_id)
+      ;(relatedIds[r.person_b_id] ??= new Set()).add(r.person_a_id)
+    }
+  }
+  function resolveAmbiguousName(name: string, alreadyResolvedIds: Iterable<string>): string | null {
+    const candidates = ambiguousNameToIds[name]
+    if (!candidates) return null
+    const matches = candidates.filter((cid) => [...alreadyResolvedIds].some((rid) => relatedIds[cid]?.has(rid)))
+    return matches.length === 1 ? matches[0] : null
+  }
 
   const tagGuidance =
     (tagNames.length > 0
@@ -250,6 +341,41 @@ async function scanUser(
               return { name: a.name, email: a.email, matched_person_id: matchId ?? null, confidence: matchId ? ("high" as const) : ("none" as const) }
             })
 
+          // Personal calendars routinely name the people IN the title ("Sid and Kate's wedding")
+          // rather than listing them as formal ICS attendees (Jake is the only "attendee" of his
+          // own calendar entry) — this is what actually surfaces those people. Only ever ADDS
+          // already-known people (never proposes a brand-new "unmatched" person from title text
+          // alone, unlike real ICS attendees which carry an email as corroborating signal) — a
+          // misheard/ambiguous name from free text is much likelier to be a false positive than a
+          // formal calendar invite is.
+          const alreadyIncluded = new Set(suggestedPeople.map((p) => p.matched_person_id).filter(Boolean))
+          const ambiguousMentions: string[] = []
+          for (const mentioned of r.mentioned_people ?? []) {
+            const key = mentioned.toLowerCase()
+            const matchId = idByName[key]
+            if (matchId) {
+              if (matchId === selfPersonId || alreadyIncluded.has(matchId)) continue
+              alreadyIncluded.add(matchId)
+              suggestedPeople.push({ name: mentioned, email: null, matched_person_id: matchId, confidence: "high" as const })
+            } else if (ambiguousNameToIds[key]) {
+              // Deferred to a second pass below, run only after every unambiguous name in this
+              // same event has resolved — so "Kate" can be disambiguated via "Sid" regardless of
+              // which order the model happened to list them in.
+              ambiguousMentions.push(mentioned)
+            }
+          }
+          for (const mentioned of ambiguousMentions) {
+            const matchId = resolveAmbiguousName(mentioned.toLowerCase(), alreadyIncluded)
+            if (!matchId || matchId === selfPersonId || alreadyIncluded.has(matchId)) continue
+            alreadyIncluded.add(matchId)
+            suggestedPeople.push({ name: mentioned, email: null, matched_person_id: matchId, confidence: "high" as const })
+          }
+
+          const groupIdFromTitle = r.suggested_group ? idByGroupName[r.suggested_group.toLowerCase()] : null
+          const resolvedPersonIds = suggestedPeople.map((p) => p.matched_person_id).filter((id): id is string => Boolean(id))
+          const groupIdsFromSharedMembership = groupsSharedByMultiple(resolvedPersonIds)
+          const suggestedGroupIds = [...new Set([groupIdFromTitle, ...groupIdsFromSharedMembership].filter((id): id is string => Boolean(id)))]
+
           const startDate = event.dtstart ? icsDateToIsoDate(event.dtstart, userTimeZone) : null
           let endDate = event.dtend ? icsEndDateToIsoDate(event.dtend, event.dtendIsDateOnly, userTimeZone) : null
           // Defensive guard against a malformed feed producing an end before the start — never
@@ -274,7 +400,7 @@ async function scanUser(
             raw_description: r.notes ?? event.description ?? null,
             suggested_people: suggestedPeople,
             suggested_tags: Array.isArray(r.suggested_tags) ? r.suggested_tags.slice(0, 3) : [],
-            suggested_group_ids: r.suggested_group ? [idByGroupName[r.suggested_group.toLowerCase()]].filter((id): id is string => Boolean(id)) : [],
+            suggested_group_ids: suggestedGroupIds,
             source_recurrence_id: event.isRecurring ? event.uid : null,
           })
         }
