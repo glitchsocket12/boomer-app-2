@@ -309,7 +309,17 @@ src/
 │   │                            raw_description has content), editable description,
 │   │                            who-was-there (hover-untag, non-destructive) +
 │   │                            search-and-add picker, suggested attendees from
-│   │                            group rosters, Affiliated Groups (hover-untag,
+│   │                            group rosters AND family (2026-07-25 — "Was their
+│   │                            family there too?": spouse/partner suggested once
+│   │                            one of a couple is attending, their kids suggested
+│   │                            too once the spouse/partner is ALSO attending;
+│   │                            `lib/relationshipSuggestions.ts`'s pure
+│   │                            `suggestFamilyMembers`, fed by a `relationships`
+│   │                            query scoped to this event's current attendees —
+│   │                            same dismissed_person_ids + add/deny-all UI as the
+│   │                            group-roster suggestions; mirrored on
+│   │                            ImportReview.tsx below, see its entry), Affiliated
+│   │                            Groups (hover-untag,
 │   │                            non-destructive) + search-and-add picker,
 │   │                            collapsed notes, maps link (+", CO"
 │   │                            hardcoded), rename, delete/merge, update chat;
@@ -598,7 +608,13 @@ Full story: PROJECT_HISTORY.md.
                                 people, or type a new name to create) plus "Also from the associated
                                 group?" suggestions (members of any group tagged on the candidate, one-
                                 tap add/dismiss, mirrors EventDetail.tsx's group-suggestion pattern)
-                                (2026-07-25). `suggested_people`/`suggested_group_ids` now also draw
+                                (2026-07-25). Second suggestion box, "Was their family there too?"
+                                (2026-07-25): spouse/partner of anyone already on the candidate, then
+                                that couple's kids once the spouse/partner is ALSO on it — same
+                                `suggestFamilyMembers` helper and dismiss-chip UI as EventDetail.tsx's
+                                version (see its entry above), fed by one whole-account `relationships`
+                                fetch (`getRelationshipsMap()`, no args) shared across every card on the
+                                page rather than a per-card query. `suggested_people`/`suggested_group_ids` now also draw
                                 on people/relationship data already on file, not just the calendar
                                 entry's own ICS attendee list or its title's explicit group name
                                 (2026-07-25 follow-up, scan-calendar-sources): (a) names mentioned

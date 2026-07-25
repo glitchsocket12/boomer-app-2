@@ -88,3 +88,50 @@ export async function getRelationshipsForPerson(personId: string): Promise<Perso
   }
   return result
 }
+
+// Batched form of getRelationshipsForPerson, for callers that need several people's relationships
+// at once (e.g. suggestFamilyMembers in relationshipSuggestions.ts) without one round-trip each.
+// Pass an id list to scope the query to just those people (either side of the row); omit it to
+// pull the whole table in one shot, same "one full-table fetch" pattern familyTree.ts already
+// uses for the same table. An empty array short-circuits to an empty map, not a scopeless fetch.
+export async function getRelationshipsMap(personIds?: string[]): Promise<Map<string, PersonRelationships>> {
+  const result = new Map<string, PersonRelationships>()
+  function ensure(id: string): PersonRelationships {
+    let rel = result.get(id)
+    if (!rel) {
+      rel = { spouseIds: [], partnerIds: [], siblingIds: [], parentIds: [], childIds: [] }
+      result.set(id, rel)
+    }
+    return rel
+  }
+
+  if (personIds && personIds.length === 0) return result
+
+  let query = supabase.from('relationships').select('person_a_id, person_b_id, kind')
+  if (personIds) {
+    const idList = personIds.join(',')
+    query = query.or(`person_a_id.in.(${idList}),person_b_id.in.(${idList})`)
+  }
+  const { data } = await query
+
+  for (const row of data ?? []) {
+    if (row.kind === 'parent') {
+      ensure(row.person_a_id).childIds.push(row.person_b_id)
+      ensure(row.person_b_id).parentIds.push(row.person_a_id)
+      continue
+    }
+    const a = ensure(row.person_a_id)
+    const b = ensure(row.person_b_id)
+    if (row.kind === 'spouse') {
+      a.spouseIds.push(row.person_b_id)
+      b.spouseIds.push(row.person_a_id)
+    } else if (row.kind === 'partner') {
+      a.partnerIds.push(row.person_b_id)
+      b.partnerIds.push(row.person_a_id)
+    } else if (row.kind === 'sibling') {
+      a.siblingIds.push(row.person_b_id)
+      b.siblingIds.push(row.person_a_id)
+    }
+  }
+  return result
+}

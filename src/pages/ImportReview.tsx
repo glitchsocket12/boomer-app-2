@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { formatDateRange } from '../lib/dates'
 import { findOrCreateTagId, type TagRef } from '../lib/tags'
+import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
+import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import SearchAddPicker from '../components/SearchAddPicker'
 import SearchBox from '../components/SearchBox'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
@@ -154,6 +156,7 @@ export default function ImportReview({
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [calendarSources, setCalendarSources] = useState<CalendarSourceRef[]>([])
   const [allPeopleList, setAllPeopleList] = useState<PersonRef[]>([])
+  const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -162,7 +165,7 @@ export default function ImportReview({
 
   async function load() {
     setLoading(true)
-    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes] = await Promise.all([
+    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap] = await Promise.all([
       supabase
         .from('moment_import_candidates')
         .select(
@@ -178,6 +181,11 @@ export default function ImportReview({
       supabase.from('groups').select('id, name, person_groups(people(id, name, last_name))').order('name'),
       supabase.from('calendar_sources').select('id, label'),
       supabase.from('people').select('id, name, last_name'),
+      // Whole-account fetch (not scoped per candidate) — this page shows many cards at once and
+      // each one's included-attendees set changes reactively as the reviewer checks boxes, so one
+      // shared table-wide map (same "one full-table fetch" pattern as familyTree.ts) avoids a
+      // refetch per card per toggle.
+      getRelationshipsMap(),
     ])
     setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
@@ -185,6 +193,7 @@ export default function ImportReview({
     setAllGroupsList((groupsRes.data as unknown as GroupRef[]) ?? [])
     setCalendarSources((sourcesRes.data as CalendarSourceRef[]) ?? [])
     setAllPeopleList((peopleRes.data as PersonRef[]) ?? [])
+    setRelationshipsById(relationshipsMap)
     setLoading(false)
   }
 
@@ -226,6 +235,7 @@ export default function ImportReview({
             allTagsList={allTagsList}
             allGroupsList={allGroupsList}
             allPeopleList={allPeopleList}
+            relationshipsById={relationshipsById}
             calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
             onTagCreated={handleTagCreated}
             onMomentCreated={handleMomentCreated}
@@ -244,6 +254,7 @@ function CandidateCard({
   allTagsList,
   allGroupsList,
   allPeopleList,
+  relationshipsById,
   calendarSourceLabel,
   onTagCreated,
   onMomentCreated,
@@ -255,6 +266,7 @@ function CandidateCard({
   allTagsList: TagRef[]
   allGroupsList: GroupRef[]
   allPeopleList: PersonRef[]
+  relationshipsById: Map<string, PersonRelationships>
   calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
   onMomentCreated: (moment: ExistingMoment) => void
@@ -275,6 +287,7 @@ function CandidateCard({
   const [manualPeople, setManualPeople] = useState<PersonRef[]>([])
   const [manualNewPeopleNames, setManualNewPeopleNames] = useState<string[]>([])
   const [dismissedGroupSuggestionIds, setDismissedGroupSuggestionIds] = useState<Set<string>>(new Set())
+  const [dismissedFamilySuggestionIds, setDismissedFamilySuggestionIds] = useState<Set<string>>(new Set())
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [personPickerOpen, setPersonPickerOpen] = useState(false)
@@ -297,28 +310,44 @@ function CandidateCard({
     return ids
   }, [includedGroups, manualGroupIds, candidate.suggested_group_ids])
 
+  // Every person already counted as "at this event" for this candidate — suggested-and-checked
+  // ICS attendees plus manually added ones. Shared by both suggestion sources below.
+  const includedPersonIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const i of included) {
+      const id = candidate.suggested_people[i].matched_person_id
+      if (id) ids.add(id)
+    }
+    for (const p of manualPeople) ids.add(p.id)
+    return ids
+  }, [included, candidate.suggested_people, manualPeople])
+
   // Mirrors EventDetail.tsx's "Also from the associated group?" suggestion — anyone belonging to
   // a group already tagged on this candidate, who isn't already a suggested/manually-added
   // attendee, gets offered as a one-tap add.
   const suggestedFromGroups = useMemo(() => {
-    const already = new Set<string>()
-    for (const i of included) {
-      const id = candidate.suggested_people[i].matched_person_id
-      if (id) already.add(id)
-    }
-    for (const p of manualPeople) already.add(p.id)
-
     const suggestions = new Map<string, PersonRef>()
     for (const group of allGroupsList) {
       if (!includedGroupIds.has(group.id)) continue
       for (const pg of group.person_groups ?? []) {
-        if (pg.people && !already.has(pg.people.id) && !dismissedGroupSuggestionIds.has(pg.people.id)) {
+        if (pg.people && !includedPersonIds.has(pg.people.id) && !dismissedGroupSuggestionIds.has(pg.people.id)) {
           suggestions.set(pg.people.id, pg.people)
         }
       }
     }
     return Array.from(suggestions.values())
-  }, [allGroupsList, includedGroupIds, included, candidate.suggested_people, manualPeople, dismissedGroupSuggestionIds])
+  }, [allGroupsList, includedGroupIds, includedPersonIds, dismissedGroupSuggestionIds])
+
+  // Mirrors EventDetail.tsx's family-suggestion box: spouse/partner of anyone already on this
+  // candidate, then that couple's kids once the spouse/partner is ALSO on it (see
+  // relationshipSuggestions.ts). Excludes anyone the group-suggestion box above already offers,
+  // so a person is never suggested twice in two different boxes on the same card.
+  const suggestedFamily = useMemo(() => {
+    const excludeIds = new Set(dismissedFamilySuggestionIds)
+    for (const p of suggestedFromGroups) excludeIds.add(p.id)
+    const ids = suggestFamilyMembers(includedPersonIds, relationshipsById, excludeIds)
+    return ids.map((id) => allPeopleList.find((p) => p.id === id)).filter((p): p is PersonRef => !!p)
+  }, [includedPersonIds, relationshipsById, dismissedFamilySuggestionIds, suggestedFromGroups, allPeopleList])
 
   function toggle(i: number) {
     setIncluded((prev) => toggleIndex(prev, i))
@@ -696,6 +725,51 @@ function CandidateCard({
                 person={p}
                 onApprove={() => setManualPeople((prev) => [...prev, p])}
                 onDeny={() => setDismissedGroupSuggestionIds((prev) => new Set(prev).add(p.id))}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {suggestedFamily.length > 0 && (
+        <div style={styles.suggestBanner}>
+          <div style={styles.suggestionHeaderRow}>
+            <span>Was their family there too?</span>
+            {suggestedFamily.length > 1 && (
+              <div style={styles.suggestButtonRow}>
+                <button
+                  type="button"
+                  onClick={() => setManualPeople((prev) => [...prev, ...suggestedFamily])}
+                  style={styles.addAllButton}
+                  disabled={saving}
+                >
+                  + Add all
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDismissedFamilySuggestionIds((prev) => {
+                      const next = new Set(prev)
+                      for (const p of suggestedFamily) next.add(p.id)
+                      return next
+                    })
+                  }
+                  style={styles.removeAllButton}
+                  disabled={saving}
+                >
+                  × Remove all suggestions
+                </button>
+              </div>
+            )}
+          </div>
+          <p style={styles.chatHint}>Tap a name to add them, or hover to dismiss.</p>
+          <div style={styles.peopleRow}>
+            {suggestedFamily.map((p) => (
+              <GroupSuggestionChip
+                key={p.id}
+                person={p}
+                onApprove={() => setManualPeople((prev) => [...prev, p])}
+                onDeny={() => setDismissedFamilySuggestionIds((prev) => new Set(prev).add(p.id))}
               />
             ))}
           </div>

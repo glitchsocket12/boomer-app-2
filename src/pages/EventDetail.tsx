@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
@@ -11,6 +11,8 @@ import { summarize } from '../lib/summarize'
 import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { findOrCreateTagId } from '../lib/tags'
+import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
+import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 export type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
@@ -71,6 +73,7 @@ export default function EventDetail({
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
+  const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
 
   useEffect(() => {
     loadMoment()
@@ -81,6 +84,23 @@ export default function EventDetail({
     setMergeOpen(false)
     setMergeCandidate(null)
   }, [eventId])
+
+  // Only the CURRENT attendees' relationships matter for the family-suggestion box below, so this
+  // stays scoped to a small id list rather than pulling the whole relationships table on every
+  // event page view. Keyed off a sorted/joined string (not the notes array itself) so it only
+  // refetches when the actual set of attendees changes, not on every unrelated moment reload
+  // (rename, description edit, etc).
+  const attendeeIdsKey = useMemo(() => {
+    const ids = new Set<string>()
+    for (const n of moment?.notes ?? []) {
+      if (n.people) ids.add(n.people.id)
+    }
+    return Array.from(ids).sort().join(',')
+  }, [moment])
+
+  useEffect(() => {
+    getRelationshipsMap(attendeeIdsKey ? attendeeIdsKey.split(',') : []).then(setRelationshipsById)
+  }, [attendeeIdsKey])
 
   // Full people/group rosters for the manual "add someone" / "tag a group" search boxes below —
   // separate from the suggestion-sourced candidates elsewhere on this page, which only surface
@@ -341,6 +361,7 @@ export default function EventDetail({
       allPeople={allPeople}
       allGroupsList={allGroupsList}
       allTagsList={allTagsList}
+      relationshipsById={relationshipsById}
       editingTitle={editingTitle}
       titleInput={titleInput}
       savingTitle={savingTitle}
@@ -406,6 +427,7 @@ export function EventDetailView({
   allPeople = [],
   allGroupsList = [],
   allTagsList = [],
+  relationshipsById = new Map(),
   readOnly = false,
   editingTitle = false,
   titleInput = '',
@@ -458,6 +480,7 @@ export function EventDetailView({
   allPeople?: PersonRef[]
   allGroupsList?: GroupRef[]
   allTagsList?: TagRef[]
+  relationshipsById?: Map<string, PersonRelationships>
   readOnly?: boolean
   editingTitle?: boolean
   titleInput?: string
@@ -546,6 +569,16 @@ export function EventDetailView({
         suggestedAttendees.set(pg.people.id, pg.people)
       }
     }
+  }
+
+  // Spouse-of-an-attendee, then children once that spouse is ALSO an attendee (see
+  // relationshipSuggestions.ts). Excludes anyone already covered by the group-roster suggestion
+  // above so a person never appears as a suggestion in both boxes at once.
+  const suggestedFamily = new Map<string, PersonRef>()
+  const familyExcludeIds = new Set([...dismissedIds, ...suggestedAttendees.keys()])
+  for (const id of suggestFamilyMembers(attendees.keys(), relationshipsById, familyExcludeIds)) {
+    const person = allPeople.find((p) => p.id === id)
+    if (person) suggestedFamily.set(id, person)
   }
 
   const details = moment.details && typeof moment.details === 'object' ? Object.entries(moment.details) : []
@@ -787,6 +820,33 @@ export function EventDetailView({
           <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
           <div style={styles.chipRow}>
             {sortByLastName(Array.from(suggestedAttendees.values())).map((p) => (
+              <SuggestedAttendeeChip
+                key={p.id}
+                person={p}
+                onApprove={() => onAddAttendee(p)}
+                onDeny={() => onDenySuggestion(p)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {!readOnly && suggestedFamily.size > 0 && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <h2 style={{ ...styles.subheading, margin: 0 }}>Was their family there too?</h2>
+            {suggestedFamily.size > 1 && (
+              <button
+                onClick={() => onDenyAllSuggestions(Array.from(suggestedFamily.values()))}
+                style={styles.removeAllButton}
+              >
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
+          <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
+          <div style={styles.chipRow}>
+            {sortByLastName(Array.from(suggestedFamily.values())).map((p) => (
               <SuggestedAttendeeChip
                 key={p.id}
                 person={p}
