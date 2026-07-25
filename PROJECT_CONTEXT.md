@@ -292,7 +292,10 @@ src/
 │   │                            existing `moments`/`reminders`, no new tables. Tag
 │   │                            filter chips (same distinct-tags-in-use pattern as
 │   │                            Events.tsx) narrow the moment tiles/list; reminders
-│   │                            always show (no tag concept for them). Tile click →
+│   │                            always show (no tag concept for them); chips sit
+│   │                            directly above the month grid (not above Upcoming) so
+│   │                            the thing they filter is adjacent. Month nav has a
+│   │                            "Today" button next to the next-month arrow. Tile click →
 │   │                            EventDetail; reminder click → PersonDetail. Phase 1
 │   │                            of a larger gameplanned feature (calendar-source
 │   │                            connection via pasted secret iCal URLs, AI import/
