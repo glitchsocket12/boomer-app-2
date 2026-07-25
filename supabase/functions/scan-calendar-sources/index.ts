@@ -34,8 +34,10 @@ Don't guess at dates — the exact start/end date is already known from the cale
 
 "mentioned_people": specific individuals named directly in the title or description (e.g. "Sid and Kate's wedding" → ["Sid", "Kate"]; "Catching up with Connor Chavez" → ["Connor Chavez"]) — first name alone is fine if that's all the title gives. Don't include the calendar owner, generic roles ("the team", "family"), or places/things that aren't a person's name. These get cross-checked separately against the founder's own people — you don't need the roster for this field, just pull out whatever names are actually written in the text. Empty array if no one is named.
 
+"mentioned_family_names": surnames referenced as a family/household unit, distinct from "mentioned_people" above (e.g. "Meal train for the Mojica family" → ["Mojica"]; "Dinner with the Andersons" → ["Anderson"], singular form). Only when the text clearly frames it as a family/household ("the X family", "the Xs", "X family reunion") — not just any capitalized word or business name that happens to look like a surname (e.g. "Mojica's Bakery" is a place, not a family reference). Empty array if none.
+
 Respond with ONLY a JSON array, one object per input event in the same order, in this exact shape and nothing else — no preamble, no markdown fences:
-[{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"]}]`
+[{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"], "mentioned_family_names": ["Surname"]}]`
 
 type Candidate = {
   user_id: string
@@ -68,6 +70,7 @@ async function callExtraction(
     suggested_tags: string[]
     suggested_group: string | null
     mentioned_people: string[]
+    mentioned_family_names: string[]
   }[]
 > {
   const batchData = JSON.stringify(
@@ -165,6 +168,17 @@ async function scanUser(
     for (const n of nicknames) claimKey(n.toLowerCase(), p.id)
   }
   for (const key of ambiguousKeys) delete idByName[key]
+
+  // Surname lookup for "mentioned_family_names" below — a family/household reference resolves
+  // to EVERY person on file sharing that last name (a family invite plausibly means the whole
+  // household), unlike idByName's single-person resolution above.
+  const personIdsByLastName: Record<string, string[]> = {}
+  const personById: Record<string, { name: string; last_name: string | null }> = {}
+  for (const p of peopleRes.data ?? []) {
+    personById[p.id] = { name: p.name, last_name: p.last_name ?? null }
+    const lastNameKey = p.last_name ? String(p.last_name).trim().toLowerCase() : ""
+    if (lastNameKey) (personIdsByLastName[lastNameKey] ??= []).push(p.id)
+  }
 
   const selfPersonId = (peopleRes.data ?? []).find((p: any) => p.is_self)?.id ?? null
 
@@ -371,10 +385,40 @@ async function scanUser(
             suggestedPeople.push({ name: mentioned, email: null, matched_person_id: matchId, confidence: "high" as const })
           }
 
+          // "Meal train for the Mojica family" — a surname mentioned as a family/household
+          // reference resolves to EVERY person on file sharing that last name (tracked separately
+          // from the single-person mentioned_people/ambiguousMentions matches above, since one
+          // surname can legitimately match several people). Feeds the group-suggestion step below.
+          const familyMatchedPersonIds: string[] = []
+          for (const familyName of r.mentioned_family_names ?? []) {
+            const key = familyName.trim().toLowerCase()
+            if (!key) continue
+            for (const personId of personIdsByLastName[key] ?? []) {
+              if (personId === selfPersonId || alreadyIncluded.has(personId)) continue
+              alreadyIncluded.add(personId)
+              familyMatchedPersonIds.push(personId)
+              const p = personById[personId]
+              suggestedPeople.push({
+                name: p ? `${p.name}${p.last_name ? ` ${p.last_name}` : ""}` : familyName,
+                email: null,
+                matched_person_id: personId,
+                confidence: "high" as const,
+              })
+            }
+          }
+
           const groupIdFromTitle = r.suggested_group ? idByGroupName[r.suggested_group.toLowerCase()] : null
           const resolvedPersonIds = suggestedPeople.map((p) => p.matched_person_id).filter((id): id is string => Boolean(id))
           const groupIdsFromSharedMembership = groupsSharedByMultiple(resolvedPersonIds)
-          const suggestedGroupIds = [...new Set([groupIdFromTitle, ...groupIdsFromSharedMembership].filter((id): id is string => Boolean(id)))]
+          // A family-name match is already a strong, explicit per-person signal (the text named
+          // their household directly) — suggest THEIR groups outright rather than requiring a
+          // second independently-resolved attendee to also share it, unlike groupsSharedByMultiple's
+          // general 2+ bar (e.g. Patrick Mojica alone, matched via "the Mojica family", is enough to
+          // suggest his "98th" group even though he's the only resolved attendee).
+          const groupIdsFromFamilyMembers = familyMatchedPersonIds.flatMap((pid) => [...(groupIdsByPerson[pid] ?? [])])
+          const suggestedGroupIds = [
+            ...new Set([groupIdFromTitle, ...groupIdsFromSharedMembership, ...groupIdsFromFamilyMembers].filter((id): id is string => Boolean(id))),
+          ]
 
           const startDate = event.dtstart ? icsDateToIsoDate(event.dtstart, userTimeZone) : null
           let endDate = event.dtend ? icsEndDateToIsoDate(event.dtend, event.dtendIsDateOnly, userTimeZone) : null
