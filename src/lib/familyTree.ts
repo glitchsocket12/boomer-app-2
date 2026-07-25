@@ -537,14 +537,28 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   ]
 
   // --- Kids tier ---
+  // Ordered left-extras / root's-own-kids / right-extras — mirroring rootGenBranches's
+  // [...leftCousinBranches, jakeBranch, ...rightCousinBranches] shape — because the renderer's
+  // collision-resolution sweep (FamilyTree.tsx's resolveTierPositions) only compares ARRAY-ADJACENT
+  // units, using each unit's index purely to infer left-to-right order; it doesn't re-sort by each
+  // unit's actual resolved anchor. Appending ALL extraKidsBranches after the direct kids regardless
+  // of side (the previous shape) put a right-side cousin's kid array-adjacent to a left-side one (or
+  // to a root's-own centered kid), and the sweep would then force that pair into left-to-right ARRAY
+  // order even though their true anchors pulled the opposite way — dragging a cousin's kid across
+  // the whole canvas to the wrong side, and along the way corrupting the spacing of whichever direct
+  // kid sat at that array boundary (which is why an unrelated couple like Andy Volin + spouse could
+  // end up looking disconnected from their own parent line).
+  const leftExtraKids = extraKidsBranches.filter((b) => b.union.a.side === 'a')
+  const rightExtraKids = extraKidsBranches.filter((b) => b.union.a.side === 'b')
   const kidsBranches: TreeBranch[] = [
+    ...leftExtraKids,
     ...rootChildNodes.map((childNode) => ({
       union: { a: childNode, spouses: inLawSpouses(g, childNode.id, 'direct') },
       leftExtended: [],
       rightExtended: [],
       siblings: [],
     })),
-    ...extraKidsBranches,
+    ...rightExtraKids,
   ]
 
   // Parents/Kids tiers always render (even at zero) so there's always a "+" to add the first one —

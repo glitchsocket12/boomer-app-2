@@ -490,7 +490,17 @@ still-living one, to avoid pulling in an unrelated remarriage partner) — other
 "parent" fact was recorded only against the in-law half of a couple loses the entire blood side
 (grandparents/aunts/uncles/cousins) when the blood parent later dies and the survivor remarries;
 found via Sam Volin's tree going blank-ish after Andy Volin (Sam's actual father) died and his
-widow Andi Romagnoli remarried Michael Galchinsky. Full story: PROJECT_HISTORY.md.
+widow Andi Romagnoli remarried Michael Galchinsky. That fix's fuller data exposed a second,
+pre-existing bug (2026-07-25 fix, same file): the Kids tier's `kidsBranches` array used to be
+`[...rootChildNodes, ...extraKidsBranches]` (all direct kids first, then every cousin's-kid
+appended after regardless of side) — `FamilyTree.tsx`'s `resolveTierPositions` collision sweep
+only compares array-ADJACENT units and assumes array order already matches left-to-right screen
+order, so a right-side cousin's kid sitting array-adjacent to a left-side one (or to a centered
+direct kid) got forced into the wrong side, sometimes dragging a person clear across the canvas
+from their actual family and corrupting the spacing of whoever sat at that array boundary. Now
+built as `[...leftExtraKids, ...rootChildNodes, ...rightExtraKids]`, mirroring how
+`rootGenBranches` already orders `[...leftCousinBranches, jakeBranch, ...rightCousinBranches]`.
+Full story: PROJECT_HISTORY.md.
 │   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
 │   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
 │   │                            only, not app-navigation shortcuts (a "My page" link was cut
