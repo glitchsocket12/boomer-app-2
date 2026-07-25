@@ -160,6 +160,11 @@ export default function Calendar({
     return buckets
   }, [filteredMomentEntries, people, viewMonth, viewYear])
 
+  function goToToday() {
+    setViewMonth(today.getMonth())
+    setViewYear(today.getFullYear())
+  }
+
   function changeMonth(delta: number) {
     let m = viewMonth + delta
     let y = viewYear
@@ -214,26 +219,6 @@ export default function Calendar({
         </button>
       )}
 
-      {distinctTags.length > 0 && (
-        <div style={styles.chipRow}>
-          <button
-            onClick={() => setTagFilter('all')}
-            style={tagFilter === 'all' ? styles.tagChipActive : styles.tagChip}
-          >
-            All
-          </button>
-          {distinctTags.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTagFilter(t)}
-              style={tagFilter === t ? styles.tagChipActive : styles.tagChip}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      )}
-
       <div style={styles.card}>
         <h2 style={styles.sectionHeading}>Upcoming</h2>
         {upcoming.length === 0 ? (
@@ -258,15 +243,40 @@ export default function Calendar({
         )}
       </div>
 
+      {distinctTags.length > 0 && (
+        <div style={styles.chipRow}>
+          <button
+            onClick={() => setTagFilter('all')}
+            style={tagFilter === 'all' ? styles.tagChipActive : styles.tagChip}
+          >
+            All
+          </button>
+          {distinctTags.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTagFilter(t)}
+              style={tagFilter === t ? styles.tagChipActive : styles.tagChip}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div style={styles.card}>
         <div style={styles.monthNavRow}>
           <button onClick={() => changeMonth(-1)} style={styles.monthNavButton} aria-label="Previous month">
             ‹
           </button>
           <h2 style={styles.sectionHeading}>{monthLabel}</h2>
-          <button onClick={() => changeMonth(1)} style={styles.monthNavButton} aria-label="Next month">
-            ›
-          </button>
+          <div style={styles.monthNavRight}>
+            <button onClick={() => changeMonth(1)} style={styles.monthNavButton} aria-label="Next month">
+              ›
+            </button>
+            <button onClick={goToToday} style={styles.todayButton}>
+              Today
+            </button>
+          </div>
         </div>
 
         <div style={styles.weekdayRow}>
@@ -394,6 +404,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   upcomingTitle: { fontSize: '1rem', color: '#2E2E2E' },
   upcomingSub: { fontSize: '0.85rem', color: '#888', marginTop: '0.1rem' },
   monthNavRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' },
+  monthNavRight: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
   monthNavButton: {
     fontSize: '1.2rem',
     padding: '0.2rem 0.7rem',
@@ -402,6 +413,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#FFF',
     color: '#2E4034',
     cursor: 'pointer',
+  },
+  todayButton: {
+    fontSize: '0.8rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #CFE0D6',
+    backgroundColor: '#FFF',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
   },
   weekdayRow: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '2px', marginBottom: '0.35rem' },
   weekdayLabel: { fontSize: '0.72rem', color: '#999', textAlign: 'center' },
