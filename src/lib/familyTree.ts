@@ -326,12 +326,24 @@ export function buildDescendantTreeFromGraph(memberIds: string[], g: Graph): Tre
   // branch is built (same as buildFamilyTree's Kids tier), so they shouldn't ALSO get picked as
   // their own separate founder just because they happen to be a group member too — e.g. a
   // descendant's spouse (Manuel Sucre, married to Mark Berzins's daughter Clare) is covered by
-  // Mark's branch, not a founder in their own right.
+  // Mark's branch, not a founder in their own right. This has to be a full transitive closure over
+  // spouse links, not just one hop: a widow(er)'s SUBSEQUENT spouse (e.g. Andi Romagnoli, Andy
+  // Volin's widow, remarried to Michael Galchinsky) is only one hop further out, but their own
+  // "descendants" (via childrenOfEither) are the exact same kids Andy's branch already covers —
+  // stopping at one hop left Michael uncovered, so he got picked as his own redundant founder,
+  // duplicating Sam/Natalie under a second, disconnected bloodline instead of leaving them as
+  // Andy's actual grandchildren-of-Roberta one tier down.
   function coveredSet(id: string): Set<string> {
     const blood = descendantsOf(id)
     const covered = new Set(blood)
-    for (const bId of blood) {
-      for (const sId of g.spousesOf.get(bId) ?? []) covered.add(sId)
+    const queue = [...blood]
+    while (queue.length > 0) {
+      const cur = queue.shift()!
+      for (const sId of g.spousesOf.get(cur) ?? []) {
+        if (covered.has(sId)) continue
+        covered.add(sId)
+        queue.push(sId)
+      }
     }
     return covered
   }

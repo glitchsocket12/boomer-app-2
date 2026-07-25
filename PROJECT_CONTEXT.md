@@ -504,6 +504,19 @@ direct kid) got forced into the wrong side, sometimes dragging a person clear ac
 from their actual family and corrupting the spacing of whoever sat at that array boundary. Now
 built as `[...leftExtraKids, ...rootChildNodes, ...rightExtraKids]`, mirroring how
 `rootGenBranches` already orders `[...leftCousinBranches, jakeBranch, ...rightCousinBranches]`.
+`buildDescendantTreeFromGraph`'s founder-picking `coveredSet` (2026-07-25 fix, same file) is now a
+full transitive closure over spouse links, not one hop — a widow(er)'s subsequent spouse (Michael
+Galchinsky, remarried to Andy Volin's widow Andi Romagnoli) was landing as their own redundant
+second "founder" of the group tree, since one hop of spouse-coverage never reached him, which
+duplicated Sam/Natalie under a disconnected second bloodline instead of leaving them as Andy's
+actual grandchildren of Roberta. Known remaining gap: the descendants-mode tree's Union model is
+hub-spoke (every `union.spouses` entry assumed married directly to `union.a`; `endedWithAnchor` is
+computed relative to `a` for exactly that reason — see FamilyTree.tsx's marriage-line comment), so
+it can't correctly express a genuine remarriage CHAIN (Andy deceased → Andi → Michael, a second,
+separate marriage) in one union — Michael simply isn't rendered in this view rather than rendered
+wrong. Founder wants both segments shown (Andy–Andi dashed, Andi–Michael solid); would need an
+actual data-model change (a real per-adjacent-pair ended status, not anchor-relative) — not yet
+scoped or built.
 Full story: PROJECT_HISTORY.md.
 │   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
 │   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
