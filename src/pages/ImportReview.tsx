@@ -1,5 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { summarize } from '../lib/summarize'
+import { formatDateRange } from '../lib/dates'
+import { findOrCreateTagId, type TagRef } from '../lib/tags'
+import SearchAddPicker from '../components/SearchAddPicker'
+import SearchBox from '../components/SearchBox'
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -8,15 +13,104 @@ type Candidate = {
   location: string | null
   when_text: string | null
   event_date: string | null
+  event_end_date: string | null
   raw_description: string | null
   suggested_people: SuggestedPerson[]
+  suggested_tags: string[]
+  suggested_group_ids: string[]
+}
+type ExistingMoment = {
+  id: string
+  occasion: string | null
+  location: string | null
+  when_text: string | null
+  event_date: string | null
+  event_end_date: string | null
+  raw_description: string
+  created_at: string
+}
+type GroupRef = { id: string; name: string }
+
+function toggleIndex(set: Set<number>, i: number): Set<number> {
+  const next = new Set(set)
+  if (next.has(i)) next.delete(i)
+  else next.add(i)
+  return next
+}
+
+// Free, client-side "might already be on file" heuristic — no AI call. Normalized word-overlap
+// on the title, optionally corroborated by date proximity/overlap. Deliberately simple and
+// tunable rather than a fuzzy-match library, since a human always reviews the suggestion before
+// anything merges.
+const STOPWORDS = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'to', 'with', 'at', 'in', 'on'])
+const TITLE_OVERLAP_THRESHOLD = 0.5
+const HIGH_CONFIDENCE_TITLE_THRESHOLD = 0.8
+const DATE_PROXIMITY_DAYS = 3
+
+function titleWords(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w && !STOPWORDS.has(w))
+  )
+}
+
+function titleOverlapRatio(a: string, b: string): number {
+  const wa = titleWords(a)
+  const wb = titleWords(b)
+  if (wa.size === 0 || wb.size === 0) return 0
+  let intersection = 0
+  for (const w of wa) if (wb.has(w)) intersection++
+  return intersection / Math.min(wa.size, wb.size)
+}
+
+function datesAreClose(candidate: Candidate, existing: ExistingMoment): boolean {
+  if (!candidate.event_date || !existing.event_date) return false
+  const dayMs = 24 * 60 * 60 * 1000
+  const cStart = new Date(`${candidate.event_date}T00:00:00`).getTime()
+  const cEnd = new Date(`${candidate.event_end_date || candidate.event_date}T00:00:00`).getTime()
+  const eStart = new Date(`${existing.event_date}T00:00:00`).getTime()
+  const eEnd = new Date(`${existing.event_end_date || existing.event_date}T00:00:00`).getTime()
+  if (cStart <= eEnd && eStart <= cEnd) return true // ranges overlap
+  const gap = cStart > eEnd ? cStart - eEnd : eStart - cEnd
+  return gap <= DATE_PROXIMITY_DAYS * dayMs
+}
+
+function findLikelyMatch(candidate: Candidate, existing: ExistingMoment[]): ExistingMoment | null {
+  const candidateTitle = candidate.occasion?.trim()
+  if (!candidateTitle) return null
+  let best: ExistingMoment | null = null
+  let bestScore = 0
+  for (const m of existing) {
+    const title = m.occasion?.trim() || summarize(null, m.raw_description)
+    const overlap = titleOverlapRatio(candidateTitle, title)
+    const matches = overlap >= HIGH_CONFIDENCE_TITLE_THRESHOLD || (overlap >= TITLE_OVERLAP_THRESHOLD && datesAreClose(candidate, m))
+    if (matches && overlap > bestScore) {
+      bestScore = overlap
+      best = m
+    }
+  }
+  return best
 }
 
 // Card-per-candidate review queue, reusing the accept/reject visual idiom + colors from
 // RelationshipSuggestions.tsx. Nothing here ever writes to `moments` without an explicit Accept —
 // same "suggest, don't assert" rule as every other AI-suggestion flow in this app.
-export default function ImportReview({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
+export default function ImportReview({
+  onBack,
+  backLabel,
+  onSelectEvent,
+}: {
+  onBack: () => void
+  backLabel: string
+  onSelectEvent: (event: { id: string; summary: string }) => void
+}) {
   const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [existingMoments, setExistingMoments] = useState<ExistingMoment[]>([])
+  const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
+  const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -25,17 +119,29 @@ export default function ImportReview({ onBack, backLabel }: { onBack: () => void
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase
-      .from('moment_import_candidates')
-      .select('id, occasion, location, when_text, event_date, raw_description, suggested_people')
-      .eq('status', 'pending')
-      .order('event_date', { ascending: false, nullsFirst: false })
-    setCandidates((data as unknown as Candidate[]) ?? [])
+    const [candidatesRes, momentsRes, tagsRes, groupsRes] = await Promise.all([
+      supabase
+        .from('moment_import_candidates')
+        .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, suggested_people, suggested_tags, suggested_group_ids')
+        .eq('status', 'pending')
+        .order('event_date', { ascending: false, nullsFirst: false }),
+      supabase.from('moments').select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at'),
+      supabase.from('tags').select('id, name').order('name'),
+      supabase.from('groups').select('id, name').order('name'),
+    ])
+    setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
+    setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
+    setAllTagsList((tagsRes.data as TagRef[]) ?? [])
+    setAllGroupsList((groupsRes.data as GroupRef[]) ?? [])
     setLoading(false)
   }
 
   function handleResolved(id: string) {
     setCandidates((prev) => prev.filter((c) => c.id !== id))
+  }
+
+  function handleTagCreated(tag: TagRef) {
+    setAllTagsList((prev) => (prev.some((t) => t.id === tag.id) ? prev : [...prev, tag]))
   }
 
   return (
@@ -53,27 +159,115 @@ export default function ImportReview({ onBack, backLabel }: { onBack: () => void
       ) : candidates.length === 0 ? (
         <p style={styles.body}>Nothing left to review.</p>
       ) : (
-        candidates.map((c) => <CandidateCard key={c.id} candidate={c} onResolved={() => handleResolved(c.id)} />)
+        candidates.map((c) => (
+          <CandidateCard
+            key={c.id}
+            candidate={c}
+            existingMoments={existingMoments}
+            allTagsList={allTagsList}
+            allGroupsList={allGroupsList}
+            onTagCreated={handleTagCreated}
+            onSelectEvent={onSelectEvent}
+            onResolved={() => handleResolved(c.id)}
+          />
+        ))
       )}
     </div>
   )
 }
 
-function CandidateCard({ candidate, onResolved }: { candidate: Candidate; onResolved: () => void }) {
+function CandidateCard({
+  candidate,
+  existingMoments,
+  allTagsList,
+  allGroupsList,
+  onTagCreated,
+  onSelectEvent,
+  onResolved,
+}: {
+  candidate: Candidate
+  existingMoments: ExistingMoment[]
+  allTagsList: TagRef[]
+  allGroupsList: GroupRef[]
+  onTagCreated: (tag: TagRef) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  onResolved: () => void
+}) {
   const [occasion, setOccasion] = useState(candidate.occasion ?? '')
   const [location, setLocation] = useState(candidate.location ?? '')
-  const [whenText, setWhenText] = useState(candidate.when_text ?? '')
   const [eventDate, setEventDate] = useState(candidate.event_date ?? '')
+  const [eventEndDate, setEventEndDate] = useState(candidate.event_end_date ?? '')
   const [included, setIncluded] = useState<Set<number>>(new Set(candidate.suggested_people.map((_, i) => i)))
+  const [includedTags, setIncludedTags] = useState<Set<number>>(new Set(candidate.suggested_tags.map((_, i) => i)))
+  const [includedGroups, setIncludedGroups] = useState<Set<number>>(new Set(candidate.suggested_group_ids.map((_, i) => i)))
+  const [manualTagIds, setManualTagIds] = useState<Set<string>>(new Set())
+  const [manualNewTagNames, setManualNewTagNames] = useState<string[]>([])
+  const [manualGroupIds, setManualGroupIds] = useState<Set<string>>(new Set())
+  const [tagPickerOpen, setTagPickerOpen] = useState(false)
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [dismissedMatch, setDismissedMatch] = useState(false)
+  const [mergeTarget, setMergeTarget] = useState<ExistingMoment | null>(null)
+  const [manualMergeOpen, setManualMergeOpen] = useState(false)
+  const [mergeSearch, setMergeSearch] = useState('')
+  const [savedResult, setSavedResult] = useState<{ kind: 'created' | 'merged'; momentId: string; label: string } | null>(null)
+
+  const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
 
   function toggle(i: number) {
-    setIncluded((prev) => {
-      const next = new Set(prev)
-      if (next.has(i)) next.delete(i)
-      else next.add(i)
-      return next
-    })
+    setIncluded((prev) => toggleIndex(prev, i))
+  }
+
+  async function applyAttendees(momentId: string) {
+    for (const i of included) {
+      const person = candidate.suggested_people[i]
+      let personId = person.matched_person_id
+      if (!personId && person.name) {
+        const [first, ...rest] = person.name.trim().split(' ')
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        const { data: newPerson } = await supabase
+          .from('people')
+          .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
+          .select()
+          .single()
+        personId = newPerson?.id ?? null
+      }
+      if (personId) {
+        await supabase.from('notes').insert({ person_id: personId, moment_id: momentId, content: 'Was there.' })
+      }
+    }
+  }
+
+  async function applyTagsAndGroups(momentId: string) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    const tagNames = new Set<string>()
+    for (const i of includedTags) tagNames.add(candidate.suggested_tags[i])
+    for (const name of manualNewTagNames) tagNames.add(name)
+    for (const name of tagNames) {
+      const tag = await findOrCreateTagId(supabase, user?.id, allTagsList, name)
+      if (tag) {
+        onTagCreated(tag)
+        await supabase.from('moment_tags').upsert({ moment_id: momentId, tag_id: tag.id }, { onConflict: 'moment_id,tag_id', ignoreDuplicates: true })
+      }
+    }
+    for (const id of manualTagIds) {
+      await supabase.from('moment_tags').upsert({ moment_id: momentId, tag_id: id }, { onConflict: 'moment_id,tag_id', ignoreDuplicates: true })
+    }
+
+    const groupIds = new Set<string>()
+    for (const i of includedGroups) {
+      const id = candidate.suggested_group_ids[i]
+      if (id) groupIds.add(id)
+    }
+    for (const id of manualGroupIds) groupIds.add(id)
+    for (const id of groupIds) {
+      await supabase.from('moment_groups').upsert({ moment_id: momentId, group_id: id }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+    }
   }
 
   async function handleAccept() {
@@ -89,8 +283,11 @@ function CandidateCard({ candidate, onResolved }: { candidate: Candidate; onReso
         raw_description: candidate.raw_description ?? '',
         occasion: occasion || null,
         location: location || null,
-        when_text: whenText || null,
+        // when_text is a deterministic rendering of the exact dates, not a separate field the
+        // reviewer types — kept in sync even if they hand-edit the date pickers above.
+        when_text: eventDate ? formatDateRange(eventDate, eventEndDate || null) : null,
         event_date: eventDate || null,
+        event_end_date: eventEndDate || null,
       })
       .select()
       .single()
@@ -100,24 +297,8 @@ function CandidateCard({ candidate, onResolved }: { candidate: Candidate; onReso
       return
     }
 
-    // Checked entries with no matched_person_id are net-new — the same "create then note" shape
-    // update-moment/index.ts uses for a mentioned person it can't resolve.
-    for (const i of included) {
-      const person = candidate.suggested_people[i]
-      let personId = person.matched_person_id
-      if (!personId && person.name) {
-        const [first, ...rest] = person.name.trim().split(' ')
-        const { data: newPerson } = await supabase
-          .from('people')
-          .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
-          .select()
-          .single()
-        personId = newPerson?.id ?? null
-      }
-      if (personId) {
-        await supabase.from('notes').insert({ person_id: personId, moment_id: newMoment.id, content: 'Was there.' })
-      }
-    }
+    await applyAttendees(newMoment.id)
+    await applyTagsAndGroups(newMoment.id)
 
     await supabase
       .from('moment_import_candidates')
@@ -125,7 +306,55 @@ function CandidateCard({ candidate, onResolved }: { candidate: Candidate; onReso
       .eq('id', candidate.id)
 
     setSaving(false)
-    onResolved()
+    setSavedResult({ kind: 'created', momentId: newMoment.id, label: summarize(occasion, candidate.raw_description ?? '') })
+  }
+
+  // Folds this candidate into an already-existing moment instead of creating a duplicate — fills
+  // only the target's currently-blank fields (never overwrites something the founder already
+  // entered), then adds attendees/tags/groups the same way a normal Accept does. The candidate
+  // row itself is marked accepted, never deleted (nothing else references it).
+  async function handleAcceptAsMerge() {
+    if (!mergeTarget) return
+    setSaving(true)
+
+    const { data: freshTarget } = await supabase
+      .from('moments')
+      .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, summary')
+      .eq('id', mergeTarget.id)
+      .single()
+
+    if (!freshTarget) {
+      setSaving(false)
+      return
+    }
+
+    const fieldsToFill: Record<string, string> = {}
+    if (!freshTarget.occasion && occasion) fieldsToFill.occasion = occasion
+    if (!freshTarget.location && location) fieldsToFill.location = location
+    if (!freshTarget.event_date && eventDate) fieldsToFill.event_date = eventDate
+    if (!freshTarget.event_end_date && eventEndDate) fieldsToFill.event_end_date = eventEndDate
+    if (!freshTarget.when_text && eventDate) fieldsToFill.when_text = formatDateRange(eventDate, eventEndDate || null)
+    if (!freshTarget.raw_description?.trim() && candidate.raw_description) fieldsToFill.raw_description = candidate.raw_description
+
+    await supabase
+      .from('moments')
+      .update({ ...fieldsToFill, summary: null })
+      .eq('id', freshTarget.id)
+
+    await applyAttendees(freshTarget.id)
+    await applyTagsAndGroups(freshTarget.id)
+
+    await supabase
+      .from('moment_import_candidates')
+      .update({ status: 'accepted', reviewed_at: new Date().toISOString() })
+      .eq('id', candidate.id)
+
+    setSaving(false)
+    setSavedResult({
+      kind: 'merged',
+      momentId: freshTarget.id,
+      label: summarize(fieldsToFill.occasion ?? freshTarget.occasion, freshTarget.raw_description || candidate.raw_description || ''),
+    })
   }
 
   async function handleReject() {
@@ -138,19 +367,43 @@ function CandidateCard({ candidate, onResolved }: { candidate: Candidate; onReso
     onResolved()
   }
 
+  if (savedResult) {
+    return (
+      <div style={styles.card}>
+        <p style={styles.confirmText}>
+          {savedResult.kind === 'created' ? `Added — ${savedResult.label}` : `Merged into "${savedResult.label}"`}
+        </p>
+        <div style={styles.suggestButtonRow}>
+          <button
+            type="button"
+            onClick={() => onSelectEvent({ id: savedResult.momentId, summary: savedResult.label })}
+            style={styles.suggestYesButton}
+          >
+            Add more details →
+          </button>
+          <button type="button" onClick={onResolved} style={styles.suggestNoButton}>
+            Done
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={styles.card}>
       <div style={styles.fieldGroup}>
         <input value={occasion} onChange={(e) => setOccasion(e.target.value)} placeholder="Occasion" style={styles.input} disabled={saving} />
         <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location" style={styles.input} disabled={saving} />
-        <input
-          value={whenText}
-          onChange={(e) => setWhenText(e.target.value)}
-          placeholder="When, e.g. August 2026"
-          style={styles.input}
-          disabled={saving}
-        />
-        <input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} style={styles.input} disabled={saving} />
+        <div style={styles.dateRow}>
+          <div style={styles.dateField}>
+            <label style={styles.dateLabel}>Starts</label>
+            <input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} style={styles.dateInput} disabled={saving} />
+          </div>
+          <div style={styles.dateField}>
+            <label style={styles.dateLabel}>Ends (optional)</label>
+            <input type="date" value={eventEndDate} onChange={(e) => setEventEndDate(e.target.value)} style={styles.dateInput} disabled={saving} />
+          </div>
+        </div>
       </div>
 
       {candidate.raw_description && <p style={styles.description}>{candidate.raw_description}</p>}
@@ -167,9 +420,179 @@ function CandidateCard({ candidate, onResolved }: { candidate: Candidate; onReso
         </div>
       )}
 
+      {(candidate.suggested_tags.length > 0 || candidate.suggested_group_ids.length > 0) && (
+        <div style={styles.peopleRow}>
+          {candidate.suggested_tags.map((name, i) => (
+            <label key={`tag-${i}`} style={includedTags.has(i) ? styles.personChipOn : styles.personChipOff}>
+              <input
+                type="checkbox"
+                checked={includedTags.has(i)}
+                onChange={() => setIncludedTags((prev) => toggleIndex(prev, i))}
+                disabled={saving}
+              />
+              #{name}
+            </label>
+          ))}
+          {candidate.suggested_group_ids.map((id, i) => {
+            const group = allGroupsList.find((g) => g.id === id)
+            if (!group) return null
+            return (
+              <label key={`group-${id}`} style={includedGroups.has(i) ? styles.personChipOn : styles.personChipOff}>
+                <input
+                  type="checkbox"
+                  checked={includedGroups.has(i)}
+                  onChange={() => setIncludedGroups((prev) => toggleIndex(prev, i))}
+                  disabled={saving}
+                />
+                {group.name}
+              </label>
+            )
+          })}
+        </div>
+      )}
+
+      {(manualTagIds.size > 0 || manualNewTagNames.length > 0 || manualGroupIds.size > 0) && (
+        <div style={styles.peopleRow}>
+          {[...manualTagIds].map((id) => {
+            const tag = allTagsList.find((t) => t.id === id)
+            return tag ? (
+              <span key={id} style={styles.personChipOn}>
+                #{tag.name}
+                <button
+                  type="button"
+                  onClick={() => setManualTagIds((prev) => { const n = new Set(prev); n.delete(id); return n })}
+                  style={styles.chipRemoveBtn}
+                >
+                  ×
+                </button>
+              </span>
+            ) : null
+          })}
+          {manualNewTagNames.map((name, i) => (
+            <span key={`newtag-${i}`} style={styles.personChipOn}>
+              #{name}
+              <button
+                type="button"
+                onClick={() => setManualNewTagNames((prev) => prev.filter((_, idx) => idx !== i))}
+                style={styles.chipRemoveBtn}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {[...manualGroupIds].map((id) => {
+            const group = allGroupsList.find((g) => g.id === id)
+            return group ? (
+              <span key={id} style={styles.personChipOn}>
+                {group.name}
+                <button
+                  type="button"
+                  onClick={() => setManualGroupIds((prev) => { const n = new Set(prev); n.delete(id); return n })}
+                  style={styles.chipRemoveBtn}
+                >
+                  ×
+                </button>
+              </span>
+            ) : null
+          })}
+        </div>
+      )}
+
+      <div style={styles.pickerToggleRow}>
+        <button type="button" onClick={() => setTagPickerOpen((v) => !v)} style={styles.addButton} disabled={saving}>
+          + Add a tag
+        </button>
+        <button type="button" onClick={() => setGroupPickerOpen((v) => !v)} style={styles.addButton} disabled={saving}>
+          + Add a group
+        </button>
+      </div>
+      {tagPickerOpen && (
+        <SearchAddPicker
+          items={[...allTagsList]
+            .filter((t) => !manualTagIds.has(t.id))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((t) => ({ id: t.id, label: t.name }))}
+          placeholder="Tag this event (e.g. milestone, vacation)…"
+          onSelect={(item) => setManualTagIds((prev) => new Set(prev).add(item.id))}
+          onCreateNew={(name) => setManualNewTagNames((prev) => [...prev, name])}
+          createLabel={(q) => `+ Add "${q}" as a new tag`}
+          emptyText="No tags match."
+          browseAll
+        />
+      )}
+      {groupPickerOpen && (
+        <SearchAddPicker
+          items={[...allGroupsList]
+            .filter((g) => !manualGroupIds.has(g.id))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((g) => ({ id: g.id, label: g.name }))}
+          placeholder="Tag this event to a group…"
+          onSelect={(item) => setManualGroupIds((prev) => new Set(prev).add(item.id))}
+          emptyText="No groups match."
+          browseAll
+        />
+      )}
+
+      {!dismissedMatch && likelyMatch && !mergeTarget && (
+        <div style={styles.suggestBanner}>
+          <span>This might already be on file as "{summarize(likelyMatch.occasion, likelyMatch.raw_description)}".</span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={() => setMergeTarget(likelyMatch)} style={styles.suggestYesButton} disabled={saving}>
+              Merge into it
+            </button>
+            <button type="button" onClick={() => setDismissedMatch(true)} style={styles.suggestNoButton} disabled={saving}>
+              No, these are different
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mergeTarget ? (
+        <div style={styles.suggestBanner}>
+          <span>Will merge into "{summarize(mergeTarget.occasion, mergeTarget.raw_description)}" instead of creating a new event.</span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={() => setMergeTarget(null)} style={styles.suggestNoButton} disabled={saving}>
+              Cancel merge
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <button type="button" onClick={() => setManualMergeOpen((v) => !v)} style={styles.linkButton} disabled={saving}>
+            {manualMergeOpen ? 'Cancel merge search' : 'Merge with an existing event instead…'}
+          </button>
+          {manualMergeOpen && (
+            <div style={styles.pickerPanel}>
+              <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search your events…" />
+              <div style={styles.mergeResultsList}>
+                {existingMoments
+                  .filter((m) => {
+                    const label = summarize(m.occasion, m.raw_description).toLowerCase()
+                    return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
+                  })
+                  .slice(0, 8)
+                  .map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setMergeTarget(m)
+                        setManualMergeOpen(false)
+                      }}
+                      style={styles.mergeResultButton}
+                    >
+                      {summarize(m.occasion, m.raw_description)}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={styles.suggestButtonRow}>
-        <button type="button" onClick={handleAccept} style={styles.suggestYesButton} disabled={saving}>
-          {saving ? '…' : 'Accept'}
+        <button type="button" onClick={mergeTarget ? handleAcceptAsMerge : handleAccept} style={styles.suggestYesButton} disabled={saving}>
+          {saving ? '…' : mergeTarget ? 'Merge' : 'Accept'}
         </button>
         <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
           Reject
@@ -200,8 +623,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
     marginBottom: '1rem',
   },
+  confirmText: { fontSize: '1.05rem', color: '#2E4034', margin: '0 0 0.9rem' },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' },
   input: {
+    fontSize: '0.95rem',
+    padding: '0.6rem 0.75rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    fontFamily: 'Georgia, serif',
+  },
+  dateRow: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' },
+  dateField: { display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: '1 1 140px' },
+  dateLabel: { fontSize: '0.78rem', color: '#888' },
+  dateInput: {
     fontSize: '0.95rem',
     padding: '0.6rem 0.75rem',
     borderRadius: '8px',
@@ -235,6 +669,69 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   newBadge: { fontStyle: 'italic' },
+  chipRemoveBtn: {
+    background: 'none',
+    border: 'none',
+    color: 'inherit',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    lineHeight: 1,
+    padding: 0,
+    marginLeft: '0.15rem',
+  },
+  pickerToggleRow: { display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' },
+  addButton: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '8px',
+    border: '1px solid #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  pickerPanel: {
+    backgroundColor: '#FAFAFA',
+    border: '1px solid #E0E0E0',
+    borderRadius: '10px',
+    padding: '0.85rem 0.85rem 0.25rem',
+    marginTop: '0.5rem',
+    marginBottom: '0.75rem',
+  },
+  linkButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    fontSize: '0.85rem',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    textDecoration: 'underline',
+  },
+  mergeResultsList: { display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '220px', overflowY: 'auto' },
+  mergeResultButton: {
+    textAlign: 'left',
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #E6D6AC',
+    backgroundColor: '#FFF',
+    color: '#2E2E2E',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  suggestBanner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.6rem',
+    fontSize: '0.9rem',
+    color: '#5A4A20',
+    backgroundColor: '#FBF3E0',
+    border: '1px solid #E6D6AC',
+    borderRadius: '10px',
+    padding: '0.85rem 1rem',
+    marginBottom: '0.9rem',
+  },
   suggestButtonRow: { display: 'flex', gap: '0.5rem' },
   suggestYesButton: {
     fontSize: '0.85rem',

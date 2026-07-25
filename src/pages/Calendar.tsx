@@ -10,6 +10,7 @@ type MomentRow = {
   location: string | null
   when_text: string | null
   event_date: string
+  event_end_date: string | null
   raw_description: string
   created_at: string
   moment_tags: { tags: TagRef | null }[]
@@ -70,7 +71,7 @@ export default function Calendar({
     const [momentsRes, peopleRes] = await Promise.all([
       supabase
         .from('moments')
-        .select('id, occasion, location, when_text, event_date, raw_description, created_at, moment_tags(tags(id, name))')
+        .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at, moment_tags(tags(id, name))')
         .not('event_date', 'is', null),
       supabase.from('people').select('id, name, last_name, reminders(id, label, month, day)'),
     ])

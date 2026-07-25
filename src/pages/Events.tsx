@@ -13,6 +13,7 @@ export type Moment = {
   location: string | null
   when_text: string | null
   event_date: string | null
+  event_end_date: string | null
   raw_description: string
   created_at: string
   notes: { people: PersonRef | null }[]
@@ -106,7 +107,7 @@ export default function Events({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, event_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name)), moment_tags(tags(id, name))'
+        'id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name)), moment_tags(tags(id, name))'
       )
 
     const sorted = ((data as unknown as Moment[]) ?? []).sort(

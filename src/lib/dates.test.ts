@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { eventSortDate, formatMonthYear } from './dates'
+import { eventSortDate, formatMonthYear, formatDateRange, formatFullDate, formatEventWhen } from './dates'
 
 describe('eventSortDate', () => {
   it('uses event_date when set', () => {
@@ -33,5 +33,59 @@ describe('formatMonthYear', () => {
 
   it('falls back to created_at when event_date is missing', () => {
     expect(formatMonthYear({ event_date: null, created_at: '2025-11-02T08:30:00Z' })).toBe('November 2025')
+  })
+})
+
+describe('formatDateRange', () => {
+  it('formats a single day when endIso is null', () => {
+    expect(formatDateRange('2026-08-15', null)).toBe('August 15, 2026')
+  })
+
+  it('formats a single day when endIso equals startIso', () => {
+    expect(formatDateRange('2026-08-15', '2026-08-15')).toBe('August 15, 2026')
+  })
+
+  it('formats a same-month range', () => {
+    expect(formatDateRange('2026-08-15', '2026-08-20')).toBe('August 15–20, 2026')
+  })
+
+  it('formats a cross-month, same-year range', () => {
+    expect(formatDateRange('2026-08-28', '2026-09-02')).toBe('August 28 – September 2, 2026')
+  })
+
+  it('formats a cross-year range', () => {
+    expect(formatDateRange('2026-12-28', '2027-01-03')).toBe('December 28, 2026 – January 3, 2027')
+  })
+})
+
+describe('formatFullDate with event_end_date', () => {
+  it('is unchanged when event_end_date is null', () => {
+    expect(formatFullDate({ event_date: '2026-03-15', event_end_date: null, created_at: '2026-07-01T12:00:00Z' })).toBe('March 15, 2026')
+  })
+
+  it('is unchanged when event_end_date equals event_date', () => {
+    expect(formatFullDate({ event_date: '2026-03-15', event_end_date: '2026-03-15', created_at: '2026-07-01T12:00:00Z' })).toBe(
+      'March 15, 2026'
+    )
+  })
+
+  it('renders a range when event_end_date differs', () => {
+    expect(formatFullDate({ event_date: '2026-03-15', event_end_date: '2026-03-18', created_at: '2026-07-01T12:00:00Z' })).toBe(
+      'March 15–18, 2026'
+    )
+  })
+})
+
+describe('formatEventWhen with event_end_date', () => {
+  it('is unchanged when event_end_date is null', () => {
+    expect(
+      formatEventWhen({ event_date: '2026-03-15', event_end_date: null, when_text: 'mid-March', created_at: '2026-07-01T12:00:00Z' })
+    ).toBe('March 2026')
+  })
+
+  it('renders a range when event_end_date differs', () => {
+    expect(
+      formatEventWhen({ event_date: '2026-03-15', event_end_date: '2026-03-18', when_text: 'mid-March', created_at: '2026-07-01T12:00:00Z' })
+    ).toBe('March 15–18, 2026')
   })
 })

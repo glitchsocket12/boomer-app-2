@@ -1,10 +1,10 @@
 // Minimal RFC5545 (iCalendar) VEVENT parser — extracts only the fields the calendar-import
-// pipeline needs (UID, SUMMARY, DESCRIPTION, LOCATION, DTSTART, STATUS, RECURRENCE-ID, RRULE
-// presence, ATTENDEE). Not a full spec implementation (no property values besides these),
+// pipeline needs (UID, SUMMARY, DESCRIPTION, LOCATION, DTSTART, DTEND, STATUS, RECURRENCE-ID,
+// RRULE presence, ATTENDEE). Not a full spec implementation (no property values besides these),
 // deliberately — every calendar host (Google, Apple, Outlook) emits these fields in the same
 // simple forms, and pulling in a full ICS library for this would be overkill. icsDateToIsoDate
 // below does use the platform's real IANA tz database (via Intl) for the one case that actually
-// needs it — a UTC-stamped DTSTART.
+// needs it — a UTC-stamped DTSTART/DTEND.
 
 import { isoDateInTimeZone } from "./tz.ts"
 
@@ -17,6 +17,8 @@ export type IcsEvent = {
   location: string | null
   dtstart: string | null
   dtstartIsDateOnly: boolean
+  dtend: string | null
+  dtendIsDateOnly: boolean
   status: string | null
   recurrenceId: string | null
   isRecurring: boolean
@@ -78,6 +80,8 @@ export function parseIcs(text: string): IcsEvent[] {
           location: current.location ?? null,
           dtstart: current.dtstart ?? null,
           dtstartIsDateOnly: current.dtstartIsDateOnly ?? false,
+          dtend: current.dtend ?? null,
+          dtendIsDateOnly: current.dtendIsDateOnly ?? false,
           status: current.status ?? null,
           recurrenceId: current.recurrenceId ?? null,
           isRecurring: current.isRecurring ?? false,
@@ -108,6 +112,10 @@ export function parseIcs(text: string): IcsEvent[] {
       case "DTSTART":
         current.dtstart = parsed.value
         current.dtstartIsDateOnly = parsed.params["VALUE"] === "DATE" || /^\d{8}$/.test(parsed.value)
+        break
+      case "DTEND":
+        current.dtend = parsed.value
+        current.dtendIsDateOnly = parsed.params["VALUE"] === "DATE" || /^\d{8}$/.test(parsed.value)
         break
       case "STATUS":
         current.status = parsed.value.toUpperCase()
@@ -146,4 +154,18 @@ export function icsDateToIsoDate(dtstart: string, timeZone = "UTC"): string | nu
   const match = dtstart.match(/^(\d{4})(\d{2})(\d{2})/)
   if (!match) return null
   return `${match[1]}-${match[2]}-${match[3]}`
+}
+
+// DTEND is EXCLUSIVE for a date-only (all-day) VEVENT (RFC5545 §3.6.1) — a 3-day all-day event
+// Aug 15-17 stores DTEND=20260818 (the day AFTER the last real day), so the date-only case needs
+// one day subtracted to get the inclusive last day. A timed VEVENT's DTEND has no such offset —
+// it's the actual end instant, handled identically to DTSTART. These two branches never overlap:
+// a date-only value is always a bare YYYYMMDD with no time/Z component, so icsDateToIsoDate's
+// UTC-conversion branch never fires for it.
+export function icsEndDateToIsoDate(dtend: string, dtendIsDateOnly: boolean, timeZone = "UTC"): string | null {
+  const raw = icsDateToIsoDate(dtend, timeZone)
+  if (!raw || !dtendIsDateOnly) return raw
+  const d = new Date(`${raw}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
 }

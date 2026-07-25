@@ -457,7 +457,13 @@ export default function App() {
   } else if (current?.type === 'calendarSettings') {
     content = <CalendarSettings onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'importReview') {
-    content = <ImportReview onBack={popCrumb} backLabel={parentLabel} />
+    content = (
+      <ImportReview
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+      />
+    )
   } else if (current?.type === 'about') {
     content = <About onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'privacy') {

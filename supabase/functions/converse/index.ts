@@ -210,6 +210,7 @@ VOICE — in your "reply" text, always address the user directly as "you"/"your"
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
 {"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
@@ -219,7 +220,9 @@ CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY 
 
 Leave "moments" as an empty array when nothing is being captured or updated — most simple questions have no moments at all. Only set "new_moment": true and fill that entry's "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
 
-When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Resolve relative phrases against today's date, given below (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.`
+When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Resolve relative phrases against today's date, given below (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.
+
+If the user describes the moment as spanning more than one day (e.g. "we were there from the 3rd through the 10th", "it was a long weekend trip"), also set moment_fields.event_end_date to your best-guess actual END calendar date as "YYYY-MM-DD". Leave event_end_date null for anything that sounds like a single day — never invent a range that wasn't stated or clearly implied.`
 
     // Roster tier — people + groups, which change only when someone/some group is added or
     // renamed, far less often than a new moment/note is recorded. Its own breakpoint, ordered
@@ -458,6 +461,7 @@ ${context || "(none recorded yet)"}`
             location: momentEntry.moment_fields?.location ?? null,
             when_text: momentEntry.moment_fields?.when_text ?? null,
             event_date: momentEntry.moment_fields?.event_date ?? null,
+            event_end_date: momentEntry.moment_fields?.event_end_date ?? null,
           })
           .select()
           .single()

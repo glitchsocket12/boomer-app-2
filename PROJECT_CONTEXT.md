@@ -566,10 +566,23 @@ Full story: PROJECT_HISTORY.md.
 │   │                            secret iCal URL (validated server-side via `validate-calendar-
 │   │                            source` before saving), founder-editable "Sync now" button.
 │   │                            Reached from Settings and from Calendar.tsx's own link
-│   └── ImportReview.tsx       — (2026-07-24, item 48) accept/reject queue for AI-extracted
-│                                calendar-import candidates (`moment_import_candidates`, status=
-│                                pending). Accept writes real `moments`+`notes`; reject writes
-│                                nothing. Reached from the Home/Calendar "N events found" nudges
+│   └── ImportReview.tsx       — (2026-07-24, item 48; overhauled 2026-07-25) accept/reject queue
+│                                for AI-extracted calendar-import candidates
+│                                (`moment_import_candidates`, status=pending). Accept no longer
+│                                auto-advances — shows a confirmation state ("Added —
+│                                {event}"/"Merged into {event}") with "Add more details →" (jumps
+│                                to EventDetail) and "Done". Free client-side heuristic (title
+│                                word-overlap + date proximity, no AI call) flags a likely existing
+│                                duplicate and offers "Merge into it" (fills only the target's
+│                                blank fields, unions attendees/tags/groups, candidate marked
+│                                accepted not deleted) or manual search-to-merge. Suggested
+│                                tags/groups (from the same scan-calendar-sources AI call, no extra
+│                                cost) render as approve-by-default chips + manual pickers; groups
+│                                are existing-only (never invented), tags may propose a new name.
+│                                No free-text "When" input — `when_text` is auto-derived from the
+│                                exact date(s) and hidden, per founder feedback that it was
+│                                confusing next to the real date. Reached from the Home/Calendar "N
+│                                events found" nudges
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
@@ -710,10 +723,17 @@ relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partne
               below for how this renders).
 moments       id, user_id, raw_description (user's words only — never assistant
               turns), summary? (AI cache), occasion?, location?, when_text?
-              (free-text, kept verbatim), event_date? (AI best-guess real date,
-              sorting/display only, NOT ground truth; null = fall back to
-              created_at), details jsonb? (open-ended tags by design),
-              dismissed_person_ids jsonb [], created_at
+              (free-text, kept verbatim), event_date? (best-guess real date —
+              exact when sourced from a calendar sync's DTSTART, AI-guessed
+              otherwise — sorting/display only, NOT ground truth; null = fall
+              back to created_at), event_end_date? (2026-07-25, date range
+              support — nullable, null = single-day/unknown; exact from a
+              calendar sync's DTEND when present, RFC5545's exclusive-end-date-
+              for-all-day-events nuance handled in `_shared/ics.ts`;
+              `formatDateRange`/`formatFullDate`/`formatEventWhen` in
+              `lib/dates.ts` render a "Mon D–D, YYYY" range when set and
+              different from event_date), details jsonb? (open-ended tags by
+              design), dismissed_person_ids jsonb [], created_at
 notes         id, person_id? , moment_id?, group_id? (CHECK: person_id OR group_id),
               source? ("home" = written by converse), source_group_id? (fact
               captured via a group chat), content, created_at
@@ -764,11 +784,18 @@ calendar_sources id, user_id, ical_url, label, last_synced_at?, last_sync_error?
 moment_import_
 candidates    id, user_id, calendar_source_id, ical_uid (unique per user, dedupes
               across re-scans), status ('pending'/'accepted'/'rejected'), occasion?,
-              location?, when_text?, event_date?, raw_description?, suggested_people
-              (jsonb array: name/email/matched_person_id/confidence), source_
-              recurrence_id?, created_at, reviewed_at? — 2026-07-24, item 48. AI-
-              extracted review queue; ImportReview.tsx accept copies pending/
-              approved fields into a real `moments` row, reject just flips status.
+              location?, when_text?, event_date?, event_end_date? (2026-07-25, both
+              exact from the ICS DTSTART/DTEND, bypassing the AI entirely — see
+              `icsEndDateToIsoDate` in `_shared/ics.ts`), raw_description?,
+              suggested_people (jsonb array: name/email/matched_person_id/
+              confidence), suggested_tags jsonb [] (2026-07-25, tag names from the
+              same extraction call, may propose new), suggested_group_ids jsonb []
+              (2026-07-25, resolved server-side, existing-groups-only — never
+              invented), source_recurrence_id?, created_at, reviewed_at? —
+              2026-07-24, item 48. AI-extracted review queue; ImportReview.tsx
+              accept copies pending/approved fields into a real `moments` row (or
+              merges into an existing one — see ImportReview.tsx entry above),
+              reject just flips status.
 ```
 
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
@@ -834,7 +861,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 46. ~~Rename the Home "Notes" stat tile to "Datapoints"~~ — **DONE 2026-07-24.** Copy-only change (`Home.tsx`); underlying count query untouched. Broader "datapoints" reframing (what else counts, how it's computed) stays open. Verified live.
 47. ~~Dunbar's-tiers widget on Home~~ — **DONE 2026-07-24.** `DunbarDetail.tsx` now shows real names (most-recently-added first) within each cumulative tier slice, not just a count — still the existing cumulative-bucket model, not real per-person tier assignment (founder-confirmed scope). Verified live against the real account.
-48. ~~New Calendar feature~~ — **DONE 2026-07-24.** Full build story in PROJECT_HISTORY.md §21. `Calendar.tsx` (nav tab: upcoming list + fixed-height month grid over `moments`/`reminders`), `CalendarSettings.tsx` (connect calendars via secret iCal URL — not Google OAuth), `scan-calendar-sources` Edge Function (fetches/parses connected feeds, AI-extracts via Claude, matches attendees, writes to `moment_import_candidates`) on both a manual "Sync now" button and a daily `pg_cron` job, and `ImportReview.tsx` (accept/reject queue — accept writes real `moments`+`notes`, reject writes nothing). Nudges on Home/Calendar surface the pending count. New tables: `calendar_sources`, `moment_import_candidates`. Verified live end-to-end against the founder's real connected calendar. **Follow-up fix 2026-07-25:** founder reported no real events surfacing (only birthdays). Root cause: the pre-AI filter required 2+ formal Google "guest" attendees or a recurrence rule before an event ever reached Claude — most personal calendars don't use formal guest invites, so real gatherings (trips, visits, reunions) were silently dropped before classification. Removed that filter; every non-cancelled, in-range event now goes to the AI, which does the actual worth-suggesting judgment call. Also found and fixed live: batches were running sequentially and blowing past the Edge Function execution timeout on a real backlog (1,060 raw events on the founder's actual calendar) — switched to `Promise.all` concurrent batch calls plus a per-invocation batch cap, so a large backlog catches up over a few clicks instead of timing out. Verified live: full backlog processed cleanly, 232 real candidates now pending (trips, reunions, family gatherings — not just birthdays).
+48. ~~New Calendar feature~~ — **DONE 2026-07-24.** Full build story in PROJECT_HISTORY.md §21. `Calendar.tsx` (nav tab: upcoming list + fixed-height month grid over `moments`/`reminders`), `CalendarSettings.tsx` (connect calendars via secret iCal URL — not Google OAuth), `scan-calendar-sources` Edge Function (fetches/parses connected feeds, AI-extracts via Claude, matches attendees, writes to `moment_import_candidates`) on both a manual "Sync now" button and a daily `pg_cron` job, and `ImportReview.tsx` (accept/reject queue — accept writes real `moments`+`notes`, reject writes nothing). Nudges on Home/Calendar surface the pending count. New tables: `calendar_sources`, `moment_import_candidates`. Verified live end-to-end against the founder's real connected calendar. **Follow-up fix 2026-07-25:** founder reported no real events surfacing (only birthdays). Root cause: the pre-AI filter required 2+ formal Google "guest" attendees or a recurrence rule before an event ever reached Claude — most personal calendars don't use formal guest invites, so real gatherings (trips, visits, reunions) were silently dropped before classification. Removed that filter; every non-cancelled, in-range event now goes to the AI, which does the actual worth-suggesting judgment call. Also found and fixed live: batches were running sequentially and blowing past the Edge Function execution timeout on a real backlog (1,060 raw events on the founder's actual calendar) — switched to `Promise.all` concurrent batch calls plus a per-invocation batch cap, so a large backlog catches up over a few clicks instead of timing out. Verified live: full backlog processed cleanly, 232 real candidates now pending (trips, reunions, family gatherings — not just birthdays). **Overhaul 2026-07-25** (founder ask: accept-flow feedback, merge-with-existing, tag/group suggestions, real date ranges): see §3 ImportReview.tsx and §6 `moments`/`moment_import_candidates` entries for the mechanism. Verified live against the founder's real account: merge-accept ("Adrienne and Jacob Fisher's Wedding") and range-accept ("Conor & Shelly's wedding", June 17–19 2027) both round-tripped correctly through EventDetail/Events.tsx.
 49. ~~Add a "Settings" button next to Log out~~ — **DONE 2026-07-23.** Scoped down with the founder to account + AI settings only (email/password change, chat-tone preference) plus About and Privacy/data-policy links — explicitly not a place for app-interface shortcuts. `SettingsPage.tsx`/`About.tsx`/`Privacy.tsx` (see §3), `user_settings` table (see §6), `converse` roster-tier read (see §4/§5). About/Privacy are placeholder pages — real copy for both still needs to be drafted together with the founder, not invented unilaterally. Verified live against the founder's real account: email/tone sections render correctly, chat tone persists and visibly changes `converse` reply style (tested "direct"), password change round-tripped (changed, logged in with the new one, reverted to original) — email-change form intentionally not tested live against the real account (low-risk code path, same `supabase.auth.updateUser()` already proven for password, but founder chose not to risk it on the real login for this pass).
 54. ~~Email-change verification code~~ — **DONE 2026-07-23** (code side; Supabase Dashboard step still pending, see §10). `SettingsPage.tsx`: after "Update email," the page now asks for a 6-digit code (`supabase.auth.verifyOtp({ type: 'email_change' })`) sent to the **new** address only (founder decided against also codeing the old address — logging into Settings already proves identity; the new-email code just confirms it's real/reachable) before the change takes effect, with resend/cancel. UI verified live (pending state, wrong-code error, cancel) against the founder's real account using a fake address — never completed against a real inbox, so the actual code-delivery email hasn't been seen yet.
 50. Home page engagement — founder wants the "Most reinforced this month" area (and Home generally) to prompt the user to confirm/add value back into the model: "is this person in group X?", "confirm this relationship", "suggested tags for this event." Explicitly a brainstorm ask, not a spec — related to item 15's relationship-aware smarts and item 26's ratings loop.

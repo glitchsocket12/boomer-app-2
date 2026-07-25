@@ -8,6 +8,7 @@ const ALL_MOMENTS: Moment[] = DEMO_MOMENTS.map((m) => ({
   location: m.location,
   when_text: m.when_text,
   event_date: m.event_date,
+  event_end_date: null,
   raw_description: m.raw_description,
   created_at: m.created_at,
   notes: m.attendeeIds.map((id) => {

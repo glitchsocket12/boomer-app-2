@@ -45,7 +45,7 @@ serve(async (req) => {
 
     const { data: moment } = await supabaseClient
       .from("moments")
-      .select("occasion, location, when_text, event_date, details")
+      .select("occasion, location, when_text, event_date, event_end_date, details")
       .eq("id", momentId)
       .single()
     const { data: existingNotes } = await supabaseClient
@@ -122,7 +122,7 @@ serve(async (req) => {
       })
       .join(", ")
 
-    const existingSummary = `Occasion: ${moment?.occasion ?? "unknown"} | Location: ${moment?.location ?? "unknown"} | When (in the user's words): ${moment?.when_text ?? "unknown"} | Resolved calendar date: ${moment?.event_date ?? "not set"} | Already tagged to groups: ${taggedGroupNames.join(", ") || "none"}. Already recorded notes: ${(existingNotes ?? [])
+    const existingSummary = `Occasion: ${moment?.occasion ?? "unknown"} | Location: ${moment?.location ?? "unknown"} | When (in the user's words): ${moment?.when_text ?? "unknown"} | Resolved calendar date: ${moment?.event_date ?? "not set"} | Resolved end date: ${moment?.event_end_date ?? "not set"} | Already tagged to groups: ${taggedGroupNames.join(", ") || "none"}. Already recorded notes: ${(existingNotes ?? [])
       .map((n: any) => `${nameById[n.person_id] ?? "someone"}: ${n.content}`)
       .join("; ") || "none"}`
 
@@ -147,7 +147,7 @@ When the user shares a new detail, don't finish right away — first ask a short
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
 This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
@@ -157,8 +157,9 @@ CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "a
 "moment_field_updates" is for the moment's own top-level fields, not a person-specific fact. Use it when the user gives new or corrected info about the event itself:
 - "when_text": the user's own words describing timing (e.g. "fall of 2025"), only when they give timing info different from what's already known.
 - "event_date": your best-guess actual calendar date as "YYYY-MM-DD" matching whatever "when_text" you just set. Resolve relative phrases against today's date, given below. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year, use the 1st of that month. If only a year, use January 1. Always give your single closest best guess rather than a range.
+- "event_end_date": your best-guess actual END calendar date as "YYYY-MM-DD", ONLY when the user describes or corrects a genuine date RANGE (e.g. "it ran from the 3rd to the 10th", "we were there through the following weekend"). Leave null for a single day or when no end is given — never invent a range that wasn't stated.
 - "location" / "occasion": only set when the user is giving new or corrected info for that specific field.
-Leave any of these four keys null when the user didn't touch that field this turn.
+Leave any of these five keys null when the user didn't touch that field this turn.
 
 "add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Associated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster provided in this prompt if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail.`
 
@@ -322,6 +323,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     if (updates?.location) fieldUpdates.location = updates.location
     if (updates?.when_text) fieldUpdates.when_text = updates.when_text
     if (updates?.event_date) fieldUpdates.event_date = updates.event_date
+    if (updates?.event_end_date) fieldUpdates.event_end_date = updates.event_end_date
     if (Object.keys(fieldUpdates).length > 0) {
       await supabaseClient.from("moments").update(fieldUpdates).eq("id", momentId)
     }

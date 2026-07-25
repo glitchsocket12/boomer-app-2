@@ -1,8 +1,9 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { parseIcs, icsDateToIsoDate, type IcsEvent } from "../_shared/ics.ts"
+import { parseIcs, icsDateToIsoDate, icsEndDateToIsoDate, type IcsEvent } from "../_shared/ics.ts"
 import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
+import { formatEventDateText } from "../_shared/eventDates.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,8 +24,14 @@ const stableInstructions = `You are screening raw calendar entries for an app th
 
 Favor real gatherings, trips, celebrations, and milestones involving other people. Skip generic solo logistics (a dentist appointment, a flight with no other detail, a work meeting, a reminder) UNLESS it clearly matches one of the founder's preferred categories given separately below — when in doubt on a borderline case, lean toward including it, since a human reviews every suggestion before anything is saved.
 
+Don't guess at dates — the exact start/end date is already known from the calendar itself and is filled in separately; just focus on occasion, location, notes, and the tag/group suggestions below.
+
+"suggested_tags": 1-3 short tags that fit this event. Prefer reusing an existing tag from the roster given separately below (case-insensitive match) over coining a near-duplicate; a genuinely new tag name is fine if nothing existing fits. Empty array if nothing fits.
+
+"suggested_group": at most one group this event clearly belongs to, from the EXISTING groups roster given separately below — copy its name EXACTLY. A group is a recurring, ongoing affiliation (a school, team, workplace, military unit, or friend circle), not a one-off detail. Only set this when the event title/description clearly signals that recurring affiliation (e.g. an event named after a known group). Never invent a new group name here — use null if nothing in the roster clearly fits.
+
 Respond with ONLY a JSON array, one object per input event in the same order, in this exact shape and nothing else — no preamble, no markdown fences:
-[{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "when_text": "natural language timing, e.g. August 2026", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given"}]`
+[{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null"}]`
 
 type Candidate = {
   user_id: string
@@ -35,8 +42,11 @@ type Candidate = {
   location: string | null
   when_text: string | null
   event_date: string | null
+  event_end_date: string | null
   raw_description: string | null
   suggested_people: { name: string | null; email: string | null; matched_person_id: string | null; confidence: "high" | "none" }[]
+  suggested_tags: string[]
+  suggested_group_ids: string[]
   source_recurrence_id: string | null
 }
 
@@ -44,7 +54,17 @@ async function callExtraction(
   batch: IcsEvent[],
   tagGuidance: string,
   userTimeZone: string
-): Promise<{ index: number; include: boolean; occasion: string; location: string | null; when_text: string; notes: string }[]> {
+): Promise<
+  {
+    index: number
+    include: boolean
+    occasion: string
+    location: string | null
+    notes: string
+    suggested_tags: string[]
+    suggested_group: string | null
+  }[]
+> {
   const batchData = JSON.stringify(
     batch.map((e, i) => ({
       index: i,
@@ -65,7 +85,7 @@ async function callExtraction(
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 6000,
+      max_tokens: 7000,
       system: [
         { type: "text", text: stableInstructions, cache_control: { type: "ephemeral", ttl: "1h" } },
         { type: "text", text: tagGuidance, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -105,10 +125,11 @@ async function scanUser(
   userId: string,
   accountEmail: string | null
 ): Promise<{ sourcesScanned: number; candidatesAdded: number }> {
-  const [sourcesRes, peopleRes, tagsRes, existingRes] = await Promise.all([
+  const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes] = await Promise.all([
     supabase.from("calendar_sources").select("id, ical_url, label").eq("user_id", userId),
     supabase.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other").eq("user_id", userId),
     supabase.from("tags").select("name").eq("user_id", userId),
+    supabase.from("groups").select("id, name").eq("user_id", userId),
     supabase.from("moment_import_candidates").select("ical_uid").eq("user_id", userId),
   ])
 
@@ -141,10 +162,15 @@ async function scanUser(
   for (const key of ambiguousKeys) delete idByName[key]
 
   const tagNames = (tagsRes.data ?? []).map((t: any) => t.name)
+  const idByGroupName: Record<string, string> = {}
+  for (const g of groupsRes.data ?? []) idByGroupName[String(g.name).toLowerCase()] = g.id
+  const groupNames = (groupsRes.data ?? []).map((g: any) => g.name)
+
   const tagGuidance =
-    tagNames.length > 0
-      ? `The founder is especially interested in events that look like: ${tagNames.join(", ")}. Lean toward including anything that clearly matches one of these; skip generic logistics that don't.`
-      : `The founder hasn't set any specific categories yet, so use your general judgement about what's worth remembering (gatherings, trips, celebrations, milestones).`
+    (tagNames.length > 0
+      ? `The founder is especially interested in events that look like: ${tagNames.join(", ")}. Lean toward including anything that clearly matches one of these; skip generic logistics that don't. Here is the founder's existing tag roster, for "suggested_tags" — reuse one of these by name where it fits: ${tagNames.join(", ")}.`
+      : `The founder hasn't set any specific categories yet, so use your general judgement about what's worth remembering (gatherings, trips, celebrations, milestones). The founder has no tags on file yet, so "suggested_tags" can propose new short tag names where they clearly fit.`) +
+    ` Here are the founder's existing recurring groups, for "suggested_group" — reuse one of these by EXACT name only if this event is clearly part of it, never invent a new one: ${groupNames.join(", ") || "(none yet)"}.`
 
   const cutoff = new Date()
   cutoff.setFullYear(cutoff.getFullYear() - MAX_AGE_YEARS)
@@ -222,6 +248,12 @@ async function scanUser(
               return { name: a.name, email: a.email, matched_person_id: matchId ?? null, confidence: matchId ? ("high" as const) : ("none" as const) }
             })
 
+          const startDate = event.dtstart ? icsDateToIsoDate(event.dtstart, userTimeZone) : null
+          let endDate = event.dtend ? icsEndDateToIsoDate(event.dtend, event.dtendIsDateOnly, userTimeZone) : null
+          // Defensive guard against a malformed feed producing an end before the start — never
+          // store a negative-length range.
+          if (startDate && endDate && endDate < startDate) endDate = null
+
           rows.push({
             user_id: userId,
             calendar_source_id: source.id,
@@ -229,10 +261,18 @@ async function scanUser(
             status: "pending",
             occasion: r.occasion ?? null,
             location: r.location ?? event.location ?? null,
-            when_text: r.when_text ?? null,
-            event_date: event.dtstart ? icsDateToIsoDate(event.dtstart, userTimeZone) : null,
+            // Dates come straight from the calendar's own DTSTART/DTEND, never AI-guessed — the
+            // AI extraction call above no longer produces a "when_text" at all. when_text is a
+            // deterministic rendering of these exact dates, kept in the DB for other flows that
+            // still fall back to it (e.g. an event with no resolvable date), but not shown/edited
+            // as a separate field in the review UI.
+            when_text: startDate ? formatEventDateText(startDate, endDate) : null,
+            event_date: startDate,
+            event_end_date: endDate,
             raw_description: r.notes ?? event.description ?? null,
             suggested_people: suggestedPeople,
+            suggested_tags: Array.isArray(r.suggested_tags) ? r.suggested_tags.slice(0, 3) : [],
+            suggested_group_ids: r.suggested_group ? [idByGroupName[r.suggested_group.toLowerCase()]].filter((id): id is string => Boolean(id)) : [],
             source_recurrence_id: event.isRecurring ? event.uid : null,
           })
         }

@@ -10,6 +10,7 @@ import VoiceInputButton from '../components/VoiceInputButton'
 import { summarize } from '../lib/summarize'
 import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
+import { findOrCreateTagId } from '../lib/tags'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 export type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
@@ -23,6 +24,7 @@ export type MomentDetail = {
   location: string | null
   when_text: string | null
   event_date: string | null
+  event_end_date: string | null
   raw_description: string
   summary: string | null
   details: Record<string, string> | null
@@ -101,7 +103,7 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, event_date, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), moment_tags(tags(id, name)), dismissed_person_ids'
+        'id, occasion, location, when_text, event_date, event_end_date, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), moment_tags(tags(id, name)), dismissed_person_ids'
       )
       .eq('id', eventId)
       .single()
@@ -163,27 +165,13 @@ export default function EventDetail({
   // race each other, the unique index rejects the loser's insert — look the winner up by name
   // rather than surfacing an error for what the user experiences as one successful action.
   async function handleCreateAndTagMoment(name: string) {
-    const trimmed = name.trim()
-    if (!trimmed) return
-    const existing = allTagsList.find((t) => t.name.toLowerCase() === trimmed.toLowerCase())
-    if (existing) {
-      await handleTagMoment(existing.id)
-      return
-    }
     const {
       data: { user },
     } = await supabase.auth.getUser()
-    const { data, error } = await supabase.from('tags').insert({ name: trimmed, user_id: user?.id }).select('id, name').single()
-    if (error || !data) {
-      const { data: found } = await supabase.from('tags').select('id, name').ilike('name', trimmed).maybeSingle()
-      if (found) {
-        setAllTagsList((prev) => (prev.some((t) => t.id === found.id) ? prev : [...prev, found]))
-        await handleTagMoment(found.id)
-      }
-      return
-    }
-    setAllTagsList((prev) => [...prev, data])
-    await handleTagMoment(data.id)
+    const tag = await findOrCreateTagId(supabase, user?.id, allTagsList, name)
+    if (!tag) return
+    setAllTagsList((prev) => (prev.some((t) => t.id === tag.id) ? prev : [...prev, tag]))
+    await handleTagMoment(tag.id)
   }
 
   // Untagging is pure detachment from moment_tags, not deletion — the tag itself stays on file

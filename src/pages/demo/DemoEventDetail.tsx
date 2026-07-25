@@ -43,6 +43,7 @@ export default function DemoEventDetail({
     location: m.location,
     when_text: m.when_text,
     event_date: m.event_date,
+    event_end_date: null,
     raw_description: m.raw_description,
     summary: m.summary,
     details: null,
