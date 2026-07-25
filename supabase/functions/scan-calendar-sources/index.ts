@@ -26,7 +26,9 @@ Favor real gatherings, trips, celebrations, and milestones involving other peopl
 
 Don't guess at dates — the exact start/end date is already known from the calendar itself and is filled in separately; just focus on occasion, location, notes, and the tag/group suggestions below.
 
-"suggested_tags": 1-3 short tags that fit this event. Prefer reusing an existing tag from the roster given separately below (case-insensitive match) over coining a near-duplicate; a genuinely new tag name is fine if nothing existing fits. Empty array if nothing fits.
+"location": if the calendar entry's own location/description doesn't name a place, but the title names a well-known recurring public event (e.g. "SF Fleet Week", "Burning Man", "Comic-Con"), use your own general knowledge to fill in the typical real-world city/location for that event. Leave it null if you don't recognize the event and no location is given.
+
+"suggested_tags": 1-3 short tags that fit this event. Reusing an existing tag from the roster given separately below is strongly preferred — check whether a word right in the event's own title (e.g. "wedding", "reunion", "graduation", "birthday") matches or is a close synonym of an existing tag name (case-insensitive) before proposing anything new. Only coin a genuinely new tag name when nothing existing is even a close fit — don't create a near-duplicate of a tag that already covers the same idea (e.g. don't add "grad party" if "graduation" already exists). Empty array if nothing fits.
 
 "suggested_group": at most one group this event clearly belongs to, from the EXISTING groups roster given separately below — copy its name EXACTLY. A group is a recurring, ongoing affiliation (a school, team, workplace, military unit, or friend circle), not a one-off detail. Only set this when the event title/description clearly signals that recurring affiliation (e.g. an event named after a known group). Never invent a new group name here — use null if nothing in the roster clearly fits.
 

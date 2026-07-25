@@ -31,7 +31,8 @@ type ExistingMoment = {
   raw_description: string
   created_at: string
 }
-type GroupRef = { id: string; name: string }
+type PersonRef = { id: string; name: string; last_name: string | null }
+type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
 
 function toggleIndex(set: Set<number>, i: number): Set<number> {
   const next = new Set(set)
@@ -114,6 +115,7 @@ export default function ImportReview({
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [calendarSources, setCalendarSources] = useState<CalendarSourceRef[]>([])
+  const [allPeopleList, setAllPeopleList] = useState<PersonRef[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -122,7 +124,7 @@ export default function ImportReview({
 
   async function load() {
     setLoading(true)
-    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes] = await Promise.all([
+    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes] = await Promise.all([
       supabase
         .from('moment_import_candidates')
         .select(
@@ -130,16 +132,21 @@ export default function ImportReview({
         )
         .eq('status', 'pending')
         .order('event_date', { ascending: false, nullsFirst: false }),
-      supabase.from('moments').select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at'),
+      supabase
+        .from('moments')
+        .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at')
+        .order('event_date', { ascending: false, nullsFirst: false }),
       supabase.from('tags').select('id, name').order('name'),
-      supabase.from('groups').select('id, name').order('name'),
+      supabase.from('groups').select('id, name, person_groups(people(id, name, last_name))').order('name'),
       supabase.from('calendar_sources').select('id, label'),
+      supabase.from('people').select('id, name, last_name'),
     ])
     setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
     setAllTagsList((tagsRes.data as TagRef[]) ?? [])
-    setAllGroupsList((groupsRes.data as GroupRef[]) ?? [])
+    setAllGroupsList((groupsRes.data as unknown as GroupRef[]) ?? [])
     setCalendarSources((sourcesRes.data as CalendarSourceRef[]) ?? [])
+    setAllPeopleList((peopleRes.data as PersonRef[]) ?? [])
     setLoading(false)
   }
 
@@ -173,6 +180,7 @@ export default function ImportReview({
             existingMoments={existingMoments}
             allTagsList={allTagsList}
             allGroupsList={allGroupsList}
+            allPeopleList={allPeopleList}
             calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
             onTagCreated={handleTagCreated}
             onSelectEvent={onSelectEvent}
@@ -189,6 +197,7 @@ function CandidateCard({
   existingMoments,
   allTagsList,
   allGroupsList,
+  allPeopleList,
   calendarSourceLabel,
   onTagCreated,
   onSelectEvent,
@@ -198,6 +207,7 @@ function CandidateCard({
   existingMoments: ExistingMoment[]
   allTagsList: TagRef[]
   allGroupsList: GroupRef[]
+  allPeopleList: PersonRef[]
   calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
@@ -213,16 +223,53 @@ function CandidateCard({
   const [manualTagIds, setManualTagIds] = useState<Set<string>>(new Set())
   const [manualNewTagNames, setManualNewTagNames] = useState<string[]>([])
   const [manualGroupIds, setManualGroupIds] = useState<Set<string>>(new Set())
+  const [manualPeople, setManualPeople] = useState<PersonRef[]>([])
+  const [manualNewPeopleNames, setManualNewPeopleNames] = useState<string[]>([])
+  const [dismissedGroupSuggestionIds, setDismissedGroupSuggestionIds] = useState<Set<string>>(new Set())
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
+  const [personPickerOpen, setPersonPickerOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dismissedMatch, setDismissedMatch] = useState(false)
   const [mergeTarget, setMergeTarget] = useState<ExistingMoment | null>(null)
   const [manualMergeOpen, setManualMergeOpen] = useState(false)
   const [mergeSearch, setMergeSearch] = useState('')
-  const [savedResult, setSavedResult] = useState<{ kind: 'created' | 'merged'; momentId: string; label: string } | null>(null)
+  const [savedResult, setSavedResult] = useState<{ kind: 'created' | 'merged' | 'noted'; momentId: string; label: string } | null>(null)
 
   const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
+
+  const includedGroupIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const i of includedGroups) {
+      const id = candidate.suggested_group_ids[i]
+      if (id) ids.add(id)
+    }
+    for (const id of manualGroupIds) ids.add(id)
+    return ids
+  }, [includedGroups, manualGroupIds, candidate.suggested_group_ids])
+
+  // Mirrors EventDetail.tsx's "Also from the associated group?" suggestion — anyone belonging to
+  // a group already tagged on this candidate, who isn't already a suggested/manually-added
+  // attendee, gets offered as a one-tap add.
+  const suggestedFromGroups = useMemo(() => {
+    const already = new Set<string>()
+    for (const i of included) {
+      const id = candidate.suggested_people[i].matched_person_id
+      if (id) already.add(id)
+    }
+    for (const p of manualPeople) already.add(p.id)
+
+    const suggestions = new Map<string, PersonRef>()
+    for (const group of allGroupsList) {
+      if (!includedGroupIds.has(group.id)) continue
+      for (const pg of group.person_groups ?? []) {
+        if (pg.people && !already.has(pg.people.id) && !dismissedGroupSuggestionIds.has(pg.people.id)) {
+          suggestions.set(pg.people.id, pg.people)
+        }
+      }
+    }
+    return Array.from(suggestions.values())
+  }, [allGroupsList, includedGroupIds, included, candidate.suggested_people, manualPeople, dismissedGroupSuggestionIds])
 
   function toggle(i: number) {
     setIncluded((prev) => toggleIndex(prev, i))
@@ -246,6 +293,25 @@ function CandidateCard({
       }
       if (personId) {
         await supabase.from('notes').insert({ person_id: personId, moment_id: momentId, content: 'Was there.' })
+      }
+    }
+
+    for (const person of manualPeople) {
+      await supabase.from('notes').insert({ person_id: person.id, moment_id: momentId, content: 'Was there.' })
+    }
+
+    for (const name of manualNewPeopleNames) {
+      const [first, ...rest] = name.trim().split(' ')
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const { data: newPerson } = await supabase
+        .from('people')
+        .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
+        .select()
+        .single()
+      if (newPerson?.id) {
+        await supabase.from('notes').insert({ person_id: newPerson.id, moment_id: momentId, content: 'Was there.' })
       }
     }
   }
@@ -367,6 +433,36 @@ function CandidateCard({
     })
   }
 
+  // Lighter-weight than a merge: for a calendar entry that's really just a detail of something
+  // that happened at/around an existing event (e.g. "cake cutting" at a wedding already on file)
+  // rather than something warranting its own event record. Writes a single event-scoped note —
+  // no person/group, no field-filling on the target moment — and leaves everything else alone.
+  async function handleSaveAsNote(target: ExistingMoment) {
+    setSaving(true)
+
+    const content = [occasion, candidate.raw_description].filter(Boolean).join(' — ')
+    const { error } = await supabase
+      .from('notes')
+      .insert({ moment_id: target.id, content: content || 'Noted from calendar import.', source: 'calendar_import' })
+
+    if (error) {
+      setSaving(false)
+      return
+    }
+
+    await supabase
+      .from('moment_import_candidates')
+      .update({ status: 'accepted', reviewed_at: new Date().toISOString() })
+      .eq('id', candidate.id)
+
+    setSaving(false)
+    setSavedResult({
+      kind: 'noted',
+      momentId: target.id,
+      label: summarize(target.occasion, target.raw_description),
+    })
+  }
+
   async function handleReject() {
     setSaving(true)
     await supabase
@@ -381,7 +477,11 @@ function CandidateCard({
     return (
       <div style={styles.card}>
         <p style={styles.confirmText}>
-          {savedResult.kind === 'created' ? `Added — ${savedResult.label}` : `Merged into "${savedResult.label}"`}
+          {savedResult.kind === 'created'
+            ? `Added — ${savedResult.label}`
+            : savedResult.kind === 'noted'
+              ? `Saved as a note on "${savedResult.label}"`
+              : `Merged into "${savedResult.label}"`}
         </p>
         <div style={styles.suggestButtonRow}>
           <button
@@ -419,7 +519,7 @@ function CandidateCard({
 
       {candidate.raw_description && <p style={styles.description}>{candidate.raw_description}</p>}
 
-      {candidate.suggested_people.length > 0 && (
+      {(candidate.suggested_people.length > 0 || manualPeople.length > 0 || manualNewPeopleNames.length > 0) && (
         <div style={styles.peopleRow}>
           {candidate.suggested_people.map((p, i) => (
             <label key={i} style={included.has(i) ? styles.personChipOn : styles.personChipOff}>
@@ -428,6 +528,84 @@ function CandidateCard({
               {p.confidence === 'none' && <span style={styles.newBadge}> (new)</span>}
             </label>
           ))}
+          {manualPeople.map((p) => (
+            <span key={p.id} style={styles.personChipOn}>
+              {p.name}
+              {p.last_name ? ` ${p.last_name}` : ''}
+              <button
+                type="button"
+                onClick={() => setManualPeople((prev) => prev.filter((mp) => mp.id !== p.id))}
+                style={styles.chipRemoveBtn}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {manualNewPeopleNames.map((name, i) => (
+            <span key={`newperson-${i}`} style={styles.personChipOn}>
+              {name}
+              <span style={styles.newBadge}> (new)</span>
+              <button
+                type="button"
+                onClick={() => setManualNewPeopleNames((prev) => prev.filter((_, idx) => idx !== i))}
+                style={styles.chipRemoveBtn}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={styles.pickerToggleRow}>
+        <button type="button" onClick={() => setPersonPickerOpen((v) => !v)} style={styles.addButton} disabled={saving}>
+          + Add someone
+        </button>
+      </div>
+      {personPickerOpen && (
+        <SearchAddPicker
+          items={allPeopleList
+            .filter((p) => !manualPeople.some((mp) => mp.id === p.id))
+            .filter((p) => !candidate.suggested_people.some((sp, i) => included.has(i) && sp.matched_person_id === p.id))
+            .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
+          placeholder="Search people to add, or type a new name…"
+          onSelect={(item) => {
+            const person = allPeopleList.find((p) => p.id === item.id)
+            if (person) setManualPeople((prev) => [...prev, person])
+          }}
+          onCreateNew={(name) => setManualNewPeopleNames((prev) => [...prev, name])}
+          createLabel={(q) => `+ Add "${q}" as a new person`}
+          emptyText="No one matches."
+        />
+      )}
+
+      {suggestedFromGroups.length > 0 && (
+        <div style={styles.suggestBanner}>
+          <span>Also from the associated group?</span>
+          <div style={styles.peopleRow}>
+            {suggestedFromGroups.map((p) => (
+              <span key={p.id} style={styles.personChipOff}>
+                {p.name}
+                {p.last_name ? ` ${p.last_name}` : ''}
+                <button
+                  type="button"
+                  onClick={() => setManualPeople((prev) => [...prev, p])}
+                  style={styles.chipRemoveBtn}
+                  disabled={saving}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDismissedGroupSuggestionIds((prev) => new Set(prev).add(p.id))}
+                  style={styles.chipRemoveBtn}
+                  disabled={saving}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -551,6 +729,9 @@ function CandidateCard({
             <button type="button" onClick={() => setMergeTarget(likelyMatch)} style={styles.suggestYesButton} disabled={saving}>
               Merge into it
             </button>
+            <button type="button" onClick={() => handleSaveAsNote(likelyMatch)} style={styles.suggestNoButton} disabled={saving}>
+              Save as a note instead
+            </button>
             <button type="button" onClick={() => setDismissedMatch(true)} style={styles.suggestNoButton} disabled={saving}>
               No, these are different
             </button>
@@ -562,6 +743,9 @@ function CandidateCard({
         <div style={styles.suggestBanner}>
           <span>Will merge into "{summarize(mergeTarget.occasion, mergeTarget.raw_description)}" instead of creating a new event.</span>
           <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={() => handleSaveAsNote(mergeTarget)} style={styles.suggestNoButton} disabled={saving}>
+              Save as a note instead
+            </button>
             <button type="button" onClick={() => setMergeTarget(null)} style={styles.suggestNoButton} disabled={saving}>
               Cancel merge
             </button>
@@ -574,13 +758,10 @@ function CandidateCard({
           </button>
           {manualMergeOpen && (
             <div style={styles.pickerPanel}>
-              <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search your events…" />
+              <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search your events… (or browse below)" />
               <div style={styles.mergeResultsList}>
                 {existingMoments
-                  .filter((m) => {
-                    const label = summarize(m.occasion, m.raw_description).toLowerCase()
-                    return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
-                  })
+                  .filter((m) => summarize(m.occasion, m.raw_description).toLowerCase().includes(mergeSearch.trim().toLowerCase()))
                   .slice(0, 8)
                   .map((m) => (
                     <button

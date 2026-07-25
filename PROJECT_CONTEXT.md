@@ -585,7 +585,20 @@ Full story: PROJECT_HISTORY.md.
 │                                events found" nudges. Each card shows a small source-calendar badge
                                 (the connected calendar's label) when the founder has 2+ calendars
                                 connected, so multi-calendar founders can tell which candidates came
-                                from which feed (2026-07-25)
+                                from which feed (2026-07-25). Manual merge-search now lists existing
+                                events immediately on open (sorted most-recent-first), narrowing as
+                                you type, instead of showing nothing until you type (2026-07-25 fix).
+                                "Save as a note instead" button (both on the auto-suggested match
+                                banner and after picking a manual merge target) writes a single
+                                moment-scoped `notes` row (no person/group, `source='calendar_import'`)
+                                without merging/creating/field-filling — for calendar entries that are
+                                really just a detail of an existing event rather than their own event
+                                (2026-07-25; needed a `notes` CHECK-constraint + RLS-policy widening,
+                                see schema entry below). "+ Add someone" search-add picker (existing
+                                people, or type a new name to create) plus "Also from the associated
+                                group?" suggestions (members of any group tagged on the candidate, one-
+                                tap add/dismiss, mirrors EventDetail.tsx's group-suggestion pattern)
+                                (2026-07-25)
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
@@ -665,7 +678,7 @@ Every page listed above under `pages/` (Home/People/PersonDetail/Groups/GroupDet
 | `suggest-prompts` | 3 suggestion cards for Home → cached in `home_suggestions` table; regenerates only when data is newer than cache or on manual refresh. |
 | `transcribe` | Whisper speech-to-text. |
 | `validate-calendar-source` | Server-side reachability/format check on a pasted iCal URL (dodges browser CORS) before `calendar_sources` saves it. |
-| `scan-calendar-sources` | Fetches connected calendars, parses ICS (`_shared/ics.ts`), AI-extracts/classifies via Claude (`cache_control`-tiered), matches attendees to `people`, writes `moment_import_candidates`. Manual JWT path or cron-secret path (scans every account) — see PROJECT_HISTORY.md §21. `icsDateToIsoDate()` now converts a UTC-stamped (`...Z`) DTSTART into the connecting user's own `user_settings.time_zone` before taking the calendar date (2026-07-24, bug fix — see §12); date-only and floating-local DTSTART forms are unaffected (no conversion needed, they never carried a UTC offset to begin with). |
+| `scan-calendar-sources` | Fetches connected calendars, parses ICS (`_shared/ics.ts`), AI-extracts/classifies via Claude (`cache_control`-tiered), matches attendees to `people`, writes `moment_import_candidates`. Manual JWT path or cron-secret path (scans every account) — see PROJECT_HISTORY.md §21. `icsDateToIsoDate()` now converts a UTC-stamped (`...Z`) DTSTART into the connecting user's own `user_settings.time_zone` before taking the calendar date (2026-07-24, bug fix — see §12); date-only and floating-local DTSTART forms are unaffected (no conversion needed, they never carried a UTC offset to begin with). Extraction prompt (2026-07-25): `suggested_tags` now explicitly checks the event title for a word matching/synonymous with an existing tag before ever coining a new one; `location` now falls back to the model's own world knowledge for a recognizable public event's real-world city (e.g. "SF Fleet Week" → San Francisco) when the calendar entry's own location is blank. |
 
 **Shared module** `_shared/relationships.ts`: the 5 relationship kinds (spouse/sibling/parent/child/partner), reciprocal notes written on BOTH sides (`INVERSE_RELATIONSHIP` map — incl. when a suggestion banner is confirmed, not just an immediate confident match, fixed 2026-07-20), dedupe on an EXACT match against the deterministic note text (not a loose name+keyword heuristic — the loose version used to false-positive on the SUBJECT's own original sentence and silently block their own reciprocal note, fixed 2026-07-20, see PROJECT_HISTORY §13), confident-match = name-as-typed exactly equals full name on file (else a suggest-don't-assert banner), siblings named together in one signal also link to EACH OTHER not just to the subject (direct write when confident, exact-full-name lookup at confirm-time otherwise — 2026-07-20), shared-parent inference suggestions, last-name inference for people created from relationship mentions (`inferLastNameFromSignals`, also called by the direct `new_people`/`add_people` creation paths). Every confident/pairwise note write here now ALSO dual-writes the matching row into the `relationships` table (2026-07-20, via `_shared/relationshipsTable.ts`'s `upsertRelationship` — takes a `userId` param now). Used by `converse`/`add-fact`/`update-moment`/`update-group` so relationship behavior is identical at all four entry points. `chat` and `search` functions were deleted 2026-07-19 (superseded by `converse`).
 
@@ -737,11 +750,15 @@ moments       id, user_id, raw_description (user's words only — never assistan
               `lib/dates.ts` render a "Mon D–D, YYYY" range when set and
               different from event_date), details jsonb? (open-ended tags by
               design), dismissed_person_ids jsonb [], created_at
-notes         id, person_id? , moment_id?, group_id? (CHECK: person_id OR group_id),
-              source? ("home" = written by converse), source_group_id? (fact
-              captured via a group chat), content, created_at
-              — attendance on an event IS the existence of a note with that
-              moment_id; untagging nulls moment_id, never deletes.
+notes         id, person_id? , moment_id?, group_id? (CHECK: person_id OR group_id
+              OR moment_id, widened 2026-07-25 for ImportReview's "save as a note"
+              action — also needed a new RLS policy for the moment_id-only case,
+              see ImportReview.tsx entry above; existing person_id/group_id
+              policies untouched), source? ("home" = written by converse,
+              "calendar_import" = ImportReview's save-as-note action),
+              source_group_id? (fact captured via a group chat), content,
+              created_at — attendance on an event IS the existence of a note with
+              that moment_id; untagging nulls moment_id, never deletes.
               ⚠ two FKs to groups: embeds must be qualified
               (groups!notes_source_group_id_fkey) or PostgREST errors (PGRST201).
 reminders     id, person_id, label ("Birthday"/"Anniversary"), month, day
@@ -844,7 +861,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 32. ~~User's own profile~~ — **DONE 2026-07-20.** Real `is_self` flag + `relationships` table (shared source of truth for family links), real "My page" (`Circle.tsx`) + real family tree (`FamilyTree.tsx`, works for any person), `person-facts` linking and "my mom/dad" resolution both read the same table — see §3/§4/§6/§7. Full build story in PROJECT_HISTORY §15. Still-open UX questions, not yet resolved: (a) empty relationship categories on "Your circle" shown as invite-to-add vs. hidden until populated. ~~(b) a family tree for a group you're NOT a member of~~ — **RESOLVED 2026-07-21**, see item 41. ~~(c) "+" always targets a tier's first branch when a tier has more than one~~ — **FIXED 2026-07-20**, see item 37.
 33. **Refer to the user as "You" instead of "User"** — requested 2026-07-19. E.g. "Your brother is Josh," "Your Mom is Amy" — more conversational/personal than the current third-person "User" phrasing. Likely pairs with item 32 once a user profile exists.
 34. ~~Filterable "View" by event category on the Events page~~ — **DONE 2026-07-22.** Shipped together with item 28: a tag filter dropdown on Events.tsx, growing from distinct tags actually applied (`useMemo`, not a fixed hardcoded set, per the founder's original ask), membership-based (a moment can carry more than one tag) rather than the single-value equality Groups.tsx's type filter uses, plus a "No tags yet" option. Verified live: option list matches tags in use, filtering narrows correctly.
-35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later.
+35. **Sub-events for multi-day events** — requested 2026-07-19, founder flagged as important. Certain events (e.g. a vacation) span multiple days and generate lots of small sub-memories; needs a way to nest those under a parent event rather than flattening everything into one event or scattering into unrelated standalone events. Adjacent to item 36's now-shipped "add event" flow — a parent-event picker would be a natural addition to that button/page later. **Partially addressed 2026-07-25** for the calendar-import-review case specifically (founder confirmed no true nested sub-event schema, keep it simple): ImportReview's new "Save as a note instead" writes the calendar entry as a plain note on an existing event rather than creating a duplicate or a real nested child event — see ImportReview.tsx entry in §6. The general "nest a whole event under a parent, browsable in EventDetail" version (e.g. for a multi-day vacation) is still open.
 37. ~~Family tree bug scan~~ — **DONE 2026-07-20**, three wire-connection follow-ups **2026-07-21/22**, layout engine rewrite **2026-07-22** (item 39), same-day live-bug fix **2026-07-22**: Kids tier now also positions relative to its own parents' tier above (`layoutRelativeToParent`) instead of independently centering on the canvas — root-gen is now the only independently-laid-out tier — fixing left-clipping on wide trees and grandchildren rendering off-anchor. One reported "missing grandparent marriage line" turned out to be a real data gap (no `spouse` relationship on file), not a bug — flagged to founder, not auto-fixed. **2026-07-21 fix, confirmed live:** the root's own siblings were the one place in `familyTree.ts` still built as a bare name list with no spouse lookup — every other role (root's own spouse, aunts/uncles, cousins, kids) already attached in-law spouses. A married sibling's spouse now shows up with a marriage line too; verified against Jake's real tree (Josh Volin + Faith Volin).
 
 38. ~~Undo a mis-added family tree relationship~~ — **DONE 2026-07-21.** Added `removeRelationship`/`unlinkRelationship` + a "Remove a relationship" control on the family tree page, scoped to the centered person's direct relations. Verified via `npm run build` + synthetic-data harness only — not yet confirmed against live data (see §10). Full story: PROJECT_HISTORY §18.
