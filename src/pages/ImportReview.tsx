@@ -5,6 +5,7 @@ import { formatDateRange } from '../lib/dates'
 import { findOrCreateTagId, type TagRef } from '../lib/tags'
 import SearchAddPicker from '../components/SearchAddPicker'
 import SearchBox from '../components/SearchBox'
+import AutoGrowTextarea from '../components/AutoGrowTextarea'
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -264,6 +265,7 @@ function CandidateCard({
   const [location, setLocation] = useState(candidate.location ?? '')
   const [eventDate, setEventDate] = useState(candidate.event_date ?? '')
   const [eventEndDate, setEventEndDate] = useState(candidate.event_end_date ?? '')
+  const [noteText, setNoteText] = useState('')
   const [included, setIncluded] = useState<Set<number>>(new Set(candidate.suggested_people.map((_, i) => i)))
   const [includedTags, setIncludedTags] = useState<Set<number>>(new Set(candidate.suggested_tags.map((_, i) => i)))
   const [includedGroups, setIncludedGroups] = useState<Set<number>>(new Set(candidate.suggested_group_ids.map((_, i) => i)))
@@ -422,6 +424,9 @@ function CandidateCard({
 
     await applyAttendees(newMoment.id)
     await applyTagsAndGroups(newMoment.id)
+    if (noteText.trim()) {
+      await supabase.from('notes').insert({ moment_id: newMoment.id, content: noteText.trim(), source: 'calendar_import' })
+    }
 
     await supabase
       .from('moment_import_candidates')
@@ -477,6 +482,9 @@ function CandidateCard({
 
     await applyAttendees(freshTarget.id)
     await applyTagsAndGroups(freshTarget.id)
+    if (noteText.trim()) {
+      await supabase.from('notes').insert({ moment_id: freshTarget.id, content: noteText.trim(), source: 'calendar_import' })
+    }
 
     await supabase
       .from('moment_import_candidates')
@@ -495,10 +503,12 @@ function CandidateCard({
   // that happened at/around an existing event (e.g. "cake cutting" at a wedding already on file)
   // rather than something warranting its own event record. Writes a single event-scoped note —
   // no person/group, no field-filling on the target moment — and leaves everything else alone.
+  // Prefers whatever the founder typed in "Your notes" (their own words beat a mechanical
+  // title/description concat) and only falls back to the auto-derived summary if that's blank.
   async function handleSaveAsNote(target: ExistingMoment) {
     setSaving(true)
 
-    const content = [occasion, candidate.raw_description].filter(Boolean).join(' — ')
+    const content = noteText.trim() || [occasion, candidate.raw_description].filter(Boolean).join(' — ')
     const { error } = await supabase
       .from('notes')
       .insert({ moment_id: target.id, content: content || 'Noted from calendar import.', source: 'calendar_import' })
@@ -576,6 +586,16 @@ function CandidateCard({
       </div>
 
       {candidate.raw_description && <p style={styles.description}>{candidate.raw_description}</p>}
+
+      <div style={styles.notesField}>
+        <label style={styles.dateLabel}>Your notes (optional)</label>
+        <AutoGrowTextarea
+          value={noteText}
+          onChange={setNoteText}
+          placeholder="Anything you remember about this — who said what, how it went, what made it special…"
+          disabled={saving}
+        />
+      </div>
 
       {(candidate.suggested_people.length > 0 || manualPeople.length > 0 || manualNewPeopleNames.length > 0) && (
         <div style={styles.peopleRow}>
@@ -917,6 +937,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
   },
   description: { fontSize: '0.88rem', color: '#666', lineHeight: 1.5, margin: '0 0 0.75rem' },
+  notesField: { display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '0.9rem' },
   peopleRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.9rem' },
   personChipOn: {
     display: 'inline-flex',

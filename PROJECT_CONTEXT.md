@@ -616,7 +616,14 @@ Full story: PROJECT_HISTORY.md.
                                 immediately adds the new event to the shared existing-events list, so
                                 the next candidate's "might already be on file" banner and manual
                                 merge-search see it right away — previously needed a page reload
-                                (2026-07-25 fix).
+                                (2026-07-25 fix). Free-text "Your notes (optional)" box on every
+                                candidate card (2026-07-25), right under the raw calendar
+                                description — lets the founder jot memories while reviewing, before
+                                deciding accept/merge/note. Saved as a `notes` row
+                                (`source='calendar_import'`) on whichever moment results: the newly
+                                created event, the merge target, or (taking precedence over the
+                                mechanical title+description fallback) the "save as a note instead"
+                                target.
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
