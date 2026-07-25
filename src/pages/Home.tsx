@@ -11,6 +11,12 @@ import RelationshipSuggestionBanners, {
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
 import DevOnboardingReset from '../components/DevOnboardingReset'
+import {
+  loadConnectionSuggestions,
+  acceptConnectionSuggestion,
+  dismissConnectionSuggestion,
+  type ConnectionSuggestion,
+} from '../lib/suggestConnections'
 
 export type PersonRef = { id: string; name: string }
 export type EventRef = { id: string; summary: string }
@@ -64,6 +70,7 @@ export default function Home({
   const [pendingImportCount, setPendingImportCount] = useState(0)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
+  const [connectionSuggestions, setConnectionSuggestions] = useState<ConnectionSuggestion[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -109,6 +116,12 @@ export default function Home({
       .then(({ count }) => setPendingImportCount(count ?? 0))
   }, [])
 
+  // Free/deterministic, so it's cheap to just recompute on every Home visit rather than caching —
+  // see lib/suggestConnections.ts for the actual signal (event attendance + associated groups).
+  useEffect(() => {
+    loadConnectionSuggestions().then(setConnectionSuggestions)
+  }, [])
+
   // "Working as intended" stats: recall assists (matched lookups logged by `converse`, see
   // supabase/functions/converse/index.ts) and the leaderboard (notes added per person), both
   // scoped to the current calendar month.
@@ -144,6 +157,16 @@ export default function Home({
   function handleSuggestionClick(text: string) {
     setSuggestions([])
     sendMessage(text)
+  }
+
+  function handleAcceptConnection(suggestion: ConnectionSuggestion) {
+    setConnectionSuggestions((prev) => prev.filter((s) => s !== suggestion))
+    acceptConnectionSuggestion(suggestion.person.id, suggestion.group.id)
+  }
+
+  function handleDismissConnection(suggestion: ConnectionSuggestion) {
+    setConnectionSuggestions((prev) => prev.filter((s) => s !== suggestion))
+    dismissConnectionSuggestion(suggestion.person.id, suggestion.group.id)
   }
 
   function handleSend() {
@@ -216,6 +239,9 @@ export default function Home({
       setRelationshipSuggestions={setRelationshipSuggestions}
       newPersonSuggestions={newPersonSuggestions}
       setNewPersonSuggestions={setNewPersonSuggestions}
+      connectionSuggestions={connectionSuggestions}
+      onAcceptConnection={handleAcceptConnection}
+      onDismissConnection={handleDismissConnection}
       onSelectPerson={onSelectPerson}
       onSelectEvent={onSelectEvent}
       onSelectGroup={onSelectGroup}
@@ -252,6 +278,9 @@ export function HomeView({
   setRelationshipSuggestions,
   newPersonSuggestions,
   setNewPersonSuggestions,
+  connectionSuggestions = [],
+  onAcceptConnection,
+  onDismissConnection,
   onSelectPerson,
   onSelectEvent,
   onSelectGroup,
@@ -280,6 +309,9 @@ export function HomeView({
   setRelationshipSuggestions: Dispatch<SetStateAction<RelationshipSuggestion[]>>
   newPersonSuggestions: NewPersonSuggestion[]
   setNewPersonSuggestions: Dispatch<SetStateAction<NewPersonSuggestion[]>>
+  connectionSuggestions?: ConnectionSuggestion[]
+  onAcceptConnection?: (suggestion: ConnectionSuggestion) => void
+  onDismissConnection?: (suggestion: ConnectionSuggestion) => void
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
   onSelectGroup: (group: GroupRef) => void
@@ -376,6 +408,37 @@ export function HomeView({
                   See who's due for an update →
                 </button>
               </div>
+
+              {connectionSuggestions.length > 0 && (
+                <div style={styles.leaderboardCard}>
+                  <h3 style={styles.leaderboardTitle}>Connections to make</h3>
+                  <p style={styles.leaderboardSubtitle}>People who look connected to a group, based on events and shared circles</p>
+                  {connectionSuggestions.map((s) => (
+                    <div key={`${s.group.id}:${s.person.id}`} style={styles.connectionRow}>
+                      <span style={styles.connectionText}>
+                        Add{' '}
+                        <button onClick={() => onSelectPerson(s.person)} style={styles.connectionLink}>
+                          {s.person.name}
+                          {s.person.last_name ? ` ${s.person.last_name}` : ''}
+                        </button>{' '}
+                        to{' '}
+                        <button onClick={() => onSelectGroup(s.group)} style={styles.connectionLink}>
+                          {s.group.name}
+                        </button>
+                        ?
+                      </span>
+                      <div style={styles.connectionButtons}>
+                        <button onClick={() => onAcceptConnection?.(s)} style={styles.connectionYesButton}>
+                          Yes
+                        </button>
+                        <button onClick={() => onDismissConnection?.(s)} style={styles.connectionNoButton}>
+                          No
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -561,6 +624,48 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: '0.9rem',
     fontFamily: 'Georgia, serif',
     cursor: 'pointer',
+  },
+  connectionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    flexWrap: 'wrap',
+    padding: '0.5rem 0',
+    borderTop: '1px solid #F0EEE8',
+  },
+  connectionText: { fontSize: '0.9rem', color: '#333', lineHeight: 1.5 },
+  connectionLink: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    color: '#2E4034',
+    fontWeight: 'bold',
+    fontSize: 'inherit',
+    fontFamily: 'Georgia, serif',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+  },
+  connectionButtons: { display: 'flex', gap: '0.5rem', flexShrink: 0 },
+  connectionYesButton: {
+    fontSize: '0.85rem',
+    padding: '0.35rem 0.8rem',
+    borderRadius: '6px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  connectionNoButton: {
+    fontSize: '0.85rem',
+    padding: '0.35rem 0.8rem',
+    borderRadius: '6px',
+    border: '1px solid #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
   },
   suggestionsLoadingRow: {
     display: 'flex',
