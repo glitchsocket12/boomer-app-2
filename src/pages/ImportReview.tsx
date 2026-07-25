@@ -98,6 +98,43 @@ function findLikelyMatch(candidate: Candidate, existing: ExistingMoment[]): Exis
   return best
 }
 
+// Matches EventDetail.tsx's SuggestedAttendeeChip exactly: click the chip to add, hover reveals a
+// small "×" badge in the corner as a separate control, so denying doesn't resize/flicker the main
+// chip (a cramped +/× pair side by side in the chip itself was hard to hit precisely).
+function GroupSuggestionChip({
+  person,
+  onApprove,
+  onDeny,
+}: {
+  person: { id: string; name: string; last_name: string | null }
+  onApprove: () => void
+  onDeny: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button type="button" onClick={onApprove} style={styles.suggestChip}>
+        + {label}
+      </button>
+      {hovered && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDeny()
+          }}
+          aria-label={`Don't suggest ${label} for this event again`}
+          style={styles.cornerBadge}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Card-per-candidate review queue, reusing the accept/reject visual idiom + colors from
 // RelationshipSuggestions.tsx. Nothing here ever writes to `moments` without an explicit Accept —
 // same "suggest, don't assert" rule as every other AI-suggestion flow in this app.
@@ -581,29 +618,34 @@ function CandidateCard({
 
       {suggestedFromGroups.length > 0 && (
         <div style={styles.suggestBanner}>
-          <span>Also from the associated group?</span>
+          <div style={styles.suggestionHeaderRow}>
+            <span>Also from the associated group?</span>
+            {suggestedFromGroups.length > 1 && (
+              <button
+                type="button"
+                onClick={() =>
+                  setDismissedGroupSuggestionIds((prev) => {
+                    const next = new Set(prev)
+                    for (const p of suggestedFromGroups) next.add(p.id)
+                    return next
+                  })
+                }
+                style={styles.removeAllButton}
+                disabled={saving}
+              >
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
+          <p style={styles.chatHint}>Tap a name to add them, or hover to dismiss.</p>
           <div style={styles.peopleRow}>
             {suggestedFromGroups.map((p) => (
-              <span key={p.id} style={styles.personChipOff}>
-                {p.name}
-                {p.last_name ? ` ${p.last_name}` : ''}
-                <button
-                  type="button"
-                  onClick={() => setManualPeople((prev) => [...prev, p])}
-                  style={styles.chipRemoveBtn}
-                  disabled={saving}
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDismissedGroupSuggestionIds((prev) => new Set(prev).add(p.id))}
-                  style={styles.chipRemoveBtn}
-                  disabled={saving}
-                >
-                  ×
-                </button>
-              </span>
+              <GroupSuggestionChip
+                key={p.id}
+                person={p}
+                onApprove={() => setManualPeople((prev) => [...prev, p])}
+                onDeny={() => setDismissedGroupSuggestionIds((prev) => new Set(prev).add(p.id))}
+              />
             ))}
           </div>
         </div>
@@ -953,5 +995,50 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#8A6A1F',
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
+  },
+  // Matches EventDetail.tsx's SuggestedAttendeeChip styles exactly (badgeWrapper/suggestChip/
+  // cornerBadge/suggestionHeaderRow/removeAllButton/chatHint), so this suggestion idiom looks and
+  // behaves the same wherever it appears in the app.
+  suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
+  chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.85rem', color: '#8A7A4A' },
+  removeAllButton: {
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#B04A3B',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  badgeWrapper: { position: 'relative', display: 'inline-block' },
+  suggestChip: {
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '999px',
+    border: '1px dashed #8A6A1F',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  cornerBadge: {
+    position: 'absolute',
+    top: '-8px',
+    right: '-8px',
+    width: '18px',
+    height: '18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
+    border: '1px solid #B04A3B',
+    backgroundColor: '#FFF',
+    color: '#B04A3B',
+    fontSize: '0.8rem',
+    lineHeight: 1,
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
   },
 }
