@@ -20,6 +20,7 @@ import ManageTags from './pages/ManageTags'
 import Circle from './pages/Circle'
 import SettingsPage from './pages/SettingsPage'
 import CalendarSettings from './pages/CalendarSettings'
+import ImportReview from './pages/ImportReview'
 import About from './pages/About'
 import Privacy from './pages/Privacy'
 import FamilyTree from './pages/FamilyTree'
@@ -40,6 +41,7 @@ type Crumb =
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
   | { type: 'settings'; id: string; label: string }
   | { type: 'calendarSettings'; id: string; label: string }
+  | { type: 'importReview'; id: string; label: string }
   | { type: 'about'; id: string; label: string }
   | { type: 'privacy'; id: string; label: string }
 
@@ -56,6 +58,7 @@ const CRUMB_TYPES = [
   'familyTree',
   'settings',
   'calendarSettings',
+  'importReview',
   'about',
   'privacy',
 ]
@@ -451,6 +454,8 @@ export default function App() {
     )
   } else if (current?.type === 'calendarSettings') {
     content = <CalendarSettings onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'importReview') {
+    content = <ImportReview onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'about') {
     content = <About onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'privacy') {
@@ -466,6 +471,7 @@ export default function App() {
             onSelectDunbar={() => pushCrumb({ type: 'dunbar', id: 'dunbar', label: "Dunbar's number" })}
             onSelectNudges={() => pushCrumb({ type: 'nudges', id: 'nudges', label: 'Due for an update' })}
             onNavigateTab={goToTab}
+            onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
           />
         )}
         {view === 'people' && (
@@ -488,6 +494,7 @@ export default function App() {
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
             onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
+            onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
           />
         )}
         {view === 'groups' && (

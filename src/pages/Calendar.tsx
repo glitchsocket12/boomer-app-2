@@ -36,15 +36,18 @@ export default function Calendar({
   onSelectPerson,
   onSelectEvent,
   onOpenCalendarSettings,
+  onOpenImportReview,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onOpenCalendarSettings: () => void
+  onOpenImportReview: () => void
 }) {
   const [moments, setMoments] = useState<MomentRow[]>([])
   const [people, setPeople] = useState<PersonRow[]>([])
   const [loading, setLoading] = useState(true)
   const [tagFilter, setTagFilter] = useState('all')
+  const [pendingCount, setPendingCount] = useState(0)
   const today = useMemo(() => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
@@ -55,6 +58,11 @@ export default function Calendar({
 
   useEffect(() => {
     load()
+    supabase
+      .from('moment_import_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .then(({ count }) => setPendingCount(count ?? 0))
   }, [])
 
   async function load() {
@@ -197,6 +205,15 @@ export default function Calendar({
         </button>
       </div>
 
+      {pendingCount > 0 && (
+        <button onClick={onOpenImportReview} style={styles.importNudge}>
+          <span>
+            {pendingCount} event{pendingCount === 1 ? '' : 's'} found from your calendar — review
+          </span>
+          <span>→</span>
+        </button>
+      )}
+
       {distinctTags.length > 0 && (
         <div style={styles.chipRow}>
           <button
@@ -307,6 +324,21 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     padding: 0,
     fontFamily: 'Georgia, serif',
+  },
+  importNudge: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    fontSize: '0.95rem',
+    padding: '0.75rem 1rem',
+    borderRadius: '10px',
+    border: '1px solid #CFE0D6',
+    backgroundColor: '#F4F8F5',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    marginBottom: '1.25rem',
   },
   chipRow: { display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' },
   tagChip: {

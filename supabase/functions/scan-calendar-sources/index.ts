@@ -84,7 +84,19 @@ async function callExtraction(
   }
 }
 
-async function scanUser(supabase: SupabaseClient, userId: string): Promise<{ sourcesScanned: number; candidatesAdded: number }> {
+// A calendar attendee with no display name set often comes through with CN equal to their own
+// email address (Google's fallback) rather than a real name — using that as a person's "name"
+// would create a junk contact literally named "someone@example.com". Detected and excluded from
+// suggested_people entirely rather than offered as a low-quality "add as new person."
+function isEmailLike(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+}
+
+async function scanUser(
+  supabase: SupabaseClient,
+  userId: string,
+  accountEmail: string | null
+): Promise<{ sourcesScanned: number; candidatesAdded: number }> {
   const [sourcesRes, peopleRes, tagsRes, existingRes] = await Promise.all([
     supabase.from("calendar_sources").select("id, ical_url, label").eq("user_id", userId),
     supabase.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other").eq("user_id", userId),
@@ -169,9 +181,12 @@ async function scanUser(supabase: SupabaseClient, userId: string): Promise<{ sou
           if (!event) continue
 
           const suggestedPeople = event.attendees
-            .filter((a) => a.name || a.email)
+            // Drop the account owner themselves (every event on their own calendar lists them) and
+            // any attendee with no usable human name (CN missing, or CN that's just their email).
+            .filter((a) => !(accountEmail && a.email?.toLowerCase() === accountEmail.toLowerCase()))
+            .filter((a) => a.name && !isEmailLike(a.name))
             .map((a) => {
-              const matchId = a.name ? idByName[a.name.toLowerCase()] : undefined
+              const matchId = idByName[a.name!.toLowerCase()]
               return { name: a.name, email: a.email, matched_person_id: matchId ?? null, confidence: matchId ? ("high" as const) : ("none" as const) }
             })
 
@@ -229,7 +244,8 @@ serve(async (req) => {
       let totalSources = 0
       let totalCandidates = 0
       for (const userId of userIds) {
-        const result = await scanUser(serviceClient, userId)
+        const { data: userData } = await serviceClient.auth.admin.getUserById(userId)
+        const result = await scanUser(serviceClient, userId, userData?.user?.email ?? null)
         totalSources += result.sourcesScanned
         totalCandidates += result.candidatesAdded
       }
@@ -252,7 +268,7 @@ serve(async (req) => {
       })
     }
 
-    const result = await scanUser(supabaseClient, user.id)
+    const result = await scanUser(supabaseClient, user.id, user.email ?? null)
     return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } })
   } catch (error) {
     console.error("scan-calendar-sources error", String(error))

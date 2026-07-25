@@ -43,6 +43,7 @@ export default function Home({
   onSelectDunbar,
   onSelectNudges,
   onNavigateTab,
+  onOpenImportReview,
 }: {
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
@@ -50,6 +51,7 @@ export default function Home({
   onSelectDunbar: () => void
   onSelectNudges: () => void
   onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
+  onOpenImportReview: () => void
 }) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -59,6 +61,7 @@ export default function Home({
   const [stats, setStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
   const [recallAssists, setRecallAssists] = useState<number | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+  const [pendingImportCount, setPendingImportCount] = useState(0)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -99,6 +102,11 @@ export default function Home({
         notes: notes.count ?? 0,
       })
     })
+    supabase
+      .from('moment_import_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .then(({ count }) => setPendingImportCount(count ?? 0))
   }, [])
 
   // "Working as intended" stats: recall assists (matched lookups logged by `converse`, see
@@ -214,6 +222,8 @@ export default function Home({
       onSelectDunbar={onSelectDunbar}
       onSelectNudges={onSelectNudges}
       onNavigateTab={onNavigateTab}
+      pendingImportCount={pendingImportCount}
+      onOpenImportReview={onOpenImportReview}
       bottomRef={bottomRef}
       devTools={<DevOnboardingReset />}
     />
@@ -248,6 +258,8 @@ export function HomeView({
   onSelectDunbar,
   onSelectNudges,
   onNavigateTab,
+  pendingImportCount = 0,
+  onOpenImportReview,
   bottomRef,
   devTools,
   readOnly = false,
@@ -274,6 +286,8 @@ export function HomeView({
   onSelectDunbar: () => void
   onSelectNudges: () => void
   onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
+  pendingImportCount?: number
+  onOpenImportReview?: () => void
   bottomRef: RefObject<HTMLDivElement | null>
   devTools?: ReactNode
   readOnly?: boolean
@@ -284,6 +298,15 @@ export function HomeView({
 
       {thread.length === 0 && (
         <>
+          {pendingImportCount > 0 && onOpenImportReview && (
+            <button onClick={onOpenImportReview} style={styles.importNudge}>
+              <span>
+                {pendingImportCount} event{pendingImportCount === 1 ? '' : 's'} found from your calendar
+              </span>
+              <span>→</span>
+            </button>
+          )}
+
           {stats && (stats.people > 0 || stats.events > 0 || stats.groups > 0 || stats.notes > 0) && (
             <div style={styles.statsRow}>
               <button onClick={() => onNavigateTab('people')} style={{ ...styles.statTile, cursor: 'pointer' }}>
@@ -444,6 +467,21 @@ const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '840px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
   heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.5rem', textAlign: 'center' },
   emptyState: { color: '#777', textAlign: 'center', marginTop: '1rem' },
+  importNudge: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    fontSize: '0.95rem',
+    padding: '0.85rem 1rem',
+    borderRadius: '10px',
+    border: '1px solid #CFE0D6',
+    backgroundColor: '#F4F8F5',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    marginTop: '1.25rem',
+  },
   statsRow: { display: 'flex', gap: '0.75rem', marginTop: '1.25rem' },
   statTile: {
     flex: 1,
