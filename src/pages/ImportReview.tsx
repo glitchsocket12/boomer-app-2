@@ -9,6 +9,7 @@ import SearchBox from '../components/SearchBox'
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
   id: string
+  calendar_source_id: string | null
   occasion: string | null
   location: string | null
   when_text: string | null
@@ -19,6 +20,7 @@ type Candidate = {
   suggested_tags: string[]
   suggested_group_ids: string[]
 }
+type CalendarSourceRef = { id: string; label: string }
 type ExistingMoment = {
   id: string
   occasion: string | null
@@ -111,6 +113,7 @@ export default function ImportReview({
   const [existingMoments, setExistingMoments] = useState<ExistingMoment[]>([])
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
+  const [calendarSources, setCalendarSources] = useState<CalendarSourceRef[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -119,20 +122,24 @@ export default function ImportReview({
 
   async function load() {
     setLoading(true)
-    const [candidatesRes, momentsRes, tagsRes, groupsRes] = await Promise.all([
+    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes] = await Promise.all([
       supabase
         .from('moment_import_candidates')
-        .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, suggested_people, suggested_tags, suggested_group_ids')
+        .select(
+          'id, calendar_source_id, occasion, location, when_text, event_date, event_end_date, raw_description, suggested_people, suggested_tags, suggested_group_ids'
+        )
         .eq('status', 'pending')
         .order('event_date', { ascending: false, nullsFirst: false }),
       supabase.from('moments').select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at'),
       supabase.from('tags').select('id, name').order('name'),
       supabase.from('groups').select('id, name').order('name'),
+      supabase.from('calendar_sources').select('id, label'),
     ])
     setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
     setAllTagsList((tagsRes.data as TagRef[]) ?? [])
     setAllGroupsList((groupsRes.data as GroupRef[]) ?? [])
+    setCalendarSources((sourcesRes.data as CalendarSourceRef[]) ?? [])
     setLoading(false)
   }
 
@@ -166,6 +173,7 @@ export default function ImportReview({
             existingMoments={existingMoments}
             allTagsList={allTagsList}
             allGroupsList={allGroupsList}
+            calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
             onTagCreated={handleTagCreated}
             onSelectEvent={onSelectEvent}
             onResolved={() => handleResolved(c.id)}
@@ -181,6 +189,7 @@ function CandidateCard({
   existingMoments,
   allTagsList,
   allGroupsList,
+  calendarSourceLabel,
   onTagCreated,
   onSelectEvent,
   onResolved,
@@ -189,6 +198,7 @@ function CandidateCard({
   existingMoments: ExistingMoment[]
   allTagsList: TagRef[]
   allGroupsList: GroupRef[]
+  calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onResolved: () => void
@@ -391,6 +401,7 @@ function CandidateCard({
 
   return (
     <div style={styles.card}>
+      {calendarSourceLabel && <span style={styles.sourceBadge}>{calendarSourceLabel}</span>}
       <div style={styles.fieldGroup}>
         <input value={occasion} onChange={(e) => setOccasion(e.target.value)} placeholder="Occasion" style={styles.input} disabled={saving} />
         <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location" style={styles.input} disabled={saving} />
@@ -624,6 +635,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '1rem',
   },
   confirmText: { fontSize: '1.05rem', color: '#2E4034', margin: '0 0 0.9rem' },
+  sourceBadge: {
+    display: 'inline-block',
+    fontSize: '0.72rem',
+    padding: '0.2rem 0.55rem',
+    borderRadius: '999px',
+    backgroundColor: '#EEE',
+    color: '#777',
+    marginBottom: '0.6rem',
+  },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' },
   input: {
     fontSize: '0.95rem',
