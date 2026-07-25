@@ -600,9 +600,7 @@ export function EventDetailView({
       <p style={styles.meta}>
         {moment.event_date || moment.when_text || moment.location ? (
           <>
-            {moment.event_date
-              ? new Date(moment.event_date).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
-              : moment.when_text}
+            {moment.event_date ? formatFullDate(moment) : moment.when_text}
             {(moment.event_date || moment.when_text) && moment.location && ' · '}
             {moment.location && (
               <a
