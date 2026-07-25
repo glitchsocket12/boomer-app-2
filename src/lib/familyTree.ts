@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { describeRelationship } from './relationshipLabels'
 
 // Builds a family tree for ANY person_id by walking the relationships table (2026-07-20 source
 // of truth) — the tree is a person's own relationship graph, not bounded by which group you
@@ -16,9 +17,13 @@ export type TreeSide = 'a' | 'b'
 // deceased: true if this person has a deceased_date on file — rendered as a muted/marked node,
 // but otherwise left in their normal tree position (they're still the blood connector for any
 // kids, so they're never hidden or special-cased structurally).
-// endedWithAnchor: true if THIS person's marriage/partnership to the union's own `a` (not to
-// whichever chain-neighbor they're drawn next to) has ended, by divorce or by either party's
-// death — only ever set on a TreePerson used as a Union's spouse, never on `a` itself.
+// endedWithAnchor: true if THIS person's marriage/partnership to whichever person they're actually
+// married to earlier in the union's spouse chain (see spouseChain) has ended, by divorce or by
+// either party's death — only ever set on a TreePerson used as a Union's spouse, never on `a` itself.
+// relationLabel: set only on a 2nd-hop-or-later spouse-chain entry (someone married to a blood
+// person's spouse, not to the blood person themself) when relationshipLabels.ts resolves something
+// worth surfacing (e.g. 'step-parent') relative to that blood person's own kids — undefined for an
+// ordinary direct spouse (visually obvious from position) or when there's nothing conclusive to say.
 export type TreePerson = {
   id: string
   name: string
@@ -27,6 +32,7 @@ export type TreePerson = {
   side?: TreeSide
   deceased?: boolean
   endedWithAnchor?: boolean
+  relationLabel?: string
 }
 export type Union = { a: TreePerson; spouses: TreePerson[] }
 // leftExtended/rightExtended hold a person's own siblings (aunts/uncles), each as their own
@@ -257,12 +263,45 @@ function groupIntoBranches(
 
 // A spouse/partner who isn't a blood relative of the root never gets a parentId, so the
 // parent-child connector code can never draw a false ancestor line through them — they only ever
-// show up via the marriage line next to their spouse.
-function inLawSpouses(g: Graph, personId: string, kind: TreePersonKind, side?: TreeSide): TreePerson[] {
-  return (g.spousesOf.get(personId) ?? []).map((sid) => ({
-    ...node(g, sid, kind, undefined, side),
-    endedWithAnchor: isUnionEnded(g, personId, sid),
-  }))
+// show up via the marriage line next to their spouse. Also walks each returned spouse's OWN further
+// spouses (a widow(er)'s subsequent remarriage), however many hops deep the data goes — a `seen`
+// set (seeded with personId) prevents cycles/duplicates and bounds it naturally to the real, finite
+// family graph.
+// Each entry's endedWithAnchor is computed relative to whichever person they were ACTUALLY married
+// to (tracked as the BFS frontier advances), not always relative to personId — a second-order
+// spouse (e.g. Michael, married to Andy's widow Andi, never to Andy) has to be checked against
+// Andi, not Andy, or isUnionEnded would wrongly read "ended" purely because Andy died. The renderer
+// doesn't need to change for this: it already just reads each chain entry's precomputed
+// endedWithAnchor boolean without caring what it was computed relative to.
+// A 2nd-hop-or-later entry also gets a relationLabel when personId has recorded kids — they're
+// married to a blood person's spouse, not to the blood person themself, which is exactly
+// relationshipLabels.ts's step-parent shape relative to those kids.
+function spouseChain(g: Graph, personId: string, kind: TreePersonKind, side?: TreeSide): TreePerson[] {
+  const kids = childrenOfEither(g, personId)
+  const seen = new Set<string>([personId])
+  const result: TreePerson[] = []
+  let frontier = [personId]
+  let hop = 0
+  while (frontier.length > 0) {
+    const next: string[] = []
+    for (const fromId of frontier) {
+      for (const sid of g.spousesOf.get(fromId) ?? []) {
+        if (seen.has(sid)) continue
+        seen.add(sid)
+        const relationLabel =
+          hop > 0 && kids.length > 0 ? describeRelationship(g, kids[0], sid) : undefined
+        result.push({
+          ...node(g, sid, kind, undefined, side),
+          endedWithAnchor: isUnionEnded(g, fromId, sid),
+          relationLabel: relationLabel === 'unknown' ? undefined : relationLabel,
+        })
+        next.push(sid)
+      }
+    }
+    frontier = next
+    hop += 1
+  }
+  return result
 }
 
 // A kid can be legitimately recorded as the child of either parent — whoever happened to be
@@ -409,7 +448,7 @@ export function buildDescendantTreeFromGraph(memberIds: string[], g: Graph): Tre
       if (seen.has(id)) continue
       seen.add(id)
       const a = node(g, id, 'direct', parentOf.get(id))
-      const spouses = inLawSpouses(g, id, 'direct').filter((s) => !seen.has(s.id))
+      const spouses = spouseChain(g, id, 'direct').filter((s) => !seen.has(s.id))
       spouses.forEach((s) => seen.add(s.id))
       branches.push({ union: { a, spouses }, leftExtended: [], rightExtended: [], siblings: [] })
     }
@@ -470,7 +509,7 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   // Each sibling's own spouse rides along as an in-law (no parentId — same treatment as the root's
   // own spouse, aunts/uncles, cousins, and kids) so a married sibling gets a marriage line too,
   // instead of the sibling showing up as a lone box with their spouse missing entirely.
-  const siblingUnions: Union[] = siblingNodes.map((sib) => ({ a: sib, spouses: inLawSpouses(g, sib.id, 'direct') }))
+  const siblingUnions: Union[] = siblingNodes.map((sib) => ({ a: sib, spouses: spouseChain(g, sib.id, 'direct') }))
   const rootParentNodes: TreePerson[] = rootParents.map((id) => node(g, id, 'direct', primaryParentId(g, id)))
   const rootChildNodes: TreePerson[] = rootChildren.map((id) => node(g, id, 'direct', rootId))
 
@@ -504,18 +543,18 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
       const auntsUncles = (g.siblingsOf.get(parentId) ?? []).filter((id) => !branchIds.includes(id))
       for (const auId of auntsUncles) {
         if (extendedSide.some((u) => u.a.id === auId)) continue
-        extendedSide.push({ a: node(g, auId, 'extended', parentAnchor, side), spouses: inLawSpouses(g, auId, 'extended', side) })
+        extendedSide.push({ a: node(g, auId, 'extended', parentAnchor, side), spouses: spouseChain(g, auId, 'extended', side) })
         for (const cousinId of childrenOfEither(g, auId)) {
           if (cousinSide.some((b) => b.union.a.id === cousinId)) continue
           cousinSide.push({
-            union: { a: node(g, cousinId, 'extended', auId, side), spouses: inLawSpouses(g, cousinId, 'extended', side) },
+            union: { a: node(g, cousinId, 'extended', auId, side), spouses: spouseChain(g, cousinId, 'extended', side) },
             leftExtended: [],
             rightExtended: [],
             siblings: [],
           })
           for (const kidId of childrenOfEither(g, cousinId)) {
             extraKidsBranches.push({
-              union: { a: node(g, kidId, 'extended', cousinId, side), spouses: inLawSpouses(g, kidId, 'extended', side) },
+              union: { a: node(g, kidId, 'extended', cousinId, side), spouses: spouseChain(g, kidId, 'extended', side) },
               leftExtended: [],
               rightExtended: [],
               siblings: [],
@@ -565,7 +604,7 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   const kidsBranches: TreeBranch[] = [
     ...leftExtraKids,
     ...rootChildNodes.map((childNode) => ({
-      union: { a: childNode, spouses: inLawSpouses(g, childNode.id, 'direct') },
+      union: { a: childNode, spouses: spouseChain(g, childNode.id, 'direct') },
       leftExtended: [],
       rightExtended: [],
       siblings: [],
@@ -650,7 +689,7 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
       return {
         union: {
           a: node(g, childId, 'extended', parentWithinSet(g, childId, allowed), side),
-          spouses: inLawSpouses(g, childId, 'extended', side),
+          spouses: spouseChain(g, childId, 'extended', side),
         },
         leftExtended: [],
         rightExtended: [],

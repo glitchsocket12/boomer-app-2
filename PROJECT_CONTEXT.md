@@ -509,14 +509,21 @@ full transitive closure over spouse links, not one hop — a widow(er)'s subsequ
 Galchinsky, remarried to Andy Volin's widow Andi Romagnoli) was landing as their own redundant
 second "founder" of the group tree, since one hop of spouse-coverage never reached him, which
 duplicated Sam/Natalie under a disconnected second bloodline instead of leaving them as Andy's
-actual grandchildren of Roberta. Known remaining gap: the descendants-mode tree's Union model is
-hub-spoke (every `union.spouses` entry assumed married directly to `union.a`; `endedWithAnchor` is
-computed relative to `a` for exactly that reason — see FamilyTree.tsx's marriage-line comment), so
-it can't correctly express a genuine remarriage CHAIN (Andy deceased → Andi → Michael, a second,
-separate marriage) in one union — Michael simply isn't rendered in this view rather than rendered
-wrong. Founder wants both segments shown (Andy–Andi dashed, Andi–Michael solid); would need an
-actual data-model change (a real per-adjacent-pair ended status, not anchor-relative) — not yet
-scoped or built.
+actual grandchildren of Roberta.
+Genuine remarriage chains (2026-07-25, `familyTree.ts`/`FamilyTree.tsx`): the Union model was
+hub-spoke (every `union.spouses` entry assumed married directly to `union.a`), so a deceased blood
+person's widow(er)'s OWN later remarriage couldn't render correctly — appending the new spouse
+would compute their ended-status against the wrong person. Replaced every `inLawSpouses` call site
+with `spouseChain` (BFS over spouse links, unbounded hops, `endedWithAnchor` computed relative to
+whichever person a given chain entry is ACTUALLY married to, not always `a`) — this is what lets
+Andy †—Andi (dashed) —Michael (solid) all render correctly in one chain now. A 2nd-hop-or-later
+chain entry also gets a `relationLabel` (e.g. "step-parent"), reusing `relationshipLabels.ts`'s
+already-computed labels relative to the blood person's own kids — surfaced as a small caption under
+the box in `FamilyTree.tsx`. Deliberately NOT extended to `rootSpouses` (the tree's own root/focal
+person's direct spouse list stays as literally their own recorded spouses) nor to
+`groupIntoBranches`'s Parents/Grandparents-tier pairing (a separate, already-correct mechanism).
+Deferred: step-sibling/half-sibling labels for sibling-GROUPS (comparing pairs within a rendered
+sibling/cousin set) are a structurally different problem, not yet built.
 Full story: PROJECT_HISTORY.md.
 │   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
 │   │                            to Log out (App.tsx `settings` crumb). Account + AI settings

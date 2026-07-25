@@ -745,10 +745,10 @@ export function FamilyTreeView({
                 const leftPlaced = layout.placed.find((p) => p.person === chain[k])
                 const rightPlaced = layout.placed.find((p) => p.person === chain[k + 1])
                 if (!leftPlaced || !rightPlaced) continue
-                // endedWithAnchor on chain[k+1] is always relative to union.a, not to chain[k] —
-                // but since every spouse's real marriage IS to `a` (a hub-spoke model; the chain is
-                // only a layout convenience), that's the right status for the segment drawn here
-                // regardless of position in the chain.
+                // endedWithAnchor on chain[k+1] is relative to whichever person they're actually
+                // married to earlier in the chain (chain[k] for a direct spouse of `a`; a further
+                // hop's own spouse otherwise — see familyTree.ts's spouseChain) — precomputed there,
+                // so this just reads the flag without needing to know who it was computed against.
                 const ended = Boolean(chain[k + 1].endedWithAnchor)
                 lines.push({
                   x1: startX + leftPlaced.x + leftPlaced.w,
@@ -794,11 +794,23 @@ export function FamilyTreeView({
                     style={{ cursor: clickable ? 'pointer' : 'default' }}
                   >
                     <rect x={x} y={y} width={p.w} height={BOX_H} rx={6} fill={fill} stroke={border} strokeWidth={1} />
-                    <text x={x + p.w / 2} y={y + 27} textAnchor="middle" fontSize="14" fontFamily="Georgia, serif" fill={textColor}>
+                    <text
+                      x={x + p.w / 2}
+                      y={p.person.relationLabel ? y + 21 : y + 27}
+                      textAnchor="middle"
+                      fontSize="14"
+                      fontFamily="Georgia, serif"
+                      fill={textColor}
+                    >
                       {p.person.name}
                       {p.person.deceased ? ' †' : ''}
                       {clickable ? ' ›' : ''}
                     </text>
+                    {p.person.relationLabel && (
+                      <text x={x + p.w / 2} y={y + 35} textAnchor="middle" fontSize="9" fontFamily="Georgia, serif" fill="#999">
+                        {p.person.relationLabel}
+                      </text>
+                    )}
                   </g>
                 )
               })}
