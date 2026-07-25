@@ -582,7 +582,10 @@ Full story: PROJECT_HISTORY.md.
 │                                No free-text "When" input — `when_text` is auto-derived from the
 │                                exact date(s) and hidden, per founder feedback that it was
 │                                confusing next to the real date. Reached from the Home/Calendar "N
-│                                events found" nudges
+│                                events found" nudges. Each card shows a small source-calendar badge
+                                (the connected calendar's label) when the founder has 2+ calendars
+                                connected, so multi-calendar founders can tell which candidates came
+                                from which feed (2026-07-25)
 ├── components/
 │   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
 │   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
