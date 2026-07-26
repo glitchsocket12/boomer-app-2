@@ -5,7 +5,7 @@ import { PersonChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 import { GROUP_TYPES } from '../lib/groupTypes'
 
-type PersonRef = { id: string; name: string; last_name: string | null }
+type PersonRef = { id: string; name: string; last_name: string | null; is_self?: boolean }
 type MomentRef = { id: string; occasion: string | null; raw_description: string }
 
 export type Group = {
@@ -45,7 +45,10 @@ export function filterGroups(groups: Group[], search: string, typeFilter: string
     if (typeFilter === 'untyped' && group.group_type) return false
     if (typeFilter !== 'all' && typeFilter !== 'untyped' && group.group_type !== typeFilter) return false
     if (!query) return true
-    const memberNames = explicitMembers.map((p) => `${p.name} ${p.last_name ?? ''}`)
+    // Excludes the founder's own name from the match — searching your own name should surface
+    // groups that mention someone ELSE by that name, or that are literally named for it, not
+    // every group you happen to personally belong to.
+    const memberNames = explicitMembers.filter((p) => !p.is_self).map((p) => `${p.name} ${p.last_name ?? ''}`)
     const haystack = [group.name, group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
     return haystack.includes(query)
   })
@@ -101,7 +104,7 @@ export default function Groups({
     const { data } = await supabase
       .from('groups')
       .select(
-        'id, name, summary, group_type, person_groups(people(id, name, last_name)), moment_groups(moments(id, occasion, raw_description))'
+        'id, name, summary, group_type, person_groups(people(id, name, last_name, is_self)), moment_groups(moments(id, occasion, raw_description))'
       )
       .order('name')
 
@@ -144,13 +147,6 @@ export default function Groups({
     if (error || !data) {
       setAddError("Couldn't start a new group — please try again.")
       return
-    }
-
-    // Every group the founder creates should include them — otherwise a group they made
-    // themselves (e.g. their own family) can end up not showing on their own profile page.
-    const { data: self } = await supabase.from('people').select('id').eq('is_self', true).maybeSingle()
-    if (self) {
-      await supabase.from('person_groups').upsert({ person_id: self.id, group_id: data.id }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
     }
 
     onSelectGroup({ id: data.id, name: data.name })

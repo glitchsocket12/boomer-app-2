@@ -217,17 +217,19 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
     const { data: group } = await supabase.from('groups').insert({ user_id: userId, name, group_type: type }).select().single()
     if (group) {
       const rawNames = currentGroupMembers.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
-      const memberIds = [selfPerson.id]
+      const memberIds: string[] = []
       for (const raw of rawNames) {
         const id = await resolveOrCreatePerson(raw)
         if (id) memberIds.push(id)
       }
-      await supabase
-        .from('person_groups')
-        .upsert(
-          memberIds.map((id) => ({ person_id: id, group_id: group.id })),
-          { onConflict: 'person_id,group_id', ignoreDuplicates: true }
-        )
+      if (memberIds.length > 0) {
+        await supabase
+          .from('person_groups')
+          .upsert(
+            memberIds.map((id) => ({ person_id: id, group_id: group.id })),
+            { onConflict: 'person_id,group_id', ignoreDuplicates: true }
+          )
+      }
       await refreshAllPeople()
     }
     setSavingGroup(false)

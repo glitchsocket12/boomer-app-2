@@ -149,6 +149,14 @@ export default function Events({
       return
     }
 
+    // Most logged moments are things the founder actually experienced, so tag them as an
+    // attendee immediately instead of making them tap themselves into "Who was there" every
+    // time — same notes-row shape EventDetail.tsx's own handleAddAttendee writes.
+    const { data: self } = await supabase.from('people').select('id').eq('is_self', true).maybeSingle()
+    if (self) {
+      await supabase.from('notes').insert({ person_id: self.id, moment_id: data.id, content: 'Was there.' })
+    }
+
     onSelectEvent({ id: data.id, summary: 'Untitled moment' })
   }
 
