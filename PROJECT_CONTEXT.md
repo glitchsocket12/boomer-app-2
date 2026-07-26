@@ -299,7 +299,10 @@ src/
 │   │                            form, 2026-07-20) → lands on its detail page to
 │   │                            rename via the pencil; type filter dropdown
 │   │                            (All/No type/Family/Friend group/School/Team/Work,
-│   │                            2026-07-20)
+│   │                            2026-07-20). `search`/`typeFilter` + scroll position
+│   │                            are owned by App.tsx, not this component, so a trip
+│   │                            into a group and back via the in-page arrow restores
+│   │                            both instead of resetting (item 62, 2026-07-26)
 │   ├── GroupDetail.tsx        — "Generate this family's tree →" button on Family-typed
 │   │                            groups (item 41), passes explicit member ids straight through
 │   │                            to FamilyTree.tsx (`memberIds` prop) which calls
@@ -1010,6 +1013,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 59. **EventDetail affiliated-group attendee suggestions missing "Add all"** — requested 2026-07-25 (USAFA Graduation event). `GroupDetail.tsx` already has "✓ Add all suggestions" paired with "× Remove all suggestions" (`GroupDetail.tsx:826`); `EventDetail.tsx`'s matching "Also from the affiliated group?" attendee-suggestion section only has the remove-all half (`EventDetail.tsx:833`, `:860`) — add the accept-all counterpart to match.
 60. **New-person name inputs don't stay side by side** — requested 2026-07-25. `PersonDetail.tsx`'s first/middle/last rename inputs (`nameInputRow`/`renameInput`, ~line 1472) are flex with no explicit width or `flex-basis` per box, so they can wrap to separate lines instead of showing as three equal-sized boxes in one row — founder found this confusing. Styling-only fix (give each input a shared `flex: 1`/basis).
 61. **First-person "my" misattributed to the wrong person** — reported 2026-07-25 on Ken Miller's profile: a note read "Mr. Miller was Ken's 5th grade teacher" when the founder meant Mr. Miller was *their own* 5th grade teacher, not Ken's. Founder's framing: any time the app captures a first-person statement ("my," "I"), it needs to resolve that to the signed-in user (self) specifically, not to whichever person's page/context the note was captured on. Related to item 33 ("refer to user as 'You'") and item 32's `is_self` self-profile — not yet root-caused which capture path (chat/`converse`, `update-moment`, or a direct profile note) produced this one.
+62. ~~Groups page lost its filter + scroll position when returning via the back arrow~~ — **DONE 2026-07-26.** Founder-reported: pick a group-type filter, click into a group, then use the in-page "← Back to Groups" arrow — landed back at an unfiltered, top-of-page list instead of where you left off. Root cause: `Groups.tsx` unmounts every time a crumb is pushed (App.tsx swaps it out for `GroupDetail`), so its local `search`/`typeFilter` state and scroll position were lost on every return trip. Fixed by lifting both into `App.tsx` (which never unmounts) and adding a scroll-position ref that's restored once the list reloads, cleared on a direct top-nav tab click so only the actual back-arrow round trip restores scroll. Verified live against the real account: "Friend group" filter + scrolled-to "Colorado Springs Friends" → back arrow correctly restored both; direct "Groups" tab click still lands at the top.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 

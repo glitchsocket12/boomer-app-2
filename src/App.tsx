@@ -160,6 +160,16 @@ export default function App() {
   const [onboardingPending, setOnboardingPending] = useState<boolean | null>(null)
   const [view, setView] = useState<Tab>(() => restoreNav().view)
   const [navStack, setNavStack] = useState<Crumb[]>(() => restoreNav().navStack)
+  // Groups' own search/type-filter state, lifted up here instead of living inside Groups.tsx —
+  // Groups unmounts whenever a crumb is pushed (e.g. clicking into a group), so state that lived
+  // only inside it reset every time the in-page back arrow returned you to the list.
+  const [groupsSearch, setGroupsSearch] = useState('')
+  const [groupsTypeFilter, setGroupsTypeFilter] = useState('all')
+  // Scroll position the Groups list was at right before navigating into a group — null except in
+  // the brief window between leaving the list and returning to it via its own back arrow. Cleared
+  // on a direct tab click (goToTab) so only that back-arrow round trip restores scroll, not every
+  // way of landing on the Groups tab.
+  const groupsScrollRef = useRef<number | null>(null)
   // Guards against re-pushing a history entry for a state change that itself came FROM a
   // popstate (browser Back/Forward) — otherwise every Back press would immediately push a
   // matching Forward entry right back on top of it.
@@ -251,6 +261,9 @@ export default function App() {
         setView('home')
         setNavStack([])
         setAuthView('landing')
+        setGroupsSearch('')
+        setGroupsTypeFilter('all')
+        groupsScrollRef.current = null
         sessionStorage.removeItem(NAV_STORAGE_KEY)
         // Replace (not push) so Back doesn't return to the authenticated trail post-logout.
         skipNextHistoryPush.current = true
@@ -295,6 +308,7 @@ export default function App() {
   }
 
   function goToTab(tab: Tab) {
+    groupsScrollRef.current = null
     setView(tab)
     setNavStack([])
   }
@@ -507,9 +521,17 @@ export default function App() {
         )}
         {view === 'groups' && (
           <Groups
+            search={groupsSearch}
+            onSearchChange={setGroupsSearch}
+            typeFilter={groupsTypeFilter}
+            onTypeFilterChange={setGroupsTypeFilter}
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
-            onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
+            onSelectGroup={(g) => {
+              groupsScrollRef.current = window.scrollY
+              pushCrumb({ type: 'group', id: g.id, label: g.name })
+            }}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+            restoreScrollRef={groupsScrollRef}
           />
         )}
       </>

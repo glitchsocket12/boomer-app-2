@@ -52,18 +52,31 @@ export function filterGroups(groups: Group[], search: string, typeFilter: string
 }
 
 export default function Groups({
+  search,
+  onSearchChange,
+  typeFilter,
+  onTypeFilterChange,
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  restoreScrollRef,
 }: {
+  search: string
+  onSearchChange: (value: string) => void
+  typeFilter: string
+  onTypeFilterChange: (value: string) => void
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  // Set by App.tsx to the scroll position this page was at right before navigating into a
+  // group, so the in-page back arrow can restore it once the list reloads instead of landing
+  // back at the top. search/typeFilter are lifted the same way (owned by App.tsx, not here) —
+  // Groups unmounts every time a crumb is pushed, so any state that lived only in here reset on
+  // every trip back from a group's own page.
+  restoreScrollRef?: { current: number | null }
 }) {
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState('all')
   const [addingGroup, setAddingGroup] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const requestedSummaries = useRef(new Set<string>())
@@ -71,6 +84,17 @@ export default function Groups({
   useEffect(() => {
     loadGroups()
   }, [])
+
+  // Restore only after the list has actually loaded and rendered at full height — doing this
+  // while the "Loading…" placeholder is still showing would scroll to a position the real
+  // content hasn't grown tall enough to reach yet.
+  useEffect(() => {
+    if (!loading && restoreScrollRef && restoreScrollRef.current != null) {
+      window.scrollTo(0, restoreScrollRef.current)
+      restoreScrollRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
 
   async function loadGroups() {
     setLoading(true)
@@ -138,9 +162,9 @@ export default function Groups({
     <GroupsView
       groups={groups}
       search={search}
-      onSearchChange={setSearch}
+      onSearchChange={onSearchChange}
       typeFilter={typeFilter}
-      onTypeFilterChange={setTypeFilter}
+      onTypeFilterChange={onTypeFilterChange}
       onAddGroup={handleAddGroup}
       addingGroup={addingGroup}
       addError={addError}
