@@ -6,6 +6,7 @@ import {
   familySignalPromptSingleSubject,
   FAMILY_SIGNAL_JSON_FIELD_SINGLE_SUBJECT,
 } from "../_shared/relationships.ts"
+import { findSelfPerson } from "../_shared/selfContext.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -56,7 +57,7 @@ serve(async (req) => {
 
     const { data: allPeople } = await supabaseClient
       .from("people")
-      .select("id, name, last_name, nicknames, middle_name, goes_by_other")
+      .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
     const lastNameById: Record<string, string | null> = {}
@@ -87,7 +88,19 @@ serve(async (req) => {
     }
     for (const key of ambiguousKeys) delete idByName[key]
 
-    const addFactSystemPrompt = `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, nicknames/goes-by = ${person?.nicknames || "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.
+    const selfInfo = findSelfPerson(allPeople, nameById)
+    const isSelfProfile = selfInfo?.id === personId
+    // Ken Miller bug (2026-07-25): the text is typed ON this person's profile, but a first-person
+    // "my"/"I"/"we" in it refers to the APP'S USER, not to whoever's profile it's captured on —
+    // e.g. "Mr. Miller was my 5th grade teacher" typed on Ken Miller's page is a fact about the
+    // user's own teacher, not about Ken. Without this, "lightly cleaned up" gave the model room to
+    // rewrite "my" as "Ken's" since the whole prompt frames the text as being about Ken.
+    const selfPronounInstruction =
+      selfInfo && selfInfo.name && !isSelfProfile
+        ? `\n\nIMPORTANT — this text is being typed on ${person?.name ?? "this person"}'s profile page, but that does NOT mean a first-person pronoun in it ("my"/"I"/"me"/"we"/"our") refers to ${person?.name ?? "them"}. The app's user is themselves separately recorded as "${selfInfo.name}" — any first-person pronoun refers to ${selfInfo.name}, the person typing, not to ${person?.name ?? "this profile"}. When producing a "note" value, never rewrite "my X" as "${person?.name ?? "this person"}'s X" — if you rewrite it out of first person at all, resolve it to "${selfInfo.name}'s X" instead. If in doubt, leave the pronoun exactly as typed rather than guessing whose it is.`
+        : ""
+
+    const addFactSystemPrompt = `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, nicknames/goes-by = ${person?.nicknames || "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.${selfPronounInstruction}
 
 Respond ONLY with a JSON object in this exact shape:
 {"type": "name_update" | "birthday_update" | "anniversary_update" | "note", "value": <see below>, "group_signal": null | {"group_name": "string", "confidence": "high" | "medium"}, ${FAMILY_SIGNAL_JSON_FIELD_SINGLE_SUBJECT}}

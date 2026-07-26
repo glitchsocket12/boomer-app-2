@@ -160,13 +160,33 @@ export default function PersonDetail({
   const [lastNameSuggestion, setLastNameSuggestion] = useState<{ lastName: string; sourceName: string } | null>(null)
   const [deceasedDateInput, setDeceasedDateInput] = useState('')
   const [savingDeceased, setSavingDeceased] = useState(false)
+  const [gender, setGender] = useState<string | null>(null)
+  const [savingGender, setSavingGender] = useState(false)
 
   useEffect(() => {
     setLastNameSuggestion(null)
     setEditingName(false)
     loadData()
     loadGroupsList()
+    loadGender()
   }, [personId])
+
+  // Own query, separate from the main person select in loadData() below — see the "isolate a new
+  // column" gotcha in project_boomer_infra.md: bundling `gender` into that shared select would 400
+  // the WHOLE profile page (name, notes, everything) until the migration adding the column has run.
+  async function loadGender() {
+    const { data } = await supabase.from('people').select('gender').eq('id', personId).maybeSingle()
+    setGender(data?.gender ?? null)
+  }
+
+  async function saveGender(value: string) {
+    setSavingGender(true)
+    const newValue = value || null
+    const { error } = await supabase.from('people').update({ gender: newValue }).eq('id', personId)
+    setSavingGender(false)
+    if (error) return
+    setGender(newValue)
+  }
 
   // Full group roster for the manual "tag a group" search box below — separate from `groups`
   // (this person's actual memberships), same split EventDetail.tsx uses for its own group tagger.
@@ -632,6 +652,9 @@ export default function PersonDetail({
       onDeceasedDateInputChange={setDeceasedDateInput}
       onSaveDeceased={saveDeceased}
       onClearDeceased={clearDeceased}
+      gender={gender}
+      savingGender={savingGender}
+      onChangeGender={saveGender}
       newFact={newFact}
       onNewFactChange={setNewFact}
       saving={saving}
@@ -722,6 +745,9 @@ export function PersonDetailView({
   onDeceasedDateInputChange = () => {},
   onSaveDeceased = () => {},
   onClearDeceased = () => {},
+  gender = null,
+  savingGender = false,
+  onChangeGender = () => {},
   newFact = '',
   onNewFactChange = () => {},
   saving = false,
@@ -800,6 +826,9 @@ export function PersonDetailView({
   onDeceasedDateInputChange?: (v: string) => void
   onSaveDeceased?: () => void
   onClearDeceased?: () => void
+  gender?: string | null
+  savingGender?: boolean
+  onChangeGender?: (value: string) => void
   newFact?: string
   onNewFactChange?: (v: string) => void
   saving?: boolean
@@ -936,6 +965,21 @@ export function PersonDetailView({
               )}
             </div>
           )}
+          <div style={styles.deceasedRow}>
+            <span style={styles.deceasedLabel}>Gender:</span>
+            <select
+              value={gender ?? ''}
+              onChange={(e) => onChangeGender(e.target.value)}
+              disabled={savingGender}
+              style={styles.goesBySelect}
+            >
+              <option value="">Not set</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="non-binary">Non-binary</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
           <div style={styles.nameButtonRow}>
             <button type="submit" disabled={savingName || !firstNameInput.trim()} style={styles.saveButton}>
               {savingName ? '…' : 'Save'}

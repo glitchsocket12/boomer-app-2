@@ -31,6 +31,12 @@ export type TreePerson = {
   parentId?: string
   side?: TreeSide
   deceased?: boolean
+  // 'male' | 'female' | 'non-binary' | 'other', or undefined if never set on the profile — drives
+  // the small gender icon on each tile (item 44). Fetched via its own query in loadGraph, not
+  // bundled into the main people select — see the "isolate a new column" gotcha in
+  // project_boomer_infra.md: PostgREST 400s the WHOLE select if `gender` doesn't exist yet on a
+  // given database, which would otherwise blank out the entire tree until the migration runs.
+  gender?: string | null
   endedWithAnchor?: boolean
   // Divorce specifically, never death — only set on rootDirect.spouses, where it drives the
   // "mark ended"/"undo" controls (a death-caused ending isn't something the UI should offer to undo).
@@ -69,6 +75,9 @@ export type Graph = {
   // Keyed by unionKey(a, b) — a spouse/partner pair whose relationship row has ended_reason set
   // (divorce). Death isn't stored here; isUnionEnded also checks deceasedIds directly.
   endedPairs: Set<string>
+  // Optional — real loadGraph() always populates it, but the demo dataset and test fixtures build
+  // a Graph by hand without it, and there's nothing gender-specific for them to get wrong by omitting it.
+  genderById?: Map<string, string>
 }
 
 function unionKey(a: string, b: string): string {
@@ -91,10 +100,19 @@ function push(map: Map<string, string[]>, key: string, value: string) {
 async function loadGraph(): Promise<Graph> {
   // Ordered by created_at so which parent/spouse ends up "first" (primaryParentId, the tree's
   // connector-line anchor) is stable across reloads instead of depending on unspecified row order.
-  const [{ data: people }, { data: rels }] = await Promise.all([
+  const [{ data: people }, { data: rels }, { data: genderRows }] = await Promise.all([
     supabase.from('people').select('id, name, last_name, is_self, deceased_date'),
     supabase.from('relationships').select('person_a_id, person_b_id, kind, ended_reason').order('created_at'),
+    // Own query, separate from the main people select above — see TreePerson.gender's comment:
+    // if `gender` doesn't exist yet (migration not run), this call alone fails (data comes back
+    // null) and the tree still renders fine with no icons, instead of breaking entirely.
+    supabase.from('people').select('id, gender'),
   ])
+
+  const genderById = new Map<string, string>()
+  for (const p of genderRows ?? []) {
+    if (p.gender) genderById.set(p.id, p.gender)
+  }
 
   const nameById = new Map<string, string>()
   let selfId: string | null = null
@@ -123,11 +141,11 @@ async function loadGraph(): Promise<Graph> {
       push(siblingsOf, r.person_b_id, r.person_a_id)
     }
   }
-  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs }
+  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs, genderById }
 }
 
 function node(g: Graph, id: string, kind: TreePersonKind, parentId: string | undefined, side?: TreeSide): TreePerson {
-  return { id, name: g.nameById.get(id) ?? 'Unknown', kind, parentId, side, deceased: g.deceasedIds.has(id) }
+  return { id, name: g.nameById.get(id) ?? 'Unknown', kind, parentId, side, deceased: g.deceasedIds.has(id), gender: g.genderById?.get(id) }
 }
 
 // Which of the root's two parent-side couples (by couple position in parentCouples, not position
@@ -501,7 +519,14 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   // family tree", the Family circle card, or re-centering by clicking a node) — every ego-mode tree
   // is inherently "focused" on its root, so the root is always the focal (purple) person. isSelfRoot
   // is unrelated to that now — it only decides the "You" tier label below.
-  const rootNode: TreePerson = { id: rootId, name: rootName, kind: 'focal', parentId: rootAnchor, deceased: g.deceasedIds.has(rootId) }
+  const rootNode: TreePerson = {
+    id: rootId,
+    name: rootName,
+    kind: 'focal',
+    parentId: rootAnchor,
+    deceased: g.deceasedIds.has(rootId),
+    gender: g.genderById?.get(rootId),
+  }
   // Show every spouse/partner on file, not just the first — remarriage/widowed-and-remarried
   // shouldn't silently drop a spouse from the tree.
   const spouseNodes: TreePerson[] = rootSpouses.map((id) => ({

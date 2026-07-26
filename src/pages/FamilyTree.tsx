@@ -32,6 +32,14 @@ const TRASH_ICON = (
   </svg>
 )
 
+// Item 44 — only male/female get a glyph (the traditional family-tree square/circle convention);
+// non-binary/other are left unmarked rather than guessing at a symbol without founder sign-off.
+function genderGlyph(gender: string | null | undefined): string {
+  if (gender === 'male') return '♂ '
+  if (gender === 'female') return '♀ '
+  return ''
+}
+
 const COLORS: Record<TreePerson['kind'], { border: string; fill: string; text: string }> = {
   focal: { border: '#6B4E9E', fill: '#F1EDF9', text: '#4A3C7A' },
   direct: { border: '#2E4034', fill: '#F4F8F1', text: '#2E4034' },
@@ -885,6 +893,7 @@ export function FamilyTreeView({
                       fontFamily="Georgia, serif"
                       fill={textColor}
                     >
+                      {genderGlyph(p.person.gender)}
                       {p.person.name}
                       {p.person.deceased ? ' †' : ''}
                       {clickable ? ' ›' : ''}

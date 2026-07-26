@@ -102,6 +102,18 @@ export default function GroupDetail({
   const [mergeCandidate, setMergeCandidate] = useState<GroupRef | null>(null)
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
+  const [selfId, setSelfId] = useState<string | null>(null)
+
+  // Account-wide, fetched once — lets member chips show "You" instead of the founder's own name
+  // (same pattern as EventDetail.tsx's selfId for attendee chips).
+  useEffect(() => {
+    supabase
+      .from('people')
+      .select('id')
+      .eq('is_self', true)
+      .maybeSingle()
+      .then(({ data }) => setSelfId(data?.id ?? null))
+  }, [])
 
   useEffect(() => {
     loadMoments()
@@ -655,6 +667,7 @@ export default function GroupDetail({
       summary={summary}
       moments={moments}
       explicitMembers={explicitMembers}
+      selfId={selfId}
       suggestedMembers={suggestedMembers}
       suggestedFamilyMembers={suggestedFamilyMembers}
       confirmedAssociatedGroups={confirmedAssociatedGroups}
@@ -757,6 +770,7 @@ export function GroupDetailView({
   summary,
   moments,
   explicitMembers,
+  selfId = null,
   suggestedMembers,
   suggestedFamilyMembers = [],
   confirmedAssociatedGroups,
@@ -831,6 +845,7 @@ export function GroupDetailView({
   summary: string | null
   moments: Moment[]
   explicitMembers: PersonRef[]
+  selfId?: string | null
   suggestedMembers: PersonRef[]
   suggestedFamilyMembers?: PersonRef[]
   suggestionsEnabled?: boolean
@@ -899,8 +914,13 @@ export function GroupDetailView({
   actionError?: string | null
   editChat?: ReactNode
 }) {
-  const sortedExplicitMembers = sortByLastName(explicitMembers)
-  const visibleExplicitMembers = membersExpanded ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
+  const [memberSearch, setMemberSearch] = useState('')
+  const memberQuery = memberSearch.trim().toLowerCase()
+  const sortedExplicitMembers = sortByLastName(explicitMembers).filter(
+    (p) => !memberQuery || `${p.name} ${p.last_name ?? ''}`.toLowerCase().includes(memberQuery)
+  )
+  const visibleExplicitMembers =
+    membersExpanded || memberQuery ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
   const visibleSuggestedMembers = suggestedMembers.slice(0, MEMBER_SUGGESTION_LIMIT)
   const sortedConfirmedAssociatedGroups = [...confirmedAssociatedGroups].sort((a, b) => a.name.localeCompare(b.name))
 
@@ -974,22 +994,30 @@ export function GroupDetailView({
 
       <PhotoGallery />
 
-      <h2 style={styles.membersHeading}>Who's in this group ({sortedExplicitMembers.length})</h2>
+      <h2 style={styles.membersHeading}>Who's in this group ({explicitMembers.length})</h2>
       {explicitMembers.length === 0 ? (
         <p style={styles.empty}>No members yet — add someone using the chat box below.</p>
       ) : (
         <>
-          <div style={styles.chipRow}>
-            {visibleExplicitMembers.map((p) => (
-              <MemberChip
-                key={p.id}
-                person={p}
-                onSelect={() => onSelectPerson(p)}
-                onRemove={readOnly ? undefined : () => onRemoveMember(p)}
-              />
-            ))}
-          </div>
-          {sortedExplicitMembers.length > MEMBER_LIST_LIMIT && (
+          {explicitMembers.length > MEMBER_LIST_LIMIT && (
+            <SearchBox value={memberSearch} onChange={setMemberSearch} placeholder="Search members…" />
+          )}
+          {sortedExplicitMembers.length === 0 ? (
+            <p style={styles.empty}>No one matches "{memberSearch}".</p>
+          ) : (
+            <div style={styles.chipRow}>
+              {visibleExplicitMembers.map((p) => (
+                <MemberChip
+                  key={p.id}
+                  person={p}
+                  isSelf={p.id === selfId}
+                  onSelect={() => onSelectPerson(p)}
+                  onRemove={readOnly ? undefined : () => onRemoveMember(p)}
+                />
+              ))}
+            </div>
+          )}
+          {!memberQuery && sortedExplicitMembers.length > MEMBER_LIST_LIMIT && (
             <button onClick={onToggleMembersExpanded} style={styles.showMoreButton}>
               {membersExpanded ? '▾ Show fewer members' : `▸ Show all ${sortedExplicitMembers.length} members`}
             </button>
@@ -1434,15 +1462,17 @@ function GroupNoteCard({
 // mode) simply never shows the hover badge.
 function MemberChip({
   person,
+  isSelf = false,
   onSelect,
   onRemove,
 }: {
   person: PersonRef
+  isSelf?: boolean
   onSelect: () => void
   onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
-  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+  const label = isSelf ? 'You' : `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
 
   return (
     <div

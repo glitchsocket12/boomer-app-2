@@ -823,6 +823,7 @@ export function EventDetailView({
               <AttendeeChip
                 key={p.id}
                 person={p}
+                isSelf={p.id === selfId}
                 onSelect={() => onSelectPerson(p)}
                 onRemove={readOnly ? undefined : () => onRemoveAttendee(p)}
               />
@@ -1059,15 +1060,17 @@ const TRASH_ICON = (
 // `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
 function AttendeeChip({
   person,
+  isSelf = false,
   onSelect,
   onRemove,
 }: {
   person: PersonRef
+  isSelf?: boolean
   onSelect: () => void
   onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
-  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+  const label = isSelf ? 'You' : `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
 
   return (
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
