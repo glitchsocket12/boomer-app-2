@@ -227,7 +227,10 @@ src/
 │   │                            separated, matched against existing people case-
 │   │                            insensitively or created new, mirroring
 │   │                            `writeRelationship.ts`'s create-new logic but for plain
-│   │                            group membership); final handoff regenerates
+│   │                            group membership — no longer auto-seeded with the
+│   │                            founder themselves, 2026-07-26, same fix as
+│   │                            Groups.tsx's own "+ Add Group"; typing your own name in
+│   │                            still works like any other member); final handoff regenerates
 │   │                            `suggest-prompts` live (`{refresh:true}`) before dropping
 │   │                            into real Home. Every stage has a "Skip" escape hatch, which
 │   │                            (like finishing normally) sets the `onboarding_complete`
@@ -308,7 +311,13 @@ src/
 │   │                            2026-07-20). `search`/`typeFilter` + scroll position
 │   │                            are owned by App.tsx, not this component, so a trip
 │   │                            into a group and back via the in-page arrow restores
-│   │                            both instead of resetting (item 62, 2026-07-26)
+│   │                            both instead of resetting (item 62, 2026-07-26).
+│   │                            Creating a group no longer auto-adds the founder as a
+│   │                            member (2026-07-26 — see backlog note in §10; same fix
+│   │                            in Onboarding.tsx's Stage 4 group creation), and search
+│   │                            excludes the founder's own name from member-name
+│   │                            matching so searching your own surname only surfaces
+│   │                            groups with someone ELSE by that name, or named for it
 │   ├── GroupDetail.tsx        — "Generate this family's tree →" button on Family-typed
 │   │                            groups (item 41), passes explicit member ids straight through
 │   │                            to FamilyTree.tsx (`memberIds` prop) which calls
@@ -361,7 +370,12 @@ src/
 │   │                            plus a "No tags yet" option. "Manage tags →" link
 │   │                            (item 28 follow-up, 2026-07-22) under the heading,
 │   │                            always visible (not gated on any tag being applied
-│   │                            yet) → `ManageTags.tsx`
+│   │                            yet) → `ManageTags.tsx`. Creating a new event now
+│   │                            auto-tags the founder under "Who was there" (2026-07-26,
+│   │                            same notes-row shape as EventDetail.tsx's manual
+│   │                            add-attendee) — the flip side of removing group
+│   │                            auto-add above; calendar-imported events and chat-
+│   │                            logged moments are NOT covered by this yet (§10)
 │   ├── Calendar.tsx           — (2026-07-24, item 48 phase 1) new nav tab. Upcoming
 │   │                            list (next 8 moments + reminder next-occurrences,
 │   │                            soonest first) + a real month grid below (prev/
@@ -1092,7 +1106,9 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - **How bad relationship data can appear without touching the family tree page**: confirmed 2026-07-22 — `add-fact`, `converse`, `update-moment`, and `update-group` all call `_shared/relationships.ts`'s `applyFamilySignals`, which writes directly to the `relationships` table (plus reciprocal notes) with **no confirmation banner**, whenever the AI extracts a spouse/sibling/parent/child/partner signal naming someone whose full name matches *exactly* one person on file (deliberate founder-approved exception to "suggest, don't assert" — siblings named together link with no banner). The one concrete risk: if two different people share an identical full name, this "confident exact match" could resolve to the wrong one of the two — worth keeping in mind if another mis-wired relationship turns up with no clear manual cause.
 - ~~Siblings now inherit shared parents (2026-07-20, see PROJECT_HISTORY §16)~~ — fixed the bug where adding a sibling via the family tree "+" picker never copied an existing sibling's parents onto the new person. **Deployed and confirmed live 2026-07-20**: frontend fix (`writeRelationship.ts`) via Vercel, edge-function mirror (`add-fact`/`converse`/`update-group`/`update-moment`) via `npx supabase functions deploy` with a founder-provided token — all 4 returned 401 (not platform-not-found) post-deploy, no Cloudflare retries needed this round.
 - ~~Relationships table + `is_self` migration + 5 Edge Function redeploy (item 32, 2026-07-20)~~ — **applied and deployed live 2026-07-20** via the Management API + `npx supabase functions deploy` with a founder-provided token (`add-fact`/`converse`/`update-group`/`update-moment`/`person-facts`, 3 of the 5 needed a retry after a transient Cloudflare 502). Backfill landed 75 relationship rows from existing notes. Click-tested end-to-end (My Page onboarding/circle/`+`, family tree render + re-center + `+`) against the real `jakevolin@gmail.com` account with disposable test data, cleaned up after — see PROJECT_HISTORY §15 for the full verification story, including a self-inflicted name-collision near-miss that was fully cleaned up.
-- ~~Self missing from groups created before the 2026-07-20 auto-add-self fix~~ — **backfilled 2026-07-20**: one-off script (authenticated as the real `jakevolin@gmail.com` account, RLS-respecting) added the self person to all 22 pre-existing groups that were missing them (only "Volin Family" already had self as a member). Cached group summaries were deliberately NOT invalidated by this backfill, to avoid a 22-call regeneration cost spike (CLAUDE.md rule 3) — a summary will just read as slightly stale until it's naturally refreshed.
+- ~~Self missing from groups created before the 2026-07-20 auto-add-self fix~~ — **backfilled 2026-07-20**: one-off script (authenticated as the real `jakevolin@gmail.com` account, RLS-respecting) added the self person to all 22 pre-existing groups that were missing them (only "Volin Family" already had self as a member). Cached group summaries were deliberately NOT invalidated by this backfill, to avoid a 22-call regeneration cost spike (CLAUDE.md rule 3) — a summary will just read as slightly stale until it's naturally refreshed. **Reverted 2026-07-26** (founder feedback: being auto-added to every group — including ones not really about them — polluted their own Groups search): the 2026-07-20 auto-add-on-create fix and this backfill's effect are both undone; see the new item below.
+- **Founder needs to run a SQL migration: remove self from all existing groups (2026-07-26)** — `supabase/migrations_manual/2026-07-26-remove-self-from-existing-groups.sql`, paste into the Supabase SQL Editor (preview SELECT first, then the DELETE). Until this runs, "Your groups" on Circle.tsx and the Groups list still show the founder as a member of nearly every group from the 2026-07-20 backfill above — only NEW groups are unaffected. Re-add yourself afterward to whichever groups are genuinely yours (e.g. your real family group) the same way you'd add anyone else.
+- **Auto-add-founder-to-events (2026-07-26) only covers the manual "+ Add Event" shell** — calendar-imported events (`ImportReview.tsx`'s `applyAttendees`) still don't tag the founder as an attendee; deferred because the merge-into-existing-moment path needs a dedup guard (no unique constraint on `notes`) that's only really testable against a live calendar import, not a quick click-test. Separately, whether Home's AI chat (`converse`) already tags the founder when they narrate their own presence in first person ("I went to Kate's wedding") is unconfirmed — that's prompt behavior, not touched by this fix, worth checking empirically before assuming it's covered.
 - Email confirmation must be re-enabled (with a proper redirect URL) before real users.
 - **Founder cleanup needed: disposable test account `onboarding.verify.test@example.com`** — created 2026-07-22 to verify the new onboarding experience end-to-end (signup → tree → groups → Home). Fully isolated by RLS from real data, but this session has no Supabase auth-admin access to delete it — needs removing via the dashboard.
 - **Founder needs to run a SQL migration: `feedback_notes` table (item — click-to-comment feedback widget, 2026-07-22)** — `supabase/migrations_manual/2026-07-22-feedback-notes.sql`, paste into the Supabase SQL Editor. Until this runs, the widget's save silently no-ops (insert fails, swallowed) — UI flow itself is verified working (toggle/highlight/click-intercept/composer, see FeedbackWidget.tsx).
