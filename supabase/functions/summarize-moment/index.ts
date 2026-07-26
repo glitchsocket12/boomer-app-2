@@ -26,6 +26,7 @@ serve(async (req) => {
         "id, occasion, location, when_text, raw_description, details, notes(content, people(name, last_name))"
       )
       .eq("id", momentId)
+      .order("created_at", { foreignTable: "notes" })
       .single()
 
     if (!moment) {
@@ -39,8 +40,8 @@ serve(async (req) => {
       p.last_name ? `${p.name} ${p.last_name}` : p.name
 
     const notesText = (moment.notes ?? [])
-      .map((n: any) => (n.people ? `${fullName(n.people)}: ${n.content}` : n.content))
-      .join("; ")
+      .map((n: any, i: number) => `${i + 1}. ${n.people ? `${fullName(n.people)}: ` : ""}${n.content}`)
+      .join("\n")
 
     const detailsText =
       moment.details && typeof moment.details === "object" && Object.keys(moment.details).length > 0
@@ -67,7 +68,7 @@ Notes recorded about who was there / what they said: ${notesText || "(none)"}`
         model: "claude-sonnet-5",
         max_tokens: 250,
         system:
-          "You write a short, warm, easy-to-read summary of a personal memory for a memory-keeping app called Boomer. You're given what the user originally typed or said about the event (which may be disjointed or repetitive, since it was captured across a back-and-forth conversation) plus any structured details and notes about who was there. Rewrite it into 2-4 smooth sentences in the user's own first-person voice (\"I...\"), past tense, that read naturally on their own — not a copy-paste of the raw input, not a bullet list, no meta-commentary about the memory app itself, no preamble, no quotation marks. Cover what happened and who was involved; skip fields that are marked not specified/none. Respond with ONLY the summary.",
+          "You write a short, warm, easy-to-read summary of a personal memory for a memory-keeping app called Boomer. You're given what the user originally typed or said about the event (which may be disjointed or repetitive, since it was captured across a back-and-forth conversation) plus any structured details and notes about who was there. The notes are listed in whatever order people happened to recall or record them — not necessarily the order things actually happened, since someone often adds a note about something earlier only after already describing something later. Read everything first, use any wording clues (e.g. \"before\", \"after\", \"first\", \"then\", \"later\", \"that morning/evening\", cause-and-effect) to work out your best guess at the true chronological order of events, and write the summary in that order rather than the order the notes are listed in. If there's no clue at all for how two things relate in time, use your best natural judgment rather than forcing a false sequence. Rewrite it all into 2-4 smooth sentences in the user's own first-person voice (\"I...\"), past tense, that read naturally on their own — not a copy-paste of the raw input, not a bullet list, no meta-commentary about the memory app itself, no preamble, no quotation marks. Cover what happened and who was involved; skip fields that are marked not specified/none. Respond with ONLY the summary.",
         messages: [{ role: "user", content: context }],
       }),
     })

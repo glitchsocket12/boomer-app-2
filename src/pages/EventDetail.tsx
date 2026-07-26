@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { supabase } from '../lib/supabase'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
+import RefreshButton from '../components/RefreshButton'
 import PhotoGallery from '../components/PhotoGallery'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
@@ -70,6 +71,7 @@ export default function EventDetail({
   const [editingDescription, setEditingDescription] = useState(false)
   const [descriptionInput, setDescriptionInput] = useState('')
   const [savingDescription, setSavingDescription] = useState(false)
+  const [refreshingSummary, setRefreshingSummary] = useState(false)
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
@@ -145,6 +147,14 @@ export default function EventDetail({
     if (data?.summary) {
       setMoment((prev) => (prev ? { ...prev, summary: data.summary } : prev))
     }
+  }
+
+  // Manual re-synthesis on demand — e.g. for an event whose cached summary predates a prompt
+  // improvement, or whose notes still read out of order for some other reason.
+  async function handleRefreshSummary() {
+    setRefreshingSummary(true)
+    await generateSummary()
+    setRefreshingSummary(false)
   }
 
   async function handleNoteSaved() {
@@ -379,6 +389,8 @@ export default function EventDetail({
       onDescriptionInputChange={setDescriptionInput}
       onSaveDescription={handleSaveDescription}
       onCancelEditDescription={() => setEditingDescription(false)}
+      refreshingSummary={refreshingSummary}
+      onRefreshSummary={handleRefreshSummary}
       onTagGroup={handleTagGroup}
       onUntagGroup={handleUntagGroup}
       onTagMoment={handleTagMoment}
@@ -443,6 +455,8 @@ export function EventDetailView({
   onDescriptionInputChange = () => {},
   onSaveDescription = () => {},
   onCancelEditDescription = () => {},
+  refreshingSummary = false,
+  onRefreshSummary = () => {},
   onTagGroup = () => {},
   onUntagGroup = () => {},
   onTagMoment = () => {},
@@ -496,6 +510,8 @@ export function EventDetailView({
   onDescriptionInputChange?: (v: string) => void
   onSaveDescription?: () => void
   onCancelEditDescription?: () => void
+  refreshingSummary?: boolean
+  onRefreshSummary?: () => void
   onTagGroup?: (groupId: string) => void
   onUntagGroup?: (groupId: string) => void
   onTagMoment?: (tagId: string) => void
@@ -755,6 +771,9 @@ export function EventDetailView({
             {moment.summary ||
               (moment.raw_description.trim() ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
           </p>
+          {!readOnly && (
+            <RefreshButton label="Refresh summary" onClick={onRefreshSummary} refreshing={refreshingSummary} />
+          )}
           {!readOnly && <EditButton label="Edit description" onClick={onStartEditDescription} />}
         </div>
       )}

@@ -325,7 +325,12 @@ src/
 │   │                            `daysUntilNextOccurrence` moved from People.tsx into
 │   │                            `lib/dates.ts` so both pages share one implementation.
 │   ├── EventDetail.tsx        — AI summary (gated: only auto-generates once
-│   │                            raw_description has content), editable description,
+│   │                            raw_description has content; manual "Refresh
+│   │                            summary" button, 2026-07-25, mirrors GroupDetail's
+│   │                            own `RefreshButton` — lets an already-cached
+│   │                            summary re-synthesize on demand, e.g. after the
+│   │                            2026-07-25 chronological-ordering prompt fix),
+│   │                            editable description,
 │   │                            who-was-there (hover-untag, non-destructive) +
 │   │                            search-and-add picker, suggested attendees from
 │   │                            group rosters AND family (2026-07-25 — "Was their
@@ -734,7 +739,7 @@ Every page listed above under `pages/` (Home/People/PersonDetail/Groups/GroupDet
 | `update-group` | Group chat: rename, members, tag/untag events, member facts (tagged `source_group_id`), relationship signals, self-person "my X" resolution (2026-07-20). Saves per turn. |
 | `person-facts` | Extracts Key Facts from a person's notes — explicitly stated only, never inferred. Cached in `people.key_facts`; `{refresh: true}` regenerates. Failure paths return cached facts, never wipe. Linked categories (spouse/siblings/parents/kids) resolve to person chips on exact-full-name match OR a `relationships` table row (2026-07-20, additive — never overrides an AI-extracted fact, just fills in a linked person the table already knows about). Has its OWN category vocabulary (not the shared 5-kind enum — known mismatch, read-only so harmless). |
 | `summarize-group` | One-sentence group description → cached `groups.summary`. Members = explicit roster only, never event attendees. |
-| `summarize-moment` | 2-4 sentence first-person event summary → cached `moments.summary`. Cleared/regenerated when notes change. |
+| `summarize-moment` | 2-4 sentence first-person event summary → cached `moments.summary`. Cleared/regenerated when notes change, or on-demand via EventDetail's manual refresh button. Notes are ordered by `created_at` and numbered in the prompt; system prompt explicitly tells the model note order is recording order, not narrative order, and to infer real chronological order from context clues before writing (2026-07-25, fixes summaries reading in whatever jumbled order notes were recalled in). |
 | `suggest-prompts` | 3 suggestion cards for Home → cached in `home_suggestions` table; regenerates only when data is newer than cache or on manual refresh. |
 | `transcribe` | Whisper speech-to-text. |
 | `validate-calendar-source` | Server-side reachability/format check on a pasted iCal URL (dodges browser CORS) before `calendar_sources` saves it. |
