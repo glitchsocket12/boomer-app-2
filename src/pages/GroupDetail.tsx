@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { GROUP_TYPES } from '../lib/groupTypes'
+import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
+import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import { PersonChip, GroupChip } from '../components/Chips'
@@ -48,6 +50,7 @@ export default function GroupDetail({
   onBack,
   backLabel,
   onRenamed,
+  onMerged,
   onOpenFamilyTree,
 }: {
   groupId: string
@@ -58,6 +61,7 @@ export default function GroupDetail({
   onBack: () => void
   backLabel: string
   onRenamed?: (newName: string) => void
+  onMerged: (group: { id: string; name: string }) => void
   // memberIds, when present, scopes the tree to that group's own lineage (buildDescendantTree)
   // instead of the single centered person's full ego graph.
   onOpenFamilyTree: (personId: string, label: string, memberIds?: string[]) => void
@@ -88,10 +92,16 @@ export default function GroupDetail({
   const [loadingPickableGroups, setLoadingPickableGroups] = useState(false)
   const [groupPickerSearch, setGroupPickerSearch] = useState('')
   const [membersExpanded, setMembersExpanded] = useState(false)
-  const [suggestionsEnabled, setSuggestionsEnabled] = useState(true)
+  const [suggestionsEnabled, setSuggestionsEnabled] = useState(false)
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeSearch, setMergeSearch] = useState('')
+  const [otherGroups, setOtherGroups] = useState<GroupRef[]>([])
+  const [mergeCandidate, setMergeCandidate] = useState<GroupRef | null>(null)
+  const [allPeople, setAllPeople] = useState<PersonRef[]>([])
+  const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
 
   useEffect(() => {
     loadMoments()
@@ -104,7 +114,30 @@ export default function GroupDetail({
     setNameInput(groupName)
     setEditingName(false)
     setDeleteConfirming(false)
+    setMergeOpen(false)
+    setMergeCandidate(null)
   }, [groupId])
+
+  // Account-wide, not scoped to groupId — fetched once since it doesn't change as you navigate
+  // between groups. Only needed to attach a name to a family-suggestion candidate below (see
+  // memberIdsKey), same "small, one account's own data" reasoning as EventDetail.tsx's allPeople.
+  useEffect(() => {
+    supabase
+      .from('people')
+      .select('id, name, last_name')
+      .order('name')
+      .then(({ data }) => setAllPeople((data as PersonRef[]) ?? []))
+  }, [])
+
+  // Same idea as EventDetail.tsx's attendeeIdsKey: only this group's own explicit members' family
+  // ties matter for the suggestion box below, so this stays scoped to a small id list rather than
+  // pulling the whole relationships table on every group page view. Keyed off a sorted/joined
+  // string so it only refetches when membership actually changes.
+  const memberIdsKey = useMemo(() => explicitMembers.map((p) => p.id).sort().join(','), [explicitMembers])
+
+  useEffect(() => {
+    getRelationshipsMap(memberIdsKey ? memberIdsKey.split(',') : []).then(setRelationshipsById)
+  }, [memberIdsKey])
 
   async function loadGroupNotes() {
     const { data } = await supabase
@@ -189,11 +222,12 @@ export default function GroupDetail({
   }
 
   // Isolated on purpose (not folded into loadMembers' shared select): if this column doesn't
-  // exist yet (migration not run — see PROJECT_CONTEXT.md §10), fail open to "on" rather than
-  // letting a 400 on this one flag blank out the member list on every group's page.
+  // exist yet (migration not run — see PROJECT_CONTEXT.md §10), fail open to "off" — matches the
+  // default-off behavior everywhere else (founder feedback 2026-07-26) and doesn't blank out the
+  // member list on every group's page.
   async function loadSuggestionsEnabled() {
     const { data, error } = await supabase.from('groups').select('suggestions_enabled').eq('id', groupId).single()
-    setSuggestionsEnabled(error ? true : data?.suggestions_enabled ?? true)
+    setSuggestionsEnabled(error ? false : data?.suggestions_enabled ?? false)
   }
 
   // Item 57: per-group opt-out for the member-suggestion signal, read by both this page's own
@@ -441,6 +475,85 @@ export default function GroupDetail({
     invalidateSummary()
   }
 
+  async function openMerge() {
+    setMergeOpen(true)
+    setMergeCandidate(null)
+    setMergeSearch('')
+    if (otherGroups.length === 0) {
+      const { data } = await supabase.from('groups').select('id, name').neq('id', groupId)
+      setOtherGroups((data as GroupRef[]) ?? [])
+    }
+  }
+
+  // Folds THIS group into `mergeCandidate` (the one picked from search) — same UX shape as
+  // EventDetail.tsx's handleMergeEvent: the group standing on is the duplicate, the one searched
+  // for and picked is the survivor. Membership (person_groups) and event tags (moment_groups) both
+  // go through fetch-then-upsert-then-delete rather than a bulk UPDATE, since both have a
+  // (x_id, group_id) unique constraint a duplicate's rows could collide with the survivor's own —
+  // same reasoning as PersonDetail.tsx's handleMerge moving person_groups. group_associations gets
+  // the same treatment, skipping/dropping any pair that would become a self-link (duplicate and
+  // survivor already associated with each other) since that violates the table's own no-self-link
+  // check. Free-standing group notes and source_group_id attribution just move by plain UPDATE —
+  // neither column is part of a uniqueness constraint. The survivor's cached summary is cleared
+  // to regenerate incorporating the newly-merged membership.
+  async function handleMergeGroup() {
+    if (!mergeCandidate) return
+    setActionBusy(true)
+    setActionError(null)
+    const survivorId = mergeCandidate.id
+    const duplicateId = groupId
+
+    const [dupMembersRes, dupMomentsRes, dupAssociationsRes] = await Promise.all([
+      supabase.from('person_groups').select('person_id').eq('group_id', duplicateId),
+      supabase.from('moment_groups').select('moment_id').eq('group_id', duplicateId),
+      supabase
+        .from('group_associations')
+        .select('group_id_a, group_id_b')
+        .or(`group_id_a.eq.${duplicateId},group_id_b.eq.${duplicateId}`),
+    ])
+
+    for (const m of dupMembersRes.data ?? []) {
+      await supabase
+        .from('person_groups')
+        .upsert({ person_id: m.person_id, group_id: survivorId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+    }
+    await supabase.from('person_groups').delete().eq('group_id', duplicateId)
+
+    for (const m of dupMomentsRes.data ?? []) {
+      await supabase
+        .from('moment_groups')
+        .upsert({ moment_id: m.moment_id, group_id: survivorId }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+    }
+    await supabase.from('moment_groups').delete().eq('group_id', duplicateId)
+
+    for (const a of dupAssociationsRes.data ?? []) {
+      const otherId = a.group_id_a === duplicateId ? a.group_id_b : a.group_id_a
+      if (otherId !== survivorId) {
+        const [x, y] = [survivorId, otherId].sort()
+        await supabase
+          .from('group_associations')
+          .upsert({ group_id_a: x, group_id_b: y }, { onConflict: 'group_id_a,group_id_b', ignoreDuplicates: true })
+      }
+    }
+    await supabase.from('group_associations').delete().or(`group_id_a.eq.${duplicateId},group_id_b.eq.${duplicateId}`)
+
+    await supabase.from('notes').update({ group_id: survivorId }).eq('group_id', duplicateId)
+    await supabase.from('notes').update({ source_group_id: survivorId }).eq('source_group_id', duplicateId)
+
+    const { error } = await supabase.from('groups').delete().eq('id', duplicateId)
+    if (error) {
+      setActionError('Something went wrong merging these groups — please try again.')
+      setActionBusy(false)
+      return
+    }
+    await supabase.from('groups').update({ summary: null }).eq('id', survivorId)
+
+    setMergeOpen(false)
+    setMergeCandidate(null)
+    setActionBusy(false)
+    onMerged({ id: survivorId, name: mergeCandidate.name })
+  }
+
   // Permanently removes this group and everything that ONLY makes sense tied to it — its
   // explicit membership, its own free-standing notes, its event tags, its associations with
   // other groups. Facts captured via this group's chat (notes.source_group_id) live on PEOPLE,
@@ -501,6 +614,19 @@ export default function GroupDetail({
   }
   const suggestedMembers = suggestionsEnabled ? sortByLastName([...suggestedMembersById.values()]) : []
 
+  // Spouse of a current member, then that couple's kids once the spouse is ALSO a member — same
+  // suggestFamilyMembers chaining as EventDetail.tsx's "Was their family there too?" box, applied
+  // here to group membership instead of event attendance (founder feedback 2026-07-26: family
+  // suggestions should chain everywhere a person gets suggested, not just on events). Excludes
+  // anyone the event/associated-group box above already offers, so nobody is suggested twice.
+  const familyExcludeIds = new Set([...dismissedIds, ...suggestedMembersById.keys()])
+  const suggestedFamilyById = new Map<string, PersonRef>()
+  for (const id of suggestFamilyMembers(explicitIds, relationshipsById, familyExcludeIds)) {
+    const person = allPeople.find((p) => p.id === id)
+    if (person) suggestedFamilyById.set(id, person)
+  }
+  const suggestedFamilyMembers = suggestionsEnabled ? sortByLastName([...suggestedFamilyById.values()]) : []
+
   // Suggested associated groups combine two signals — any other group tagged to the same events
   // as this one (event-based, reusing the moments already loaded above, same one-hop reasoning as
   // EventDetail.tsx's "Affiliated Groups"), and any other group this group's own explicit members
@@ -530,6 +656,7 @@ export default function GroupDetail({
       moments={moments}
       explicitMembers={explicitMembers}
       suggestedMembers={suggestedMembers}
+      suggestedFamilyMembers={suggestedFamilyMembers}
       confirmedAssociatedGroups={confirmedAssociatedGroups}
       suggestedAssociatedGroups={suggestedAssociatedGroups}
       groupNotes={groupNotes}
@@ -584,6 +711,16 @@ export default function GroupDetail({
       onStartDelete={() => setDeleteConfirming(true)}
       onCancelDelete={() => setDeleteConfirming(false)}
       onConfirmDelete={handleDeleteGroup}
+      mergeOpen={mergeOpen}
+      onOpenMerge={openMerge}
+      mergeSearch={mergeSearch}
+      onMergeSearchChange={setMergeSearch}
+      otherGroups={otherGroups}
+      mergeCandidate={mergeCandidate}
+      onSelectMergeCandidate={setMergeCandidate}
+      onCancelMerge={() => setMergeOpen(false)}
+      onBackFromMergeCandidate={() => setMergeCandidate(null)}
+      onConfirmMerge={handleMergeGroup}
       actionBusy={actionBusy}
       actionError={actionError}
       editChat={
@@ -621,6 +758,7 @@ export function GroupDetailView({
   moments,
   explicitMembers,
   suggestedMembers,
+  suggestedFamilyMembers = [],
   confirmedAssociatedGroups,
   suggestedAssociatedGroups,
   groupNotes,
@@ -646,7 +784,7 @@ export function GroupDetailView({
   onToggleMembersExpanded = () => {},
   onAddMember = () => {},
   onRemoveMember = () => {},
-  suggestionsEnabled = true,
+  suggestionsEnabled = false,
   onToggleSuggestions = () => {},
   onApproveAllSuggestions = () => {},
   onDenySuggestion = () => {},
@@ -673,6 +811,16 @@ export function GroupDetailView({
   onStartDelete = () => {},
   onCancelDelete = () => {},
   onConfirmDelete = () => {},
+  mergeOpen = false,
+  onOpenMerge = () => {},
+  mergeSearch = '',
+  onMergeSearchChange = () => {},
+  otherGroups = [],
+  mergeCandidate = null,
+  onSelectMergeCandidate = () => {},
+  onCancelMerge = () => {},
+  onBackFromMergeCandidate = () => {},
+  onConfirmMerge = () => {},
   actionBusy = false,
   actionError = null,
   editChat,
@@ -684,6 +832,7 @@ export function GroupDetailView({
   moments: Moment[]
   explicitMembers: PersonRef[]
   suggestedMembers: PersonRef[]
+  suggestedFamilyMembers?: PersonRef[]
   suggestionsEnabled?: boolean
   onToggleSuggestions?: (enabled: boolean) => void
   confirmedAssociatedGroups: GroupRef[]
@@ -736,6 +885,16 @@ export function GroupDetailView({
   onStartDelete?: () => void
   onCancelDelete?: () => void
   onConfirmDelete?: () => void
+  mergeOpen?: boolean
+  onOpenMerge?: () => void
+  mergeSearch?: string
+  onMergeSearchChange?: (v: string) => void
+  otherGroups?: GroupRef[]
+  mergeCandidate?: GroupRef | null
+  onSelectMergeCandidate?: (g: GroupRef) => void
+  onCancelMerge?: () => void
+  onBackFromMergeCandidate?: () => void
+  onConfirmMerge?: () => void
   actionBusy?: boolean
   actionError?: string | null
   editChat?: ReactNode
@@ -874,6 +1033,34 @@ export function GroupDetailView({
           </div>
           <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
             {visibleSuggestedMembers.map((p) => (
+              <SuggestionChip
+                key={p.id}
+                person={p}
+                onApprove={() => onAddMember(p)}
+                onDeny={() => onDenySuggestion(p)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {!readOnly && suggestionsEnabled && suggestedFamilyMembers.length > 0 && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <p style={styles.eventOnlyLabel}>Family of a current member — tap to add, or hover to dismiss</p>
+            {suggestedFamilyMembers.length > 1 && (
+              <div style={styles.suggestionActionRow}>
+                <button onClick={() => onApproveAllSuggestions(suggestedFamilyMembers)} style={styles.addAllButton}>
+                  ✓ Add all suggestions
+                </button>
+                <button onClick={() => onDenyAllSuggestions(suggestedFamilyMembers)} style={styles.removeAllButton}>
+                  × Remove all suggestions
+                </button>
+              </div>
+            )}
+          </div>
+          <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
+            {suggestedFamilyMembers.map((p) => (
               <SuggestionChip
                 key={p.id}
                 person={p}

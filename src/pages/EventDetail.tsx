@@ -76,6 +76,7 @@ export default function EventDetail({
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
+  const [selfId, setSelfId] = useState<string | null>(null)
 
   useEffect(() => {
     loadMoment()
@@ -87,18 +88,31 @@ export default function EventDetail({
     setMergeCandidate(null)
   }, [eventId])
 
-  // Only the CURRENT attendees' relationships matter for the family-suggestion box below, so this
-  // stays scoped to a small id list rather than pulling the whole relationships table on every
-  // event page view. Keyed off a sorted/joined string (not the notes array itself) so it only
-  // refetches when the actual set of attendees changes, not on every unrelated moment reload
-  // (rename, description edit, etc).
+  // Fetched once (not per-event) — self's own spouse is always worth suggesting below regardless
+  // of which event this is (founder feedback 2026-07-26: a household shows up to things together,
+  // so the spouse suggestion shouldn't require self to already be tagged as attending).
+  useEffect(() => {
+    supabase
+      .from('people')
+      .select('id')
+      .eq('is_self', true)
+      .maybeSingle()
+      .then(({ data }) => setSelfId(data?.id ?? null))
+  }, [])
+
+  // The family-suggestion box below needs the CURRENT attendees' relationships, plus self's (even
+  // when self isn't tagged as attending — see selfId above), so this stays scoped to that small id
+  // list rather than pulling the whole relationships table on every event page view. Keyed off a
+  // sorted/joined string (not the notes array itself) so it only refetches when the actual set of
+  // attendees changes, not on every unrelated moment reload (rename, description edit, etc).
   const attendeeIdsKey = useMemo(() => {
     const ids = new Set<string>()
     for (const n of moment?.notes ?? []) {
       if (n.people) ids.add(n.people.id)
     }
+    if (selfId) ids.add(selfId)
     return Array.from(ids).sort().join(',')
-  }, [moment])
+  }, [moment, selfId])
 
   useEffect(() => {
     getRelationshipsMap(attendeeIdsKey ? attendeeIdsKey.split(',') : []).then(setRelationshipsById)
@@ -372,6 +386,7 @@ export default function EventDetail({
       allGroupsList={allGroupsList}
       allTagsList={allTagsList}
       relationshipsById={relationshipsById}
+      selfId={selfId}
       editingTitle={editingTitle}
       titleInput={titleInput}
       savingTitle={savingTitle}
@@ -440,6 +455,7 @@ export function EventDetailView({
   allGroupsList = [],
   allTagsList = [],
   relationshipsById = new Map(),
+  selfId = null,
   readOnly = false,
   editingTitle = false,
   titleInput = '',
@@ -495,6 +511,7 @@ export function EventDetailView({
   allGroupsList?: GroupRef[]
   allTagsList?: TagRef[]
   relationshipsById?: Map<string, PersonRelationships>
+  selfId?: string | null
   readOnly?: boolean
   editingTitle?: boolean
   titleInput?: string
@@ -588,11 +605,15 @@ export function EventDetailView({
   }
 
   // Spouse-of-an-attendee, then children once that spouse is ALSO an attendee (see
-  // relationshipSuggestions.ts). Excludes anyone already covered by the group-roster suggestion
-  // above so a person never appears as a suggestion in both boxes at once.
+  // relationshipSuggestions.ts). Self is always seeded in even when not tagged as attending —
+  // founder feedback 2026-07-26: a household's events are a given, so self's spouse shouldn't
+  // need self to be manually added first. Excludes anyone already covered by the group-roster
+  // suggestion above so a person never appears as a suggestion in both boxes at once.
   const suggestedFamily = new Map<string, PersonRef>()
   const familyExcludeIds = new Set([...dismissedIds, ...suggestedAttendees.keys()])
-  for (const id of suggestFamilyMembers(attendees.keys(), relationshipsById, familyExcludeIds)) {
+  const familySeedIds = new Set(attendees.keys())
+  if (selfId) familySeedIds.add(selfId)
+  for (const id of suggestFamilyMembers(familySeedIds, relationshipsById, familyExcludeIds)) {
     const person = allPeople.find((p) => p.id === id)
     if (person) suggestedFamily.set(id, person)
   }

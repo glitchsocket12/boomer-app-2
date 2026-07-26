@@ -42,7 +42,13 @@ src/
 │   │                            pool each call, so a large backlog rotates across visits rather
 │   │                            than always showing the same few. accept/dismiss write the same
 │   │                            person_groups/dismissed_person_ids GroupDetail itself writes, so
-│   │                            a suggestion acted on from Home stays consistent there too.
+│   │                            a suggestion acted on from Home stays consistent there too. Third
+│   │                            signal added 2026-07-26 (item 63): family — spouse of a current
+│   │                            group member, then that couple's kids once the spouse is also a
+│   │                            member, same `suggestFamilyMembers` chaining GroupDetail.tsx's own
+│   │                            "Family of a current member?" box uses, scoped to people already
+│   │                            in some group with a backfill `people` lookup for a suggested
+│   │                            spouse/child who isn't.
 │   ├── writeRelationship.ts   — linkRelationship/createAndLinkRelationship: the shared "+"
 │   │                            write path (relationships table row + both-sides reciprocal
 │   │                            note) used by Circle.tsx and FamilyTree.tsx. syncFamilyClique
@@ -323,7 +329,16 @@ src/
 │   │                            off hides this group's own suggestion chips AND drops
 │   │                            it from Home's "Connections to make" card
 │   │                            (`suggestions_enabled` column, read by
-│   │                            `lib/suggestConnections.ts` too), Associated Groups
+│   │                            `lib/suggestConnections.ts` too). Second suggestion
+│   │                            box, "Family of a current member?" (item 63,
+│   │                            2026-07-26): same `suggestFamilyMembers` chaining as
+│   │                            EventDetail.tsx's own family box, seeded from this
+│   │                            group's explicit members instead of event attendees —
+│   │                            spouse of a member suggested, then that couple's kids
+│   │                            once the spouse is also a member; shares the existing
+│   │                            add/deny handlers (same person_groups/
+│   │                            dismissed_person_ids writes) and the same
+│   │                            suggestionsEnabled gate as the box above it, Associated Groups
 │   │                            (confirmed + suggested + manual picker) unaffected —
 │   │                            different signal, not in scope, notes section, edit
 │   │                            chat, delete group
@@ -382,7 +397,12 @@ src/
 │   │                            query scoped to this event's current attendees —
 │   │                            same dismissed_person_ids + add/deny-all UI as the
 │   │                            group-roster suggestions; mirrored on
-│   │                            ImportReview.tsx below, see its entry), Affiliated
+│   │                            ImportReview.tsx below, see its entry. 2026-07-26
+│   │                            (item 63, founder feedback): self is always seeded
+│   │                            into the attendee set fed to `suggestFamilyMembers`,
+│   │                            even when self isn't tagged as attending — so self's
+│   │                            spouse is suggested on every event from the start,
+│   │                            not just once self has been manually added), Affiliated
 │   │                            Groups (hover-untag,
 │   │                            non-destructive) + search-and-add picker,
 │   │                            collapsed notes, maps link (+", CO"
@@ -678,7 +698,10 @@ Full story: PROJECT_HISTORY.md.
                                 `suggestFamilyMembers` helper and dismiss-chip UI as EventDetail.tsx's
                                 version (see its entry above), fed by one whole-account `relationships`
                                 fetch (`getRelationshipsMap()`, no args) shared across every card on the
-                                page rather than a per-card query. `suggested_people`/`suggested_group_ids` now also draw
+                                page rather than a per-card query. Self seeded into that candidate the
+                                same way as EventDetail.tsx (item 63, 2026-07-26) — self's spouse is
+                                suggested even before self is added to the candidate.
+                                `suggested_people`/`suggested_group_ids` now also draw
                                 on people/relationship data already on file, not just the calendar
                                 entry's own ICS attendee list or its title's explicit group name
                                 (2026-07-25 follow-up, scan-calendar-sources): (a) names mentioned
@@ -878,9 +901,11 @@ reminders     id, person_id, label ("Birthday"/"Anniversary"), month, day
 groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               group/School/Team/Work, nullable, fixed picker, CHECK-constrained),
               dismissed_person_ids jsonb [], dismissed_group_ids jsonb [], created_at,
-              suggestions_enabled bool (default true, item 57, 2026-07-25 — per-group
-              opt-out for the member-suggestion signal, read by GroupDetail.tsx and
-              lib/suggestConnections.ts; migrated live 2026-07-26)
+              suggestions_enabled bool (item 57, 2026-07-25 — per-group opt-out for the
+              member-suggestion signal, read by GroupDetail.tsx and
+              lib/suggestConnections.ts; migrated live 2026-07-26; default flipped
+              true→false 2026-07-26 per founder feedback — not used in practice — pending
+              founder SQL run, see §10)
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
@@ -1014,6 +1039,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 60. **New-person name inputs don't stay side by side** — requested 2026-07-25. `PersonDetail.tsx`'s first/middle/last rename inputs (`nameInputRow`/`renameInput`, ~line 1472) are flex with no explicit width or `flex-basis` per box, so they can wrap to separate lines instead of showing as three equal-sized boxes in one row — founder found this confusing. Styling-only fix (give each input a shared `flex: 1`/basis).
 61. **First-person "my" misattributed to the wrong person** — reported 2026-07-25 on Ken Miller's profile: a note read "Mr. Miller was Ken's 5th grade teacher" when the founder meant Mr. Miller was *their own* 5th grade teacher, not Ken's. Founder's framing: any time the app captures a first-person statement ("my," "I"), it needs to resolve that to the signed-in user (self) specifically, not to whichever person's page/context the note was captured on. Related to item 33 ("refer to user as 'You'") and item 32's `is_self` self-profile — not yet root-caused which capture path (chat/`converse`, `update-moment`, or a direct profile note) produced this one.
 62. ~~Groups page lost its filter + scroll position when returning via the back arrow~~ — **DONE 2026-07-26.** Founder-reported: pick a group-type filter, click into a group, then use the in-page "← Back to Groups" arrow — landed back at an unfiltered, top-of-page list instead of where you left off. Root cause: `Groups.tsx` unmounts every time a crumb is pushed (App.tsx swaps it out for `GroupDetail`), so its local `search`/`typeFilter` state and scroll position were lost on every return trip. Fixed by lifting both into `App.tsx` (which never unmounts) and adding a scroll-position ref that's restored once the list reloads, cleared on a direct top-nav tab click so only the actual back-arrow round trip restores scroll. Verified live against the real account: "Friend group" filter + scrolled-to "Colorado Springs Friends" → back arrow correctly restored both; direct "Groups" tab click still lands at the top.
+63. ~~Spouse/family chaining should apply everywhere a person is suggested, not just events~~ — **DONE 2026-07-26.** Founder feedback: self's spouse should always be suggested for events (household events are a given, shouldn't need self manually added first), and the existing event "person added → spouse suggested → kids suggested once spouse also added" chain should apply to every suggestion surface in the app, not just EventDetail.tsx. Shipped: (1) EventDetail.tsx/ImportReview.tsx now always seed self into the attendee set fed to `suggestFamilyMembers`, so self's spouse is suggested even before self is tagged; (2) GroupDetail.tsx gained a second suggestion box, "Family of a current member?", using the same `suggestFamilyMembers` chaining seeded from the group's explicit members; (3) `suggestConnections.ts` (Home's "Connections to make" card) gained the same family signal, generalized across every group. Verified live against the real account: a blank new event immediately suggested Caroline Volin (self's spouse) with zero attendees added; a throwaway test group seeded with Jake+Steve Volin correctly suggested Amy Volin (Steve's spouse), and once added, correctly suggested Jess/Danny/Josh Volin (their kids per the `relationships` table) — test group deleted after verifying, no changes to real data.
 
 **Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); weather metadata; iPhone Contacts import; "AI should ask deeper follow-ups" thread (feeds 17).
 
@@ -1036,6 +1062,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 ## 10. Pending manual steps, open bugs, cleanup
 
+- **Founder action needed: run `migrations_manual/2026-07-26-group-suggestions-default-off.sql`** — flips the `groups.suggestions_enabled` (item 57) default from true to false, and sets every existing group's value to false, per founder feedback 2026-07-26 ("not using it for anyone"). Code-side defaults (GroupDetail.tsx, suggestConnections.ts) already updated and verified in browser preview; no token available this session to run it directly (see `project_boomer_infra.md`), so paste this file into the Supabase SQL Editor. Until it runs, existing groups keep whatever value they already have (mixed true/false — some groups were already manually toggled off).
 - ~~Redeploy 4 edge functions for the family tree relationship-sync fix~~ — **DONE 2026-07-25.** `add-fact`/`converse`/`update-moment`/`update-group` all redeployed with the fixed `_shared/relationships.ts` (founder-provided token, confirmed success on all 4).
 - **Founder action needed: run the family-tree backfill SQL by hand (2026-07-25, item 40 follow-up)** — code deployed everywhere (frontend + all 4 edge functions), verified live with disposable test people, but the actual backfill against real data (fixes the reported Lorenzo Harris tree, and everyone else's already-built trees) needs to be run **by the founder, in the Supabase Dashboard's SQL Editor** — both the Management API and the browser-client fallback were tried and both got blocked by the auto-mode safety classifier for a write at this scale (a bulk backfill across many real relationship rows, not a narrow single-row fix — see `project_boomer_infra.md` memory for the refined understanding). Run `migrations_manual/2026-07-25-spouse-coparent-backfill.sql` FIRST, then `2026-07-25-shared-parent-sibling-backfill.sql` (each file's own header explains why). Dry-run preview already done this session (read-only queries aren't blocked): the spouse-coparent file will add 35 new parent links across ~20 different families (including the reported Jamie/Leanne/Lorenzo case) and correctly excludes the Andy Volin/Andi/Michael Galchinsky remarriage case; the sibling file will add at least 24 new direct sibling pairs before its own transitive-closure step runs. Both are `ON CONFLICT DO NOTHING`/additive-only — safe to re-run, nothing gets deleted or overwritten.
 - **Needs deploy: `scan-calendar-sources` family-surname matching (2026-07-25)** — code committed (`mentioned_family_names`, see §4 entry), not yet run through `npx supabase functions deploy scan-calendar-sources`. Until deployed, calendar entries like "Meal train for the Mojica family" keep matching/scanning under the OLD prompt (no surname resolution). Needs a founder-provided Supabase access token (see §2 workflow) — none available this session.

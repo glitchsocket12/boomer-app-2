@@ -1,4 +1,6 @@
 import { supabase } from './supabase'
+import { getRelationshipsMap } from './relationshipsTable'
+import { suggestFamilyMembers } from './relationshipSuggestions'
 
 export type ConnectionPerson = { id: string; name: string; last_name: string | null }
 export type ConnectionGroup = { id: string; name: string }
@@ -9,10 +11,11 @@ export type ConnectionSuggestion = { person: ConnectionPerson; group: Connection
 const SAMPLE_SIZE = 4
 
 // Generalizes GroupDetail.tsx's own per-group suggestion logic (event attendance on a
-// group-tagged moment, or membership in a CONFIRMED associated group) across every group at
-// once, for a Home-page nudge. Deliberately free/deterministic, no AI call — same two signals
-// GroupDetail already surfaces one group at a time, just aggregated, so it's cheap enough to
-// recompute on every Home visit instead of needing a cache (CLAUDE.md rule 3).
+// group-tagged moment, membership in a CONFIRMED associated group, or family — spouse of a
+// current member, then kids once the spouse is also a member) across every group at once, for a
+// Home-page nudge. Deliberately free/deterministic, no AI call — same signals GroupDetail already
+// surfaces one group at a time, just aggregated, so it's cheap enough to recompute on every Home
+// visit instead of needing a cache (CLAUDE.md rule 3).
 export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[]> {
   const [groupsRes, personGroupsRes, associationsRes] = await Promise.all([
     supabase.from('groups').select('id, name, dismissed_person_ids, suggestions_enabled'),
@@ -59,7 +62,7 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
     if (membersByGroup[groupId]?.has(person.id)) return
     const group = groupById.get(groupId)
     if (!group) return
-    if (group.suggestions_enabled === false) return
+    if (group.suggestions_enabled !== true) return
     if ((group.dismissed_person_ids ?? []).includes(person.id)) return
     suggestionsByKey.set(`${groupId}:${person.id}`, { person, group: { id: group.id, name: group.name } })
   }
@@ -72,6 +75,28 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
       for (const personId of membersByGroup[otherGroupId] ?? []) addCandidate(group.id, personById.get(personId))
     }
   }
+
+  // Family signal: spouse of a current member, then that couple's kids once the spouse is ALSO a
+  // member — same suggestFamilyMembers chaining as GroupDetail.tsx's own per-group "Family of a
+  // current member?" box, generalized across every group here (founder feedback 2026-07-26).
+  // Scoped to just people already in some group (cheaper than a full-table relationships fetch);
+  // a suggested spouse/child not yet in personById gets backfilled by id below.
+  const relationshipsById = await getRelationshipsMap([...personById.keys()])
+  const familyCandidates: { groupId: string; personId: string }[] = []
+  for (const group of groups) {
+    const members = membersByGroup[group.id]
+    if (!members || members.size === 0) continue
+    const exclude = new Set([...(group.dismissed_person_ids ?? []), ...members])
+    for (const personId of suggestFamilyMembers(members, relationshipsById, exclude)) {
+      familyCandidates.push({ groupId: group.id, personId })
+    }
+  }
+  const missingIds = [...new Set(familyCandidates.map((f) => f.personId).filter((id) => !personById.has(id)))]
+  if (missingIds.length > 0) {
+    const { data } = await supabase.from('people').select('id, name, last_name').in('id', missingIds)
+    for (const p of (data as ConnectionPerson[]) ?? []) personById.set(p.id, p)
+  }
+  for (const f of familyCandidates) addCandidate(f.groupId, personById.get(f.personId))
 
   const all = [...suggestionsByKey.values()]
   // Fisher-Yates shuffle so repeat Home visits surface a different slice of a large candidate

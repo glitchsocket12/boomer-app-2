@@ -157,6 +157,7 @@ export default function ImportReview({
   const [calendarSources, setCalendarSources] = useState<CalendarSourceRef[]>([])
   const [allPeopleList, setAllPeopleList] = useState<PersonRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
+  const [selfId, setSelfId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -165,7 +166,7 @@ export default function ImportReview({
 
   async function load() {
     setLoading(true)
-    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap] = await Promise.all([
+    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes] = await Promise.all([
       supabase
         .from('moment_import_candidates')
         .select(
@@ -186,6 +187,9 @@ export default function ImportReview({
       // shared table-wide map (same "one full-table fetch" pattern as familyTree.ts) avoids a
       // refetch per card per toggle.
       getRelationshipsMap(),
+      // Self's spouse is always worth suggesting below, even on a candidate with nobody added yet
+      // (founder feedback 2026-07-26, mirrors EventDetail.tsx's own selfId seeding).
+      supabase.from('people').select('id').eq('is_self', true).maybeSingle(),
     ])
     setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
@@ -194,6 +198,7 @@ export default function ImportReview({
     setCalendarSources((sourcesRes.data as CalendarSourceRef[]) ?? [])
     setAllPeopleList((peopleRes.data as PersonRef[]) ?? [])
     setRelationshipsById(relationshipsMap)
+    setSelfId(selfRes.data?.id ?? null)
     setLoading(false)
   }
 
@@ -236,6 +241,7 @@ export default function ImportReview({
             allGroupsList={allGroupsList}
             allPeopleList={allPeopleList}
             relationshipsById={relationshipsById}
+            selfId={selfId}
             calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
             onTagCreated={handleTagCreated}
             onMomentCreated={handleMomentCreated}
@@ -255,6 +261,7 @@ function CandidateCard({
   allGroupsList,
   allPeopleList,
   relationshipsById,
+  selfId,
   calendarSourceLabel,
   onTagCreated,
   onMomentCreated,
@@ -267,6 +274,7 @@ function CandidateCard({
   allGroupsList: GroupRef[]
   allPeopleList: PersonRef[]
   relationshipsById: Map<string, PersonRelationships>
+  selfId: string | null
   calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
   onMomentCreated: (moment: ExistingMoment) => void
@@ -340,14 +348,18 @@ function CandidateCard({
 
   // Mirrors EventDetail.tsx's family-suggestion box: spouse/partner of anyone already on this
   // candidate, then that couple's kids once the spouse/partner is ALSO on it (see
-  // relationshipSuggestions.ts). Excludes anyone the group-suggestion box above already offers,
-  // so a person is never suggested twice in two different boxes on the same card.
+  // relationshipSuggestions.ts). Self is always seeded in even when not added to this candidate —
+  // founder feedback 2026-07-26, same reasoning as EventDetail.tsx's own selfId seeding. Excludes
+  // anyone the group-suggestion box above already offers, so a person is never suggested twice in
+  // two different boxes on the same card.
   const suggestedFamily = useMemo(() => {
     const excludeIds = new Set(dismissedFamilySuggestionIds)
     for (const p of suggestedFromGroups) excludeIds.add(p.id)
-    const ids = suggestFamilyMembers(includedPersonIds, relationshipsById, excludeIds)
+    const seedIds = new Set(includedPersonIds)
+    if (selfId) seedIds.add(selfId)
+    const ids = suggestFamilyMembers(seedIds, relationshipsById, excludeIds)
     return ids.map((id) => allPeopleList.find((p) => p.id === id)).filter((p): p is PersonRef => !!p)
-  }, [includedPersonIds, relationshipsById, dismissedFamilySuggestionIds, suggestedFromGroups, allPeopleList])
+  }, [includedPersonIds, relationshipsById, dismissedFamilySuggestionIds, suggestedFromGroups, allPeopleList, selfId])
 
   function toggle(i: number) {
     setIncluded((prev) => toggleIndex(prev, i))
