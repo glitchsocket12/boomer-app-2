@@ -411,6 +411,7 @@ export default function App() {
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onRenamed={renameCurrentCrumb}
+        onMerged={(g) => replaceCurrentCrumb({ type: 'group', id: g.id, label: g.name })}
         onOpenFamilyTree={(personId, label, memberIds) => pushCrumb({ type: 'familyTree', id: personId, label, memberIds })}
       />
     )

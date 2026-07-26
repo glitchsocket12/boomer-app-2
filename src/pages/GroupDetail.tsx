@@ -1258,8 +1258,11 @@ export function GroupDetailView({
 
           {actionError && <p style={styles.actionErrorBanner}>{actionError}</p>}
 
-          {!deleteConfirming ? (
+          {!mergeOpen && !deleteConfirming && (
             <div style={styles.dangerButtonRow}>
+              <button type="button" onClick={onOpenMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                This is a duplicate — merge it away…
+              </button>
               <button
                 type="button"
                 onClick={onStartDelete}
@@ -1269,7 +1272,9 @@ export function GroupDetailView({
                 Delete this group
               </button>
             </div>
-          ) : (
+          )}
+
+          {deleteConfirming && (
             <div style={styles.suggestBanner}>
               <span>Delete this group permanently? This removes its membership, notes, and event/group tags. This can't be undone.</span>
               <div style={styles.suggestButtonRow}>
@@ -1285,6 +1290,57 @@ export function GroupDetailView({
                   Cancel
                 </button>
               </div>
+            </div>
+          )}
+
+          {mergeOpen && (
+            <div style={styles.suggestBanner}>
+              {!mergeCandidate ? (
+                <>
+                  <span>Search for the group you want to keep. Everything here will move there, and this group will be deleted:</span>
+                  <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search groups…" />
+                  <div style={styles.mergeResultsList}>
+                    {otherGroups
+                      .filter((g) => (mergeSearch.trim() ? g.name.toLowerCase().includes(mergeSearch.trim().toLowerCase()) : false))
+                      .slice(0, 8)
+                      .map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => onSelectMergeCandidate(g)}
+                          style={styles.mergeResultButton}
+                        >
+                          {g.name}
+                        </button>
+                      ))}
+                  </div>
+                  <div style={styles.suggestButtonRow}>
+                    <button type="button" onClick={onCancelMerge} style={styles.suggestNoButton}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span>
+                    Merge this group into "{mergeCandidate.name}"? All membership, event tags, associated groups, and notes
+                    move there, this group is deleted, and you'll be taken to the kept group. This can't be undone.
+                  </span>
+                  <div style={styles.suggestButtonRow}>
+                    <button type="button" onClick={onConfirmMerge} style={styles.suggestYesButton} disabled={actionBusy}>
+                      {actionBusy ? 'Merging…' : 'Yes, merge'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onBackFromMergeCandidate}
+                      style={styles.suggestNoButton}
+                      disabled={actionBusy}
+                    >
+                      Back
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1838,6 +1894,16 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   dangerHeading: { fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6B7A6E', fontWeight: 700 },
   dangerButtonRow: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' },
+  dangerSecondaryButton: {
+    fontSize: '0.85rem',
+    padding: '0.5rem 0.9rem',
+    borderRadius: '6px',
+    border: '1px solid #999',
+    backgroundColor: 'transparent',
+    color: '#555',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
   dangerDeleteButton: {
     fontSize: '0.85rem',
     padding: '0.5rem 0.9rem',
@@ -1861,4 +1927,34 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.85rem 1rem',
   },
   suggestButtonRow: { display: 'flex', gap: '0.5rem' },
+  suggestYesButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
+  suggestNoButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '6px',
+    border: '1px solid #B08B2E',
+    backgroundColor: 'transparent',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+  },
+  mergeResultsList: { display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '220px', overflowY: 'auto' },
+  mergeResultButton: {
+    textAlign: 'left',
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #E6D6AC',
+    backgroundColor: '#FFF',
+    color: '#2E2E2E',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
 }

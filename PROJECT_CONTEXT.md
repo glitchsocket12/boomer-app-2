@@ -341,7 +341,12 @@ src/
 │   │                            suggestionsEnabled gate as the box above it, Associated Groups
 │   │                            (confirmed + suggested + manual picker) unaffected —
 │   │                            different signal, not in scope, notes section, edit
-│   │                            chat, delete group
+│   │                            chat, delete/merge group (item added 2026-07-26,
+│   │                            same process/design as EventDetail.tsx's own merge:
+│   │                            search-and-pick survivor, confirm, the group you're
+│   │                            standing on folds away — moves membership,
+│   │                            event tags, associated groups, and notes/
+│   │                            source_group_id attribution over, self-links dropped)
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
 │   │                            created_at), "Month Year" format, grouped under
 │   │                            sticky year headers (2026, 2025, ...; float at
