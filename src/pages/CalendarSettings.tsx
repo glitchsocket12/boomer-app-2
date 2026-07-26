@@ -7,6 +7,7 @@ type CalendarSource = {
   label: string
   last_synced_at: string | null
   last_sync_error: string | null
+  source_type: 'events' | 'birthdays'
 }
 
 // Deliberately NOT Google OAuth / full account access — each source is just a calendar's own
@@ -19,6 +20,7 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
 
   const [url, setUrl] = useState('')
   const [label, setLabel] = useState('')
+  const [sourceType, setSourceType] = useState<'events' | 'birthdays'>('events')
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
 
@@ -43,9 +45,13 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
       return
     }
     const added = data?.candidatesAdded ?? 0
+    const birthdaysAdded = data?.birthdayCandidatesAdded ?? 0
+    const parts: string[] = []
+    if (added > 0) parts.push(`${added} event${added === 1 ? '' : 's'}`)
+    if (birthdaysAdded > 0) parts.push(`${birthdaysAdded} birthday${birthdaysAdded === 1 ? '' : 's'}`)
     setSyncResult(
-      added > 0
-        ? `Found ${added} event${added === 1 ? '' : 's'} — check the Calendar page to review.`
+      parts.length > 0
+        ? `Found ${parts.join(' and ')} — check the Calendar page to review.`
         : "All synced — nothing new found."
     )
     load()
@@ -59,7 +65,17 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
       .order('created_at')
     // A missing table (migration not yet applied) surfaces as a PostgREST error, not just an
     // empty list — show the empty state rather than crash, since this page should still render.
-    setSources(error ? [] : (data ?? []))
+    const baseSources = error ? [] : (data ?? [])
+    // source_type is a newer column (2026-07-26) fetched separately and merged in, fail-open to
+    // 'events' — code always ships before the founder runs the matching migration, and a missing
+    // column in the MAIN select above would 400 the whole query, blanking the list of existing
+    // calendars during that gap (see PROJECT_CONTEXT.md's calendar-import notes).
+    let typeById = new Map<string, 'events' | 'birthdays'>()
+    if (baseSources.length > 0) {
+      const { data: typeData } = await supabase.from('calendar_sources').select('id, source_type')
+      typeById = new Map((typeData ?? []).map((r: any) => [r.id, r.source_type as 'events' | 'birthdays']))
+    }
+    setSources(baseSources.map((s) => ({ ...s, source_type: typeById.get(s.id) ?? 'events' })))
     setLoadError(!!error)
     setLoading(false)
   }
@@ -87,7 +103,7 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
 
     const { error } = await supabase
       .from('calendar_sources')
-      .insert({ user_id: user?.id, ical_url: trimmedUrl, label: finalLabel })
+      .insert({ user_id: user?.id, ical_url: trimmedUrl, label: finalLabel, source_type: sourceType })
 
     setAdding(false)
     if (error) {
@@ -96,6 +112,7 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
     }
     setUrl('')
     setLabel('')
+    setSourceType('events')
     load()
   }
 
@@ -140,7 +157,10 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
             {sources.map((s) => (
               <div key={s.id} style={styles.sourceRow}>
                 <div style={styles.sourceInfo}>
-                  <p style={styles.sourceLabel}>{s.label}</p>
+                  <p style={styles.sourceLabel}>
+                    {s.label}
+                    {s.source_type === 'birthdays' && <span style={styles.typeBadge}>Birthdays</span>}
+                  </p>
                   <p style={s.last_sync_error ? styles.sourceErrorText : styles.sourceMeta}>
                     {s.last_sync_error
                       ? `Couldn't sync — ${s.last_sync_error}`
@@ -164,16 +184,56 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
 
       <section style={styles.section}>
         <h2 style={styles.sectionHeading}>Add a calendar</h2>
-        <p style={styles.body}>
-          In Google Calendar: Settings → pick a calendar on the left → "Integrate calendar" →
-          copy the "Secret address in iCal format."
-        </p>
+
+        <div style={styles.typeChoiceRow}>
+          <label style={styles.typeChoiceLabel}>
+            <input
+              type="radio"
+              name="sourceType"
+              checked={sourceType === 'events'}
+              onChange={() => setSourceType('events')}
+              disabled={adding}
+            />
+            Regular calendar (events)
+          </label>
+          <label style={styles.typeChoiceLabel}>
+            <input
+              type="radio"
+              name="sourceType"
+              checked={sourceType === 'birthdays'}
+              onChange={() => setSourceType('birthdays')}
+              disabled={adding}
+            />
+            Birthdays calendar
+          </label>
+        </div>
+
+        {sourceType === 'events' ? (
+          <p style={styles.body}>
+            In Google Calendar: Settings → pick a calendar on the left → "Integrate calendar" →
+            copy the "Secret address in iCal format."
+          </p>
+        ) : (
+          <p style={styles.body}>
+            iPhone automatically keeps a "Birthdays" calendar in sync with your Contacts app — connect
+            that one here and Boomer stays current as you add or update contacts, with no re-uploading.
+            On your iPhone: open <strong>Calendar</strong> → tap <strong>Calendars</strong> at the
+            bottom → tap the <strong>(i)</strong> next to <strong>Birthdays</strong> → tap{' '}
+            <strong>Share Calendar</strong> → turn on <strong>Public Calendar</strong> → tap{' '}
+            <strong>Copy Link</strong>. Paste it below, but change the very beginning from{' '}
+            <code>webcal://</code> to <code>https://</code> before pasting (it's the same link, just a
+            different way of writing the start of it).
+          </p>
+        )}
+
         <form onSubmit={handleAdd} style={styles.formColumn}>
           <input
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://calendar.google.com/calendar/ical/…"
+            placeholder={
+              sourceType === 'events' ? 'https://calendar.google.com/calendar/ical/…' : 'https://p01-caldav.icloud.com/published/…'
+            }
             style={styles.input}
             disabled={adding}
           />
@@ -241,6 +301,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   sourceInfo: { minWidth: 0 },
   sourceLabel: { fontSize: '0.95rem', color: '#2E2E2E', margin: 0 },
+  typeBadge: {
+    fontSize: '0.7rem',
+    color: '#2E4034',
+    backgroundColor: '#EAF1EC',
+    border: '1px solid #CFE0D6',
+    borderRadius: '6px',
+    padding: '0.1rem 0.4rem',
+    marginLeft: '0.5rem',
+  },
+  typeChoiceRow: { display: 'flex', gap: '1.25rem', margin: '0 0 0.75rem' },
+  typeChoiceLabel: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', color: '#2E2E2E', cursor: 'pointer' },
   sourceMeta: { fontSize: '0.8rem', color: '#999', margin: '0.15rem 0 0' },
   sourceErrorText: { fontSize: '0.8rem', color: '#B04A3B', margin: '0.15rem 0 0' },
   removeButton: {

@@ -128,25 +128,131 @@ function isEmailLike(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 }
 
+// A Birthdays-calendar entry's title is usually just the contact's name, but some calendar
+// clients (and manually-created "Mom's Birthday"-style entries) append a suffix — strip it so the
+// remaining text is a plain name for matching/display.
+function stripBirthdaySuffix(summary: string): string {
+  return summary.replace(/[’']s\s+birthday$/i, "").replace(/\s+birthday$/i, "").trim()
+}
+
+// DTSTART for an all-day birthday entry is a bare YYYYMMDD (no time/Z component) — reuse
+// icsDateToIsoDate for the parsing but read year/month/day directly rather than round-tripping
+// through a Date, and sanity-check the year (some calendar exports use a sentinel like 1604 or
+// 1904 for "birth year unknown") so an obviously-fake year isn't stored as if it were real.
+function parseBirthdayDate(dtstart: string, timeZone: string): { month: number; day: number; year: number | null } | null {
+  const iso = icsDateToIsoDate(dtstart, timeZone)
+  if (!iso) return null
+  const [yearStr, monthStr, dayStr] = iso.split("-")
+  const year = Number(yearStr)
+  const month = Number(monthStr)
+  const day = Number(dayStr)
+  if (!month || !day) return null
+  const currentYear = new Date().getFullYear()
+  const plausibleYear = year >= 1900 && year <= currentYear
+  return { month, day, year: plausibleYear ? year : null }
+}
+
+async function processBirthdaySource(
+  supabase: SupabaseClient,
+  source: { id: string; ical_url: string },
+  userId: string,
+  userTimeZone: string,
+  seenBirthdayUids: Set<string>,
+  idByName: Record<string, string>
+): Promise<number> {
+  const response = await fetch(source.ical_url)
+  if (!response.ok) {
+    await supabase.from("calendar_sources").update({ last_sync_error: `Couldn't fetch calendar (status ${response.status}).` }).eq("id", source.id)
+    return 0
+  }
+  const text = await response.text()
+  const parsedEvents = parseIcs(text)
+
+  const byUid = new Map<string, IcsEvent>()
+  for (const e of parsedEvents) byUid.set(e.uid, e)
+
+  const rows: {
+    user_id: string
+    calendar_source_id: string
+    ical_uid: string
+    status: "pending"
+    full_name: string | null
+    birthday_month: number | null
+    birthday_day: number | null
+    birthday_year: number | null
+    matched_person_id: string | null
+    match_confidence: "high" | "none"
+  }[] = []
+
+  for (const event of byUid.values()) {
+    if (event.status === "CANCELLED") continue
+    if (seenBirthdayUids.has(event.uid)) continue
+    if (!event.dtstart || !event.summary) continue
+    const parsedDate = parseBirthdayDate(event.dtstart, userTimeZone)
+    if (!parsedDate) continue
+
+    const fullName = stripBirthdaySuffix(event.summary)
+    if (!fullName) continue
+    const matchId = idByName[fullName.toLowerCase()] ?? null
+
+    rows.push({
+      user_id: userId,
+      calendar_source_id: source.id,
+      ical_uid: event.uid,
+      status: "pending",
+      full_name: fullName,
+      birthday_month: parsedDate.month,
+      birthday_day: parsedDate.day,
+      birthday_year: parsedDate.year,
+      matched_person_id: matchId,
+      match_confidence: matchId ? "high" : "none",
+    })
+  }
+
+  if (rows.length === 0) return 0
+
+  const { error } = await supabase
+    .from("birthday_import_candidates")
+    .upsert(rows, { onConflict: "user_id,ical_uid", ignoreDuplicates: true })
+  if (error) {
+    console.error("Failed to upsert birthday candidates", error.message)
+    return 0
+  }
+  return rows.length
+}
+
 async function scanUser(
   supabase: SupabaseClient,
   userId: string,
   accountEmail: string | null
-): Promise<{ sourcesScanned: number; candidatesAdded: number }> {
-  const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes] = await Promise.all([
-    supabase.from("calendar_sources").select("id, ical_url, label").eq("user_id", userId),
+): Promise<{ sourcesScanned: number; candidatesAdded: number; birthdayCandidatesAdded: number }> {
+  const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes, existingBirthdayRes] = await Promise.all([
+    supabase.from("calendar_sources").select("id, ical_url, label, source_type").eq("user_id", userId),
     supabase.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self").eq("user_id", userId),
     supabase.from("tags").select("name").eq("user_id", userId),
     supabase.from("groups").select("id, name").eq("user_id", userId),
-    supabase.from("moment_import_candidates").select("ical_uid").eq("user_id", userId),
+    supabase.from("moment_import_candidates").select("id, ical_uid, status, event_date, event_end_date").eq("user_id", userId),
+    supabase.from("birthday_import_candidates").select("ical_uid").eq("user_id", userId),
   ])
 
   const sources = sourcesRes.data ?? []
-  if (sources.length === 0) return { sourcesScanned: 0, candidatesAdded: 0 }
+  if (sources.length === 0) return { sourcesScanned: 0, candidatesAdded: 0, birthdayCandidatesAdded: 0 }
 
   const userTimeZone = await getUserTimeZone(supabase, userId)
 
   const seenUids = new Set((existingRes.data ?? []).map((r: any) => r.ical_uid))
+  const seenBirthdayUids = new Set((existingBirthdayRes.data ?? []).map((r: any) => r.ical_uid))
+
+  // Repair map for a historical bug: candidates synced before this account's user_settings.time_zone
+  // was populated got event_date computed against the fallback 'UTC' zone instead of the founder's
+  // real one — a UTC-stamped evening event lands a calendar day late in any zone west of UTC (see
+  // PROJECT_HISTORY.md's calendar-date-bug entry, e.g. a 5-11pm Denver Dec 24 gathering stored as
+  // Dec 25). Only 'pending' rows are eligible — accepted/rejected candidates are reviewed history and
+  // never touched. Checked below, per source, once userTimeZone is confirmed correct.
+  const pendingByUid = new Map<string, { id: string; event_date: string | null; event_end_date: string | null }>()
+  for (const r of existingRes.data ?? []) {
+    if (r.status === "pending") pendingByUid.set(r.ical_uid, { id: r.id, event_date: r.event_date, event_end_date: r.event_end_date })
+  }
 
   // Same name/nickname-matching approach as update-moment/index.ts — ambiguous keys (two people
   // sharing a first name/nickname) are excluded so a collision resolves to "no match" rather than
@@ -284,6 +390,7 @@ async function scanUser(
   const cutoffIso = isoDateInTimeZone(cutoff, userTimeZone)
 
   let candidatesAdded = 0
+  let birthdayCandidatesAdded = 0
   let sourcesScanned = 0
   let batchesProcessed = 0
 
@@ -298,6 +405,19 @@ async function scanUser(
       const text = await response.text()
       const parsedEvents = parseIcs(text)
 
+      if (source.source_type === "birthdays") {
+        // No AI call for birthday sources — pure ICS parsing + the same idByName matcher already
+        // built above, so this costs nothing per CLAUDE.md's caching/cost rules. Not subject to
+        // MAX_AGE_YEARS/MAX_BATCHES_PER_RUN (those exist to bound AI batch cost, which doesn't
+        // apply here) — a single Birthdays calendar is at most a few hundred entries, cheap to
+        // parse in one pass.
+        const added = await processBirthdaySource(supabase, source, userId, userTimeZone, seenBirthdayUids, idByName)
+        birthdayCandidatesAdded += added
+        await supabase.from("calendar_sources").update({ last_synced_at: new Date().toISOString(), last_sync_error: null }).eq("id", source.id)
+        sourcesScanned++
+        continue
+      }
+
       // Dedupe within this feed by UID (a recurring series' override instances share the master's
       // UID) and apply only the cheap, UNAMBIGUOUS pre-AI filters: skip cancelled, skip anything
       // older than the cutoff, skip already-seen. Deliberately NOT filtering on attendee count or
@@ -310,6 +430,38 @@ async function scanUser(
       // let every non-cancelled, in-range event through and let the batched Claude call decide.
       const byUid = new Map<string, IcsEvent>()
       for (const e of parsedEvents) byUid.set(e.uid, e)
+
+      // Cheap, no-AI-cost repair pass (see pendingByUid comment above): recompute each still-pending
+      // candidate's date fields against the now-correct userTimeZone and fix in place if they drifted.
+      // Runs on every sync so the backlog self-heals once, rather than staying frozen forever behind
+      // the ignoreDuplicates upsert below (which only ever inserts brand-new uids).
+      const dateRepairs: { id: string; event_date: string | null; event_end_date: string | null; when_text: string | null }[] = []
+      for (const e of byUid.values()) {
+        const existing = pendingByUid.get(e.uid)
+        if (!existing) continue
+        const correctStart = e.dtstart ? icsDateToIsoDate(e.dtstart, userTimeZone) : null
+        let correctEnd = e.dtend ? icsEndDateToIsoDate(e.dtend, e.dtendIsDateOnly, userTimeZone) : null
+        if (correctStart && correctEnd && correctEnd < correctStart) correctEnd = null
+        if (correctStart !== existing.event_date || correctEnd !== existing.event_end_date) {
+          dateRepairs.push({
+            id: existing.id,
+            event_date: correctStart,
+            event_end_date: correctEnd,
+            when_text: correctStart ? formatEventDateText(correctStart, correctEnd) : null,
+          })
+        }
+      }
+      if (dateRepairs.length > 0) {
+        await Promise.all(
+          dateRepairs.map((r) =>
+            supabase
+              .from("moment_import_candidates")
+              .update({ event_date: r.event_date, event_end_date: r.event_end_date, when_text: r.when_text })
+              .eq("id", r.id)
+          )
+        )
+        console.log(`Repaired ${dateRepairs.length} stale candidate date(s) for user ${userId}, source ${source.id}`)
+      }
 
       const candidates: IcsEvent[] = []
       for (const e of byUid.values()) {
@@ -471,7 +623,7 @@ async function scanUser(
     }
   }
 
-  return { sourcesScanned, candidatesAdded }
+  return { sourcesScanned, candidatesAdded, birthdayCandidatesAdded }
 }
 
 serve(async (req) => {
@@ -492,15 +644,23 @@ serve(async (req) => {
 
       let totalSources = 0
       let totalCandidates = 0
+      let totalBirthdayCandidates = 0
       for (const userId of userIds) {
         const { data: userData } = await serviceClient.auth.admin.getUserById(userId)
         const result = await scanUser(serviceClient, userId, userData?.user?.email ?? null)
         totalSources += result.sourcesScanned
         totalCandidates += result.candidatesAdded
+        totalBirthdayCandidates += result.birthdayCandidatesAdded
       }
-      return new Response(JSON.stringify({ usersScanned: userIds.length, sourcesScanned: totalSources, candidatesAdded: totalCandidates }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      return new Response(
+        JSON.stringify({
+          usersScanned: userIds.length,
+          sourcesScanned: totalSources,
+          candidatesAdded: totalCandidates,
+          birthdayCandidatesAdded: totalBirthdayCandidates,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      )
     }
 
     // Manual "Sync now" — relay the caller's own JWT so RLS scopes everything to just them.

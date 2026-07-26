@@ -22,6 +22,7 @@ import Circle from './pages/Circle'
 import SettingsPage from './pages/SettingsPage'
 import CalendarSettings from './pages/CalendarSettings'
 import ImportReview from './pages/ImportReview'
+import BirthdayImportReview from './pages/BirthdayImportReview'
 import About from './pages/About'
 import Privacy from './pages/Privacy'
 import FamilyTree from './pages/FamilyTree'
@@ -43,6 +44,7 @@ type Crumb =
   | { type: 'settings'; id: string; label: string }
   | { type: 'calendarSettings'; id: string; label: string }
   | { type: 'importReview'; id: string; label: string }
+  | { type: 'birthdayReview'; id: string; label: string }
   | { type: 'about'; id: string; label: string }
   | { type: 'privacy'; id: string; label: string }
 
@@ -60,6 +62,7 @@ const CRUMB_TYPES = [
   'settings',
   'calendarSettings',
   'importReview',
+  'birthdayReview',
   'about',
   'privacy',
 ]
@@ -246,6 +249,11 @@ export default function App() {
       setSession(session)
       setCheckingSession(false)
       checkOnboarding(session)
+      // Also covers a restored session, not just a fresh sign-in — onAuthStateChange's SIGNED_IN
+      // event never re-fires for a persisted session, so an account that stayed logged in across
+      // this feature's rollout would otherwise never get its time zone detected (own internal
+      // `timezone_detected` flag makes this a no-op after the first successful run either way).
+      if (session?.user) ensureUserTimeZone(session.user.id, session.user.user_metadata ?? {})
     })
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -479,6 +487,8 @@ export default function App() {
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
       />
     )
+  } else if (current?.type === 'birthdayReview') {
+    content = <BirthdayImportReview onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'about') {
     content = <About onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'privacy') {
@@ -495,6 +505,7 @@ export default function App() {
             onSelectNudges={() => pushCrumb({ type: 'nudges', id: 'nudges', label: 'Due for an update' })}
             onNavigateTab={goToTab}
             onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
+            onOpenBirthdayReview={() => pushCrumb({ type: 'birthdayReview', id: 'birthdayReview', label: 'Review birthdays' })}
           />
         )}
         {view === 'people' && (
@@ -518,6 +529,7 @@ export default function App() {
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
             onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
             onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
+            onOpenBirthdayReview={() => pushCrumb({ type: 'birthdayReview', id: 'birthdayReview', label: 'Review birthdays' })}
           />
         )}
         {view === 'groups' && (

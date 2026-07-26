@@ -50,6 +50,7 @@ export default function Home({
   onSelectNudges,
   onNavigateTab,
   onOpenImportReview,
+  onOpenBirthdayReview,
 }: {
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
@@ -58,6 +59,7 @@ export default function Home({
   onSelectNudges: () => void
   onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
   onOpenImportReview: () => void
+  onOpenBirthdayReview: () => void
 }) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -68,6 +70,7 @@ export default function Home({
   const [recallAssists, setRecallAssists] = useState<number | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [pendingImportCount, setPendingImportCount] = useState(0)
+  const [pendingBirthdayImportCount, setPendingBirthdayImportCount] = useState(0)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [connectionSuggestions, setConnectionSuggestions] = useState<ConnectionSuggestion[]>([])
@@ -114,6 +117,13 @@ export default function Home({
       .select('id', { count: 'exact', head: true })
       .eq('status', 'pending')
       .then(({ count }) => setPendingImportCount(count ?? 0))
+    // birthday_import_candidates is a newer table (2026-07-26) — count query fails open to 0 via
+    // the same `?? 0` fallback if the migration hasn't been applied yet.
+    supabase
+      .from('birthday_import_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .then(({ count }) => setPendingBirthdayImportCount(count ?? 0))
   }, [])
 
   // Free/deterministic, so it's cheap to just recompute on every Home visit rather than caching —
@@ -250,6 +260,8 @@ export default function Home({
       onNavigateTab={onNavigateTab}
       pendingImportCount={pendingImportCount}
       onOpenImportReview={onOpenImportReview}
+      pendingBirthdayImportCount={pendingBirthdayImportCount}
+      onOpenBirthdayReview={onOpenBirthdayReview}
       bottomRef={bottomRef}
       devTools={<DevOnboardingReset />}
     />
@@ -289,6 +301,8 @@ export function HomeView({
   onNavigateTab,
   pendingImportCount = 0,
   onOpenImportReview,
+  pendingBirthdayImportCount = 0,
+  onOpenBirthdayReview,
   bottomRef,
   devTools,
   readOnly = false,
@@ -320,6 +334,8 @@ export function HomeView({
   onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
   pendingImportCount?: number
   onOpenImportReview?: () => void
+  pendingBirthdayImportCount?: number
+  onOpenBirthdayReview?: () => void
   bottomRef: RefObject<HTMLDivElement | null>
   devTools?: ReactNode
   readOnly?: boolean
@@ -334,6 +350,15 @@ export function HomeView({
             <button onClick={onOpenImportReview} style={styles.importNudge}>
               <span>
                 {pendingImportCount} event{pendingImportCount === 1 ? '' : 's'} found from your calendar
+              </span>
+              <span>→</span>
+            </button>
+          )}
+
+          {pendingBirthdayImportCount > 0 && onOpenBirthdayReview && (
+            <button onClick={onOpenBirthdayReview} style={styles.importNudge}>
+              <span>
+                {pendingBirthdayImportCount} birthday{pendingBirthdayImportCount === 1 ? '' : 's'} found from your calendar
               </span>
               <span>→</span>
             </button>

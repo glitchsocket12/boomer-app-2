@@ -678,7 +678,32 @@ Full story: PROJECT_HISTORY.md.
 │   ├── CalendarSettings.tsx   — (2026-07-24, item 48) connect/remove calendars by pasting their
 │   │                            secret iCal URL (validated server-side via `validate-calendar-
 │   │                            source` before saving), founder-editable "Sync now" button.
-│   │                            Reached from Settings and from Calendar.tsx's own link
+│   │                            Reached from Settings and from Calendar.tsx's own link.
+│   │                            (2026-07-26) "Regular calendar" vs "Birthdays calendar" radio
+│   │                            when adding a source (writes `calendar_sources.source_type`);
+│   │                            birthdays copy walks through connecting iPhone's iCloud
+│   │                            Birthdays calendar (Calendar app → Calendars → (i) → Share
+│   │                            Calendar → Public Calendar → Copy Link, then swap `webcal://`
+│   │                            for `https://`) since that's a real always-on Contacts sync,
+│   │                            not a one-time export. `source_type` fetched via its own
+│   │                            separate fail-open query (not the main list select) so a
+│   │                            pre-migration frontend deploy doesn't blank the whole
+│   │                            connected-calendars list — same pattern as GroupDetail.tsx's
+│   │                            `loadSuggestionsEnabled` (see §10/infra notes).
+│   ├── BirthdayImportReview.tsx — (2026-07-26) accept/reject queue for
+│   │                            `birthday_import_candidates`, mirrors ImportReview.tsx's card
+│   │                            idiom but simpler (name + date only, no tags/groups/location).
+│   │                            High-confidence matches show "Goes to: {person} (change)";
+│   │                            unmatched shows a search-to-link picker with "leaving this
+│   │                            blank creates a new person" as the fallback. Accept upserts
+│   │                            `reminders` (label='Birthday', + year if the calendar carried
+│   │                            one). Reached from Home.tsx/Calendar.tsx's "N birthdays found"
+│   │                            nudges (same pending-count pattern as the events nudge).
+│   │                            Verified end-to-end live against a disposable test account
+│   │                            (`jake.volin+birthdaytest@gmail.com` — not yet deleted, needs
+│   │                            founder cleanup via the Supabase dashboard, no admin access
+│   │                            from this session), NOT the shared `jakevolin@gmail.com`
+│   │                            login (real data, never used for mutating tests).
 │   └── ImportReview.tsx       — (2026-07-24, item 48; overhauled 2026-07-25) accept/reject queue
 │                                for AI-extracted calendar-import candidates
 │                                (`moment_import_candidates`, status=pending). Accept no longer
@@ -825,7 +850,7 @@ Every page listed above under `pages/` (Home/People/PersonDetail/Groups/GroupDet
 | `suggest-prompts` | 3 suggestion cards for Home → cached in `home_suggestions` table; regenerates only when data is newer than cache or on manual refresh. |
 | `transcribe` | Whisper speech-to-text. |
 | `validate-calendar-source` | Server-side reachability/format check on a pasted iCal URL (dodges browser CORS) before `calendar_sources` saves it. |
-| `scan-calendar-sources` | Fetches connected calendars, parses ICS (`_shared/ics.ts`), AI-extracts/classifies via Claude (`cache_control`-tiered), matches attendees to `people`, writes `moment_import_candidates`. Manual JWT path or cron-secret path (scans every account) — see PROJECT_HISTORY.md §21. `icsDateToIsoDate()` now converts a UTC-stamped (`...Z`) DTSTART into the connecting user's own `user_settings.time_zone` before taking the calendar date (2026-07-24, bug fix — see §12); date-only and floating-local DTSTART forms are unaffected (no conversion needed, they never carried a UTC offset to begin with). Extraction prompt (2026-07-25): `suggested_tags` now explicitly checks the event title for a word matching/synonymous with an existing tag before ever coining a new one; `location` now falls back to the model's own world knowledge for a recognizable public event's real-world city (e.g. "SF Fleet Week" → San Francisco) when the calendar entry's own location is blank; new `mentioned_people` output field (names in the title/description, cross-checked server-side against the roster — see ImportReview.tsx entry in §3) and server-side group-affiliation inference (`groupsSharedByMultiple`) feeding `suggested_group_ids`. **Family-surname matching (2026-07-25, NOT YET DEPLOYED — see §10):** new `mentioned_family_names` output field (surnames referenced as a family/household unit, e.g. "Meal train for the Mojica family" → `["Mojica"]`, distinct from `mentioned_people` which explicitly excludes generic "family" references) resolves via a `last_name` lookup to EVERY person on file sharing that surname (a family invite plausibly means the whole household, unlike a single ambiguous first name), tracked separately as `familyMatchedPersonIds`. Their OWN groups are then suggested directly (`groupIdsFromFamilyMembers`, count ≥ 1) rather than requiring a second independently-resolved attendee to also share it, unlike `groupsSharedByMultiple`'s general 2+ bar — a family-name match is already a strong enough per-person signal on its own (e.g. Patrick Mojica alone, matched via "the Mojica family," is enough to suggest his real "98 FTS" group). Same AI call, no added cost. **Gotcha:** the group-affiliation queries (`person_groups`/`notes`) must be scoped via `.in("group_id"/"moment_id", <this user's own small list>)`, NOT `.in("person_id", <every person>)` — with 400+ people the person-based IN-list got long enough to silently misbehave through the Edge Function's outbound fetch (empty data, no thrown error, identical query worked fine from a browser). |
+| `scan-calendar-sources` | Fetches connected calendars, parses ICS (`_shared/ics.ts`), AI-extracts/classifies via Claude (`cache_control`-tiered), matches attendees to `people`, writes `moment_import_candidates`. **Birthday sources (2026-07-26):** a `calendar_sources.source_type = 'birthdays'` row skips the AI call entirely — `processBirthdaySource` just parses each VEVENT's SUMMARY (stripping a "'s Birthday"/" Birthday" suffix) and DTSTART (month/day/plausible-year, sentinel years like 1604 nulled out), matches the name against the same `idByName` roster used for event attendees, and upserts into `birthday_import_candidates`. Zero added Anthropic cost. Manual JWT path or cron-secret path (scans every account) — see PROJECT_HISTORY.md §21. `icsDateToIsoDate()` now converts a UTC-stamped (`...Z`) DTSTART into the connecting user's own `user_settings.time_zone` before taking the calendar date (2026-07-24, bug fix — see §12); date-only and floating-local DTSTART forms are unaffected (no conversion needed, they never carried a UTC offset to begin with). Extraction prompt (2026-07-25): `suggested_tags` now explicitly checks the event title for a word matching/synonymous with an existing tag before ever coining a new one; `location` now falls back to the model's own world knowledge for a recognizable public event's real-world city (e.g. "SF Fleet Week" → San Francisco) when the calendar entry's own location is blank; new `mentioned_people` output field (names in the title/description, cross-checked server-side against the roster — see ImportReview.tsx entry in §3) and server-side group-affiliation inference (`groupsSharedByMultiple`) feeding `suggested_group_ids`. **Family-surname matching (2026-07-25, NOT YET DEPLOYED — see §10):** new `mentioned_family_names` output field (surnames referenced as a family/household unit, e.g. "Meal train for the Mojica family" → `["Mojica"]`, distinct from `mentioned_people` which explicitly excludes generic "family" references) resolves via a `last_name` lookup to EVERY person on file sharing that surname (a family invite plausibly means the whole household, unlike a single ambiguous first name), tracked separately as `familyMatchedPersonIds`. Their OWN groups are then suggested directly (`groupIdsFromFamilyMembers`, count ≥ 1) rather than requiring a second independently-resolved attendee to also share it, unlike `groupsSharedByMultiple`'s general 2+ bar — a family-name match is already a strong enough per-person signal on its own (e.g. Patrick Mojica alone, matched via "the Mojica family," is enough to suggest his real "98 FTS" group). Same AI call, no added cost. **Gotcha:** the group-affiliation queries (`person_groups`/`notes`) must be scoped via `.in("group_id"/"moment_id", <this user's own small list>)`, NOT `.in("person_id", <every person>)` — with 400+ people the person-based IN-list got long enough to silently misbehave through the Edge Function's outbound fetch (empty data, no thrown error, identical query worked fine from a browser). |
 
 **Shared module** `_shared/relationships.ts`: the 5 relationship kinds (spouse/sibling/parent/child/partner), reciprocal notes written on BOTH sides (`INVERSE_RELATIONSHIP` map — incl. when a suggestion banner is confirmed, not just an immediate confident match, fixed 2026-07-20), dedupe on an EXACT match against the deterministic note text (not a loose name+keyword heuristic — the loose version used to false-positive on the SUBJECT's own original sentence and silently block their own reciprocal note, fixed 2026-07-20, see PROJECT_HISTORY §13), confident-match = name-as-typed exactly equals full name on file (else a suggest-don't-assert banner), siblings named together in one signal also link to EACH OTHER not just to the subject (direct write when confident, exact-full-name lookup at confirm-time otherwise — 2026-07-20), shared-parent inference suggestions, last-name inference for people created from relationship mentions (`inferLastNameFromSignals`, also called by the direct `new_people`/`add_people` creation paths). Every confident/pairwise note write here now ALSO dual-writes the matching row into the `relationships` table (2026-07-20, via `_shared/relationshipsTable.ts`'s `upsertRelationship` — takes a `userId` param now). Used by `converse`/`add-fact`/`update-moment`/`update-group` so relationship behavior is identical at all four entry points. `chat` and `search` functions were deleted 2026-07-19 (superseded by `converse`). `syncFamilyClique`/new `syncSpouseParenthood`/new `invalidateKeyFacts` (2026-07-25) mirror `src/lib/writeRelationship.ts`'s fixes exactly — see that entry (§3) for the full mechanism; **NOT YET REDEPLOYED**, see §10.
 
@@ -915,8 +940,10 @@ notes         id, person_id? , moment_id?, group_id? (CHECK: person_id OR group_
               that moment_id; untagging nulls moment_id, never deletes.
               ⚠ two FKs to groups: embeds must be qualified
               (groups!notes_source_group_id_fkey) or PostgREST errors (PGRST201).
-reminders     id, person_id, label ("Birthday"/"Anniversary"), month, day
-              — no year, no automatic sending exists.
+reminders     id, person_id, label ("Birthday"/"Anniversary"), month, day,
+              year? (2026-07-26, nullable — captured when a birthday-calendar
+              import provides one; not shown in the UI yet) — no automatic
+              sending exists.
 groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               group/School/Team/Work, nullable, fixed picker, CHECK-constrained),
               dismissed_person_ids jsonb [], dismissed_group_ids jsonb [], created_at,
@@ -958,8 +985,13 @@ user_settings user_id (PK), chat_tone (text, CHECK-constrained to 'warm'/'direct
               `getUserTimeZone` defaults to 'UTC' server-side when null.
               **Applied live 2026-07-24 — confirmed via PostgREST 200.**
 calendar_sources id, user_id, ical_url, label, last_synced_at?, last_sync_error?,
-              created_at — 2026-07-24, item 48. One row per connected calendar
+              created_at, source_type ('events'/'birthdays', default 'events',
+              2026-07-26) — 2026-07-24, item 48. One row per connected calendar
               (secret iCal URL, not an OAuth token — nothing to refresh/expire).
+              A 'birthdays' source is meant for iCloud's auto-generated Birthdays
+              calendar (itself derived from Contacts, so connecting it is a real,
+              always-current sync — no re-export needed as contacts change) —
+              see CalendarSettings.tsx and birthday_import_candidates below.
 moment_import_
 candidates    id, user_id, calendar_source_id, ical_uid (unique per user, dedupes
               across re-scans), status ('pending'/'accepted'/'rejected'), occasion?,
@@ -975,6 +1007,23 @@ candidates    id, user_id, calendar_source_id, ical_uid (unique per user, dedupe
               accept copies pending/approved fields into a real `moments` row (or
               merges into an existing one — see ImportReview.tsx entry above),
               reject just flips status.
+birthday_import_
+candidates    id, user_id, calendar_source_id, ical_uid (unique per user — same
+              dedupe/never-re-ask pattern as moment_import_candidates), status
+              ('pending'/'accepted'/'rejected'), full_name?, birthday_month?,
+              birthday_day?, birthday_year?, matched_person_id?, match_confidence
+              ('high'/'none'), created_at, reviewed_at? — 2026-07-26. Populated
+              ONLY from 'birthdays'-type calendar_sources, parsed directly (no AI
+              call — pure ICS text, no cost) by `processBirthdaySource` inside
+              scan-calendar-sources/index.ts. BirthdayImportReview.tsx (new page,
+              crumb `birthdayReview`) is the accept/reject queue: accept upserts a
+              `reminders` row (label='Birthday', + year if present) on either an
+              existing matched person or a newly-created one (search-to-link
+              picker if the match is wrong/missing), reject just flips status.
+              Nudge banners on Home.tsx/Calendar.tsx mirror the existing "N events
+              found" ones. **Applied live 2026-07-26 — confirmed via PostgREST/
+              Management API, end-to-end accept/reject flow verified in browser
+              against a disposable test account.**
 ```
 
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.

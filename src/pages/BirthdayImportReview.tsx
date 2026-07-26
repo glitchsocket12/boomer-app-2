@@ -1,0 +1,337 @@
+import { useEffect, useMemo, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import SearchBox from '../components/SearchBox'
+
+type Candidate = {
+  id: string
+  full_name: string | null
+  birthday_month: number | null
+  birthday_day: number | null
+  birthday_year: number | null
+  matched_person_id: string | null
+  match_confidence: 'high' | 'none'
+}
+type PersonRef = { id: string; name: string; last_name: string | null }
+type ExistingReminder = { person_id: string; month: number; day: number; year: number | null }
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+function formatBirthday(month: number | null, day: number | null, year: number | null): string {
+  if (!month || !day) return 'Unknown date'
+  const base = `${MONTH_NAMES[month - 1]} ${day}`
+  return year ? `${base}, ${year}` : base
+}
+
+function personLabel(p: PersonRef): string {
+  return p.last_name ? `${p.name} ${p.last_name}` : p.name
+}
+
+// Card-per-candidate review queue for calendar-sourced birthdays (2026-07-26) — mirrors
+// ImportReview.tsx's accept/reject idiom, but simplified: no tags/groups/location, just a name +
+// date and where it should land. Nothing writes to `people`/`reminders` without an explicit Accept.
+export default function BirthdayImportReview({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
+  const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [allPeople, setAllPeople] = useState<PersonRef[]>([])
+  const [existingReminders, setExistingReminders] = useState<ExistingReminder[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function load() {
+    setLoading(true)
+    const [candidatesRes, peopleRes, remindersRes] = await Promise.all([
+      supabase
+        .from('birthday_import_candidates')
+        .select('id, full_name, birthday_month, birthday_day, birthday_year, matched_person_id, match_confidence')
+        .eq('status', 'pending')
+        .order('full_name'),
+      supabase.from('people').select('id, name, last_name').order('name'),
+      supabase.from('reminders').select('person_id, month, day, year').eq('label', 'Birthday'),
+    ])
+    setCandidates((candidatesRes.data as Candidate[]) ?? [])
+    setAllPeople((peopleRes.data as PersonRef[]) ?? [])
+    setExistingReminders((remindersRes.data as ExistingReminder[]) ?? [])
+    setLoading(false)
+  }
+
+  function handleResolved(id: string) {
+    setCandidates((prev) => prev.filter((c) => c.id !== id))
+  }
+
+  return (
+    <div style={styles.page}>
+      <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
+
+      <h1 style={styles.heading}>Review birthdays</h1>
+      <p style={styles.intro}>
+        Found on your connected Birthdays calendar. Pick who each one belongs to, then accept or
+        reject — nothing is saved until you say yes.
+      </p>
+
+      {loading ? (
+        <p style={styles.body}>Loading…</p>
+      ) : candidates.length === 0 ? (
+        <p style={styles.body}>Nothing left to review.</p>
+      ) : (
+        candidates.map((c) => (
+          <CandidateCard
+            key={c.id}
+            candidate={c}
+            allPeople={allPeople}
+            existingReminder={c.matched_person_id ? existingReminders.find((r) => r.person_id === c.matched_person_id) ?? null : null}
+            onResolved={() => handleResolved(c.id)}
+          />
+        ))
+      )}
+    </div>
+  )
+}
+
+function CandidateCard({
+  candidate,
+  allPeople,
+  existingReminder,
+  onResolved,
+}: {
+  candidate: Candidate
+  allPeople: PersonRef[]
+  existingReminder: ExistingReminder | null
+  onResolved: () => void
+}) {
+  const [linkedPersonId, setLinkedPersonId] = useState<string | null>(candidate.matched_person_id)
+  const [pickerOpen, setPickerOpen] = useState(candidate.match_confidence !== 'high')
+  const [search, setSearch] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [savedLabel, setSavedLabel] = useState<string | null>(null)
+
+  const linkedPerson = allPeople.find((p) => p.id === linkedPersonId) ?? null
+  const dateLabel = formatBirthday(candidate.birthday_month, candidate.birthday_day, candidate.birthday_year)
+
+  const searchResults = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return []
+    return allPeople.filter((p) => personLabel(p).toLowerCase().includes(q)).slice(0, 8)
+  }, [search, allPeople])
+
+  const dateChanged =
+    existingReminder != null &&
+    linkedPersonId === candidate.matched_person_id &&
+    (existingReminder.month !== candidate.birthday_month || existingReminder.day !== candidate.birthday_day)
+
+  async function upsertBirthday(personId: string) {
+    const { data: existing } = await supabase
+      .from('reminders')
+      .select('id')
+      .eq('person_id', personId)
+      .eq('label', 'Birthday')
+      .maybeSingle()
+
+    if (existing) {
+      await supabase
+        .from('reminders')
+        .update({ month: candidate.birthday_month, day: candidate.birthday_day, year: candidate.birthday_year })
+        .eq('id', existing.id)
+    } else {
+      await supabase.from('reminders').insert({
+        person_id: personId,
+        label: 'Birthday',
+        month: candidate.birthday_month,
+        day: candidate.birthday_day,
+        year: candidate.birthday_year,
+      })
+    }
+  }
+
+  async function markReviewed(status: 'accepted' | 'rejected') {
+    await supabase
+      .from('birthday_import_candidates')
+      .update({ status, reviewed_at: new Date().toISOString(), matched_person_id: linkedPersonId })
+      .eq('id', candidate.id)
+  }
+
+  async function handleAccept() {
+    setSaving(true)
+    let personId: string | null = linkedPersonId
+
+    if (!personId) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const name = (candidate.full_name ?? 'New person').trim()
+      const [first, ...rest] = name.split(' ')
+      const { data: newPerson, error } = await supabase
+        .from('people')
+        .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
+        .select()
+        .single()
+      if (error || !newPerson) {
+        setSaving(false)
+        return
+      }
+      personId = newPerson.id
+    }
+
+    await upsertBirthday(personId as string)
+    await markReviewed('accepted')
+    setSaving(false)
+    setSavedLabel(linkedPerson ? personLabel(linkedPerson) : candidate.full_name ?? 'this person')
+  }
+
+  async function handleReject() {
+    setSaving(true)
+    await markReviewed('rejected')
+    setSaving(false)
+    onResolved()
+  }
+
+  if (savedLabel) {
+    return (
+      <div style={styles.card}>
+        <p style={styles.confirmText}>Added birthday for {savedLabel} — {dateLabel}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={styles.card}>
+      <p style={styles.cardTitle}>{candidate.full_name ?? 'Unknown name'}</p>
+      <p style={styles.dateText}>
+        {dateLabel}
+        {dateChanged && existingReminder && (
+          <span style={styles.changedNote}>
+            {' '}(currently {formatBirthday(existingReminder.month, existingReminder.day, existingReminder.year)} on file)
+          </span>
+        )}
+      </p>
+
+      <div style={styles.linkSection}>
+        {linkedPerson && !pickerOpen ? (
+          <p style={styles.body}>
+            Goes to: <strong>{personLabel(linkedPerson)}</strong>{' '}
+            <button type="button" onClick={() => setPickerOpen(true)} style={styles.linkButton}>
+              change
+            </button>
+          </p>
+        ) : (
+          <div>
+            <p style={styles.body}>
+              {linkedPerson ? 'Confirm who this belongs to:' : "Couldn't match this to anyone on file — add as a new person, or link to someone existing:"}
+            </p>
+            <SearchBox value={search} onChange={setSearch} placeholder="Search your people…" />
+            {searchResults.length > 0 && (
+              <div style={styles.searchResults}>
+                {searchResults.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    style={styles.searchResultRow}
+                    onClick={() => {
+                      setLinkedPersonId(p.id)
+                      setPickerOpen(false)
+                      setSearch('')
+                    }}
+                  >
+                    {personLabel(p)}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!linkedPerson && (
+              <p style={styles.body}>
+                Leaving this blank and accepting will add <strong>{candidate.full_name}</strong> as a new person.
+              </p>
+            )}
+            {linkedPerson && (
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkedPersonId(candidate.matched_person_id)
+                  setPickerOpen(false)
+                }}
+                style={styles.linkButton}
+              >
+                cancel
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={styles.buttonRow}>
+        <button type="button" onClick={handleAccept} disabled={saving} style={styles.acceptButton}>
+          {saving ? '…' : 'Accept'}
+        </button>
+        <button type="button" onClick={handleReject} disabled={saving} style={styles.rejectButton}>
+          Reject
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const styles: { [key: string]: React.CSSProperties } = {
+  page: { maxWidth: '840px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  backButton: { background: 'none', border: 'none', color: '#2E4034', fontSize: '1rem', cursor: 'pointer', marginBottom: '1rem', padding: 0 },
+  heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 0.5rem' },
+  intro: { fontSize: '0.95rem', color: '#666', lineHeight: 1.5, margin: '0 0 1.25rem' },
+  body: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5, margin: '0 0 0.5rem' },
+  card: {
+    backgroundColor: '#FFF',
+    border: '1px solid #CFE0D6',
+    borderRadius: '10px',
+    padding: '1rem 1.1rem',
+    marginBottom: '1rem',
+  },
+  cardTitle: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.25rem', fontWeight: 'bold' },
+  dateText: { fontSize: '0.95rem', color: '#2E2E2E', margin: '0 0 0.75rem' },
+  changedNote: { color: '#B04A3B', fontSize: '0.85rem' },
+  linkSection: { marginBottom: '0.75rem' },
+  linkButton: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    fontFamily: 'Georgia, serif',
+    padding: 0,
+  },
+  searchResults: { display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '0.5rem' },
+  searchResultRow: {
+    textAlign: 'left',
+    fontSize: '0.9rem',
+    padding: '0.4rem 0.6rem',
+    borderRadius: '6px',
+    border: '1px solid #E5E5E5',
+    backgroundColor: '#FAFAFA',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  buttonRow: { display: 'flex', gap: '0.6rem' },
+  acceptButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 1rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  rejectButton: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 1rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+    backgroundColor: '#FFF',
+    color: '#B04A3B',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  confirmText: { color: '#3A7A4A', fontSize: '0.95rem', margin: 0 },
+}

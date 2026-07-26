@@ -38,17 +38,20 @@ export default function Calendar({
   onSelectEvent,
   onOpenCalendarSettings,
   onOpenImportReview,
+  onOpenBirthdayReview,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onOpenCalendarSettings: () => void
   onOpenImportReview: () => void
+  onOpenBirthdayReview: () => void
 }) {
   const [moments, setMoments] = useState<MomentRow[]>([])
   const [people, setPeople] = useState<PersonRow[]>([])
   const [loading, setLoading] = useState(true)
   const [tagFilter, setTagFilter] = useState('all')
   const [pendingCount, setPendingCount] = useState(0)
+  const [pendingBirthdayCount, setPendingBirthdayCount] = useState(0)
   const today = useMemo(() => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
@@ -64,6 +67,11 @@ export default function Calendar({
       .select('id', { count: 'exact', head: true })
       .eq('status', 'pending')
       .then(({ count }) => setPendingCount(count ?? 0))
+    supabase
+      .from('birthday_import_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .then(({ count }) => setPendingBirthdayCount(count ?? 0))
   }, [])
 
   async function load() {
@@ -215,6 +223,15 @@ export default function Calendar({
         <button onClick={onOpenImportReview} style={styles.importNudge}>
           <span>
             {pendingCount} event{pendingCount === 1 ? '' : 's'} found from your calendar — review
+          </span>
+          <span>→</span>
+        </button>
+      )}
+
+      {pendingBirthdayCount > 0 && (
+        <button onClick={onOpenBirthdayReview} style={styles.importNudge}>
+          <span>
+            {pendingBirthdayCount} birthday{pendingBirthdayCount === 1 ? '' : 's'} found from your calendar — review
           </span>
           <span>→</span>
         </button>
