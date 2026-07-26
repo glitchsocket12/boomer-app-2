@@ -306,6 +306,15 @@ async function resolveRelationNames(
   return extractRelationNames(anthropicApiKey, kind, personName, notesText)
 }
 
+// Nulls the Key Facts cache (person-facts/index.ts's people.key_facts + key_facts_updated_at) for
+// everyone touched by a relationship write, so their next profile visit regenerates fresh instead
+// of serving a stale cached chip list — mirrors writeRelationship.ts's browser-side copy.
+async function invalidateKeyFacts(supabaseClient: MinimalSupabaseClient, personIds: (string | undefined | null)[]): Promise<void> {
+  const ids = [...new Set(personIds.filter((id): id is string => !!id))]
+  if (ids.length === 0) return
+  await supabaseClient.from("people").update({ key_facts: null, key_facts_updated_at: null }).in("id", ids)
+}
+
 // Siblings form a clique, and share parents. Whenever a sibling or parent link touching
 // anchorId is written, walk the full transitive sibling closure reachable from anchorId (not just
 // the pair that was just linked — a newly-added sibling of an EXISTING sibling group must connect
@@ -325,9 +334,28 @@ async function syncFamilyClique(
   const closure = new Set<string>([anchorId])
   const queue = [anchorId]
   const relById = new Map<string, Awaited<ReturnType<typeof getRelationshipsForPerson>>>()
+
+  // Seed the closure with everyone who shares one of the ANCHOR's own recorded parents — two kids
+  // independently given the same parent never get an explicit sibling row, so without this seed
+  // step they never joined any closure at all (2026-07-25 fix, mirrors writeRelationship.ts).
+  // Seeded ONCE, from only the anchor's own parentIds — not recursively re-applied to every
+  // newly-discovered member's own (possibly different) other parents, which would cascade into
+  // unrelated half-sibling chains.
+  const anchorRel = await getRelationshipsForPerson(supabaseClient, anchorId)
+  relById.set(anchorId, anchorRel)
+  for (const parentId of anchorRel.parentIds) {
+    const parentRel = await getRelationshipsForPerson(supabaseClient, parentId)
+    for (const childId of parentRel.childIds) {
+      if (!closure.has(childId)) {
+        closure.add(childId)
+        queue.push(childId)
+      }
+    }
+  }
+
   while (queue.length > 0) {
     const current = queue.shift() as string
-    const rel = await getRelationshipsForPerson(supabaseClient, current)
+    const rel = relById.get(current) ?? (await getRelationshipsForPerson(supabaseClient, current))
     relById.set(current, rel)
     for (const sibId of rel.siblingIds) {
       if (!closure.has(sibId)) {
@@ -359,6 +387,50 @@ async function syncFamilyClique(
     }
   }
   await Promise.all(writes)
+  await invalidateKeyFacts(supabaseClient, ids)
+}
+
+// Founder decision (2026-07-25): when a spouse relationship is added and either side already has
+// kids on file, the OTHER spouse automatically becomes a recorded parent of those existing kids
+// too — silent, no confirmation banner, symmetric both directions. Scoped to 'spouse' only, never
+// 'partner' — dating doesn't imply co-parenthood the way marriage does. Skips a side entirely (no
+// write, no error) when that side already has ANOTHER spouse/partner on file — a remarriage shape
+// where the new spouse is more likely a step-parent than a blood/legal parent, and this data model
+// has no qualifier column to record that distinction yet (backlog item 24, open). Mirrors
+// writeRelationship.ts's browser-side copy, including its FamilyTree.tsx-only suggestion-banner
+// treatment for the skipped remarriage case (not surfaced from this chat/AI path).
+async function syncSpouseParenthood(
+  supabaseClient: MinimalSupabaseClient,
+  userId: string | undefined | null,
+  aId: string,
+  bId: string
+): Promise<void> {
+  if (!userId || !aId || !bId || aId === bId) return
+  const [relA, relB] = await Promise.all([
+    getRelationshipsForPerson(supabaseClient, aId),
+    getRelationshipsForPerson(supabaseClient, bId),
+  ])
+
+  const aHasOtherSpouse = [...relA.spouseIds, ...relA.partnerIds].some((id) => id !== bId)
+  const bHasOtherSpouse = [...relB.spouseIds, ...relB.partnerIds].some((id) => id !== aId)
+
+  const writes: Promise<void>[] = []
+  const touchedChildren = new Set<string>()
+  if (!aHasOtherSpouse) {
+    for (const childId of relA.childIds) {
+      writes.push(upsertRelationship(supabaseClient, userId, bId, childId, "parent"))
+      touchedChildren.add(childId)
+    }
+  }
+  if (!bHasOtherSpouse) {
+    for (const childId of relB.childIds) {
+      writes.push(upsertRelationship(supabaseClient, userId, aId, childId, "parent"))
+      touchedChildren.add(childId)
+    }
+  }
+  await Promise.all(writes)
+  if (touchedChildren.size > 0) await invalidateKeyFacts(supabaseClient, [aId, bId])
+  for (const childId of touchedChildren) await syncFamilyClique(supabaseClient, userId, childId)
 }
 
 // Compares two people who are (or are about to become) recorded as siblings and reports any
@@ -532,12 +604,16 @@ export async function applyFamilySignals(
         // symmetric.
         if (signal.relationship === "parent") {
           await upsertRelationship(supabaseClient, userId, targetId, subjectId, "parent")
+          await invalidateKeyFacts(supabaseClient, [subjectId, targetId])
           await syncFamilyClique(supabaseClient, userId, subjectId)
         } else if (signal.relationship === "child") {
           await upsertRelationship(supabaseClient, userId, subjectId, targetId, "parent")
+          await invalidateKeyFacts(supabaseClient, [subjectId, targetId])
           await syncFamilyClique(supabaseClient, userId, targetId)
         } else if (signal.relationship === "spouse" || signal.relationship === "partner") {
           await upsertRelationship(supabaseClient, userId, subjectId, targetId, signal.relationship)
+          await invalidateKeyFacts(supabaseClient, [subjectId, targetId])
+          if (signal.relationship === "spouse") await syncSpouseParenthood(supabaseClient, userId, subjectId, targetId)
         }
       }
 
@@ -570,6 +646,7 @@ export async function applyFamilySignals(
         await writeNoteIfMissing(supabaseClient, a.id, RECIPROCAL_NOTE.sibling(b.name))
         await writeNoteIfMissing(supabaseClient, b.id, RECIPROCAL_NOTE.sibling(a.name))
         await upsertRelationship(supabaseClient, userId, a.id, b.id, "sibling")
+        await invalidateKeyFacts(supabaseClient, [a.id, b.id])
       }
     }
     // All of confidentPeers is now one connected component (every pair was just linked above), so

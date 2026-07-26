@@ -40,6 +40,18 @@ async function deleteNoteIfPresent(personId: string, content: string) {
   if (match) await supabase.from('notes').delete().eq('id', match.id)
 }
 
+// Nulls the Key Facts cache (person-facts/index.ts's people.key_facts + key_facts_updated_at) for
+// everyone touched by a relationship write, so their next profile visit regenerates fresh instead
+// of serving a stale cached chip list — nothing previously invalidated it, so a profile's Key Facts
+// could keep showing stale spouse/sibling/parent/kid chips long after the relationships table was
+// already correct. person-facts/index.ts already treats key_facts === null as a cache miss and
+// regenerates on next visit — no change needed there.
+export async function invalidateKeyFacts(personIds: (string | undefined | null)[]) {
+  const ids = [...new Set(personIds.filter((id): id is string => !!id))]
+  if (ids.length === 0) return
+  await supabase.from('people').update({ key_facts: null, key_facts_updated_at: null }).in('id', ids)
+}
+
 // Siblings form a clique, and share parents. Whenever a sibling or parent link touching
 // anchorId is written, walk the full transitive sibling closure reachable from anchorId (not just
 // the pair that was just linked — a newly-added sibling of an EXISTING sibling group must connect
@@ -55,9 +67,34 @@ export async function syncFamilyClique(userId: string | undefined | null, anchor
   const closure = new Set<string>([anchorId])
   const queue = [anchorId]
   const relById = new Map<string, Awaited<ReturnType<typeof getRelationshipsForPerson>>>()
+
+  // Seed the closure with everyone who shares one of the ANCHOR's own recorded parents — two kids
+  // independently given the same parent (typical when adding kids one at a time, or from each
+  // kid's own profile) never get an explicit sibling row, so without this seed step they never
+  // joined any closure at all (2026-07-25 fix — this was the exact reported bug: siblings/parents
+  // not syncing across a tree regardless of which profile a relationship was added from). Seeded
+  // ONCE, from only the anchor's own parentIds — not recursively re-applied to every
+  // newly-discovered member's own (possibly different) other parents, which would cascade into
+  // unrelated half-sibling chains. Note: if the anchor has two different parents on file, kids
+  // found via one and kids found via the other still land in the same closure and get flagged
+  // mutual siblings even if they share no parent with each other directly — same flattening the
+  // sibling-chain BFS below already does with no half/step qualifier (backlog item 24, open), not a
+  // new class of imprecision.
+  const anchorRel = await getRelationshipsForPerson(anchorId)
+  relById.set(anchorId, anchorRel)
+  for (const parentId of anchorRel.parentIds) {
+    const parentRel = await getRelationshipsForPerson(parentId)
+    for (const childId of parentRel.childIds) {
+      if (!closure.has(childId)) {
+        closure.add(childId)
+        queue.push(childId)
+      }
+    }
+  }
+
   while (queue.length > 0) {
     const current = queue.shift() as string
-    const rel = await getRelationshipsForPerson(current)
+    const rel = relById.get(current) ?? (await getRelationshipsForPerson(current))
     relById.set(current, rel)
     for (const sibId of rel.siblingIds) {
       if (!closure.has(sibId)) {
@@ -89,6 +126,47 @@ export async function syncFamilyClique(userId: string | undefined | null, anchor
     }
   }
   await Promise.all(writes)
+  await invalidateKeyFacts(ids)
+}
+
+// Founder decision (2026-07-25): when a spouse relationship is added and either side already has
+// kids on file, the OTHER spouse automatically becomes a recorded parent of those existing kids
+// too — silent, no confirmation banner, symmetric both directions. Scoped to being called only for
+// kind 'spouse', never 'partner' — dating doesn't imply co-parenthood the way marriage does.
+// Skips a side entirely (no write, no error) when that side already has ANOTHER spouse/partner on
+// file — a remarriage shape (e.g. a deceased first spouse, still on file as a 'spouse' row) where
+// the new spouse is more likely a step-parent than a blood/legal parent, and this data model has no
+// qualifier column to record that distinction yet (backlog item 24, open). FamilyTree.tsx's
+// suggestCoParentLinks surfaces exactly this skipped case as a one-click "suggest, don't assert"
+// banner instead, mirroring the existing reverse-direction "are X and Y married?" banner.
+// Composes with syncFamilyClique: after writing the new parent rows, re-syncs each newly-connected
+// child's own sibling clique too, so the new spouse's parenthood reaches every one of the other
+// spouse's kids — including ones only discoverable via syncFamilyClique's shared-parentage fix, not
+// just the ones with a pre-existing explicit sibling link.
+export async function syncSpouseParenthood(userId: string | undefined | null, aId: string, bId: string) {
+  if (!userId || !aId || !bId || aId === bId) return
+  const [relA, relB] = await Promise.all([getRelationshipsForPerson(aId), getRelationshipsForPerson(bId)])
+
+  const aHasOtherSpouse = [...relA.spouseIds, ...relA.partnerIds].some((id) => id !== bId)
+  const bHasOtherSpouse = [...relB.spouseIds, ...relB.partnerIds].some((id) => id !== aId)
+
+  const writes: Promise<void>[] = []
+  const touchedChildren = new Set<string>()
+  if (!aHasOtherSpouse) {
+    for (const childId of relA.childIds) {
+      writes.push(upsertRelationship(userId, bId, childId, 'parent'))
+      touchedChildren.add(childId)
+    }
+  }
+  if (!bHasOtherSpouse) {
+    for (const childId of relB.childIds) {
+      writes.push(upsertRelationship(userId, aId, childId, 'parent'))
+      touchedChildren.add(childId)
+    }
+  }
+  await Promise.all(writes)
+  if (touchedChildren.size > 0) await invalidateKeyFacts([aId, bId])
+  for (const childId of touchedChildren) await syncFamilyClique(userId, childId)
 }
 
 // Links subjectId and targetId as `category` (from the subject's point of view, e.g.
@@ -103,15 +181,21 @@ export async function linkRelationship(
 ): Promise<void> {
   await writeNoteIfMissing(targetId, NOTE_FOR_TARGET[category](subjectName))
   await writeNoteIfMissing(subjectId, NOTE_FOR_SUBJECT[category](targetName))
-  if (category === 'spouse') await upsertRelationship(userId, subjectId, targetId, 'spouse')
-  else if (category === 'siblings') {
+  if (category === 'spouse') {
+    await upsertRelationship(userId, subjectId, targetId, 'spouse')
+    await invalidateKeyFacts([subjectId, targetId])
+    await syncSpouseParenthood(userId, subjectId, targetId)
+  } else if (category === 'siblings') {
     await upsertRelationship(userId, subjectId, targetId, 'sibling')
+    await invalidateKeyFacts([subjectId, targetId])
     await syncFamilyClique(userId, subjectId)
   } else if (category === 'parents') {
     await upsertRelationship(userId, targetId, subjectId, 'parent')
+    await invalidateKeyFacts([subjectId, targetId])
     await syncFamilyClique(userId, subjectId)
   } else if (category === 'kids') {
     await upsertRelationship(userId, subjectId, targetId, 'parent')
+    await invalidateKeyFacts([subjectId, targetId])
     await syncFamilyClique(userId, targetId)
   }
 }

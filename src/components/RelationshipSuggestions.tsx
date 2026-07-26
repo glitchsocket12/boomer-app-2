@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { upsertRelationship, type RelationshipKind } from '../lib/relationshipsTable'
-import { syncFamilyClique } from '../lib/writeRelationship'
+import { syncFamilyClique, syncSpouseParenthood, invalidateKeyFacts } from '../lib/writeRelationship'
 
 // Shared by every entry point that can surface a relationship suggestion (the profile fact bar,
 // Home chat, an event's chat, a group's chat) — the confirm/decline logic writes exactly what a
@@ -73,13 +73,17 @@ async function writeRelationshipTableEntry(
 ) {
   if (relationship === 'parent') {
     await upsertRelationship(userId, targetId, subjectId, 'parent')
+    await invalidateKeyFacts([subjectId, targetId])
     await syncFamilyClique(userId, subjectId)
   } else if (relationship === 'child') {
     await upsertRelationship(userId, subjectId, targetId, 'parent')
+    await invalidateKeyFacts([subjectId, targetId])
     await syncFamilyClique(userId, targetId)
   } else if (relationship === 'spouse' || relationship === 'partner' || relationship === 'sibling') {
     await upsertRelationship(userId, subjectId, targetId, relationship as RelationshipKind)
+    await invalidateKeyFacts([subjectId, targetId])
     if (relationship === 'sibling') await syncFamilyClique(userId, subjectId)
+    if (relationship === 'spouse') await syncSpouseParenthood(userId, subjectId, targetId)
   }
 }
 
@@ -126,6 +130,7 @@ async function linkCoSiblings(s: NewPersonSuggestion, resolvedId: string, resolv
       { person_id: peerId, moment_id: null, content: `Their sibling is ${resolvedFullName}.` },
     ])
     await upsertRelationship(userId, resolvedId, peerId, 'sibling')
+    await invalidateKeyFacts([resolvedId, peerId])
     await syncFamilyClique(userId, resolvedId)
   }
 }
@@ -175,6 +180,7 @@ export default function RelationshipSuggestionBanners({
       data: { user },
     } = await supabase.auth.getUser()
     await upsertRelationship(user?.id, s.parentId, s.childId, 'parent')
+    await invalidateKeyFacts([s.parentId, s.childId])
     await syncFamilyClique(user?.id, s.childId)
     onApplied?.()
   }

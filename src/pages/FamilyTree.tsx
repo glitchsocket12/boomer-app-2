@@ -18,8 +18,8 @@ import {
   type Union,
   type TreeSide,
 } from '../lib/familyTree'
-import { linkRelationship, createAndLinkRelationship, unlinkRelationship, type CircleCategory } from '../lib/writeRelationship'
-import { getRelationshipsForPerson, setRelationshipEndedReason } from '../lib/relationshipsTable'
+import { linkRelationship, createAndLinkRelationship, unlinkRelationship, syncFamilyClique, invalidateKeyFacts, type CircleCategory } from '../lib/writeRelationship'
+import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 
 const TRASH_ICON = (
@@ -258,6 +258,10 @@ function layoutRelativeToParent(
 
 type RemoveTarget = { category: CircleCategory; label: string; subjectId: string; subjectName: string; targetId: string; targetName: string }
 type SpouseSuggestion = { aId: string; aName: string; bId: string; bName: string }
+// Surfaced when syncSpouseParenthood (writeRelationship.ts) silently skipped auto-linking a new
+// spouse as a parent of the other's existing kids, because the child-owning side already has
+// another spouse/partner on file (a remarriage shape) — see suggestCoParentLinks below.
+type CoParentSuggestion = { parentId: string; parentName: string; childId: string; childName: string }
 // Divorce keeps the relationship row (unlike RemoveTarget, which deletes it) — only the root's own
 // CURRENT spouses/partners are offered this, one hop out isn't handled here for the same reason
 // RemoveTarget isn't (see confirmRemove's comment).
@@ -285,6 +289,7 @@ export default function FamilyTree({
   const [removeConfirm, setRemoveConfirm] = useState<RemoveTarget | null>(null)
   const [removing, setRemoving] = useState(false)
   const [spouseSuggestions, setSpouseSuggestions] = useState<SpouseSuggestion[]>([])
+  const [coParentSuggestions, setCoParentSuggestions] = useState<CoParentSuggestion[]>([])
   const [divorceConfirm, setDivorceConfirm] = useState<DivorceTarget | null>(null)
   const [divorcing, setDivorcing] = useState(false)
   const [undoingDivorceId, setUndoingDivorceId] = useState<string | null>(null)
@@ -297,6 +302,7 @@ export default function FamilyTree({
   async function load() {
     setLoading(true)
     setSpouseSuggestions([])
+    setCoParentSuggestions([])
     const [{ data: { user } }, { data: everyone }, tree] = await Promise.all([
       supabase.auth.getUser(),
       supabase.from('people').select('id, name, last_name'),
@@ -330,6 +336,31 @@ export default function FamilyTree({
     setSpouseSuggestions((prev) => [...prev, ...suggestions])
   }
 
+  // A spouse just added to subjectId might also belong on subjectId's (or the new spouse's own)
+  // EXISTING kids as a parent — syncSpouseParenthood (writeRelationship.ts) already does this
+  // automatically for a first marriage, but silently skips it when either side already has another
+  // spouse/partner on file (a remarriage shape, where the new spouse is more likely a step-parent
+  // than a blood parent — see backlog item 24). Re-derive that same skipped case here and surface
+  // it as a suggestion instead of leaving it silently unlinked — same "suggest, don't assert"
+  // treatment as suggestSpouseLinks above.
+  async function suggestCoParentLinks(aId: string, aName: string, bId: string, bName: string) {
+    const [relA, relB] = await Promise.all([getRelationshipsForPerson(aId), getRelationshipsForPerson(bId)])
+    const aHasOtherSpouse = [...relA.spouseIds, ...relA.partnerIds].some((id) => id !== bId)
+    const bHasOtherSpouse = [...relB.spouseIds, ...relB.partnerIds].some((id) => id !== aId)
+    const suggestions: CoParentSuggestion[] = []
+    if (aHasOtherSpouse) {
+      for (const childId of relA.childIds) {
+        suggestions.push({ parentId: bId, parentName: bName, childId, childName: allPeople.find((p) => p.id === childId)?.label ?? 'this child' })
+      }
+    }
+    if (bHasOtherSpouse) {
+      for (const childId of relB.childIds) {
+        suggestions.push({ parentId: aId, parentName: aName, childId, childName: allPeople.find((p) => p.id === childId)?.label ?? 'this child' })
+      }
+    }
+    if (suggestions.length > 0) setCoParentSuggestions((prev) => [...prev, ...suggestions])
+  }
+
   // Explicit add slots rather than one-per-tier: a person can have more than one parent, so
   // "add a grandparent" needs one slot PER parent (which side is this grandparent on?) instead of
   // silently always attaching to whichever parent happens to be listed first.
@@ -357,6 +388,8 @@ export default function FamilyTree({
     }
     if (category === 'parents' && targetId && targetName) {
       await suggestSpouseLinks(subjectId, targetId, targetName)
+    } else if (category === 'spouse' && targetId && targetName) {
+      await suggestCoParentLinks(subjectId, subjectName, targetId, targetName)
     }
     const refreshed = await buildFamilyTree(data.rootId)
     setData(refreshed)
@@ -373,6 +406,21 @@ export default function FamilyTree({
 
   function declineSpouseSuggestion(s: SpouseSuggestion) {
     setSpouseSuggestions((prev) => prev.filter((x) => x !== s))
+  }
+
+  async function acceptCoParentSuggestion(s: CoParentSuggestion) {
+    setCoParentSuggestions((prev) => prev.filter((x) => x !== s))
+    await upsertRelationship(userId, s.parentId, s.childId, 'parent')
+    await invalidateKeyFacts([s.parentId, s.childId])
+    await syncFamilyClique(userId, s.childId)
+    if (data) {
+      const refreshed = await buildFamilyTree(data.rootId)
+      setData(refreshed)
+    }
+  }
+
+  function declineCoParentSuggestion(s: CoParentSuggestion) {
+    setCoParentSuggestions((prev) => prev.filter((x) => x !== s))
   }
 
   // A relationship added in the wrong spot (wrong person, wrong category) needs to be fully
@@ -444,6 +492,9 @@ export default function FamilyTree({
       spouseSuggestions={spouseSuggestions}
       onAcceptSpouseSuggestion={acceptSpouseSuggestion}
       onDeclineSpouseSuggestion={declineSpouseSuggestion}
+      coParentSuggestions={coParentSuggestions}
+      onAcceptCoParentSuggestion={acceptCoParentSuggestion}
+      onDeclineCoParentSuggestion={declineCoParentSuggestion}
       divorceConfirm={divorceConfirm}
       divorcing={divorcing}
       onRequestDivorce={setDivorceConfirm}
@@ -477,6 +528,9 @@ export function FamilyTreeView({
   spouseSuggestions = [],
   onAcceptSpouseSuggestion = () => {},
   onDeclineSpouseSuggestion = () => {},
+  coParentSuggestions = [],
+  onAcceptCoParentSuggestion = () => {},
+  onDeclineCoParentSuggestion = () => {},
   divorceConfirm = null,
   divorcing = false,
   onRequestDivorce = () => {},
@@ -513,6 +567,9 @@ export function FamilyTreeView({
   spouseSuggestions?: SpouseSuggestion[]
   onAcceptSpouseSuggestion?: (s: SpouseSuggestion) => void
   onDeclineSpouseSuggestion?: (s: SpouseSuggestion) => void
+  coParentSuggestions?: CoParentSuggestion[]
+  onAcceptCoParentSuggestion?: (s: CoParentSuggestion) => void
+  onDeclineCoParentSuggestion?: (s: CoParentSuggestion) => void
 }) {
   const { tiers, mode } = data
 
@@ -945,6 +1002,20 @@ export function FamilyTreeView({
               Yes, link them
             </button>
             <button type="button" onClick={() => onDeclineSpouseSuggestion(s)} style={styles.suggestNoButton}>
+              No thanks
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {coParentSuggestions.map((s) => (
+        <div key={`${s.parentId}:${s.childId}`} style={styles.suggestBanner}>
+          <span>Is {s.parentName} also {s.childName}'s parent?</span>
+          <div style={styles.suggestButtonRow}>
+            <button type="button" onClick={() => onAcceptCoParentSuggestion(s)} style={styles.suggestYesButton}>
+              Yes, add
+            </button>
+            <button type="button" onClick={() => onDeclineCoParentSuggestion(s)} style={styles.suggestNoButton}>
               No thanks
             </button>
           </div>
