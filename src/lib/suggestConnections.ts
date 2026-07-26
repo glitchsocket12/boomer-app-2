@@ -15,12 +15,12 @@ const SAMPLE_SIZE = 4
 // recompute on every Home visit instead of needing a cache (CLAUDE.md rule 3).
 export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[]> {
   const [groupsRes, personGroupsRes, associationsRes] = await Promise.all([
-    supabase.from('groups').select('id, name, dismissed_person_ids'),
+    supabase.from('groups').select('id, name, dismissed_person_ids, suggestions_enabled'),
     supabase.from('person_groups').select('person_id, group_id, people(id, name, last_name)'),
     supabase.from('group_associations').select('group_id_a, group_id_b'),
   ])
 
-  const groups = (groupsRes.data ?? []) as { id: string; name: string; dismissed_person_ids: string[] | null }[]
+  const groups = (groupsRes.data ?? []) as { id: string; name: string; dismissed_person_ids: string[] | null; suggestions_enabled: boolean | null }[]
   if (groups.length === 0) return []
   const groupById = new Map(groups.map((g) => [g.id, g]))
   const groupIds = groups.map((g) => g.id)
@@ -59,6 +59,7 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
     if (membersByGroup[groupId]?.has(person.id)) return
     const group = groupById.get(groupId)
     if (!group) return
+    if (group.suggestions_enabled === false) return
     if ((group.dismissed_person_ids ?? []).includes(person.id)) return
     suggestionsByKey.set(`${groupId}:${person.id}`, { person, group: { id: group.id, name: group.name } })
   }

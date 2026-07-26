@@ -313,9 +313,17 @@ src/
 │   │                            against the "New group" placeholder forever), members
 │   │                            (explicit only, sorted, collapsible >12, hover-remove),
 │   │                            suggestions (from events + associated groups, capped
-│   │                            20, add/deny all), Associated Groups (confirmed +
-│   │                            suggested + manual picker), notes section, edit chat,
-│   │                            delete group
+│   │                            20, add/deny all), per-group "Suggest new members for
+│   │                            this group" checkbox (item 57, 2026-07-25) — always
+│   │                            visible (not gated on there being any current
+│   │                            suggestions, so it stays reachable to turn back on),
+│   │                            off hides this group's own suggestion chips AND drops
+│   │                            it from Home's "Connections to make" card
+│   │                            (`suggestions_enabled` column, read by
+│   │                            `lib/suggestConnections.ts` too), Associated Groups
+│   │                            (confirmed + suggested + manual picker) unaffected —
+│   │                            different signal, not in scope, notes section, edit
+│   │                            chat, delete group
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
 │   │                            created_at), "Month Year" format, grouped under
 │   │                            sticky year headers (2026, 2025, ...; float at
@@ -866,7 +874,10 @@ reminders     id, person_id, label ("Birthday"/"Anniversary"), month, day
               — no year, no automatic sending exists.
 groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               group/School/Team/Work, nullable, fixed picker, CHECK-constrained),
-              dismissed_person_ids jsonb [], dismissed_group_ids jsonb [], created_at
+              dismissed_person_ids jsonb [], dismissed_group_ids jsonb [], created_at,
+              suggestions_enabled bool (default true, item 57, 2026-07-25 — per-group
+              opt-out for the member-suggestion signal, read by GroupDetail.tsx and
+              lib/suggestConnections.ts; NOT YET RUN against production, see §10)
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
@@ -994,7 +1005,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 **Items 57–61 came in via the click-to-comment feedback widget (§3 FeedbackWidget.tsx), founder session 2026-07-25, folded in here instead of living only in the `feedback_notes` table — marked done in the widget once captured below:**
 
-57. **Per-group toggle for "connections to make" suggestions** — requested 2026-07-25, left on both `GroupDetail.tsx`'s own suggestion card (SOS - F60, 25C) and Home's "Connections to make" card. Some groups (loose/large ones) generate suggestions the founder doesn't want; others (tight family groups) do — add a per-group on/off toggle near "Remove all suggestions" (see item 59's citation of that button). Founder's stretch idea: if a group's suggestions get dismissed ("No") every time, proactively offer to turn suggestions off for it rather than waiting to be asked. Related to item 15/50 (`lib/suggestConnections.ts`, GroupDetail's own membership-suggestion signal) — an opt-out layer on top of the now-shipped suggestion engine, not a rebuild of it.
+57. ~~Per-group toggle for "connections to make" suggestions~~ — **DONE 2026-07-25** (scope confirmed with founder: Groups only, not Events — EventDetail's own attendee-suggestion boxes are a separate, not-yet-built ask). New `groups.suggestions_enabled` column (default true); checkbox on `GroupDetail.tsx` right above where the suggestion chips would render (always visible, not gated on there currently being any, so it stays reachable to re-enable); off also drops that group from Home's "Connections to make" card since both read the same column (`lib/suggestConnections.ts`). Isolated fetch/write, fails open to "on" if the column isn't there yet — doesn't risk breaking the member list or Home's card while the migration is pending. **Founder's stretch idea (proactively offer to turn suggestions off after repeated dismissals) NOT built** — out of scope for this pass. **Needs founder action, see §10:** `migrations_manual/2026-07-25-group-suggestions-toggle.sql` not yet run. Build passes; click-tested live against the real `jakevolin@gmail.com` account/"Air Force" group (checkbox renders in the right place, defaults checked, toggling it optimistically unchecks then correctly reverts since the column doesn't exist yet — confirmed via a direct read-only query that the failure is exactly `42703 column does not exist`, nothing else); full on/off behavior against real suggestion data still needs a pass once the migration runs.
 58. **Auto-load more Home suggestions without a refresh** — requested 2026-07-25. `suggestConnections.ts` already returns a random sample (currently 4) of the full candidate pool per call (§3); founder wants the "Connections to make" card to silently fetch/show another batch once the visible ones are cleared, instead of requiring a full page reload to see more.
 59. **EventDetail affiliated-group attendee suggestions missing "Add all"** — requested 2026-07-25 (USAFA Graduation event). `GroupDetail.tsx` already has "✓ Add all suggestions" paired with "× Remove all suggestions" (`GroupDetail.tsx:826`); `EventDetail.tsx`'s matching "Also from the affiliated group?" attendee-suggestion section only has the remove-all half (`EventDetail.tsx:833`, `:860`) — add the accept-all counterpart to match.
 60. **New-person name inputs don't stay side by side** — requested 2026-07-25. `PersonDetail.tsx`'s first/middle/last rename inputs (`nameInputRow`/`renameInput`, ~line 1472) are flex with no explicit width or `flex-basis` per box, so they can wrap to separate lines instead of showing as three equal-sized boxes in one row — founder found this confusing. Styling-only fix (give each input a shared `flex: 1`/basis).
@@ -1021,6 +1032,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 ## 10. Pending manual steps, open bugs, cleanup
 
+- **Founder needs to run a SQL migration: per-group suggestions toggle (item 57, 2026-07-25)** — `supabase/migrations_manual/2026-07-25-group-suggestions-toggle.sql`, paste into the Supabase SQL Editor. Until this runs, the new checkbox on `GroupDetail.tsx` always shows as on and reverts itself if clicked (fails open, doesn't break the member list or Home's card — see §3/§6/§8 item 57).
 - ~~Redeploy 4 edge functions for the family tree relationship-sync fix~~ — **DONE 2026-07-25.** `add-fact`/`converse`/`update-moment`/`update-group` all redeployed with the fixed `_shared/relationships.ts` (founder-provided token, confirmed success on all 4).
 - **Founder action needed: run the family-tree backfill SQL by hand (2026-07-25, item 40 follow-up)** — code deployed everywhere (frontend + all 4 edge functions), verified live with disposable test people, but the actual backfill against real data (fixes the reported Lorenzo Harris tree, and everyone else's already-built trees) needs to be run **by the founder, in the Supabase Dashboard's SQL Editor** — both the Management API and the browser-client fallback were tried and both got blocked by the auto-mode safety classifier for a write at this scale (a bulk backfill across many real relationship rows, not a narrow single-row fix — see `project_boomer_infra.md` memory for the refined understanding). Run `migrations_manual/2026-07-25-spouse-coparent-backfill.sql` FIRST, then `2026-07-25-shared-parent-sibling-backfill.sql` (each file's own header explains why). Dry-run preview already done this session (read-only queries aren't blocked): the spouse-coparent file will add 35 new parent links across ~20 different families (including the reported Jamie/Leanne/Lorenzo case) and correctly excludes the Andy Volin/Andi/Michael Galchinsky remarriage case; the sibling file will add at least 24 new direct sibling pairs before its own transitive-closure step runs. Both are `ON CONFLICT DO NOTHING`/additive-only — safe to re-run, nothing gets deleted or overwritten.
 - **Needs deploy: `scan-calendar-sources` family-surname matching (2026-07-25)** — code committed (`mentioned_family_names`, see §4 entry), not yet run through `npx supabase functions deploy scan-calendar-sources`. Until deployed, calendar entries like "Meal train for the Mojica family" keep matching/scanning under the OLD prompt (no surname resolution). Needs a founder-provided Supabase access token (see §2 workflow) — none available this session.

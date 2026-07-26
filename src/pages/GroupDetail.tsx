@@ -88,6 +88,7 @@ export default function GroupDetail({
   const [loadingPickableGroups, setLoadingPickableGroups] = useState(false)
   const [groupPickerSearch, setGroupPickerSearch] = useState('')
   const [membersExpanded, setMembersExpanded] = useState(false)
+  const [suggestionsEnabled, setSuggestionsEnabled] = useState(true)
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -98,6 +99,7 @@ export default function GroupDetail({
     loadSummary()
     loadGroupNotes()
     loadAssociatedGroups()
+    loadSuggestionsEnabled()
     setName(groupName)
     setNameInput(groupName)
     setEditingName(false)
@@ -184,6 +186,23 @@ export default function GroupDetail({
     const { error } = await supabase.from('groups').update({ group_type: newType }).eq('id', groupId)
     setSavingType(false)
     if (!error) setGroupType(newType)
+  }
+
+  // Isolated on purpose (not folded into loadMembers' shared select): if this column doesn't
+  // exist yet (migration not run — see PROJECT_CONTEXT.md §10), fail open to "on" rather than
+  // letting a 400 on this one flag blank out the member list on every group's page.
+  async function loadSuggestionsEnabled() {
+    const { data, error } = await supabase.from('groups').select('suggestions_enabled').eq('id', groupId).single()
+    setSuggestionsEnabled(error ? true : data?.suggestions_enabled ?? true)
+  }
+
+  // Item 57: per-group opt-out for the member-suggestion signal, read by both this page's own
+  // suggestion card and Home's "Connections to make" card (lib/suggestConnections.ts). Optimistic
+  // with a revert on failure, same pattern as other single-flag writes on this page.
+  async function handleToggleSuggestions(enabled: boolean) {
+    setSuggestionsEnabled(enabled)
+    const { error } = await supabase.from('groups').update({ suggestions_enabled: enabled }).eq('id', groupId)
+    if (error) setSuggestionsEnabled(!enabled)
   }
 
   // Scopes the tree to this group's own lineage (buildDescendantTree, via memberIds) rather than
@@ -480,7 +499,7 @@ export default function GroupDetail({
   for (const p of associatedGroupMembers) {
     if (!explicitIds.has(p.id) && !dismissedIds.has(p.id)) suggestedMembersById.set(p.id, p)
   }
-  const suggestedMembers = sortByLastName([...suggestedMembersById.values()])
+  const suggestedMembers = suggestionsEnabled ? sortByLastName([...suggestedMembersById.values()]) : []
 
   // Suggested associated groups combine two signals — any other group tagged to the same events
   // as this one (event-based, reusing the moments already loaded above, same one-hop reasoning as
@@ -538,6 +557,8 @@ export default function GroupDetail({
       onToggleMembersExpanded={() => setMembersExpanded((e) => !e)}
       onAddMember={handleAddMember}
       onRemoveMember={handleRemoveMember}
+      suggestionsEnabled={suggestionsEnabled}
+      onToggleSuggestions={handleToggleSuggestions}
       onApproveAllSuggestions={handleApproveAllSuggestions}
       onDenySuggestion={handleDenySuggestion}
       onDenyAllSuggestions={handleDenyAllSuggestions}
@@ -625,6 +646,8 @@ export function GroupDetailView({
   onToggleMembersExpanded = () => {},
   onAddMember = () => {},
   onRemoveMember = () => {},
+  suggestionsEnabled = true,
+  onToggleSuggestions = () => {},
   onApproveAllSuggestions = () => {},
   onDenySuggestion = () => {},
   onDenyAllSuggestions = () => {},
@@ -661,6 +684,8 @@ export function GroupDetailView({
   moments: Moment[]
   explicitMembers: PersonRef[]
   suggestedMembers: PersonRef[]
+  suggestionsEnabled?: boolean
+  onToggleSuggestions?: (enabled: boolean) => void
   confirmedAssociatedGroups: GroupRef[]
   suggestedAssociatedGroups: GroupRef[]
   groupNotes: GroupNote[]
@@ -813,7 +838,23 @@ export function GroupDetailView({
         </>
       )}
 
-      {!readOnly && suggestedMembers.length > 0 && (
+      {!readOnly && (
+        <div style={styles.suggestionToggleRow}>
+          <label style={styles.suggestionToggleLabel}>
+            <input
+              type="checkbox"
+              checked={suggestionsEnabled}
+              onChange={(e) => onToggleSuggestions(e.target.checked)}
+            />
+            Suggest new members for this group
+          </label>
+          {!suggestionsEnabled && (
+            <span style={styles.suggestionToggleHint}>Off — won't suggest here or on Home</span>
+          )}
+        </div>
+      )}
+
+      {!readOnly && suggestionsEnabled && suggestedMembers.length > 0 && (
         <>
           <div style={styles.suggestionHeaderRow}>
             <p style={styles.eventOnlyLabel}>
@@ -1399,6 +1440,9 @@ const styles: { [key: string]: React.CSSProperties } = {
   eventOnlyLabel: { margin: '0.75rem 0 0.5rem 0', fontSize: '0.85rem', color: '#888', fontStyle: 'italic' },
   suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
   suggestionActionRow: { display: 'flex', gap: '0.9rem', flexWrap: 'wrap' },
+  suggestionToggleRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', margin: '0.75rem 0 0.5rem 0' },
+  suggestionToggleLabel: { display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: '#555', cursor: 'pointer' },
+  suggestionToggleHint: { fontSize: '0.8rem', color: '#999', fontStyle: 'italic' },
   removeAllButton: {
     fontSize: '0.85rem',
     background: 'none',
