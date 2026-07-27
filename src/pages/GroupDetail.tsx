@@ -429,7 +429,8 @@ export default function GroupDetail({
     setGroupPickerSearch('')
     setLoadingPickableGroups(true)
     const { data } = await supabase.from('groups').select('id, name').neq('id', groupId).order('name')
-    setPickableGroups((data as GroupRef[]) ?? [])
+    const hierarchyIds = new Set([parentGroup?.id, ...subgroups.map((sg) => sg.id)].filter((id): id is string => !!id))
+    setPickableGroups(((data as GroupRef[]) ?? []).filter((g) => !hierarchyIds.has(g.id)))
     setLoadingPickableGroups(false)
   }
 
@@ -742,18 +743,31 @@ export default function GroupDetail({
   // EventDetail.tsx's "Affiliated Groups"), and any other group this group's own explicit members
   // explicitly belong to (member-based, loaded in loadMemberSharedGroups). Either signal is enough
   // to suggest — confirmed/dismissed groups are filtered out either way.
+  //
+  // Parent/subgroup pairs are excluded from both signals: that's a hierarchical relationship
+  // already shown via the Subgroups section and the "belongs to parent" nudge, not the kind of
+  // symmetric, otherwise-unrelated link (e.g. "Air Force" <-> "Air Force Academy") Associated
+  // Groups is for. Without this, a subgroup's members being also in the parent's roster made the
+  // subgroup (and the parent) suggest itself right back as an associated group.
   const confirmedGroupIds = new Set(confirmedAssociatedGroups.map((g) => g.id))
   const dismissedGroupIdSet = new Set(dismissedGroupIds)
+  const hierarchyGroupIds = new Set([parentGroup?.id, ...subgroups.map((sg) => sg.id)].filter((id): id is string => !!id))
   const suggestedGroupsById = new Map<string, GroupRef>()
   for (const m of moments) {
     for (const mg of m.moment_groups ?? []) {
-      if (mg.groups && mg.groups.id !== groupId && !confirmedGroupIds.has(mg.groups.id) && !dismissedGroupIdSet.has(mg.groups.id)) {
+      if (
+        mg.groups &&
+        mg.groups.id !== groupId &&
+        !confirmedGroupIds.has(mg.groups.id) &&
+        !dismissedGroupIdSet.has(mg.groups.id) &&
+        !hierarchyGroupIds.has(mg.groups.id)
+      ) {
         suggestedGroupsById.set(mg.groups.id, mg.groups)
       }
     }
   }
   for (const g of memberSharedGroups) {
-    if (!confirmedGroupIds.has(g.id) && !dismissedGroupIdSet.has(g.id)) suggestedGroupsById.set(g.id, g)
+    if (!confirmedGroupIds.has(g.id) && !dismissedGroupIdSet.has(g.id) && !hierarchyGroupIds.has(g.id)) suggestedGroupsById.set(g.id, g)
   }
   const suggestedAssociatedGroups = [...suggestedGroupsById.values()].sort((a, b) => a.name.localeCompare(b.name))
 
@@ -774,7 +788,7 @@ export default function GroupDetail({
       subgroupError={subgroupError}
       onAddSubgroup={handleAddSubgroup}
       suggestedParentMembers={suggestedParentMembers}
-      confirmedAssociatedGroups={confirmedAssociatedGroups}
+      confirmedAssociatedGroups={confirmedAssociatedGroups.filter((g) => !hierarchyGroupIds.has(g.id))}
       suggestedAssociatedGroups={suggestedAssociatedGroups}
       groupNotes={groupNotes}
       onSelectPerson={onSelectPerson}

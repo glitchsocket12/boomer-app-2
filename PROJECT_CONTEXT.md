@@ -957,11 +957,9 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               self-referencing FK, ON DELETE SET NULL, CHECK parent_group_id != id;
               nested subgroups, e.g. a mission under a squadron or a class year under a
               school group — one level deep only in the UI, arbitrary depth in schema;
-              migrated live 2026-07-26). Trigger `person_groups_sync_parent` (2026-07-26,
-              `migrations_manual/2026-07-26-subgroup-member-parent-sync.sql`): AFTER INSERT
-              on person_groups, adding someone to a subgroup also upserts them into its
-              parent (one-time backfill for pre-existing subgroup members included; does NOT
-              mirror on remove) — pending founder SQL run, see §10.
+              migrated live 2026-07-26). Subgroup membership is deliberately independent of
+              the parent's — no sync trigger. One was added by mistake 2026-07-26 and removed
+              same day before ever being run (contradicted this design decision).
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
@@ -1175,8 +1173,9 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Founder action needed: deploy `add-fact` (item 61 fix)** — `npx supabase functions deploy add-fact --project-ref dedtnytxhzzjimkozncc` with a founder-provided access token (no token available this session). Until deployed, the live function still has the first-person misattribution bug.
 - **Founder action needed: run `migrations_manual/2026-07-26-gender.sql`** (item 44) — adds the nullable `people.gender` column. Code (PersonDetail's gender dropdown, FamilyTree's ♂/♀ glyph) already deployed and verified in browser preview — it fails open (no crash, no icons/saves) until this runs, so nothing breaks in the gap, but nothing persists either.
-- **Founder action needed: run `migrations_manual/2026-07-26-subgroup-member-parent-sync.sql`** (founder ask 2026-07-26: adding someone to a subgroup should also add them to the parent group) — adds an AFTER INSERT trigger on `person_groups` (`person_groups_sync_parent`) plus a one-time backfill for existing subgroup members. Pure DB-side fix (no app code changed, nothing to click-test) — chosen as a trigger rather than app code because `person_groups` inserts happen from GroupDetail.tsx AND three chat-driven Edge Functions (`converse`/`add-fact`/`update-group`), so a trigger covers all of them at once. No token available this session to run it directly — paste into the Supabase SQL Editor. Until this runs, adding someone to a subgroup does NOT also add them to the parent group.
+- ~~Founder action needed: run `migrations_manual/2026-07-26-subgroup-member-parent-sync.sql`~~ — **never shipped.** This trigger was added by mistake (not part of the reviewed subgroups plan) and removed same day, before it was ever run — it contradicted the deliberate design that subgroup membership stays independent of the parent's. No founder action needed; adding someone to a subgroup intentionally does NOT also add them to the parent group.
 - ~~Founder action needed: run `migrations_manual/2026-07-26-group-subgroups.sql`~~ (item 19, subgroups) — **migration run and fully verified live 2026-07-26.** Full click-through against the real account with disposable test groups: create a subgroup, rename, parent link navigation, parent-roster suggestion chip (add via chip), event tagging via EventDetail's existing "Associate a Group" (zero new code, confirmed), merging a group with 2 subgroups into another root group (subgroups correctly reparent to the survivor), deleting a parent with subgroups (they correctly survive as independent root groups, confirmation copy correctly pluralized). All test groups/events cleaned up after.
+- ~~Subgroups showing up as "Associated Groups" of their own parent (and vice versa)~~ — **fixed 2026-07-26.** The Associated Groups suggestion/confirm/manual-picker logic in [GroupDetail.tsx](../src/pages/GroupDetail.tsx) only excluded the current group itself, not its parent or its own subgroups — so a subgroup's roster overlapping the parent's roster made them suggest each other as "associated," duplicating the hierarchy already shown via the Subgroups section. Now excludes parent/subgroup ids from all three (suggestions, confirmed display, and the manual picker). Verified live: 98 FTS/Wings of Blue's "2019" subgroup no longer suggests or lists its parent as an associated group.
 - **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.
 
 ## 11. Rules for AI assistants working on this repo
