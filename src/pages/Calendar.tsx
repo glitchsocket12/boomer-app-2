@@ -137,7 +137,6 @@ export default function Calendar({
   const upcoming = [...filteredMomentEntries, ...reminderEntries]
     .filter((e) => e.date.getTime() >= today.getTime())
     .sort((a, b) => a.date.getTime() - b.date.getTime())
-    .slice(0, 8)
 
   // Month grid buckets by day-of-month for the currently viewed month. Moments match an exact
   // year+month; reminders recur every year so they only need the month to match.
@@ -398,7 +397,14 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   sectionHeading: { fontSize: '1.15rem', color: '#2E4034', margin: 0 },
   empty: { color: '#777', margin: '0.5rem 0 0' },
-  upcomingList: { display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.75rem' },
+  upcomingList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.25rem',
+    marginTop: '0.75rem',
+    maxHeight: '22.5rem',
+    overflowY: 'auto',
+  },
   upcomingRow: {
     display: 'flex',
     alignItems: 'center',
