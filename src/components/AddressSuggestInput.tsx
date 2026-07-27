@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchAddressSuggestions } from '../lib/radar'
+import { fetchAddressSuggestions } from '../lib/geoapify'
 
 // A plain text input whose own value IS the field (unlike SearchAddPicker, which clears its query
 // box after picking — that's fine for adding items to a list, but location is free text you keep
-// editing). Suggests previously-typed values first (instant, local), then live Radar address
-// suggestions once Radar/VITE_RADAR_PUBLISHABLE_KEY is configured — see AddressSuggestInput's
-// sibling src/lib/radar.ts. Degrades silently to local-only suggestions if Radar is unset or fails.
-const RADAR_MIN_CHARS = 3
-const RADAR_DEBOUNCE_MS = 300
+// editing). Suggests previously-typed values first (instant, local), then live Geoapify address
+// suggestions once VITE_GEOAPIFY_API_KEY is configured — see AddressSuggestInput's sibling
+// src/lib/geoapify.ts. Degrades silently to local-only suggestions if Geoapify is unset or fails.
+const LIVE_MIN_CHARS = 3
+const LIVE_DEBOUNCE_MS = 300
 
 export default function AddressSuggestInput({
   value,
@@ -24,20 +24,20 @@ export default function AddressSuggestInput({
 }) {
   const [focused, setFocused] = useState(false)
   const [highlighted, setHighlighted] = useState(-1)
-  const [radarResults, setRadarResults] = useState<string[]>([])
+  const [liveResults, setLiveResults] = useState<string[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     const q = value.trim()
-    if (q.length < RADAR_MIN_CHARS) {
-      setRadarResults([])
+    if (q.length < LIVE_MIN_CHARS) {
+      setLiveResults([])
       return
     }
     debounceRef.current = setTimeout(async () => {
       const results = await fetchAddressSuggestions(q)
-      setRadarResults(results.map((r) => r.formattedAddress))
-    }, RADAR_DEBOUNCE_MS)
+      setLiveResults(results.map((r) => r.formattedAddress))
+    }, LIVE_DEBOUNCE_MS)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
@@ -48,17 +48,17 @@ export default function AddressSuggestInput({
   const localMatches = q
     ? recentValues.filter((v) => v.toLowerCase().includes(q) && v.toLowerCase() !== q).slice(0, 5)
     : []
-  const radarMatches = radarResults.filter((r) => !localMatches.some((l) => l.toLowerCase() === r.toLowerCase()))
+  const liveMatches = liveResults.filter((r) => !localMatches.some((l) => l.toLowerCase() === r.toLowerCase()))
   const combined = [
     ...localMatches.map((v) => ({ value: v, source: 'recent' as const })),
-    ...radarMatches.map((v) => ({ value: v, source: 'radar' as const })),
+    ...liveMatches.map((v) => ({ value: v, source: 'live' as const })),
   ]
   const showList = focused && q.length > 0 && combined.length > 0
 
   function select(v: string) {
     onChange(v)
     setHighlighted(-1)
-    setRadarResults([])
+    setLiveResults([])
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -107,7 +107,7 @@ export default function AddressSuggestInput({
               }}
             >
               {item.value}
-              {item.source === 'radar' && <span style={styles.radarBadge}>via Radar</span>}
+              {item.source === 'live' && <span style={styles.liveBadge}>via Geoapify</span>}
             </button>
           ))}
         </div>
@@ -163,7 +163,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#F4F8F5',
     border: '1px solid #2E4034',
   },
-  radarBadge: {
+  liveBadge: {
     fontSize: '0.7rem',
     color: '#8A6A1F',
     fontStyle: 'italic',

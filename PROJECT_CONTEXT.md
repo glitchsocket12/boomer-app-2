@@ -13,7 +13,7 @@ A mobile-friendly web app for backing up and staying close to your social memori
 - **AI:** Anthropic Claude API, model `claude-sonnet-5` in all functions (an invalid model string fails silently — see guard §12).
 - **Speech-to-text:** OpenAI Whisper (`whisper-1`) via the `transcribe` function; needs `OPENAI_API_KEY` in Supabase secrets (project-wide list under Edge Functions → Secrets). Chosen over the free Web Speech API because that doesn't work in iPhone Safari, and the founder's end goal is an iPhone app.
 - **Hosting:** Vercel, live at `https://boomer-app-2-eight.vercel.app/`, auto-deploys on every push to `main` (repo: `github.com/glitchsocket12/boomer-app-2`). `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` set in Vercel project settings; Vite bakes them in at build time. Vercel CLI (`npx vercel`) installed as a fallback deploy path.
-- **Address autocomplete:** Radar (docs.radar.com), publishable key in `VITE_RADAR_PUBLISHABLE_KEY` (local `.env` + Vercel project settings) — client-side calls only, no Edge Function proxy. Key not yet created — see §10.
+- **Address autocomplete:** Geoapify (geoapify.com — verified free tier, 3,000 req/day, no credit card; Radar was tried first but turned out enterprise/quote-only despite its docs), key in `VITE_GEOAPIFY_API_KEY` (local `.env` + Vercel project settings) — client-side calls only, no Edge Function proxy. Key not yet created — see §10.
 - **Dev:** local folder, this repo. `npm run dev` (port 5173; respects `PORT` for the browser-preview tool), `npm run build`, `npm run test` (Vitest — only covers `src/lib/` pure helpers; zero Edge Function coverage).
 - **Deploying Edge Functions:** `npx supabase functions deploy <name>` with a founder-provided Personal Access Token, or paste the file into the Supabase dashboard and click Deploy. `supabase/functions/_shared/` is bundled automatically.
 - **Schema changes:** SQL handed to the founder to run in the SQL Editor (saved under `supabase/migrations_manual/`), or applied directly via the Management API (`POST /v1/projects/{ref}/database/query` with the same access token).
@@ -26,10 +26,11 @@ src/
 ├── main.tsx / index.css       — entry, global styles (incl. `spin` keyframe)
 ├── lib/
 │   ├── supabase.ts            — shared client (reads VITE_* env)
-│   ├── radar.ts               — (2026-07-26) fetchAddressSuggestions(): thin client for Radar's
-│   │                            Autocomplete API (publishable key, safe client-side, no proxy).
-│   │                            Reads `VITE_RADAR_PUBLISHABLE_KEY`; returns [] (no error) if unset
-│   │                            or the call fails — see §2/§10 for the founder's Radar signup step.
+│   ├── geoapify.ts             — (2026-07-26) fetchAddressSuggestions(): thin client for
+│   │                            Geoapify's Address Autocomplete API (key restricted by referrer,
+│   │                            safe client-side, no proxy). Reads `VITE_GEOAPIFY_API_KEY`; returns
+│   │                            [] (no error) if unset or the call fails — see §2/§10 for the
+│   │                            founder's signup step.
 │   ├── dates.ts               — eventSortDate/formatMonthYear (tested)
 │   ├── summarize.ts           — short title helper (tested)
 │   ├── people.ts              — sortByLastName
@@ -779,13 +780,13 @@ Full story: PROJECT_HISTORY.md.
                                 mechanical title+description fallback) the "save as a note instead"
                                 target. Location field (2026-07-26) is now `AddressSuggestInput`
                                 (see components/ entry below) instead of a plain input — suggests
-                                addresses the founder has typed before, plus live Radar
+                                addresses the founder has typed before, plus live Geoapify
                                 suggestions once a key is configured.
 ├── components/
 │   ├── AddressSuggestInput.tsx — (2026-07-26) drop-in text input with a suggestion dropdown:
 │   │                            previously-typed values (instant, local, from the `recentValues`
-│   │                            prop) first, then live Radar address suggestions (debounced,
-│   │                            `lib/radar.ts`). Unlike SearchAddPicker, the input's own value IS
+│   │                            prop) first, then live Geoapify address suggestions (debounced,
+│   │                            `lib/geoapify.ts`). Unlike SearchAddPicker, the input's own value IS
 │   │                            the field — picking a suggestion (click, or ↓/↑ + Enter) fills it
 │   │                            in place rather than clearing a separate query box. Currently only
 │   │                            wired to ImportReview.tsx's Location field (the only real location
@@ -1154,7 +1155,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 ## 10. Pending manual steps, open bugs, cleanup
 
-- **Founder action needed: create a Radar account + publishable API key (2026-07-26)** — powers live address-autocomplete suggestions on ImportReview's Location field (see components/AddressSuggestInput.tsx). Sign up free at radar.com, generate a publishable key, then add `VITE_RADAR_PUBLISHABLE_KEY=<key>` to local `.env` AND to the Vercel project's Environment Variables (Settings → Environment Variables) — `.env` isn't committed so the deployed build needs it set separately. Until this is done, the feature still works using only previously-typed addresses (no live suggestions, no errors).
+- **Founder action needed: create a Geoapify account + API key (2026-07-26, corrected same day — Radar turned out not to have a usable free tier)** — powers live address-autocomplete suggestions on ImportReview's Location field (see components/AddressSuggestInput.tsx). Sign up free at geoapify.com (verified: 3,000 requests/day free, no credit card), generate a key, restrict it to your production domain + localhost under "Referrer restrictions" in the Geoapify dashboard, then add `VITE_GEOAPIFY_API_KEY=<key>` to local `.env` AND to the Vercel project's Environment Variables (Settings → Environment Variables) — `.env` isn't committed so the deployed build needs it set separately. Until this is done, the feature still works using only previously-typed addresses (no live suggestions, no errors).
 - **Founder action needed: run `migrations_manual/2026-07-26-group-suggestions-default-off.sql`** — flips the `groups.suggestions_enabled` (item 57) default from true to false, and sets every existing group's value to false, per founder feedback 2026-07-26 ("not using it for anyone"). Code-side defaults (GroupDetail.tsx, suggestConnections.ts) already updated and verified in browser preview; no token available this session to run it directly (see `project_boomer_infra.md`), so paste this file into the Supabase SQL Editor. Until it runs, existing groups keep whatever value they already have (mixed true/false — some groups were already manually toggled off).
 - ~~Redeploy 4 edge functions for the family tree relationship-sync fix~~ — **DONE 2026-07-25.** `add-fact`/`converse`/`update-moment`/`update-group` all redeployed with the fixed `_shared/relationships.ts` (founder-provided token, confirmed success on all 4).
 - **Founder action needed: run the family-tree backfill SQL by hand (2026-07-25, item 40 follow-up)** — code deployed everywhere (frontend + all 4 edge functions), verified live with disposable test people, but the actual backfill against real data (fixes the reported Lorenzo Harris tree, and everyone else's already-built trees) needs to be run **by the founder, in the Supabase Dashboard's SQL Editor** — both the Management API and the browser-client fallback were tried and both got blocked by the auto-mode safety classifier for a write at this scale (a bulk backfill across many real relationship rows, not a narrow single-row fix — see `project_boomer_infra.md` memory for the refined understanding). Run `migrations_manual/2026-07-25-spouse-coparent-backfill.sql` FIRST, then `2026-07-25-shared-parent-sibling-backfill.sql` (each file's own header explains why). Dry-run preview already done this session (read-only queries aren't blocked): the spouse-coparent file will add 35 new parent links across ~20 different families (including the reported Jamie/Leanne/Lorenzo case) and correctly excludes the Andy Volin/Andi/Michael Galchinsky remarriage case; the sibling file will add at least 24 new direct sibling pairs before its own transitive-closure step runs. Both are `ON CONFLICT DO NOTHING`/additive-only — safe to re-run, nothing gets deleted or overwritten.
