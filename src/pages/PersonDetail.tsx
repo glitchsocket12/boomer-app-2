@@ -5,6 +5,7 @@ import { EventChip, PersonChip } from '../components/Chips'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import PhotoGallery from '../components/PhotoGallery'
+import ContactInfoSection from '../components/ContactInfoSection'
 import RefreshButton from '../components/RefreshButton'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
@@ -1024,6 +1025,8 @@ export function PersonDetailView({
         </div>
       )}
 
+      {!loading && <ContactInfoSection personId={personId} readOnly={readOnly} />}
+
       {!loading && (
         <>
           <h2 style={styles.subheading}>Associated Groups</h2>
@@ -1456,6 +1459,8 @@ function NoteCard({
             </button>
           ) : note.source === 'home' ? (
             <span style={styles.noteSourceTag}>From Home</span>
+          ) : note.source === 'contacts_import' ? (
+            <span style={styles.noteSourceTag}>From: Contacts import</span>
           ) : null}
         </div>
       </div>

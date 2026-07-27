@@ -51,6 +51,8 @@ export default function Home({
   onNavigateTab,
   onOpenImportReview,
   onOpenBirthdayReview,
+  onOpenContactImportReview,
+  onOpenContactSelection,
 }: {
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
@@ -60,6 +62,8 @@ export default function Home({
   onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
   onOpenImportReview: () => void
   onOpenBirthdayReview: () => void
+  onOpenContactImportReview: () => void
+  onOpenContactSelection: () => void
 }) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -71,6 +75,8 @@ export default function Home({
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [pendingImportCount, setPendingImportCount] = useState(0)
   const [pendingBirthdayImportCount, setPendingBirthdayImportCount] = useState(0)
+  const [pendingContactSelectedCount, setPendingContactSelectedCount] = useState(0)
+  const [pendingContactUndecidedCount, setPendingContactUndecidedCount] = useState(0)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [connectionSuggestions, setConnectionSuggestions] = useState<ConnectionSuggestion[]>([])
@@ -124,6 +130,19 @@ export default function Home({
       .select('id', { count: 'exact', head: true })
       .eq('status', 'pending')
       .then(({ count }) => setPendingBirthdayImportCount(count ?? 0))
+    // Deliberately count 'selected' here, not raw 'pending' — a founder mid-way through curating a
+    // large contacts file shouldn't feel nagged about the ones they haven't gotten to yet. The
+    // still-undecided count gets its own lower-key secondary line instead (see HomeView below).
+    supabase
+      .from('contact_import_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'selected')
+      .then(({ count }) => setPendingContactSelectedCount(count ?? 0))
+    supabase
+      .from('contact_import_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .then(({ count }) => setPendingContactUndecidedCount(count ?? 0))
   }, [])
 
   // Free/deterministic, so it's cheap to just recompute on every Home visit rather than caching —
@@ -262,6 +281,10 @@ export default function Home({
       onOpenImportReview={onOpenImportReview}
       pendingBirthdayImportCount={pendingBirthdayImportCount}
       onOpenBirthdayReview={onOpenBirthdayReview}
+      pendingContactSelectedCount={pendingContactSelectedCount}
+      onOpenContactImportReview={onOpenContactImportReview}
+      pendingContactUndecidedCount={pendingContactUndecidedCount}
+      onOpenContactSelection={onOpenContactSelection}
       bottomRef={bottomRef}
       devTools={<DevOnboardingReset />}
     />
@@ -303,6 +326,10 @@ export function HomeView({
   onOpenImportReview,
   pendingBirthdayImportCount = 0,
   onOpenBirthdayReview,
+  pendingContactSelectedCount = 0,
+  onOpenContactImportReview,
+  pendingContactUndecidedCount = 0,
+  onOpenContactSelection,
   bottomRef,
   devTools,
   readOnly = false,
@@ -336,6 +363,10 @@ export function HomeView({
   onOpenImportReview?: () => void
   pendingBirthdayImportCount?: number
   onOpenBirthdayReview?: () => void
+  pendingContactSelectedCount?: number
+  onOpenContactImportReview?: () => void
+  pendingContactUndecidedCount?: number
+  onOpenContactSelection?: () => void
   bottomRef: RefObject<HTMLDivElement | null>
   devTools?: ReactNode
   readOnly?: boolean
@@ -359,6 +390,24 @@ export function HomeView({
             <button onClick={onOpenBirthdayReview} style={styles.importNudge}>
               <span>
                 {pendingBirthdayImportCount} birthday{pendingBirthdayImportCount === 1 ? '' : 's'} found from your calendar
+              </span>
+              <span>→</span>
+            </button>
+          )}
+
+          {pendingContactSelectedCount > 0 && onOpenContactImportReview && (
+            <button onClick={onOpenContactImportReview} style={styles.importNudge}>
+              <span>
+                {pendingContactSelectedCount} contact{pendingContactSelectedCount === 1 ? '' : 's'} selected, ready to review
+              </span>
+              <span>→</span>
+            </button>
+          )}
+
+          {pendingContactUndecidedCount > 0 && onOpenContactSelection && (
+            <button onClick={onOpenContactSelection} style={styles.importNudgeSecondary}>
+              <span>
+                {pendingContactUndecidedCount} more contact{pendingContactUndecidedCount === 1 ? '' : 's'} to look through
               </span>
               <span>→</span>
             </button>
@@ -569,6 +618,21 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
     marginTop: '1.25rem',
+  },
+  importNudgeSecondary: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    fontSize: '0.85rem',
+    padding: '0.6rem 1rem',
+    borderRadius: '10px',
+    border: '1px solid #E5E5E5',
+    backgroundColor: 'transparent',
+    color: '#999',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    marginTop: '0.5rem',
   },
   statsRow: { display: 'flex', gap: '0.75rem', marginTop: '1.25rem' },
   statTile: {

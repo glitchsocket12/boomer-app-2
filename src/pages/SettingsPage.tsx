@@ -21,12 +21,14 @@ export default function SettingsPage({
   onOpenAbout,
   onOpenPrivacy,
   onOpenCalendarSettings,
+  onOpenContactsImport,
 }: {
   onBack: () => void
   backLabel: string
   onOpenAbout: () => void
   onOpenPrivacy: () => void
   onOpenCalendarSettings: () => void
+  onOpenContactsImport: () => void
 }) {
   const [currentEmail, setCurrentEmail] = useState<string | null>(null)
 
@@ -362,6 +364,9 @@ export default function SettingsPage({
       <section style={styles.section}>
         <button onClick={onOpenCalendarSettings} style={styles.linkRow}>
           Calendar settings →
+        </button>
+        <button onClick={onOpenContactsImport} style={styles.linkRow}>
+          Import contacts →
         </button>
         <button onClick={onOpenAbout} style={styles.linkRow}>
           About Boomer →

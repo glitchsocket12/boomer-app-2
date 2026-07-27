@@ -23,6 +23,9 @@ import SettingsPage from './pages/SettingsPage'
 import CalendarSettings from './pages/CalendarSettings'
 import ImportReview from './pages/ImportReview'
 import BirthdayImportReview from './pages/BirthdayImportReview'
+import ContactsImport from './pages/ContactsImport'
+import ContactSelection from './pages/ContactSelection'
+import ContactImportReview from './pages/ContactImportReview'
 import About from './pages/About'
 import Privacy from './pages/Privacy'
 import FamilyTree from './pages/FamilyTree'
@@ -45,6 +48,9 @@ type Crumb =
   | { type: 'calendarSettings'; id: string; label: string }
   | { type: 'importReview'; id: string; label: string }
   | { type: 'birthdayReview'; id: string; label: string }
+  | { type: 'contactsImport'; id: string; label: string }
+  | { type: 'contactSelection'; id: string; label: string }
+  | { type: 'contactImportReview'; id: string; label: string }
   | { type: 'about'; id: string; label: string }
   | { type: 'privacy'; id: string; label: string }
 
@@ -63,6 +69,9 @@ const CRUMB_TYPES = [
   'calendarSettings',
   'importReview',
   'birthdayReview',
+  'contactsImport',
+  'contactSelection',
+  'contactImportReview',
   'about',
   'privacy',
 ]
@@ -476,6 +485,7 @@ export default function App() {
         onOpenAbout={() => pushCrumb({ type: 'about', id: 'about', label: 'About' })}
         onOpenPrivacy={() => pushCrumb({ type: 'privacy', id: 'privacy', label: 'Privacy' })}
         onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
+        onOpenContactsImport={() => pushCrumb({ type: 'contactsImport', id: 'contactsImport', label: 'Import contacts' })}
       />
     )
   } else if (current?.type === 'calendarSettings') {
@@ -490,6 +500,24 @@ export default function App() {
     )
   } else if (current?.type === 'birthdayReview') {
     content = <BirthdayImportReview onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'contactsImport') {
+    content = (
+      <ContactsImport
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onImported={() => pushCrumb({ type: 'contactSelection', id: 'contactSelection', label: 'Choose contacts' })}
+      />
+    )
+  } else if (current?.type === 'contactSelection') {
+    content = (
+      <ContactSelection
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onReviewSelected={() => pushCrumb({ type: 'contactImportReview', id: 'contactImportReview', label: 'Review contacts' })}
+      />
+    )
+  } else if (current?.type === 'contactImportReview') {
+    content = <ContactImportReview onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'about') {
     content = <About onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'privacy') {
@@ -507,6 +535,8 @@ export default function App() {
             onNavigateTab={goToTab}
             onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
             onOpenBirthdayReview={() => pushCrumb({ type: 'birthdayReview', id: 'birthdayReview', label: 'Review birthdays' })}
+            onOpenContactImportReview={() => pushCrumb({ type: 'contactImportReview', id: 'contactImportReview', label: 'Review contacts' })}
+            onOpenContactSelection={() => pushCrumb({ type: 'contactSelection', id: 'contactSelection', label: 'Choose contacts' })}
           />
         )}
         {view === 'people' && (
