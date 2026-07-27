@@ -1484,7 +1484,7 @@ export function GroupDetailView({
               <span>
                 Delete this group permanently? This removes its membership, notes, and event/group tags.
                 {subgroups.length > 0 &&
-                  ` Its ${subgroups.length} subgroup${subgroups.length === 1 ? '' : 's'} will become independent top-level groups, not deleted.`}{' '}
+                  ` Its ${subgroups.length} subgroup${subgroups.length === 1 ? '' : 's'} will become independent top-level group${subgroups.length === 1 ? '' : 's'}, not deleted.`}{' '}
                 This can't be undone.
               </span>
               <div style={styles.suggestButtonRow}>
