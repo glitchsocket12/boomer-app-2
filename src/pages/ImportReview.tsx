@@ -8,6 +8,7 @@ import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import SearchAddPicker from '../components/SearchAddPicker'
 import SearchBox from '../components/SearchBox'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import AddressSuggestInput from '../components/AddressSuggestInput'
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -217,6 +218,22 @@ export default function ImportReview({
     setExistingMoments((prev) => (prev.some((m) => m.id === moment.id) ? prev : [moment, ...prev]))
   }
 
+  // Feeds AddressSuggestInput's "you've typed this before" suggestions — deduped case-insensitively,
+  // most-recent first, from data already loaded above (no extra query).
+  const recentLocations = useMemo(() => {
+    const seen = new Set<string>()
+    const result: string[] = []
+    for (const m of existingMoments) {
+      const loc = m.location?.trim()
+      if (!loc) continue
+      const key = loc.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(loc)
+    }
+    return result
+  }, [existingMoments])
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -237,6 +254,7 @@ export default function ImportReview({
             key={c.id}
             candidate={c}
             existingMoments={existingMoments}
+            recentLocations={recentLocations}
             allTagsList={allTagsList}
             allGroupsList={allGroupsList}
             allPeopleList={allPeopleList}
@@ -257,6 +275,7 @@ export default function ImportReview({
 function CandidateCard({
   candidate,
   existingMoments,
+  recentLocations,
   allTagsList,
   allGroupsList,
   allPeopleList,
@@ -270,6 +289,7 @@ function CandidateCard({
 }: {
   candidate: Candidate
   existingMoments: ExistingMoment[]
+  recentLocations: string[]
   allTagsList: TagRef[]
   allGroupsList: GroupRef[]
   allPeopleList: PersonRef[]
@@ -613,7 +633,13 @@ function CandidateCard({
       {calendarSourceLabel && <span style={styles.sourceBadge}>{calendarSourceLabel}</span>}
       <div style={styles.fieldGroup}>
         <input value={occasion} onChange={(e) => setOccasion(e.target.value)} placeholder="Occasion" style={styles.input} disabled={saving} />
-        <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location" style={styles.input} disabled={saving} />
+        <AddressSuggestInput
+          value={location}
+          onChange={setLocation}
+          recentValues={recentLocations}
+          placeholder="Location"
+          disabled={saving}
+        />
         <div style={styles.dateRow}>
           <div style={styles.dateField}>
             <label style={styles.dateLabel}>Starts</label>
@@ -634,6 +660,7 @@ function CandidateCard({
           value={noteText}
           onChange={setNoteText}
           placeholder="Anything you remember about this — who said what, how it went, what made it special…"
+          style={styles.notesInput}
           disabled={saving}
         />
       </div>
@@ -1005,6 +1032,13 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '0.6rem',
   },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' },
+  notesInput: {
+    flex: 'none',
+    fontSize: '0.95rem',
+    padding: '0.6rem 0.75rem',
+    fontFamily: 'Georgia, serif',
+    minHeight: '2.6rem',
+  },
   input: {
     fontSize: '0.95rem',
     padding: '0.6rem 0.75rem',
