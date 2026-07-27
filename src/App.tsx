@@ -465,6 +465,7 @@ export default function App() {
         onBack={popCrumb}
         backLabel={parentLabel}
         onSelectTree={(id, label) => pushCrumb({ type: 'familyTree', id, label })}
+        onSelectPerson={(id, name) => pushCrumb({ type: 'person', id, label: name })}
       />
     )
   } else if (current?.type === 'settings') {

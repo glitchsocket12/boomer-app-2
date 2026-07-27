@@ -280,12 +280,14 @@ export default function FamilyTree({
   onBack,
   backLabel,
   onSelectTree,
+  onSelectPerson = () => {},
   memberIds,
 }: {
   personId: string
   onBack: () => void
   backLabel: string
   onSelectTree: (id: string, label: string) => void
+  onSelectPerson?: (id: string, name: string) => void
   // Present only when opened from a Family-typed group's "Generate this family's tree" button —
   // scopes the tree to that lineage (buildDescendantTree) instead of personId's own full ego graph.
   memberIds?: string[]
@@ -490,6 +492,7 @@ export default function FamilyTree({
       onBack={onBack}
       backLabel={backLabel}
       onSelectTree={onSelectTree}
+      onSelectPerson={onSelectPerson}
       allPeople={allPeople}
       onAddRelationship={addRelationship}
       removeConfirm={removeConfirm}
@@ -525,6 +528,7 @@ export function FamilyTreeView({
   onBack,
   backLabel,
   onSelectTree,
+  onSelectPerson = () => {},
   readOnly = false,
   allPeople = [],
   onAddRelationship = () => {},
@@ -551,6 +555,7 @@ export function FamilyTreeView({
   onBack: () => void
   backLabel: string
   onSelectTree: (id: string, label: string) => void
+  onSelectPerson?: (id: string, name: string) => void
   readOnly?: boolean
   allPeople?: { id: string; label: string }[]
   onAddRelationship?: (
@@ -930,10 +935,16 @@ export function FamilyTreeView({
 
       {removeSlots.length > 0 && (
         <div style={styles.removeSection}>
-          <span style={styles.addLabel}>Remove a relationship:</span>
+          <span style={styles.addLabel}>View Relationships:</span>
           <div style={styles.addRow}>
             {removeSlots.map((slot) => (
-              <RemoveChip key={slot.key} name={slot.targetName} relLabel={slot.relLabel} onRemove={() => onRequestRemove(slot)} />
+              <RemoveChip
+                key={slot.key}
+                name={slot.targetName}
+                relLabel={slot.relLabel}
+                onSelect={() => onSelectPerson(slot.targetId, slot.targetName)}
+                onRemove={() => onRequestRemove(slot)}
+              />
             ))}
           </div>
         </div>
@@ -1038,11 +1049,33 @@ export function FamilyTreeView({
 
 // Same hover-reveals-a-trash-badge pattern as PersonDetail.tsx's AffiliatedGroupChip — click just
 // opens the confirm banner below, doesn't remove directly, since this is destructive.
-function RemoveChip({ name, relLabel, onRemove }: { name: string; relLabel: string; onRemove: () => void }) {
+function RemoveChip({
+  name,
+  relLabel,
+  onSelect,
+  onRemove,
+}: {
+  name: string
+  relLabel: string
+  onSelect: () => void
+  onRemove: () => void
+}) {
   const [hovered, setHovered] = useState(false)
   return (
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <span style={styles.removeChip}>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onSelect()
+          }
+        }}
+        style={{ ...styles.removeChip, cursor: 'pointer' }}
+        aria-label={`View ${name}'s profile`}
+      >
         {name} <span style={styles.removeChipRel}>({relLabel})</span>
       </span>
       {hovered && (
