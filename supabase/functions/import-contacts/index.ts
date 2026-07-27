@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { parseVcf, type VCardContact } from "../_shared/vcard.ts"
-import { findBestPersonMatch, type MatchablePerson } from "../_shared/nameMatch.ts"
+import { findBestPersonMatch, buildPersonIndex, type MatchablePerson } from "../_shared/nameMatch.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -97,6 +97,8 @@ serve(async (req) => {
     }
     for (const key of ambiguousKeys) delete idByName[key]
 
+    const personIndex = buildPersonIndex(people)
+
     const existingRowKeys = new Set((existingRes.data ?? []).map((r: any) => r.row_key))
 
     const rows: any[] = []
@@ -112,7 +114,7 @@ serve(async (req) => {
           contact.fullName,
           contact.emails.map((e) => e.value),
           contact.phones.map((p) => p.value),
-          people
+          personIndex
         )
         if (fuzzy) {
           matchedPersonId = fuzzy.personId
