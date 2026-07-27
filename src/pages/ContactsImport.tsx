@@ -1,18 +1,44 @@
 import { useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-function fileToBase64(file: File): Promise<string> {
+function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onloadend = () => {
-      const result = reader.result as string
-      // strip the "data:text/vcard;base64," prefix, we only want the raw base64 payload —
-      // same pattern as VoiceInputButton.tsx's blobToBase64.
-      resolve(result.slice(result.indexOf(',') + 1))
-    }
+    reader.onloadend = () => resolve(reader.result as string)
     reader.onerror = reject
-    reader.readAsDataURL(file)
+    reader.readAsText(file)
   })
+}
+
+// iCloud/Mac Contacts vCard exports embed a full-resolution photo per contact by default (per
+// the instructions on this page) — the parser never reads PHOTO/LOGO/SOUND, so for a few hundred
+// contacts that's tens of MB of dead weight that can push the upload past the Edge Function's
+// request-size limit. Stripped client-side, before the file is ever base64-encoded, so it never
+// leaves the browser. Continuation (folded) lines start with a space/tab per RFC6350 §3.2 — those
+// have to be dropped along with the property line they belong to, not just the property line itself.
+function stripBinaryProps(text: string): string {
+  const rawLines = text.split(/\r\n|\n|\r/)
+  const kept: string[] = []
+  let dropping = false
+  for (const line of rawLines) {
+    if (line.startsWith(' ') || line.startsWith('\t')) {
+      if (!dropping) kept.push(line)
+      continue
+    }
+    dropping = /^(?:item\d+\.)?(PHOTO|LOGO|SOUND)(;|:)/i.test(line)
+    if (!dropping) kept.push(line)
+  }
+  return kept.join('\r\n')
+}
+
+function textToBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
 }
 
 // Upload entry point for the contacts-import feature. Deliberately separate from
@@ -37,7 +63,8 @@ export default function ContactsImport({
     setUploading(true)
     setError(null)
     try {
-      const fileData = await fileToBase64(file)
+      const rawText = await readFileAsText(file)
+      const fileData = textToBase64(stripBinaryProps(rawText))
       const { data, error: invokeError } = await supabase.functions.invoke('import-contacts', { body: { fileData } })
       if (invokeError || data?.error) {
         setUploading(false)
