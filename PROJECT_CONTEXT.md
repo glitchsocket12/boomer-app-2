@@ -377,8 +377,10 @@ src/
 │   │                            auto-add above; calendar-imported events and chat-
 │   │                            logged moments are NOT covered by this yet (§10)
 │   ├── Calendar.tsx           — (2026-07-24, item 48 phase 1) new nav tab. Upcoming
-│   │                            list (next 8 moments + reminder next-occurrences,
-│   │                            soonest first) + a real month grid below (prev/
+│   │                            list (all future moments + reminder next-occurrences,
+│   │                            soonest first; container caps at 6 visible rows with
+│   │                            internal scroll for the rest, 2026-07-26) + a real
+│   │                            month grid below (prev/
 │   │                            next nav, today highlighted, each day showing an
 │   │                            actual tile with a truncated event title, not just
 │   │                            a dot — "+N more" when a day has multiple). Reads
