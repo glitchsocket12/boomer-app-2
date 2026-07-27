@@ -17,6 +17,7 @@ import SearchBox from '../components/SearchBox'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 export type GroupRef = { id: string; name: string }
+export type SubgroupRef = GroupRef & { group_type: string | null; person_groups: { people: PersonRef | null }[] }
 export type GroupNote = { id: string; content: string; created_at: string }
 
 export type Moment = {
@@ -103,6 +104,11 @@ export default function GroupDetail({
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
   const [selfId, setSelfId] = useState<string | null>(null)
+  const [parentGroup, setParentGroup] = useState<GroupRef | null>(null)
+  const [parentMembers, setParentMembers] = useState<PersonRef[]>([])
+  const [subgroups, setSubgroups] = useState<SubgroupRef[]>([])
+  const [addingSubgroup, setAddingSubgroup] = useState(false)
+  const [subgroupError, setSubgroupError] = useState<string | null>(null)
 
   // Account-wide, fetched once — lets member chips show "You" instead of the founder's own name
   // (same pattern as EventDetail.tsx's selfId for attendee chips).
@@ -122,6 +128,7 @@ export default function GroupDetail({
     loadGroupNotes()
     loadAssociatedGroups()
     loadSuggestionsEnabled()
+    loadSubgroups()
     setName(groupName)
     setNameInput(groupName)
     setEditingName(false)
@@ -150,6 +157,26 @@ export default function GroupDetail({
   useEffect(() => {
     getRelationshipsMap(memberIdsKey ? memberIdsKey.split(',') : []).then(setRelationshipsById)
   }, [memberIdsKey])
+
+  // Parent's own roster, fetched only once this group's parent is known — used purely as a
+  // convenience suggestion source below (item 19, 2026-07-26), never to block adding someone
+  // who isn't in the parent group.
+  useEffect(() => {
+    if (!parentGroup) {
+      setParentMembers([])
+      return
+    }
+    supabase
+      .from('person_groups')
+      .select('people(id, name, last_name)')
+      .eq('group_id', parentGroup.id)
+      .then(({ data }) => {
+        const people = ((data as unknown as { people: PersonRef | null }[]) ?? [])
+          .map((r) => r.people)
+          .filter((p): p is PersonRef => p !== null)
+        setParentMembers(people)
+      })
+  }, [parentGroup])
 
   async function loadGroupNotes() {
     const { data } = await supabase
@@ -223,6 +250,60 @@ export default function GroupDetail({
     setDismissedGroupIds(loaded?.dismissed_group_ids ?? [])
     setGroupType(loaded?.group_type ?? null)
     loadMemberSharedGroups(explicit.map((p) => p.id))
+  }
+
+  // Isolated from loadMembers' shared select on purpose — same reasoning as
+  // loadSuggestionsEnabled: if parent_group_id doesn't exist yet (migration not run, see
+  // PROJECT_CONTEXT.md §10), fail open to "no parent" instead of breaking the member list above.
+  async function loadParent() {
+    const { data, error } = await supabase.from('groups').select('parent_group_id').eq('id', groupId).single()
+    const parentId = error ? null : (data as { parent_group_id: string | null } | null)?.parent_group_id ?? null
+    if (!parentId) {
+      setParentGroup(null)
+      return
+    }
+    const { data: parent } = await supabase.from('groups').select('id, name').eq('id', parentId).single()
+    setParentGroup((parent as GroupRef) ?? null)
+  }
+
+  // Item 19 (2026-07-26): child groups nested one level under this one — e.g. a specific mission
+  // under a squadron, or a class year under a larger org. Only ever rendered when this group is
+  // itself a root group (no parentGroup) — a subgroup doesn't get its own child subgroups in the
+  // UI, even though the schema would technically allow it. Same fail-open-on-missing-column
+  // reasoning as loadParent.
+  async function loadSubgroups() {
+    const { data, error } = await supabase
+      .from('groups')
+      .select('id, name, group_type, person_groups(people(id, name, last_name))')
+      .eq('parent_group_id', groupId)
+      .order('name')
+    setSubgroups(error ? [] : (data as unknown as SubgroupRef[]) ?? [])
+    loadParent()
+  }
+
+  // No form up front, same reasoning as Groups.tsx's handleAddGroup and EventDetail.tsx's "add an
+  // event" — creates a blank shell and drops straight onto its own page. Deliberately does NOT
+  // pre-populate membership from the parent roster (2026-07-26 lesson: no auto-added membership).
+  async function handleAddSubgroup() {
+    setAddingSubgroup(true)
+    setSubgroupError(null)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    const { data, error } = await supabase
+      .from('groups')
+      .insert({ name: 'New subgroup', user_id: user?.id, parent_group_id: groupId })
+      .select()
+      .single()
+
+    setAddingSubgroup(false)
+    if (error || !data) {
+      setSubgroupError("Couldn't create a subgroup — please try again.")
+      return
+    }
+
+    onSelectGroup({ id: data.id, name: data.name })
   }
 
   async function handleChangeType(value: string) {
@@ -552,6 +633,14 @@ export default function GroupDetail({
     await supabase.from('notes').update({ group_id: survivorId }).eq('group_id', duplicateId)
     await supabase.from('notes').update({ source_group_id: survivorId }).eq('source_group_id', duplicateId)
 
+    // Reparent the duplicate's own subgroups onto the survivor, so mission/class-year subgroups
+    // of a merged-away group aren't silently orphaned to root. The `.neq('id', survivorId)` guard
+    // covers the rare case of merging a group into its own subgroup (survivor's parent_group_id
+    // already points at the duplicate) — without it this would try to make the survivor its own
+    // parent, violating the self-parent CHECK constraint. Fails open if parent_group_id doesn't
+    // exist yet (migration not run) — nothing to reparent in that case anyway.
+    await supabase.from('groups').update({ parent_group_id: survivorId }).eq('parent_group_id', duplicateId).neq('id', survivorId)
+
     const { error } = await supabase.from('groups').delete().eq('id', duplicateId)
     if (error) {
       setActionError('Something went wrong merging these groups — please try again.')
@@ -639,6 +728,15 @@ export default function GroupDetail({
   }
   const suggestedFamilyMembers = suggestionsEnabled ? sortByLastName([...suggestedFamilyById.values()]) : []
 
+  // Convenience nudge shown only when viewing a subgroup: anyone already in the parent group's
+  // roster, filtered against members/dismissed/already-suggested-elsewhere so nobody appears
+  // twice. Purely a suggestion — adding someone NOT in the parent's roster is never blocked.
+  const parentExcludeIds = new Set([...dismissedIds, ...suggestedMembersById.keys(), ...suggestedFamilyById.keys()])
+  const suggestedParentMembers =
+    suggestionsEnabled && parentGroup
+      ? sortByLastName(parentMembers.filter((p) => !explicitIds.has(p.id) && !parentExcludeIds.has(p.id)))
+      : []
+
   // Suggested associated groups combine two signals — any other group tagged to the same events
   // as this one (event-based, reusing the moments already loaded above, same one-hop reasoning as
   // EventDetail.tsx's "Affiliated Groups"), and any other group this group's own explicit members
@@ -670,6 +768,12 @@ export default function GroupDetail({
       selfId={selfId}
       suggestedMembers={suggestedMembers}
       suggestedFamilyMembers={suggestedFamilyMembers}
+      parentGroup={parentGroup}
+      subgroups={subgroups}
+      addingSubgroup={addingSubgroup}
+      subgroupError={subgroupError}
+      onAddSubgroup={handleAddSubgroup}
+      suggestedParentMembers={suggestedParentMembers}
       confirmedAssociatedGroups={confirmedAssociatedGroups}
       suggestedAssociatedGroups={suggestedAssociatedGroups}
       groupNotes={groupNotes}
@@ -773,6 +877,12 @@ export function GroupDetailView({
   selfId = null,
   suggestedMembers,
   suggestedFamilyMembers = [],
+  parentGroup = null,
+  subgroups = [],
+  addingSubgroup = false,
+  subgroupError = null,
+  onAddSubgroup = () => {},
+  suggestedParentMembers = [],
   confirmedAssociatedGroups,
   suggestedAssociatedGroups,
   groupNotes,
@@ -848,6 +958,12 @@ export function GroupDetailView({
   selfId?: string | null
   suggestedMembers: PersonRef[]
   suggestedFamilyMembers?: PersonRef[]
+  parentGroup?: GroupRef | null
+  subgroups?: SubgroupRef[]
+  addingSubgroup?: boolean
+  subgroupError?: string | null
+  onAddSubgroup?: () => void
+  suggestedParentMembers?: PersonRef[]
   suggestionsEnabled?: boolean
   onToggleSuggestions?: (enabled: boolean) => void
   confirmedAssociatedGroups: GroupRef[]
@@ -955,6 +1071,12 @@ export function GroupDetailView({
           <h1 style={styles.heading}>{name}</h1>
           {!readOnly && <EditButton label="Rename group" onClick={onStartEditName} />}
         </div>
+      )}
+
+      {parentGroup && (
+        <button type="button" onClick={() => onSelectGroup(parentGroup)} style={styles.parentLink}>
+          ↑ Part of {parentGroup.name}
+        </button>
       )}
 
       {readOnly ? (
@@ -1097,6 +1219,61 @@ export function GroupDetailView({
               />
             ))}
           </div>
+        </>
+      )}
+
+      {!readOnly && parentGroup && suggestionsEnabled && suggestedParentMembers.length > 0 && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <p style={styles.eventOnlyLabel}>Member of {parentGroup.name} — tap to add, or hover to dismiss</p>
+            {suggestedParentMembers.length > 1 && (
+              <div style={styles.suggestionActionRow}>
+                <button onClick={() => onApproveAllSuggestions(suggestedParentMembers)} style={styles.addAllButton}>
+                  ✓ Add all suggestions
+                </button>
+                <button onClick={() => onDenyAllSuggestions(suggestedParentMembers)} style={styles.removeAllButton}>
+                  × Remove all suggestions
+                </button>
+              </div>
+            )}
+          </div>
+          <div style={{ ...styles.chipRow, marginBottom: '1.5rem' }}>
+            {suggestedParentMembers.map((p) => (
+              <SuggestionChip key={p.id} person={p} onApprove={() => onAddMember(p)} onDeny={() => onDenySuggestion(p)} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {!parentGroup && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <h2 style={styles.membersHeading}>Subgroups</h2>
+            {!readOnly && (
+              <button type="button" onClick={onAddSubgroup} style={styles.addGroupButton} disabled={addingSubgroup}>
+                {addingSubgroup ? '…' : '+ New Subgroup'}
+              </button>
+            )}
+          </div>
+          {subgroupError && <p style={styles.actionErrorBanner}>{subgroupError}</p>}
+          {subgroups.length === 0 ? (
+            <p style={styles.empty}>No subgroups yet.</p>
+          ) : (
+            <div style={styles.subgroupGrid}>
+              {subgroups.map((sg) => {
+                const memberCount = (sg.person_groups ?? []).filter((pg) => pg.people).length
+                return (
+                  <button key={sg.id} type="button" onClick={() => onSelectGroup(sg)} style={styles.subgroupTile}>
+                    <span style={styles.subgroupTileName}>{sg.name}</span>
+                    <span style={styles.subgroupTileMeta}>
+                      {memberCount} member{memberCount === 1 ? '' : 's'}
+                      {sg.group_type ? ` · ${sg.group_type}` : ''}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </>
       )}
 
@@ -1304,7 +1481,12 @@ export function GroupDetailView({
 
           {deleteConfirming && (
             <div style={styles.suggestBanner}>
-              <span>Delete this group permanently? This removes its membership, notes, and event/group tags. This can't be undone.</span>
+              <span>
+                Delete this group permanently? This removes its membership, notes, and event/group tags.
+                {subgroups.length > 0 &&
+                  ` Its ${subgroups.length} subgroup${subgroups.length === 1 ? '' : 's'} will become independent top-level groups, not deleted.`}{' '}
+                This can't be undone.
+              </span>
               <div style={styles.suggestButtonRow}>
                 <button type="button" onClick={onConfirmDelete} style={styles.dangerDeleteButton} disabled={actionBusy}>
                   {actionBusy ? 'Deleting…' : 'Yes, delete'}
@@ -1672,6 +1854,38 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   heading: { fontSize: '2rem', color: '#2E4034', margin: 0 },
   headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.4rem', flexWrap: 'wrap' },
+  parentLink: {
+    display: 'block',
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    marginBottom: '0.75rem',
+    fontSize: '0.9rem',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  subgroupGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+    gap: '0.75rem',
+    marginBottom: '0.75rem',
+  },
+  subgroupTile: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: '0.2rem',
+    textAlign: 'left',
+    backgroundColor: '#FFF',
+    border: '1px solid #E0E0E0',
+    borderRadius: '10px',
+    padding: '0.75rem 0.9rem',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  subgroupTileName: { fontSize: '1rem', color: '#2E4034' },
+  subgroupTileMeta: { fontSize: '0.8rem', color: '#888' },
   renameForm: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' },
   typeSelect: {
     fontSize: '0.85rem',

@@ -101,12 +101,16 @@ export default function Groups({
 
   async function loadGroups() {
     setLoading(true)
-    const { data } = await supabase
-      .from('groups')
-      .select(
-        'id, name, summary, group_type, person_groups(people(id, name, last_name, is_self)), moment_groups(moments(id, occasion, raw_description))'
-      )
-      .order('name')
+    const baseSelect =
+      'id, name, summary, group_type, person_groups(people(id, name, last_name, is_self)), moment_groups(moments(id, occasion, raw_description))'
+    // Subgroups (item 19, 2026-07-26) live only under their parent's own page, not this top-level
+    // list — same list-pollution lesson as the self-membership revert (§25). Falls open to the
+    // unfiltered list if parent_group_id doesn't exist yet (migration not run, see
+    // PROJECT_CONTEXT.md §10) rather than erroring out to an empty page.
+    let { data, error } = await supabase.from('groups').select(baseSelect).is('parent_group_id', null).order('name')
+    if (error) {
+      ;({ data } = await supabase.from('groups').select(baseSelect).order('name'))
+    }
 
     const loaded = (data as unknown as Group[]) ?? []
     setGroups(loaded)

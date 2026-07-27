@@ -951,7 +951,11 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               member-suggestion signal, read by GroupDetail.tsx and
               lib/suggestConnections.ts; migrated live 2026-07-26; default flipped
               true→false 2026-07-26 per founder feedback — not used in practice — pending
-              founder SQL run, see §10)
+              founder SQL run, see §10), parent_group_id uuid? (item 19, 2026-07-26 —
+              self-referencing FK, ON DELETE SET NULL, CHECK parent_group_id != id;
+              nested subgroups, e.g. a mission under a squadron or a class year under a
+              school group — one level deep only in the UI, arbitrary depth in schema;
+              pending founder SQL run, see §10)
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
@@ -1054,7 +1058,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 16. Auto-notes from chat for every person mentioned (events do this; extend everywhere).
 17. Long story/voice-note handling (1–2 min recording parsed into all its facts) — chat currently chokes on long stories.
 18. Real-time voice transcription (words appear as you speak; Whisper is batch-only — partial option: Web Speech captions on non-iPhone only).
-19. Rules engine ("group A + group B ⇒ group C") + group hierarchy visualization.
+19. ~~Group hierarchy~~ — **subgroups DONE 2026-07-26** (code pushed, DB migration pending founder — see §10). Founder's real ask, clarified 2026-07-26: nested subgroups under an existing group (e.g. a specific mission under "22 AS", or class year/staff/role under "Wings of Blue"), each with independent membership, so events can be tagged to the specific subgroup. Shipped as a self-referencing `groups.parent_group_id` (one level deep in the UI) — see §3 GroupDetail.tsx/Groups.tsx entries and §6. Because a subgroup is just a normal `groups` row, every existing group-picker (EventDetail's "Associate a Group", ImportReview, PersonDetail's "Associated Groups") already works on it with zero extra code — still needs a live click-through once the migration runs. Still open, deliberately deferred (founder feedback 2026-07-26, given the 2026-07-26 auto-add-to-groups revert): a "rules engine" auto-deriving group C from group A + group B membership — if revisited, should suggest-and-confirm rather than silently auto-write, same as item 15's connection scanning.
 20. Data viz: family tree, connection map.
 21. Internet lookup for added context.
 22. ~~Settings page~~ — **DONE 2026-07-23** (v1, see item 49 for what shipped). Of the six candidates speculated here, only chat tone/About shipped in v1; tile colors, suggestion sensitivity, and terminology library remain open (each needs new infrastructure built first — a theme layer, a suggestion-frequency concept, a centralized vocabulary module, respectively). "User's own profile/library" was considered and cut from Settings entirely — that's app navigation (already reachable via the main nav), not a setting.
@@ -1165,6 +1169,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Founder action needed: deploy `add-fact` (item 61 fix)** — `npx supabase functions deploy add-fact --project-ref dedtnytxhzzjimkozncc` with a founder-provided access token (no token available this session). Until deployed, the live function still has the first-person misattribution bug.
 - **Founder action needed: run `migrations_manual/2026-07-26-gender.sql`** (item 44) — adds the nullable `people.gender` column. Code (PersonDetail's gender dropdown, FamilyTree's ♂/♀ glyph) already deployed and verified in browser preview — it fails open (no crash, no icons/saves) until this runs, so nothing breaks in the gap, but nothing persists either.
+- **Founder action needed: run `migrations_manual/2026-07-26-group-subgroups.sql`** (item 19, subgroups) — adds the nullable `groups.parent_group_id` self-referencing column. Code (GroupDetail.tsx's "Subgroups" section + "+ New Subgroup", parent link, parent-roster suggestion, delete/merge handling; Groups.tsx's root-only list filter) already pushed and verified fail-open in browser preview against the real account's real "22 AS" group — no crash, "+ New Subgroup" shows a clean error, Groups list still shows every real group unfiltered. Until this runs, subgroups can't actually be created. Full click-through (create a subgroup, parent link, parent-roster suggestion chip, event tagging, merge reparenting, delete-with-subgroups copy) still needs to happen once the migration is applied.
 - **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.
 
 ## 11. Rules for AI assistants working on this repo
