@@ -32,6 +32,7 @@ import FamilyTree from './pages/FamilyTree'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 import FeedbackWidget from './components/FeedbackWidget'
+import { Analytics } from '@vercel/analytics/react'
 
 type Tab = 'home' | 'people' | 'events' | 'calendar' | 'groups'
 type AuthView = 'landing' | 'login' | 'signup' | 'demo'
@@ -614,6 +615,7 @@ export default function App() {
       <ErrorBoundary key={current ? `${current.type}-${current.id}` : view}>{content}</ErrorBoundary>
 
       <FeedbackWidget pageLabel={feedbackPageLabel} />
+      <Analytics />
     </div>
   )
 }
