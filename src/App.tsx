@@ -228,7 +228,12 @@ export default function App() {
     const state = authFromPath
       ? { authView: authFromPath }
       : { view: parsedApp?.view ?? view, navStack: parsedApp?.navStack ?? navStack }
-    window.history.replaceState(state, '', window.location.pathname)
+    // No url argument — replaces STATE only, truly leaving the current URL untouched (including
+    // its query string). Passing `window.location.pathname` here used to silently strip any
+    // `?...` search params on mount (e.g. Google's `?code=...&state=...` on the OAuth callback
+    // redirect), even though the comment above already says "not the path" — this now actually
+    // does that.
+    window.history.replaceState(state, '')
 
     function handlePopState(e: PopStateEvent) {
       skipNextHistoryPush.current = true
