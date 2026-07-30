@@ -17,6 +17,7 @@ A mobile-friendly web app for backing up and staying close to your social memori
 - **Dev:** local folder, this repo. `npm run dev` (port 5173; respects `PORT` for the browser-preview tool), `npm run build`, `npm run test` (Vitest — only covers `src/lib/` pure helpers; zero Edge Function coverage).
 - **Deploying Edge Functions:** `npx supabase functions deploy <name>` with a founder-provided Personal Access Token, or paste the file into the Supabase dashboard and click Deploy. `supabase/functions/_shared/` is bundled automatically.
 - **Schema changes:** SQL handed to the founder to run in the SQL Editor (saved under `supabase/migrations_manual/`), or applied directly via the Management API (`POST /v1/projects/{ref}/database/query` with the same access token).
+- **Google Photos import (2026-07-30, item 27):** this app's first OAuth flow and first Supabase Storage usage — see §3 `lib/googlePhotosAuth.ts`/`lib/googlePhotosImport.ts`/`PhotoImportReview.tsx`, §6 `photo_connections`/`photo_clusters`/`photos`, §10 for what's still needed before it's live. New Edge Function secrets `GOOGLE_PHOTOS_CLIENT_ID`/`GOOGLE_PHOTOS_CLIENT_SECRET` (server-side only, from a Google Cloud OAuth Client) and a new Vercel env var `VITE_GOOGLE_PHOTOS_CLIENT_ID` (the client ID itself isn't secret). A private `photos` Storage bucket holds resized (~1600px) copies, RLS-scoped per user by folder prefix — deliberate choice over leaving photos live in Google, since a picker session's access to a picked item expires with the session (no stable long-term pointer available).
 - **Token-free live verification (no login needed):** a column exists if PostgREST returns 200 (400 if not, via anon key); a function is deployed if its URL returns its own error/401 rather than Supabase's `NOT_FOUND`.
 
 ## 3. Frontend map
@@ -121,20 +122,33 @@ src/
 │   │                            "Phone Calls" — from real production usage
 │   │                            post-deploy, correctly left untouched/not
 │   │                            duplicated).
-│   └── ensureSelfFromSignup.ts — (2026-07-22) turns sign-up's auth user_metadata
-│                                (first_name/last_name/birthday) into a real self `people`
-│                                row + Birthday `reminders` row, so a new signup skips
-│                                Circle.tsx's "which profile is you?" onboarding. Called
-│                                from App.tsx's `onAuthStateChange` on the `SIGNED_IN`
-│                                event only (not the initial session restore, so it isn't
-│                                re-run on every page load). No-ops safely: does nothing
-│                                if `first_name` is absent (pre-2026-07-22 accounts, or
-│                                login rather than signup) or if a self person already
-│                                exists (checked before inserting — verified live against
-│                                the real `jakevolin@gmail.com` account that this correctly
-│                                skips rather than creating a duplicate). Errors are
-│                                logged, never thrown — worst case a new user just falls
-│                                through to the existing manual onboarding screen.
+│   ├── ensureSelfFromSignup.ts — (2026-07-22) turns sign-up's auth user_metadata
+│   │                            (first_name/last_name/birthday) into a real self `people`
+│   │                            row + Birthday `reminders` row, so a new signup skips
+│   │                            Circle.tsx's "which profile is you?" onboarding. Called
+│   │                            from App.tsx's `onAuthStateChange` on the `SIGNED_IN`
+│   │                            event only (not the initial session restore, so it isn't
+│   │                            re-run on every page load). No-ops safely: does nothing
+│   │                            if `first_name` is absent (pre-2026-07-22 accounts, or
+│   │                            login rather than signup) or if a self person already
+│   │                            exists (checked before inserting — verified live against
+│   │                            the real `jakevolin@gmail.com` account that this correctly
+│   │                            skips rather than creating a duplicate). Errors are
+│   │                            logged, never thrown — worst case a new user just falls
+│   │                            through to the existing manual onboarding screen.
+│   ├── googlePhotosAuth.ts     — (2026-07-30) `startGooglePhotosAuth()`: builds Google's OAuth
+│   │                            authorize URL (`photospicker.mediaitems.readonly` +
+│   │                            `userinfo.email` scopes, `access_type=offline&prompt=consent`
+│   │                            so a refresh_token is always returned) and does a full-page
+│   │                            redirect — no popup. CSRF `state` nonce round-trips via
+│   │                            sessionStorage, checked by `consumeGooglePhotosOAuthState` in
+│   │                            `GooglePhotosOAuthCallback.tsx`.
+│   └── googlePhotosImport.ts   — (2026-07-30) `startGooglePhotosImport(momentId?, callbacks)`:
+│                                shared picker-session-create → open tab → poll-until-done logic
+│                                behind `PhotoImportReview.tsx`'s general import AND
+│                                `EventDetail.tsx`'s quick-add button — they differ only in
+│                                whether `momentId` is set. Returns a `{ cancel }` handle so
+│                                either caller can stop in-flight polling on unmount.
 ├── pages/
 │   ├── Landing.tsx            — public marketing page (2026-07-22), now what `!session`
 │   │                            renders in App.tsx instead of bare Login.tsx: single
@@ -698,6 +712,26 @@ Full story: PROJECT_HISTORY.md.
 │   │                            pre-migration frontend deploy doesn't blank the whole
 │   │                            connected-calendars list — same pattern as GroupDetail.tsx's
 │   │                            `loadSuggestionsEnabled` (see §10/infra notes).
+│   ├── PhotoImportReview.tsx  — (2026-07-30, item 27) general Google Photos import flow, reached
+│   │                            from Settings. "Connect Google Photos" (OAuth) → "Import photos"
+│   │                            opens Google's picker in a new tab, polls until done — then, for
+│   │                            each date-clustered group of newly-imported photos, a card offers
+│   │                            "New event" (default) or an existing-event match (free date-range
+│   │                            heuristic, no AI call — see `_shared/photoClusters.ts`) with a
+│   │                            manual `SearchAddPicker` override. Accept resolves every photo in
+│   │                            that cluster's `moment_id` (creating a blank-shell event first if
+│   │                            "new event"); reject just flips `photo_clusters.status`, photos
+│   │                            stay unattached. `EventDetail.tsx`'s own "Add photos" button is
+│   │                            the simpler quick-add path — same underlying picker flow
+│   │                            (`lib/googlePhotosImport.ts`) but skips clustering/review
+│   │                            entirely since the target event is already known.
+│   ├── GooglePhotosOAuthCallback.tsx — (2026-07-30) the redirect target for Google's consent
+│   │                            screen (`/oauth/google-photos/callback`, checked in App.tsx
+│   │                            before normal view/crumb routing since it isn't a real app page).
+│   │                            Exchanges the returned `code` via the `google-photos-oauth-
+│   │                            callback` Edge Function, then reloads at `/` — sessionStorage's
+│   │                            nav-restore key already reflects wherever the user was when they
+│   │                            clicked "Connect," so no return-path plumbing is needed.
 │   ├── BirthdayImportReview.tsx — (2026-07-26) accept/reject queue for
 │   │                            `birthday_import_candidates`, mirrors ImportReview.tsx's card
 │   │                            idiom but simpler (name + date only, no tags/groups/location).
@@ -807,7 +841,11 @@ Full story: PROJECT_HISTORY.md.
 │   ├── UpdateGroupChat.tsx    — group edit chat → `update-group`
 │   ├── VoiceInputButton.tsx   — mic → `transcribe`; renders null w/o MediaRecorder
 │   ├── AutoGrowTextarea.tsx   — grows to 160px then scrolls; Enter sends
-│   ├── PhotoGallery.tsx       — DISPLAY-ONLY placeholder tiles (no real photos)
+│   ├── PhotoGallery.tsx       — (2026-07-30) given a `momentId`, renders real photo thumbnails
+│   │                            (signed Storage URLs, `photos` table) once any exist; falls back
+│   │                            to the original placeholder tiles otherwise, and unchanged for
+│   │                            Person/Group pages (no `momentId` passed — a per-person/group
+│   │                            rollup across their moments is a later pass, item 66 below)
 │   ├── RefreshButton.tsx      — spinning refresh icon
 │   ├── SearchBox.tsx          — client-side list filter. Optional `onFocus`/`onBlur`
 │   │                            props (item 28 follow-up, 2026-07-22, additive)
@@ -1067,6 +1105,27 @@ candidates    id, user_id, calendar_source_id, ical_uid (unique per user — sam
               found" ones. **Applied live 2026-07-26 — confirmed via PostgREST/
               Management API, end-to-end accept/reject flow verified in browser
               against a disposable test account.**
+photo_connections id, user_id (FK, unique), google_email?, refresh_token, created_at —
+              2026-07-30, item 27. One row per connected Google account. **No SELECT policy
+              for the authenticated role at all** — refresh_token is as sensitive as an API
+              key, readable only by service-role Edge Functions (same trust boundary as
+              ANTHROPIC_API_KEY never reaching the browser). The frontend instead reads a
+              sticky `google_photos_email` auth-metadata flag (same pattern as
+              onboarding_complete/tags_seeded) to know "connected" without a round trip.
+photo_clusters id, user_id, date_range_start?, date_range_end? (date), matched_moment_id?
+              (FK moments), status ('pending'/'accepted'/'rejected'), created_at, reviewed_at? —
+              2026-07-30, item 27. One row per date-clustered group from a general-import
+              picker session (see `_shared/photoClusters.ts`); the quick-add-to-one-event
+              flow never creates these. Same "review queue, nothing auto-writes" shape as
+              moment_import_candidates, but no AI call anywhere in this pipeline.
+photos        id, user_id, moment_id? (FK moments), photo_cluster_id? (FK, null once
+              resolved), storage_path, google_media_id? (unique per user — dedupes re-picking
+              the same photo), taken_at? (timestamptz, from Google's mediaMetadata), width?,
+              height?, created_at — 2026-07-30, item 27. storage_path points into the private
+              `photos` Storage bucket (resized ~1600px copies, RLS-scoped per user by folder
+              prefix `{user_id}/...` — first Storage usage in this app). A picked item's
+              access via Google expires with its picker session, so nothing here is a lazy
+              pointer back to Google — the bytes are copied in at import time.
 ```
 
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
@@ -1105,7 +1164,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 23. **Security hardening** + honest About-page writeup ("I don't want it to be bullshit") — start from §10's reality, audit first.
 24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both). Real example on file: Andy Volin (deceased) was married to Andi Volin, who's since remarried to Michael Galchinsky. **Partially superseded 2026-07-25** (see item 40 follow-up): spouse-as-co-parent auto-linking now ships, gated by a heuristic guard (skip + suggest instead when either side already has another spouse/partner on file) rather than waiting on this full qualifier-field decision — that heuristic catches the Andy/Andi/Michael shape specifically but is not the real half/step/adoptive data model this item is still tracking (e.g. it can't represent "step-parent to one sibling, blood parent to another" once the two are linked as full siblings — syncFamilyClique's existing all-parents-shared-across-the-clique behavior, unchanged, still flattens that). Still open.
 26. Ratings/thumbs feedback loop (tunes suggestions; does not retrain the model).
-27. Photo gallery for real (upload/Supabase Storage/tagging; placeholder shipped). True camera-roll sync needs the native iPhone app.
+27. ~~Photo gallery for real~~ — **BUILT 2026-07-30, not yet deployed/live (see §10)**: real import via Google Photos OAuth + Picker API (not upload — founder chose this over a raw-upload/Supabase-Storage-only approach after confirming Google's API no longer allows third-party library scanning; see PROJECT_HISTORY for the full tradeoff discussion). `EventDetail.tsx` real gallery + quick-add; `PhotoImportReview.tsx` general import with date-clustered event-matching review. Person/Group photo rollups NOT included — see item 69. True camera-roll sync still needs the native iPhone app.
 28. ~~Manual + AI-suggested tags on events~~ — **DONE 2026-07-22** (schema: new `tags`/`moment_tags` tables, see §6). Manual create-or-reuse picker + hover-remove chip on EventDetail; AI-suggested via `converse` only for v1 (capped 1-3 tags/moment, reuse-biased instruction) — `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred until real usage confirms the vocabulary stays clean, not scope-cut for any other reason. Verified live end-to-end against the real account (manual create/reuse/persist/untag, AI auto-tag via Home chat correctly created and applied a new "vacation" tag with no manual step), test data cleaned up after. Pairs with item 34's filter, same schema change powers both. **Same-day follow-up (founder-requested):** the tag picker now browses the full alphabetical list on focus instead of requiring you to already know a tag's exact spelling (`SearchAddPicker`'s new `browseAll` prop); 10 generic starter tags auto-seed once per account (`ensureStarterTags.ts`, guarded so it can't resurrect a deliberately-emptied list); new `ManageTags.tsx` page (linked from Events) lists every tag with usage counts and lets you add/rename/delete outside the context of any one event. Verified live: starter seed fired correctly on the real account's next sign-in (10/10 inserted, left a pre-existing AI-created "Phone Calls" tag alone rather than duplicating), rename/add/delete all confirmed against real + disposable test tags, alphabetical order holds everywhere (picker, chips, filter, Manage Tags list) regardless of creation order.
 29. ~~Search within GroupDetail~~ — **DONE 2026-07-26.** `GroupDetail.tsx`'s member list gets a `SearchBox` (same component/pattern as `People.tsx`) once a group has more than 12 members; filters by name, doesn't affect the "show all" expansion. People page's own filter already existed (`People.tsx` `filterPeople`) — no separate work needed there.
 30. AI/"fuzzy" semantic search (likely merges into 14).
@@ -1211,6 +1270,14 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - ~~Founder needs to run a SQL migration + redeploy 3 Edge Functions: time zone bug fix (2026-07-24, item — "today" mis-dating evening events)~~ — **migration applied and all 3 functions (`converse`/`update-moment`/`scan-calendar-sources`) deployed live 2026-07-24**, via the Management API + `npx supabase functions deploy` with a founder-provided token. Confirmed live: `user_settings.time_zone` returns 200 via PostgREST (not a 400 undefined-column error), Settings time-zone picker's save round-trip verified end-to-end in a real browser session against `jakevolin@gmail.com`. A second, separate display-only bug found in the same investigation and fixed same day: [EventDetail.tsx:604](../src/pages/EventDetail.tsx) parsed `event_date` with bare `new Date(...)` (UTC-midnight parsing, same bug CLASS as the regression guard below) instead of `formatFullDate()` — this one didn't affect what was SAVED, only what EventDetail showed, and in negative-UTC zones it happened to shift the display back a day, partially masking the real bug rather than causing it. Both fixes verified together live: "Tulas & Jackass The End" (previously mis-dated to 2026-07-25 by the pre-fix `converse` deploy) corrected to 2026-07-24 via its own update-chat, confirmed matching on both EventDetail and the Calendar month grid. **Side finding, not caused by this fix:** that correction cleared the event's cached `summary` (EventDetail's normal behavior on any change) and it couldn't auto-regenerate because the event's `raw_description` was already empty — `update-moment` never writes `raw_description` (only `converse` does, at moment-creation time), so this looks like a pre-existing data gap on this one event, not something introduced here. The individual notes are all intact; only the AI-generated prose blurb needs retyping via "Edit description" if wanted back.
 67. **Tag people to groups/subgroups at entry time** — requested 2026-07-27. Goal: build out a person's profile as fully as possible right when they're first added, rather than as a separate later step. Not scoped or built yet — likely touches whatever "add a new person" flow(s) exist (`+ Add Person` on People.tsx, contacts-import accept flow in `ContactImportReview.tsx`) to let group/subgroup assignment happen inline.
 68. **Sort `ContactImportReview.tsx`'s "Review Contacts" list: high-confidence existing-person matches first, new people second** — requested 2026-07-27. Founder wants matched candidates (already recognized as an existing person — just filling in/updating that profile) surfaced ahead of net-new people, so the quick "just accept" ones aren't mixed in with the ones needing an actual new-person decision. Not scoped or built yet.
+69. **Photo gallery for Person/Group pages** — deferred from item 27's Google Photos build (2026-07-30). `PhotoGallery.tsx` only shows real photos when passed a `momentId` (EventDetail); Person/Group pages still show the original placeholder. Would mean aggregating photos across everything a person/group is tagged to (their moments) rather than one moment's own `photos` rows — not scoped yet.
+- **Google Photos import (item 27) is BUILT but NOT LIVE — needs founder setup before it can be used or verified end-to-end (2026-07-30):**
+  1. Google Cloud Console: create/select a project, enable the **Google Photos Picker API**, configure the OAuth consent screen (External, app name "Boomer", support email, scope `photospicker.mediaitems.readonly`, add yourself as a **test user** — see the Testing-mode limitation below), create an OAuth Client ID (Web application type) with authorized redirect URI `https://boomer-app-2-eight.vercel.app/oauth/google-photos/callback` (plus the localhost dev equivalent), copy the Client ID + Client Secret.
+  2. Add `GOOGLE_PHOTOS_CLIENT_ID` and `GOOGLE_PHOTOS_CLIENT_SECRET` as Supabase Edge Function secrets, and `VITE_GOOGLE_PHOTOS_CLIENT_ID` as a Vercel env var (same value as the Client ID — not secret).
+  3. Run `supabase/migrations_manual/2026-07-30-google-photos-import.sql` (creates `photo_connections`/`photo_clusters`/`photos` + RLS).
+  4. Create a **private** Storage bucket named `photos` (Supabase dashboard → Storage → New bucket) — bucket creation isn't expressible as plain SQL, this is a manual dashboard step; the RLS policy on `storage.objects` is included at the bottom of the same migration file and can run once the bucket exists.
+  5. Deploy the three new Edge Functions: `npx supabase functions deploy google-photos-oauth-callback`, `google-photos-picker-session-create`, `google-photos-picker-session-import` (or paste each into the dashboard).
+  6. **Known limitation, not a bug:** while the OAuth consent screen stays in Testing mode (step 1), only Google accounts explicitly added as test users can connect — i.e. only the founder (and anyone else manually added), not real end users, until Google's app verification review is complete (needs the Privacy page — already live — and possibly a demo video depending on final scope classification). Worth knowing before telling anyone else to try this feature.
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Founder action needed: deploy `add-fact` (item 61 fix)** — `npx supabase functions deploy add-fact --project-ref dedtnytxhzzjimkozncc` with a founder-provided access token (no token available this session). Until deployed, the live function still has the first-person misattribution bug.
 - **Founder action needed: run `migrations_manual/2026-07-26-gender.sql`** (item 44) — adds the nullable `people.gender` column. Code (PersonDetail's gender dropdown, FamilyTree's ♂/♀ glyph) already deployed and verified in browser preview — it fails open (no crash, no icons/saves) until this runs, so nothing breaks in the gap, but nothing persists either.

@@ -21,6 +21,8 @@ import ManageTags from './pages/ManageTags'
 import Circle from './pages/Circle'
 import SettingsPage from './pages/SettingsPage'
 import CalendarSettings from './pages/CalendarSettings'
+import PhotoImportReview from './pages/PhotoImportReview'
+import GooglePhotosOAuthCallback from './pages/GooglePhotosOAuthCallback'
 import ImportReview from './pages/ImportReview'
 import BirthdayImportReview from './pages/BirthdayImportReview'
 import ContactsImport from './pages/ContactsImport'
@@ -46,6 +48,7 @@ type Crumb =
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
   | { type: 'settings'; id: string; label: string }
   | { type: 'calendarSettings'; id: string; label: string }
+  | { type: 'photoImport'; id: string; label: string }
   | { type: 'importReview'; id: string; label: string }
   | { type: 'birthdayReview'; id: string; label: string }
   | { type: 'contactsImport'; id: string; label: string }
@@ -67,6 +70,7 @@ const CRUMB_TYPES = [
   'familyTree',
   'settings',
   'calendarSettings',
+  'photoImport',
   'importReview',
   'birthdayReview',
   'contactsImport',
@@ -79,7 +83,7 @@ const CRUMB_TYPES = [
 // Crumb types that are single fixed pages rather than records with a real id (their `id` is
 // just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
 // segment for these, not a `/type/id` pair.
-const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'circle', 'settings', 'calendarSettings', 'about', 'privacy'])
+const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
 
 const AUTH_VIEWS = new Set<AuthView>(['landing', 'login', 'signup', 'demo'])
 
@@ -363,6 +367,14 @@ export default function App() {
     return <p style={{ textAlign: 'center', marginTop: '4rem' }}>Loading…</p>
   }
 
+  // Google's OAuth consent screen redirects back here — handled before the normal view/crumb
+  // routing since it isn't a real app page, just a one-time round trip (see
+  // GooglePhotosOAuthCallback.tsx for why a plain reload-to-"/" on success is enough to land the
+  // user back where they started).
+  if (window.location.pathname === '/oauth/google-photos/callback') {
+    return <GooglePhotosOAuthCallback />
+  }
+
   if (!session) {
     if (authView === 'landing') {
       return <Landing onAuthClick={(mode) => setAuthView(mode)} />
@@ -486,10 +498,19 @@ export default function App() {
         onOpenPrivacy={() => pushCrumb({ type: 'privacy', id: 'privacy', label: 'Privacy' })}
         onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
         onOpenContactsImport={() => pushCrumb({ type: 'contactsImport', id: 'contactsImport', label: 'Import contacts' })}
+        onOpenPhotoImport={() => pushCrumb({ type: 'photoImport', id: 'photoImport', label: 'Import photos' })}
       />
     )
   } else if (current?.type === 'calendarSettings') {
     content = <CalendarSettings onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'photoImport') {
+    content = (
+      <PhotoImportReview
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+      />
+    )
   } else if (current?.type === 'importReview') {
     content = (
       <ImportReview

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import UpdateMomentChat from '../components/UpdateMomentChat'
 import EditButton from '../components/EditButton'
@@ -8,6 +8,8 @@ import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import VoiceInputButton from '../components/VoiceInputButton'
+import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
+import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { summarize } from '../lib/summarize'
 import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
@@ -77,6 +79,11 @@ export default function EventDetail({
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
   const [selfId, setSelfId] = useState<string | null>(null)
+  const [photosImporting, setPhotosImporting] = useState(false)
+  const [photosStatus, setPhotosStatus] = useState<string | null>(null)
+  const [photosError, setPhotosError] = useState<string | null>(null)
+  const [photosRefreshKey, setPhotosRefreshKey] = useState(0)
+  const photosImportHandle = useRef<{ cancel: () => void } | null>(null)
 
   useEffect(() => {
     loadMoment()
@@ -86,7 +93,44 @@ export default function EventDetail({
     setDeleteConfirming(false)
     setMergeOpen(false)
     setMergeCandidate(null)
+    photosImportHandle.current?.cancel()
+    setPhotosImporting(false)
+    setPhotosStatus(null)
+    setPhotosError(null)
   }, [eventId])
+
+  useEffect(() => {
+    return () => {
+      photosImportHandle.current?.cancel()
+    }
+  }, [])
+
+  // Quick-add path: skips PhotoImportReview.tsx's clustering/review entirely since the target
+  // event is already known — picked photos attach directly to `eventId`. See
+  // lib/googlePhotosImport.ts (shared with PhotoImportReview.tsx's general-import flow).
+  function handleAddPhotos() {
+    setPhotosImporting(true)
+    setPhotosError(null)
+    setPhotosStatus('Starting…')
+    photosImportHandle.current = startGooglePhotosImport(eventId, {
+      onNeedsConnect: () => {
+        setPhotosImporting(false)
+        setPhotosStatus(null)
+        startGooglePhotosAuth()
+      },
+      onStatus: (message) => setPhotosStatus(message),
+      onError: (message) => {
+        setPhotosImporting(false)
+        setPhotosStatus(null)
+        setPhotosError(message)
+      },
+      onDone: (result) => {
+        setPhotosImporting(false)
+        setPhotosStatus(result.imported > 0 ? `Added ${result.imported} photo${result.imported === 1 ? '' : 's'}.` : 'No new photos found to import.')
+        setPhotosRefreshKey((k) => k + 1)
+      },
+    })
+  }
 
   // Fetched once (not per-event) — self's own spouse is always worth suggesting below regardless
   // of which event this is (founder feedback 2026-07-26: a household shows up to things together,
@@ -406,6 +450,11 @@ export default function EventDetail({
       onCancelEditDescription={() => setEditingDescription(false)}
       refreshingSummary={refreshingSummary}
       onRefreshSummary={handleRefreshSummary}
+      photosImporting={photosImporting}
+      photosStatus={photosStatus}
+      photosError={photosError}
+      photosRefreshKey={photosRefreshKey}
+      onAddPhotos={handleAddPhotos}
       onTagGroup={handleTagGroup}
       onUntagGroup={handleUntagGroup}
       onTagMoment={handleTagMoment}
@@ -473,6 +522,11 @@ export function EventDetailView({
   onCancelEditDescription = () => {},
   refreshingSummary = false,
   onRefreshSummary = () => {},
+  photosImporting = false,
+  photosStatus = null,
+  photosError = null,
+  photosRefreshKey = 0,
+  onAddPhotos = () => {},
   onTagGroup = () => {},
   onUntagGroup = () => {},
   onTagMoment = () => {},
@@ -529,6 +583,11 @@ export function EventDetailView({
   onCancelEditDescription?: () => void
   refreshingSummary?: boolean
   onRefreshSummary?: () => void
+  photosImporting?: boolean
+  photosStatus?: string | null
+  photosError?: string | null
+  photosRefreshKey?: number
+  onAddPhotos?: () => void
   onTagGroup?: (groupId: string) => void
   onUntagGroup?: (groupId: string) => void
   onTagMoment?: (tagId: string) => void
@@ -810,7 +869,16 @@ export function EventDetailView({
         </div>
       )}
 
-      <PhotoGallery />
+      <PhotoGallery momentId={moment.id} key={photosRefreshKey} />
+      {!readOnly && (
+        <div style={styles.photosActionRow}>
+          <button onClick={onAddPhotos} style={styles.photosButton} disabled={photosImporting}>
+            {photosImporting ? 'Working…' : 'Add photos from Google Photos'}
+          </button>
+          {photosStatus && <p style={styles.photosStatus}>{photosStatus}</p>}
+          {photosError && <p style={styles.photosError}>{photosError}</p>}
+        </div>
+      )}
 
       <h2 style={styles.subheading}>Who was there</h2>
       {attendees.size > 0 && (
@@ -1261,6 +1329,19 @@ const styles: { [key: string]: React.CSSProperties } = {
   detailRow: { margin: '0.25rem 0', fontSize: '0.95rem', color: '#5A4A20' },
   detailKey: { fontWeight: 'bold', textTransform: 'capitalize' },
   subheading: { fontSize: '1.2rem', color: '#2E4034', margin: '1.5rem 0 0.5rem 0' },
+  photosActionRow: { margin: '-1rem 0 1rem' },
+  photosButton: {
+    fontSize: '0.85rem',
+    padding: '0.45rem 0.85rem',
+    borderRadius: '8px',
+    border: '1px solid #2E4034',
+    backgroundColor: '#FFF',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  photosStatus: { fontSize: '0.8rem', color: '#3A7A4A', margin: '0.4rem 0 0' },
+  photosError: { fontSize: '0.8rem', color: '#B04A3B', margin: '0.4rem 0 0' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: '0.9rem', color: '#888' },
   suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' },
   addButton: {
