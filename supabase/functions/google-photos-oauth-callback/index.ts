@@ -80,7 +80,14 @@ serve(async (req) => {
       // Non-fatal — the connection still works without a display email.
     }
 
-    const { error: upsertError } = await supabaseClient
+    // Service-role client, not the user's own JWT client: Postgres requires SELECT-level access
+    // to check for a conflicting row on ANY upsert (INSERT ... ON CONFLICT DO UPDATE), even when
+    // no conflict ends up existing — and photo_connections deliberately has no SELECT policy for
+    // the authenticated role (see the migration's comment), so this upsert would 100%-reliably
+    // fail RLS from the user's own client regardless of whether a row already exists. Safe here
+    // because `user.id` was already verified above via the caller's real JWT.
+    const serviceClient = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "")
+    const { error: upsertError } = await serviceClient
       .from("photo_connections")
       .upsert({ user_id: user.id, google_email: googleEmail, refresh_token: tokenData.refresh_token }, { onConflict: "user_id" })
     if (upsertError) {
