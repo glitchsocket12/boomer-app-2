@@ -132,7 +132,15 @@ function unionAddresses(existing: Address[], incoming: Address[]): Address[] {
 // mixed in with the fast ones.
 type MatchFilter = 'all' | 'existing' | 'new'
 
-export default function ContactImportReview({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
+export default function ContactImportReview({
+  onBack,
+  backLabel,
+  onSelectPerson,
+}: {
+  onBack: () => void
+  backLabel: string
+  onSelectPerson: (id: string, name: string) => void
+}) {
   const [page, setPage] = useState(0)
   const [matchFilter, setMatchFilter] = useState<MatchFilter>('all')
   const [candidates, setCandidates] = useState<Candidate[]>([])
@@ -274,6 +282,7 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
             onGroupCreated={handleGroupCreated}
             onAccepted={handleAccepted}
             onRejected={handleRejected}
+            onSelectPerson={onSelectPerson}
           />
         ))
       )}
@@ -302,6 +311,7 @@ function CandidateCard({
   onGroupCreated,
   onAccepted,
   onRejected,
+  onSelectPerson,
 }: {
   candidate: Candidate
   allPeople: PersonRef[]
@@ -309,12 +319,14 @@ function CandidateCard({
   onGroupCreated: (group: GroupRef) => void
   onAccepted: () => void
   onRejected: () => void
+  onSelectPerson: (id: string, name: string) => void
 }) {
   const [linkedPersonId, setLinkedPersonId] = useState<string | null>(candidate.matched_person_id)
   const [pickerOpen, setPickerOpen] = useState(candidate.match_confidence !== 'high')
   const [search, setSearch] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedLabel, setSavedLabel] = useState<string | null>(null)
+  const [savedPersonId, setSavedPersonId] = useState<string | null>(null)
   const [undoInfo, setUndoInfo] = useState<UndoInfo | null>(null)
 
   // Prefilled from the parsed vCard data but editable — this review pass is effectively the only
@@ -531,6 +543,7 @@ function CandidateCard({
     setSaving(false)
     setUndoInfo(undo)
     setSavedLabel(linkedPerson ? personLabel(linkedPerson) : candidate.full_name)
+    setSavedPersonId(personId)
     onAccepted()
   }
 
@@ -584,6 +597,7 @@ function CandidateCard({
     setSelectedGroupIds([])
     setUndoInfo(null)
     setSavedLabel(null)
+    setSavedPersonId(null)
     setSaving(false)
     onAccepted()
   }
@@ -597,6 +611,15 @@ function CandidateCard({
             {saving ? '…' : 'Undo'}
           </button>
         </p>
+        {savedPersonId && (
+          <button
+            type="button"
+            onClick={() => onSelectPerson(savedPersonId, savedLabel)}
+            style={styles.viewProfileButton}
+          >
+            View profile →
+          </button>
+        )}
       </div>
     )
   }
@@ -891,7 +914,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily: 'Georgia, serif',
   },
-  confirmText: { color: '#3A7A4A', fontSize: '0.95rem', margin: 0 },
+  confirmText: { color: '#3A7A4A', fontSize: '0.95rem', margin: '0 0 0.6rem' },
+  viewProfileButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '8px',
+    border: '1px solid #2E4034',
+    backgroundColor: '#FFF',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
   nameSection: { margin: '0 0 0.75rem' },
   nameRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
   nameInput: {

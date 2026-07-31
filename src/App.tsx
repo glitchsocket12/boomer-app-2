@@ -544,7 +544,13 @@ export default function App() {
       />
     )
   } else if (current?.type === 'contactImportReview') {
-    content = <ContactImportReview onBack={popCrumb} backLabel={parentLabel} />
+    content = (
+      <ContactImportReview
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectPerson={(id, name) => pushCrumb({ type: 'person', id, label: name })}
+      />
+    )
   } else if (current?.type === 'about') {
     content = <About onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'privacy') {
