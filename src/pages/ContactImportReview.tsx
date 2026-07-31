@@ -95,8 +95,11 @@ function unionAddresses(existing: Address[], incoming: Address[]): Address[] {
 // keeps the DOM light). Sorted high-confidence matches first: those are quick "just accept" calls,
 // so surfacing them ahead of net-new people keeps the harder new-person decisions from being
 // mixed in with the fast ones.
+type MatchFilter = 'all' | 'existing' | 'new'
+
 export default function ContactImportReview({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
   const [page, setPage] = useState(0)
+  const [matchFilter, setMatchFilter] = useState<MatchFilter>('all')
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [totalSelected, setTotalSelected] = useState(0)
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
@@ -109,7 +112,7 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
 
   useEffect(() => {
     loadPage()
-  }, [page])
+  }, [page, matchFilter])
 
   async function loadRoster() {
     const [peopleRes, groupsRes] = await Promise.all([
@@ -120,21 +123,35 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
     setAllGroups((groupsRes.data as GroupRef[]) ?? [])
   }
 
+  // Filtering by whether matched_person_id is set (not match_confidence) is deliberate: it's the
+  // same field the "goes to an existing person" vs. "creates someone new" distinction on
+  // handleAccept actually keys off of, so the filter matches what accepting a card will really do.
+  function applyMatchFilter<T>(query: T): T {
+    const q = query as any
+    if (matchFilter === 'existing') return q.not('matched_person_id', 'is', null)
+    if (matchFilter === 'new') return q.is('matched_person_id', null)
+    return q
+  }
+
   async function loadPage() {
     setLoading(true)
     const from = page * PAGE_SIZE
     const to = from + PAGE_SIZE - 1
     const [candidatesRes, countRes] = await Promise.all([
-      supabase
-        .from('contact_import_candidates')
-        .select(
-          'id, full_name, first_name, last_name, middle_name, nickname, organization, job_title, phones, emails, addresses, urls, social_profiles, birthday_month, birthday_day, birthday_year, anniversary_month, anniversary_day, anniversary_year, note_text, related_names, matched_person_id, match_confidence'
-        )
-        .eq('status', 'selected')
+      applyMatchFilter(
+        supabase
+          .from('contact_import_candidates')
+          .select(
+            'id, full_name, first_name, last_name, middle_name, nickname, organization, job_title, phones, emails, addresses, urls, social_profiles, birthday_month, birthday_day, birthday_year, anniversary_month, anniversary_day, anniversary_year, note_text, related_names, matched_person_id, match_confidence'
+          )
+          .eq('status', 'selected')
+      )
         .order('match_confidence', { ascending: true })
         .order('full_name')
         .range(from, to),
-      supabase.from('contact_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'selected'),
+      applyMatchFilter(
+        supabase.from('contact_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'selected')
+      ),
     ])
     const data = (candidatesRes.data as Candidate[]) ?? []
     const count = countRes.count ?? 0
@@ -147,6 +164,11 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
     setCandidates(data)
     setTotalSelected(count)
     setLoading(false)
+  }
+
+  function handleFilterChange(next: MatchFilter) {
+    setMatchFilter(next)
+    setPage(0)
   }
 
   function handleGroupCreated(group: GroupRef) {
@@ -163,10 +185,9 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
   // (see CandidateCard's savedLabel), so this only refreshes the total count for the footer —
   // a full reload would yank the confirmation off-screen before it's seen.
   async function handleAccepted() {
-    const { count } = await supabase
-      .from('contact_import_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'selected')
+    const { count } = await applyMatchFilter(
+      supabase.from('contact_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'selected')
+    )
     setTotalSelected(count ?? 0)
   }
 
@@ -183,10 +204,31 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
         say yes.
       </p>
 
+      <div style={styles.filterRow}>
+        {(
+          [
+            ['all', 'All'],
+            ['existing', 'Already in Boomer'],
+            ['new', 'New people'],
+          ] as [MatchFilter, string][]
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => handleFilterChange(value)}
+            style={matchFilter === value ? styles.filterButtonActive : styles.filterButton}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {loading ? (
         <p style={styles.body}>Loading…</p>
       ) : candidates.length === 0 ? (
-        <p style={styles.body}>Nothing left to review.</p>
+        <p style={styles.body}>
+          {matchFilter === 'all' ? 'Nothing left to review.' : 'Nothing left in this filter — try "All".'}
+        </p>
       ) : (
         candidates.map((c) => (
           <CandidateCard
@@ -248,9 +290,36 @@ function CandidateCard({
 
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([])
 
+  // The linked person's CURRENT groups (read-only, distinct from selectedGroupIds above, which
+  // are new tags this session is about to add). Shown so a match to an existing person comes with
+  // visible proof it's really them — not just a name, but the groups you already know them by.
+  const [existingPersonGroups, setExistingPersonGroups] = useState<GroupRef[]>([])
+
   const linkedPerson = allPeople.find((p) => p.id === linkedPersonId) ?? null
   const birthdayLabel = formatDate(candidate.birthday_month, candidate.birthday_day, candidate.birthday_year)
   const anniversaryLabel = formatDate(candidate.anniversary_month, candidate.anniversary_day, candidate.anniversary_year)
+
+  useEffect(() => {
+    if (!linkedPersonId) {
+      setExistingPersonGroups([])
+      return
+    }
+    let cancelled = false
+    supabase
+      .from('person_groups')
+      .select('groups(id, name)')
+      .eq('person_id', linkedPersonId)
+      .then(({ data }) => {
+        if (cancelled) return
+        const groups = ((data as { groups: GroupRef | null }[] | null) ?? [])
+          .map((row) => row.groups)
+          .filter((g): g is GroupRef => !!g)
+        setExistingPersonGroups(groups)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [linkedPersonId])
 
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -431,17 +500,29 @@ function CandidateCard({
 
       <div style={styles.linkSection}>
         {linkedPerson && !pickerOpen ? (
-          <p style={styles.body}>
-            Goes to: <strong>{personLabel(linkedPerson)}</strong>{' '}
-            <button type="button" onClick={() => setPickerOpen(true)} style={styles.linkButton}>
-              change
-            </button>
-          </p>
+          <>
+            <p style={styles.body}>
+              Goes to: <strong>{personLabel(linkedPerson)}</strong>{' '}
+              <button type="button" onClick={() => setPickerOpen(true)} style={styles.linkButton}>
+                change
+              </button>
+            </p>
+            {existingPersonGroups.length > 0 && (
+              <p style={styles.matchGroupsText}>
+                Already in: {existingPersonGroups.map((g) => g.name).join(', ')}
+              </p>
+            )}
+          </>
         ) : (
           <div>
             <p style={styles.body}>
               {linkedPerson ? 'Confirm who this belongs to:' : "Couldn't match this to anyone on file — add as a new person, or link to someone existing:"}
             </p>
+            {linkedPerson && existingPersonGroups.length > 0 && (
+              <p style={styles.matchGroupsText}>
+                {personLabel(linkedPerson)} is already in: {existingPersonGroups.map((g) => g.name).join(', ')}
+              </p>
+            )}
             <SearchBox value={search} onChange={setSearch} placeholder="Search your people…" />
             {searchResults.length > 0 && (
               <div style={styles.searchResults}>
@@ -523,7 +604,9 @@ function CandidateCard({
           </div>
         )}
         <SearchAddPicker
-          items={allGroups.filter((g) => !selectedGroupIds.includes(g.id)).map((g) => ({ id: g.id, label: g.name }))}
+          items={allGroups
+            .filter((g) => !selectedGroupIds.includes(g.id) && !existingPersonGroups.some((eg) => eg.id === g.id))
+            .map((g) => ({ id: g.id, label: g.name }))}
           placeholder="Tag a group…"
           onSelect={(item) => addGroup(item.id)}
           onCreateNew={handleCreateGroup}
@@ -550,6 +633,27 @@ const styles: { [key: string]: React.CSSProperties } = {
   backButton: { background: 'none', border: 'none', color: '#2E4034', fontSize: '1rem', cursor: 'pointer', marginBottom: '1rem', padding: 0 },
   heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 0.5rem' },
   intro: { fontSize: '0.95rem', color: '#666', lineHeight: 1.5, margin: '0 0 1.25rem' },
+  filterRow: { display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' },
+  filterButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '999px',
+    border: '1px solid #CCC',
+    backgroundColor: '#FFF',
+    color: '#666',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  filterButtonActive: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '999px',
+    border: '1px solid #2E4034',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
   body: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5, margin: '0 0 0.5rem' },
   card: {
     backgroundColor: '#FFF',
@@ -561,6 +665,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   cardTitle: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.25rem', fontWeight: 'bold' },
   metaText: { fontSize: '0.85rem', color: '#666', margin: '0 0 0.25rem' },
   linkSection: { margin: '0.75rem 0' },
+  matchGroupsText: { fontSize: '0.85rem', color: '#3A7A4A', margin: '0 0 0.5rem', fontStyle: 'italic' },
   linkButton: {
     background: 'none',
     border: 'none',
