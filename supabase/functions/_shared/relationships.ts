@@ -627,11 +627,15 @@ export async function applyFamilySignals(
       } else if (signal.relationship === "parent" && relationshipSuggestions.length < 6) {
         const siblingNames = await getRelationNames(supabaseClient, anthropicApiKey, relationCache, "sibling", subjectId, subjectName)
         const siblingIds = resolveIds(index, siblingNames).filter((id) => id !== subjectId && id !== targetId)
-        for (const sId of siblingIds.slice(0, 5)) {
-          const found = await findSharedParentSuggestions(supabaseClient, anthropicApiKey, index, relationCache, subjectId, subjectName, sId, index.nameById[sId])
-          relationshipSuggestions.push(...found)
-          if (relationshipSuggestions.length >= 6) break
-        }
+        // Each sibling comparison is independent (different personId, no shared write), so they're
+        // run together instead of one Anthropic round-trip at a time — this is the branch that used
+        // to chain up to 5 sequential extra calls onto a single "her mom is Amy" message.
+        const foundBatches = await Promise.all(
+          siblingIds
+            .slice(0, 5)
+            .map((sId) => findSharedParentSuggestions(supabaseClient, anthropicApiKey, index, relationCache, subjectId, subjectName, sId, index.nameById[sId]))
+        )
+        relationshipSuggestions.push(...foundBatches.flat())
       }
     }
 

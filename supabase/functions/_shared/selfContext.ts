@@ -41,21 +41,28 @@ export async function buildSelfInstruction(
   // Step-parent/step-sibling (death/divorce/remarriage backlog item): only surfaces once a
   // parent's OTHER union is on file, so most users cost nothing extra here — bounded to one query
   // per known parent (almost always 0-2), not a full graph walk, since this is a per-request tier
-  // and can't afford building the whole relationships graph on every converse call.
+  // and can't afford building the whole relationships graph on every converse call. Both levels
+  // (parents, then their spouses) are fetched with Promise.all instead of sequential awaits inside
+  // the loops — each parent's/spouse's relationships are independent of the others, so there's no
+  // reason to pay for them one round-trip at a time.
   const stepParentNames = new Set<string>()
   const stepSiblingNames = new Set<string>()
-  for (const parentId of rel.parentIds) {
-    const parentRel = await getRelationshipsForPerson(supabaseClient, parentId)
+  const parentRels = await Promise.all(rel.parentIds.map((parentId) => getRelationshipsForPerson(supabaseClient, parentId)))
+  const stepParentIds = new Set<string>()
+  for (const parentRel of parentRels) {
     for (const spouseId of [...parentRel.spouseIds, ...parentRel.partnerIds]) {
       if (rel.parentIds.includes(spouseId)) continue // the OTHER known parent, not a step-parent
+      stepParentIds.add(spouseId)
       const name = nameById[spouseId]
       if (name) stepParentNames.add(name)
-      const spouseRel = await getRelationshipsForPerson(supabaseClient, spouseId)
-      for (const childId of spouseRel.childIds) {
-        if (childId === self.id || rel.childIds.includes(childId)) continue
-        const childName = nameById[childId]
-        if (childName) stepSiblingNames.add(childName)
-      }
+    }
+  }
+  const spouseRels = await Promise.all([...stepParentIds].map((spouseId) => getRelationshipsForPerson(supabaseClient, spouseId)))
+  for (const spouseRel of spouseRels) {
+    for (const childId of spouseRel.childIds) {
+      if (childId === self.id || rel.childIds.includes(childId)) continue
+      const childName = nameById[childId]
+      if (childName) stepSiblingNames.add(childName)
     }
   }
   const stepText =

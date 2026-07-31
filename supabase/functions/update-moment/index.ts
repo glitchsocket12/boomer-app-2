@@ -10,6 +10,7 @@ import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
+import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,27 +44,29 @@ serve(async (req) => {
       )
     }
 
-    const { data: moment } = await supabaseClient
-      .from("moments")
-      .select("occasion, location, when_text, event_date, event_end_date, details")
-      .eq("id", momentId)
-      .single()
-    const { data: existingNotes } = await supabaseClient
-      .from("notes")
-      .select("content, person_id")
-      .eq("moment_id", momentId)
-    const { data: people } = await supabaseClient
-      .from("people")
-      .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
-    const { data: existingGroups } = await supabaseClient.from("groups").select("id, name")
-    const { data: existingMomentGroups } = await supabaseClient
-      .from("moment_groups")
-      .select("group_id")
-      .eq("moment_id", momentId)
-    const { data: otherMoments } = await supabaseClient
-      .from("moments")
-      .select("occasion, when_text")
-      .neq("id", momentId)
+    // Six independent reads, fired together instead of one round-trip at a time (same fix as
+    // converse/index.ts's roster reads).
+    const [
+      { data: moment },
+      { data: existingNotes },
+      { data: people },
+      { data: existingGroups },
+      { data: existingMomentGroups },
+      { data: otherMoments },
+    ] = await Promise.all([
+      supabaseClient
+        .from("moments")
+        .select("occasion, location, when_text, event_date, event_end_date, details")
+        .eq("id", momentId)
+        .single(),
+      supabaseClient.from("notes").select("content, person_id").eq("moment_id", momentId),
+      supabaseClient
+        .from("people")
+        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self"),
+      supabaseClient.from("groups").select("id, name"),
+      supabaseClient.from("moment_groups").select("group_id").eq("moment_id", momentId),
+      supabaseClient.from("moments").select("occasion, when_text").neq("id", momentId),
+    ])
 
     const otherEventsRoster = (otherMoments ?? [])
       .map((m: any) => (m.when_text ? `${m.occasion} (${m.when_text})` : m.occasion))
@@ -147,16 +150,18 @@ When the user shares a new detail, don't finish right away — first ask a short
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1, or null for a general note about the event itself", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
 This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
 
-CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "additional_notes": a person only shows up as having attended if they have at least one note tied to this moment. So whenever the user mentions someone was AT this event — even in passing, even with no other detail about them — you MUST still include an entry for them in "additional_notes" (e.g. {"person": "Name1", "note": "Was there."}) so they get linked. Do not just add them to "new_people" and stop — a person with no note attached will silently NOT appear as having attended, which is the whole point of recording them.
+IMPORTANT — capture EVERY concrete new detail the user gives, not just who attended. An "additional_notes" entry doesn't have to be about a specific person: anything the user says about the event itself — an activity, food, weather, a gift, how it went — belongs in its own entry with "person" set to null, unless it's naturally about one specific attendee (attach it to that person's own note instead). Never let a real detail disappear just because it wasn't about a named person.
+
+CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "additional_notes": a person only shows up as having attended if they have at least one note tied to this moment. So whenever the user mentions someone was AT this event — even in passing, even with no other detail about them — you MUST still include an entry for them in "additional_notes" (e.g. {"person": "Name1", "note": "Was there."}) so they get linked. Do not just add them to "new_people" and stop — a person with no note attached will silently NOT appear as having attended, which is the whole point of recording them. But "Was there." is a LAST RESORT for someone named with zero detail — if the user actually described what that person did, said, or brought, capture that in their note instead of flattening it to "Was there.".
 
 "moment_field_updates" is for the moment's own top-level fields, not a person-specific fact. Use it when the user gives new or corrected info about the event itself:
 - "when_text": the user's own words describing timing (e.g. "fall of 2025"), only when they give timing info different from what's already known.
-- "event_date": your best-guess actual calendar date as "YYYY-MM-DD" matching whatever "when_text" you just set. Resolve relative phrases against today's date, given below. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year, use the 1st of that month. If only a year, use January 1. Always give your single closest best guess rather than a range.
+- "event_date": your best-guess actual calendar date as "YYYY-MM-DD" matching whatever "when_text" you just set. Resolve relative phrases against today's date, given below — this includes ordinal-day phrasing ("the 4th" = the 4th of the current or most recently-implied month), weekday phrasing ("next Tuesday", "last Saturday" = the nearest matching weekday in that direction from today), and compound phrasing ("two weeks from Saturday", "a week from tomorrow" = do the arithmetic from today's date), not just "last week"/whole-season phrasing. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year, use the 1st of that month. If only a year, use January 1. Always give your single closest best guess rather than a range.
 - "event_end_date": your best-guess actual END calendar date as "YYYY-MM-DD", ONLY when the user describes or corrects a genuine date RANGE (e.g. "it ran from the 3rd to the 10th", "we were there through the following weekend"). Leave null for a single day or when no end is given — never invent a range that wasn't stated.
 - "location" / "occasion": only set when the user is giving new or corrected info for that specific field.
 Leave any of these five keys null when the user didn't touch that field this turn.
@@ -298,7 +303,24 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     let notesAdded = 0
     let notesFailed = 0
     for (const note of parsed.additional_notes ?? []) {
-      const personId = idByName[note.person?.toLowerCase()]
+      const rawPerson = note.person?.trim()
+      // No person named (or explicitly null) — a general event-level detail, same "notes" table,
+      // just person_id: null, same as GroupDetail's own manual notes. Not a resolution failure, so
+      // it doesn't count against notesFailed.
+      if (!rawPerson) {
+        const { error: noteError } = await supabaseClient.from("notes").insert({
+          person_id: null,
+          moment_id: momentId,
+          content: note.note,
+        })
+        if (noteError) {
+          console.error("Failed to save general note", noteError.message, JSON.stringify(note))
+        } else {
+          notesAdded++
+        }
+        continue
+      }
+      const personId = idByName[rawPerson.toLowerCase()]
       if (personId) {
         const { error: noteError } = await supabaseClient.from("notes").insert({
           person_id: personId,
@@ -322,8 +344,11 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     if (updates?.occasion) fieldUpdates.occasion = updates.occasion
     if (updates?.location) fieldUpdates.location = updates.location
     if (updates?.when_text) fieldUpdates.when_text = updates.when_text
-    if (updates?.event_date) fieldUpdates.event_date = updates.event_date
-    if (updates?.event_end_date) fieldUpdates.event_end_date = updates.event_end_date
+    // Drop a hallucinated/malformed date before it ever reaches the moment row — see dateValidation.ts.
+    const sanitizedEventDate = sanitizeIsoDate(updates?.event_date)
+    const sanitizedEventEndDate = sanitizeIsoDate(updates?.event_end_date)
+    if (sanitizedEventDate) fieldUpdates.event_date = sanitizedEventDate
+    if (sanitizedEventEndDate) fieldUpdates.event_end_date = sanitizedEventEndDate
     if (Object.keys(fieldUpdates).length > 0) {
       await supabaseClient.from("moments").update(fieldUpdates).eq("id", momentId)
     }

@@ -104,6 +104,16 @@ export default function EventDetail({
   const [childEvents, setChildEvents] = useState<ChildEventRef[]>([])
   const [addingSubEvent, setAddingSubEvent] = useState(false)
   const [subEventError, setSubEventError] = useState<string | null>(null)
+  // Manual date/location fallback (2026-07-30) — chat parsing is still the primary way these get
+  // set, but there was previously no way to fix a wrong/missing one by hand at all.
+  const [editingMeta, setEditingMeta] = useState(false)
+  const [dateInput, setDateInput] = useState('')
+  const [locationInput, setLocationInput] = useState('')
+  const [savingMeta, setSavingMeta] = useState(false)
+  // Manual "add a note" box (2026-07-30) — matches GroupDetail's own manual note box, so adding a
+  // general detail to an event no longer requires going through chat.
+  const [newEventNote, setNewEventNote] = useState('')
+  const [savingEventNote, setSavingEventNote] = useState(false)
 
   useEffect(() => {
     loadMoment()
@@ -111,6 +121,8 @@ export default function EventDetail({
     loadChildEvents()
     setEditingTitle(false)
     setEditingDescription(false)
+    setEditingMeta(false)
+    setNewEventNote('')
     setDeleteConfirming(false)
     setMergeOpen(false)
     setMergeCandidate(null)
@@ -410,6 +422,46 @@ export default function EventDetail({
     await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
   }
 
+  function startEditingMeta() {
+    setDateInput(moment?.event_date ?? '')
+    setLocationInput(moment?.location ?? '')
+    setEditingMeta(true)
+  }
+
+  // Direct edit of event_date/location, not a chat turn — the reliable fallback for when chat
+  // parsing gets the date wrong or leaves it null (see handleSaveDescription's comment above for
+  // the same reasoning applied to the description field). when_text is left untouched: the display
+  // already prefers event_date over when_text whenever event_date is set (see formatFullDate call
+  // sites below), so there's no stale-text mismatch to worry about.
+  async function handleSaveMeta(e: FormEvent) {
+    e.preventDefault()
+    if (!moment) return
+    const newDate = dateInput || null
+    const newLocation = locationInput.trim() || null
+    if (newDate === moment.event_date && newLocation === moment.location) {
+      setEditingMeta(false)
+      return
+    }
+    setSavingMeta(true)
+    const { error } = await supabase.from('moments').update({ event_date: newDate, location: newLocation }).eq('id', moment.id)
+    setSavingMeta(false)
+    if (error) return
+    setMoment({ ...moment, event_date: newDate, location: newLocation })
+    setEditingMeta(false)
+  }
+
+  // Same insert shape as GroupDetail's submitGroupNote (group_id -> moment_id, still person_id:
+  // null) — a general note about the event itself, no AI classification needed. Reuses
+  // handleNoteSaved so it gets the same "clear cached summary, reload" refresh chat-added notes get.
+  async function handleAddEventNote() {
+    if (!newEventNote.trim()) return
+    setSavingEventNote(true)
+    await supabase.from('notes').insert({ moment_id: eventId, person_id: null, content: newEventNote.trim() })
+    setNewEventNote('')
+    setSavingEventNote(false)
+    await handleNoteSaved()
+  }
+
   async function handleSaveTitle(e: FormEvent) {
     e.preventDefault()
     if (!moment) return
@@ -549,6 +601,19 @@ export default function EventDetail({
       onDescriptionInputChange={setDescriptionInput}
       onSaveDescription={handleSaveDescription}
       onCancelEditDescription={() => setEditingDescription(false)}
+      editingMeta={editingMeta}
+      dateInput={dateInput}
+      locationInput={locationInput}
+      savingMeta={savingMeta}
+      onStartEditMeta={startEditingMeta}
+      onDateInputChange={setDateInput}
+      onLocationInputChange={setLocationInput}
+      onSaveMeta={handleSaveMeta}
+      onCancelEditMeta={() => setEditingMeta(false)}
+      newEventNote={newEventNote}
+      savingEventNote={savingEventNote}
+      onNewEventNoteChange={setNewEventNote}
+      onAddEventNote={handleAddEventNote}
       refreshingSummary={refreshingSummary}
       onRefreshSummary={handleRefreshSummary}
       photosImporting={photosImporting}
@@ -627,6 +692,19 @@ export function EventDetailView({
   onDescriptionInputChange = () => {},
   onSaveDescription = () => {},
   onCancelEditDescription = () => {},
+  editingMeta = false,
+  dateInput = '',
+  locationInput = '',
+  savingMeta = false,
+  onStartEditMeta = () => {},
+  onDateInputChange = () => {},
+  onLocationInputChange = () => {},
+  onSaveMeta = () => {},
+  onCancelEditMeta = () => {},
+  newEventNote = '',
+  savingEventNote = false,
+  onNewEventNoteChange = () => {},
+  onAddEventNote = () => {},
   refreshingSummary = false,
   onRefreshSummary = () => {},
   photosImporting = false,
@@ -694,6 +772,19 @@ export function EventDetailView({
   onDescriptionInputChange?: (v: string) => void
   onSaveDescription?: () => void
   onCancelEditDescription?: () => void
+  editingMeta?: boolean
+  dateInput?: string
+  locationInput?: string
+  savingMeta?: boolean
+  onStartEditMeta?: () => void
+  onDateInputChange?: (v: string) => void
+  onLocationInputChange?: (v: string) => void
+  onSaveMeta?: (e: FormEvent) => void
+  onCancelEditMeta?: () => void
+  newEventNote?: string
+  savingEventNote?: boolean
+  onNewEventNoteChange?: (v: string) => void
+  onAddEventNote?: () => void
   refreshingSummary?: boolean
   onRefreshSummary?: () => void
   photosImporting?: boolean
@@ -841,26 +932,61 @@ export function EventDetailView({
           {!readOnly && <EditButton label="Rename event" onClick={onStartEditTitle} />}
         </div>
       )}
-      <p style={styles.meta}>
-        {moment.event_date || moment.when_text || moment.location ? (
-          <>
-            {moment.event_date ? formatFullDate(moment) : moment.when_text}
-            {(moment.event_date || moment.when_text) && moment.location && ' · '}
-            {moment.location && (
-              <a
-                href={mapsUrl!}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={styles.locationLink}
-              >
-                {moment.location}
-              </a>
+      {editingMeta ? (
+        <form onSubmit={onSaveMeta} style={styles.metaEditForm}>
+          <label style={styles.metaEditLabel}>
+            Date
+            <input
+              type="date"
+              value={dateInput}
+              onChange={(e) => onDateInputChange(e.target.value)}
+              style={styles.metaEditInput}
+            />
+          </label>
+          <label style={styles.metaEditLabel}>
+            Location
+            <input
+              type="text"
+              value={locationInput}
+              onChange={(e) => onLocationInputChange(e.target.value)}
+              placeholder="Where was this?"
+              style={styles.metaEditInput}
+            />
+          </label>
+          <div style={styles.suggestButtonRow}>
+            <button type="submit" disabled={savingMeta} style={styles.saveButton}>
+              {savingMeta ? '…' : 'Save'}
+            </button>
+            <button type="button" onClick={onCancelEditMeta} style={styles.cancelButton} disabled={savingMeta}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div style={styles.metaRow}>
+          <p style={styles.meta}>
+            {moment.event_date || moment.when_text || moment.location ? (
+              <>
+                {moment.event_date ? formatFullDate(moment) : moment.when_text}
+                {(moment.event_date || moment.when_text) && moment.location && ' · '}
+                {moment.location && (
+                  <a
+                    href={mapsUrl!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={styles.locationLink}
+                  >
+                    {moment.location}
+                  </a>
+                )}
+              </>
+            ) : (
+              formatFullDate(moment)
             )}
-          </>
-        ) : (
-          formatFullDate(moment)
-        )}
-      </p>
+          </p>
+          {!readOnly && <EditButton label="Edit date & location" onClick={onStartEditMeta} />}
+        </div>
+      )}
 
       {!parentEvent && (
         <>
@@ -1131,22 +1257,49 @@ export function EventDetailView({
         </>
       )}
 
-      {moment.notes.length > 0 && (
+      {(moment.notes.length > 0 || !readOnly) && (
         <>
           <div style={styles.notesHeaderRow}>
             <h2 style={{ ...styles.subheading, margin: 0 }}>Notes</h2>
-            <button
-              type="button"
-              onClick={onToggleNotesOpen}
-              style={styles.notesToggle}
-            >
-              {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
-            </button>
+            {moment.notes.length > 0 && (
+              <button
+                type="button"
+                onClick={onToggleNotesOpen}
+                style={styles.notesToggle}
+              >
+                {notesOpen ? '▾ Hide notes' : '▸ Show notes'}
+              </button>
+            )}
           </div>
           <p style={styles.notesHint}>
             These are the individual details you shared for this memory — exactly what fed the summary above.
           </p>
-          {notesOpen && (
+          {!readOnly && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                onAddEventNote()
+              }}
+              style={styles.addNoteForm}
+            >
+              <AutoGrowTextarea
+                value={newEventNote}
+                onChange={onNewEventNoteChange}
+                onEnter={onAddEventNote}
+                placeholder="Add a note about this event…"
+                style={styles.addNoteInput}
+                disabled={savingEventNote}
+              />
+              <VoiceInputButton
+                disabled={savingEventNote}
+                onTranscribed={(text) => onNewEventNoteChange(newEventNote ? `${newEventNote} ${text}` : text)}
+              />
+              <button type="submit" disabled={savingEventNote || !newEventNote.trim()} style={styles.addNoteButton}>
+                {savingEventNote ? '…' : 'Add'}
+              </button>
+            </form>
+          )}
+          {notesOpen && moment.notes.length > 0 && (
             <div style={styles.notesList}>
               {noteGroups.map((group) => (
                 <div key={group.key} style={styles.noteCard}>
@@ -1471,7 +1624,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#555',
     cursor: 'pointer',
   },
-  meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#888' },
+  meta: { margin: 0, fontSize: '0.95rem', color: '#888' },
+  metaRow: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' },
+  metaEditForm: { display: 'flex', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '0.75rem', flexWrap: 'wrap' },
+  metaEditLabel: { display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.85rem', color: '#555' },
+  metaEditInput: {
+    fontSize: '0.95rem',
+    padding: '0.45rem 0.6rem',
+    borderRadius: '8px',
+    border: '1px solid #CCC',
+  },
   parentLink: {
     display: 'block',
     background: 'none',
@@ -1517,6 +1679,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   notesHint: { margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
+  addNoteForm: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem', marginBottom: '1rem' },
+  addNoteInput: { flex: 1, fontSize: '1rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #CCC' },
+  addNoteButton: {
+    fontSize: '1rem',
+    padding: '0.6rem 1.1rem',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#2E4034',
+    color: '#FFF',
+    cursor: 'pointer',
+  },
   description: { fontSize: '1.05rem', color: '#2E2E2E', lineHeight: 1.6, margin: 0, flex: 1 },
   descriptionRow: { display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '1.5rem' },
   descriptionEditForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.5rem' },

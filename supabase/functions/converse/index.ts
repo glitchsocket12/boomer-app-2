@@ -10,6 +10,7 @@ import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 import { buildChatToneInstruction, getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone, fullDateInTimeZone } from "../_shared/tz.ts"
+import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,28 +48,38 @@ serve(async (req) => {
     // guarantee row order without one, so the exact same data can come back reshuffled between
     // calls — which reshuffles this text and breaks the prompt-cache prefix match on every turn
     // even when nothing changed (see the cache_control breakpoint below, and CLAUDE.md's
-    // "serialize deterministically" rule).
-    const { data: people } = await supabaseClient
-      .from("people")
-      .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
-      .order("id")
-    const { data: moments } = await supabaseClient
-      .from("moments")
-      .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
-      .order("id")
-      .order("created_at", { foreignTable: "notes" })
-    const { data: groups } = await supabaseClient.from("groups").select("id, name").order("id")
-    const { data: personGroups } = await supabaseClient
-      .from("person_groups")
-      .select("person_id, group_id")
-      .order("person_id")
-      .order("group_id")
-    const { data: momentGroups } = await supabaseClient
-      .from("moment_groups")
-      .select("moment_id, group_id")
-      .order("moment_id")
-      .order("group_id")
-    const { data: tags } = await supabaseClient.from("tags").select("id, name").order("id")
+    // "serialize deterministically" rule). Fired together with Promise.all — the six queries are
+    // independent of each other, so there's no reason to pay for them one round-trip at a time.
+    const [
+      { data: people },
+      { data: moments },
+      { data: groups },
+      { data: personGroups },
+      { data: momentGroups },
+      { data: tags },
+    ] = await Promise.all([
+      supabaseClient
+        .from("people")
+        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+        .order("id"),
+      supabaseClient
+        .from("moments")
+        .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
+        .order("id")
+        .order("created_at", { foreignTable: "notes" }),
+      supabaseClient.from("groups").select("id, name").order("id"),
+      supabaseClient
+        .from("person_groups")
+        .select("person_id, group_id")
+        .order("person_id")
+        .order("group_id"),
+      supabaseClient
+        .from("moment_groups")
+        .select("moment_id, group_id")
+        .order("moment_id")
+        .order("group_id"),
+      supabaseClient.from("tags").select("id, name").order("id"),
+    ])
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
@@ -209,18 +220,22 @@ ${familySignalPromptMultiSubject()}
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "...", "note": "..."}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
+
+IMPORTANT — capture EVERY concrete detail the user gives about an event, not just who attended. A "notes" entry doesn't have to be about a specific person: anything the user says about the event itself — what was done, eaten, said, how it went, the weather, an activity, a gift, a reaction — belongs in its own "notes" entry with "person" set to null, UNLESS it's naturally about one specific attendee (in which case attach it to that person's own note instead). Never let a real detail the user typed disappear just because it wasn't about a named person — the event's own page shows these general notes alongside the per-person ones. Don't pad a note with filler if the user gave no detail (that's what "Was there." is for — see below); but when they DID give detail, capture it, even if it means several separate notes entries for one event.
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
 IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", "relevant_people", "notes", etc.), copy their spelling EXACTLY as it appears in the roster provided in this prompt, character for character — same capitalization, same spelling. Never respell, "correct," or reformat a name from the roster, even if it looks unusual. This is what makes their name in your reply clickable — a respelled name breaks that link.
 
-CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions someone was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them.
+CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions someone was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them. But "Was there." is a LAST RESORT for someone the user named with zero detail — if the user actually described what that person did, said, or brought, put THAT in their note instead of flattening it to "Was there." (e.g. user says "my brother Jake came and brought his new girlfriend" → Jake's note should say he brought his new girlfriend, not just "Was there.").
 
 Leave "moments" as an empty array when nothing is being captured or updated — most simple questions have no moments at all. Only set "new_moment": true and fill that entry's "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
 
-When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Resolve relative phrases against today's date, given below (e.g. "last week," "a couple months ago") or, if the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.
+Every "new_moment" entry needs a concise "occasion" (a few words, e.g. "Fourth of July at the lake", "Sarah's graduation dinner") — work one out from whatever the user described even if they never stated a literal title. Only leave "occasion" null if there's truly nothing to name it from at all.
+
+When capturing a brand-new moment, also work out your best-guess ACTUAL calendar date for when it happened and put it in that entry's moment_fields.event_date as "YYYY-MM-DD" (in addition to when_text, which stays the user's own words, unchanged). Resolve relative phrases against today's date, given below — this includes not just "last week"/"a couple months ago" but ordinal-day phrasing ("the 4th" = the 4th of the current or most recently-implied month), weekday phrasing ("next Tuesday", "last Saturday" = the nearest matching weekday in that direction from today), and compound phrasing ("two weeks from Saturday", "a week from tomorrow" = do the arithmetic from today's date). If the story is clearly set in an earlier period of their life (e.g. "back in college," "when I was stationed in Germany"), use whatever surrounding context or other recorded moments give you to place it as closely as you can. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year ("May of 2027"), use the 1st of that month. If only a year is given, use January 1 of that year. Always give your closest single best guess rather than a range — exact precision doesn't matter, this is only used for sorting and display. Only leave event_date null if there is truly no time information or contextual clue to go on at all.
 
 If the user describes the moment as spanning more than one day (e.g. "we were there from the 3rd through the 10th", "it was a long weekend trip"), also set moment_fields.event_end_date to your best-guess actual END calendar date as "YYYY-MM-DD". Leave event_end_date null for anything that sounds like a single day — never invent a range that wasn't stated or clearly implied.`
 
@@ -233,9 +248,11 @@ If the user describes the moment as spanning more than one day (e.g. "we were th
     // rewrite of the whole roster just because the user paused to think (CLAUDE.md's token/
     // billing efficiency rule).
     const selfInfo = findSelfPerson(people, nameById)
-    const selfInstruction = await buildSelfInstruction(supabaseClient, selfInfo, nameById)
-    const chatToneInstruction = await buildChatToneInstruction(supabaseClient, user.id)
-    const userTimeZone = await getUserTimeZone(supabaseClient, user.id)
+    const [selfInstruction, chatToneInstruction, userTimeZone] = await Promise.all([
+      buildSelfInstruction(supabaseClient, selfInfo, nameById),
+      buildChatToneInstruction(supabaseClient, user.id),
+      getUserTimeZone(supabaseClient, user.id),
+    ])
 
     const rosterContext = `Here are the groups already created:
 ${groupsContext || "(none yet)"}
@@ -331,6 +348,13 @@ ${context || "(none recorded yet)"}`
         // text, so use it as-is rather than discarding a real response the user already got.
         parsed.reply = rawText.trim()
       }
+    }
+
+    // Drop any hallucinated/malformed date before it reaches an insert — see dateValidation.ts.
+    for (const momentEntry of parsed.moments ?? []) {
+      if (!momentEntry.moment_fields) continue
+      momentEntry.moment_fields.event_date = sanitizeIsoDate(momentEntry.moment_fields.event_date)
+      momentEntry.moment_fields.event_end_date = sanitizeIsoDate(momentEntry.moment_fields.event_end_date)
     }
 
     for (const rename of parsed.renames ?? []) {
@@ -465,23 +489,58 @@ ${context || "(none recorded yet)"}`
           })
           .select()
           .single()
-        if (newMoment) momentId = newMoment.id
+        if (newMoment) {
+          momentId = newMoment.id
+          // Kick off the summary now, in the background, instead of waiting for the user to open
+          // the event page — by the time they navigate there it's usually already done, instead of
+          // adding a fresh multi-second wait on load. Doesn't block this response and its result
+          // isn't read here (the frontend already re-fetches the moment when the page opens).
+          if (rawDescription.trim()) {
+            const summarizePromise = fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/summarize-moment`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: req.headers.get("Authorization")!,
+                apikey: Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+              },
+              body: JSON.stringify({ momentId: newMoment.id }),
+            }).catch((e) => console.error("Background summarize-moment kickoff failed", String(e)))
+            // @ts-ignore -- EdgeRuntime is a Supabase Edge Runtime global, not in the Deno std lib types
+            if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(summarizePromise)
+          }
+        }
       }
 
       if (!momentId) continue
       touchedMomentIds.add(momentId)
 
-      for (const note of momentEntry.notes ?? []) {
-        const personId = idByName[note.person?.trim().toLowerCase()]
-        if (personId) {
-          await supabaseClient.from("notes").insert({
+      // Each note is an independent insert (no dedup/lookup state to race on), so they're fired
+      // together instead of one round-trip at a time. A note with no "person" (or one the model
+      // didn't tie to a specific attendee) is a general event-level detail — same "notes" table,
+      // same moment_id, just person_id: null — rather than being silently dropped. A note that DOES
+      // name a person but fails to resolve (typo, ambiguous shared name) is still dropped, same as
+      // before: that's a resolution failure, not an intentional general note.
+      await Promise.all(
+        (momentEntry.notes ?? []).map((note: any) => {
+          const rawPerson = note.person?.trim()
+          if (!rawPerson) {
+            return supabaseClient.from("notes").insert({
+              person_id: null,
+              moment_id: momentId,
+              content: note.note,
+              source: "home",
+            })
+          }
+          const personId = idByName[rawPerson.toLowerCase()]
+          if (!personId) return null
+          return supabaseClient.from("notes").insert({
             person_id: personId,
             moment_id: momentId,
             content: note.note,
             source: "home",
           })
-        }
-      }
+        })
+      )
 
       for (const groupName of momentEntry.moment_groups ?? []) {
         const groupId = await findOrCreateGroupId(groupName)
