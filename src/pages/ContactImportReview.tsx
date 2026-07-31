@@ -37,6 +37,26 @@ type Candidate = {
 type PersonRef = { id: string; name: string; last_name: string | null }
 type GroupRef = { id: string; name: string; parent_group_id?: string | null }
 
+// What handleAccept actually touched, captured at accept time so handleUndo can put things back
+// exactly rather than guessing — a snapshot of the "before" state for an existing-person merge,
+// or just the new row's id for a brand-new person.
+type ReminderSnapshot = {
+  label: 'Birthday' | 'Anniversary'
+  before: { id: string; month: number | null; day: number | null; year: number | null } | null
+}
+type PersonFields = {
+  organization: string | null
+  job_title: string | null
+  phones: LabeledValue[]
+  emails: LabeledValue[]
+  addresses: Address[]
+  urls: LabeledValue[]
+  social_profiles: LabeledValue[]
+}
+type UndoInfo =
+  | { kind: 'new'; personId: string; noteId: string | null; groupIds: string[]; reminders: ReminderSnapshot[] }
+  | { kind: 'existing'; personId: string; noteId: string | null; groupIds: string[]; reminders: ReminderSnapshot[]; before: PersonFields }
+
 const PAGE_SIZE = 20
 
 const MONTH_NAMES = [
@@ -295,6 +315,7 @@ function CandidateCard({
   const [search, setSearch] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedLabel, setSavedLabel] = useState<string | null>(null)
+  const [undoInfo, setUndoInfo] = useState<UndoInfo | null>(null)
 
   // Prefilled from the parsed vCard data but editable — this review pass is effectively the only
   // chance to fix a name before it becomes a real profile, since nobody comes back later to a
@@ -393,9 +414,15 @@ function CandidateCard({
     return lines.length > 0 ? lines.join('\n') : null
   }
 
+  async function snapshotReminder(personId: string, label: 'Birthday' | 'Anniversary') {
+    const { data } = await supabase.from('reminders').select('id, month, day, year').eq('person_id', personId).eq('label', label).maybeSingle()
+    return data ?? null
+  }
+
   async function handleAccept() {
     setSaving(true)
     let personId: string | null = linkedPersonId
+    let undo: UndoInfo
 
     if (!personId) {
       const {
@@ -424,12 +451,29 @@ function CandidateCard({
         return
       }
       personId = newPerson.id
+      undo = { kind: 'new', personId: personId as string, noteId: null, groupIds: [], reminders: [] }
     } else {
       const { data: existingPerson } = await supabase
         .from('people')
         .select('organization, job_title, phones, emails, addresses, urls, social_profiles')
         .eq('id', personId)
         .maybeSingle()
+      undo = {
+        kind: 'existing',
+        personId,
+        noteId: null,
+        groupIds: [],
+        reminders: [],
+        before: {
+          organization: existingPerson?.organization ?? null,
+          job_title: existingPerson?.job_title ?? null,
+          phones: existingPerson?.phones ?? [],
+          emails: existingPerson?.emails ?? [],
+          addresses: existingPerson?.addresses ?? [],
+          urls: existingPerson?.urls ?? [],
+          social_profiles: existingPerson?.social_profiles ?? [],
+        },
+      }
       if (existingPerson) {
         await supabase
           .from('people')
@@ -447,6 +491,7 @@ function CandidateCard({
     }
 
     if (candidate.birthday_month && candidate.birthday_day) {
+      undo.reminders.push({ label: 'Birthday', before: await snapshotReminder(personId as string, 'Birthday') })
       await upsertReminder(personId as string, 'Birthday', {
         month: candidate.birthday_month,
         day: candidate.birthday_day,
@@ -454,6 +499,7 @@ function CandidateCard({
       })
     }
     if (candidate.anniversary_month && candidate.anniversary_day) {
+      undo.reminders.push({ label: 'Anniversary', before: await snapshotReminder(personId as string, 'Anniversary') })
       await upsertReminder(personId as string, 'Anniversary', {
         month: candidate.anniversary_month,
         day: candidate.anniversary_day,
@@ -463,7 +509,12 @@ function CandidateCard({
 
     const noteContent = buildNoteContent()
     if (noteContent) {
-      await supabase.from('notes').insert({ person_id: personId, content: noteContent, source: 'contacts_import' })
+      const { data: newNote } = await supabase
+        .from('notes')
+        .insert({ person_id: personId, content: noteContent, source: 'contacts_import' })
+        .select('id')
+        .single()
+      undo.noteId = newNote?.id ?? null
     }
 
     if (selectedGroupIds.length > 0) {
@@ -473,10 +524,12 @@ function CandidateCard({
           selectedGroupIds.map((groupId) => ({ person_id: personId, group_id: groupId })),
           { onConflict: 'person_id,group_id', ignoreDuplicates: true }
         )
+      undo.groupIds = selectedGroupIds
     }
 
     await markReviewed('accepted', personId)
     setSaving(false)
+    setUndoInfo(undo)
     setSavedLabel(linkedPerson ? personLabel(linkedPerson) : candidate.full_name)
     onAccepted()
   }
@@ -488,10 +541,62 @@ function CandidateCard({
     onRejected()
   }
 
+  // Reverses exactly what handleAccept did, using the snapshot captured at accept time — deletes
+  // whatever was newly created (person, note, group tags, reminders) or restores whatever an
+  // existing person's fields looked like before the merge, then puts the candidate back to
+  // 'selected' so it reappears in the queue to be reviewed again (e.g. via the "add as new"
+  // escape hatch above, for exactly the wrong-match case this was built for).
+  async function handleUndo() {
+    if (!undoInfo) return
+    setSaving(true)
+
+    if (undoInfo.noteId) {
+      await supabase.from('notes').delete().eq('id', undoInfo.noteId)
+    }
+    if (undoInfo.groupIds.length > 0) {
+      await supabase.from('person_groups').delete().eq('person_id', undoInfo.personId).in('group_id', undoInfo.groupIds)
+    }
+    for (const r of undoInfo.reminders) {
+      if (r.before) {
+        await supabase.from('reminders').update({ month: r.before.month, day: r.before.day, year: r.before.year }).eq('id', r.before.id)
+      } else {
+        await supabase.from('reminders').delete().eq('person_id', undoInfo.personId).eq('label', r.label)
+      }
+    }
+
+    if (undoInfo.kind === 'new') {
+      await supabase.from('people').delete().eq('id', undoInfo.personId)
+    } else {
+      await supabase.from('people').update(undoInfo.before).eq('id', undoInfo.personId)
+    }
+
+    await supabase
+      .from('contact_import_candidates')
+      .update({ status: 'selected', reviewed_at: null, matched_person_id: candidate.matched_person_id })
+      .eq('id', candidate.id)
+
+    setLinkedPersonId(candidate.matched_person_id)
+    setPickerOpen(candidate.match_confidence !== 'high')
+    setSearch('')
+    setFirstNameInput(candidate.first_name || candidate.full_name.split(' ')[0] || '')
+    setMiddleNameInput(candidate.middle_name || '')
+    setLastNameInput(candidate.last_name || '')
+    setSelectedGroupIds([])
+    setUndoInfo(null)
+    setSavedLabel(null)
+    setSaving(false)
+    onAccepted()
+  }
+
   if (savedLabel) {
     return (
       <div style={styles.card}>
-        <p style={styles.confirmText}>Saved contact info for {savedLabel}</p>
+        <p style={styles.confirmText}>
+          Saved contact info for {savedLabel}.{' '}
+          <button type="button" onClick={handleUndo} disabled={saving} style={styles.linkButton}>
+            {saving ? '…' : 'Undo'}
+          </button>
+        </p>
       </div>
     )
   }
@@ -585,6 +690,23 @@ function CandidateCard({
                 style={styles.linkButton}
               >
                 cancel
+              </button>
+            )}
+            {linkedPerson && (
+              // The escape hatch that was missing: a high-confidence auto-match (e.g. two
+              // different people sharing a phone number) previously had no way to say "no,
+              // that's not them" — only pick a DIFFERENT existing person, or cancel back to
+              // the same wrong match. Clearing linkedPersonId flips the view below to the
+              // !linkedPerson branch, which shows the editable name fields for a brand-new person.
+              <button
+                type="button"
+                onClick={() => {
+                  setLinkedPersonId(null)
+                  setSearch('')
+                }}
+                style={styles.linkButtonSecondary}
+              >
+                Not the same person — add as new
               </button>
             )}
           </div>
@@ -725,6 +847,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: '0.85rem',
     fontFamily: 'Georgia, serif',
     padding: 0,
+  },
+  linkButtonSecondary: {
+    background: 'none',
+    border: 'none',
+    color: '#B04A3B',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    fontFamily: 'Georgia, serif',
+    padding: 0,
+    marginLeft: '0.75rem',
   },
   searchResults: { display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '0.5rem' },
   searchResultRow: {
