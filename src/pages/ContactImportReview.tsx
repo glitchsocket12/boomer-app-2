@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
+import SearchAddPicker from '../components/SearchAddPicker'
 
 type LabeledValue = { label: string; value: string }
 type Address = { label: string; street: string | null; city: string | null; state: string | null; zip: string | null; country: string | null }
@@ -33,6 +34,9 @@ type Candidate = {
   match_confidence: 'high' | 'none'
 }
 type PersonRef = { id: string; name: string; last_name: string | null }
+type GroupRef = { id: string; name: string }
+
+const PAGE_SIZE = 20
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -85,35 +89,88 @@ function unionAddresses(existing: Address[], incoming: Address[]): Address[] {
 // Detailed accept/reject-with-matching review, structural clone of BirthdayImportReview.tsx, BUT
 // scoped to status = 'selected' only — candidates only reach here after the founder deliberately
 // picked them on ContactSelection.tsx, never the raw pending set from an upload.
+//
+// Paginated at PAGE_SIZE (mirrors ContactSelection.tsx's approach — a real import can be 1000+
+// selected candidates, and these cards are heavier than that screen's rows, so a smaller page
+// keeps the DOM light). Sorted high-confidence matches first: those are quick "just accept" calls,
+// so surfacing them ahead of net-new people keeps the harder new-person decisions from being
+// mixed in with the fast ones.
 export default function ContactImportReview({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
+  const [page, setPage] = useState(0)
   const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [totalSelected, setTotalSelected] = useState(0)
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
+  const [allGroups, setAllGroups] = useState<GroupRef[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    load()
+    loadRoster()
   }, [])
 
-  async function load() {
+  useEffect(() => {
+    loadPage()
+  }, [page])
+
+  async function loadRoster() {
+    const [peopleRes, groupsRes] = await Promise.all([
+      supabase.from('people').select('id, name, last_name').order('name'),
+      supabase.from('groups').select('id, name').order('name'),
+    ])
+    setAllPeople((peopleRes.data as PersonRef[]) ?? [])
+    setAllGroups((groupsRes.data as GroupRef[]) ?? [])
+  }
+
+  async function loadPage() {
     setLoading(true)
-    const [candidatesRes, peopleRes] = await Promise.all([
+    const from = page * PAGE_SIZE
+    const to = from + PAGE_SIZE - 1
+    const [candidatesRes, countRes] = await Promise.all([
       supabase
         .from('contact_import_candidates')
         .select(
           'id, full_name, first_name, last_name, middle_name, nickname, organization, job_title, phones, emails, addresses, urls, social_profiles, birthday_month, birthday_day, birthday_year, anniversary_month, anniversary_day, anniversary_year, note_text, related_names, matched_person_id, match_confidence'
         )
         .eq('status', 'selected')
-        .order('full_name'),
-      supabase.from('people').select('id, name, last_name').order('name'),
+        .order('match_confidence', { ascending: true })
+        .order('full_name')
+        .range(from, to),
+      supabase.from('contact_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'selected'),
     ])
-    setCandidates((candidatesRes.data as Candidate[]) ?? [])
-    setAllPeople((peopleRes.data as PersonRef[]) ?? [])
+    const data = (candidatesRes.data as Candidate[]) ?? []
+    const count = countRes.count ?? 0
+    // Guards against a page emptying out mid-review (e.g. accepting the last card on the last
+    // page) by stepping back a page instead of showing a false "nothing left to review".
+    if (data.length === 0 && page > 0 && count > 0) {
+      setPage((p) => Math.max(0, p - 1))
+      return
+    }
+    setCandidates(data)
+    setTotalSelected(count)
     setLoading(false)
   }
 
-  function handleResolved(id: string) {
-    setCandidates((prev) => prev.filter((c) => c.id !== id))
+  function handleGroupCreated(group: GroupRef) {
+    setAllGroups((prev) => [...prev, group].sort((a, b) => a.name.localeCompare(b.name)))
   }
+
+  // Reject removes the card outright (nothing to confirm), so it refetches the whole page —
+  // pulling in the next candidate from the total set rather than the page slowly shrinking.
+  async function handleRejected() {
+    await loadPage()
+  }
+
+  // Accept leaves its card in place showing a quiet "Saved contact info for X" confirmation
+  // (see CandidateCard's savedLabel), so this only refreshes the total count for the footer —
+  // a full reload would yank the confirmation off-screen before it's seen.
+  async function handleAccepted() {
+    const { count } = await supabase
+      .from('contact_import_candidates')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'selected')
+    setTotalSelected(count ?? 0)
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalSelected / PAGE_SIZE))
 
   return (
     <div style={styles.page}>
@@ -121,8 +178,9 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
 
       <h1 style={styles.heading}>Review contacts</h1>
       <p style={styles.intro}>
-        These are the contacts you chose to bring in. Confirm who each one is, then accept or
-        reject — nothing is saved to a profile until you say yes.
+        These are the contacts you chose to bring in. Confirm who each one is, adjust their name
+        or groups if you'd like, then accept or reject — nothing is saved to a profile until you
+        say yes.
       </p>
 
       {loading ? (
@@ -131,8 +189,30 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
         <p style={styles.body}>Nothing left to review.</p>
       ) : (
         candidates.map((c) => (
-          <CandidateCard key={c.id} candidate={c} allPeople={allPeople} onResolved={() => handleResolved(c.id)} />
+          <CandidateCard
+            key={c.id}
+            candidate={c}
+            allPeople={allPeople}
+            allGroups={allGroups}
+            onGroupCreated={handleGroupCreated}
+            onAccepted={handleAccepted}
+            onRejected={handleRejected}
+          />
         ))
+      )}
+
+      {totalSelected > 0 && (
+        <div style={styles.pagination}>
+          <button type="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} style={styles.pageButton}>
+            ← Prev
+          </button>
+          <span style={styles.pageLabel}>
+            Page {page + 1} of {totalPages} — {totalSelected} contact{totalSelected === 1 ? '' : 's'}
+          </span>
+          <button type="button" onClick={() => setPage((p) => p + 1)} disabled={page + 1 >= totalPages} style={styles.pageButton}>
+            Next →
+          </button>
+        </div>
       )}
     </div>
   )
@@ -141,17 +221,32 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
 function CandidateCard({
   candidate,
   allPeople,
-  onResolved,
+  allGroups,
+  onGroupCreated,
+  onAccepted,
+  onRejected,
 }: {
   candidate: Candidate
   allPeople: PersonRef[]
-  onResolved: () => void
+  allGroups: GroupRef[]
+  onGroupCreated: (group: GroupRef) => void
+  onAccepted: () => void
+  onRejected: () => void
 }) {
   const [linkedPersonId, setLinkedPersonId] = useState<string | null>(candidate.matched_person_id)
   const [pickerOpen, setPickerOpen] = useState(candidate.match_confidence !== 'high')
   const [search, setSearch] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedLabel, setSavedLabel] = useState<string | null>(null)
+
+  // Prefilled from the parsed vCard data but editable — this review pass is effectively the only
+  // chance to fix a name before it becomes a real profile, since nobody comes back later to a
+  // person out of a 1000+-contact import just to correct a name.
+  const [firstNameInput, setFirstNameInput] = useState(candidate.first_name || candidate.full_name.split(' ')[0] || '')
+  const [middleNameInput, setMiddleNameInput] = useState(candidate.middle_name || '')
+  const [lastNameInput, setLastNameInput] = useState(candidate.last_name || '')
+
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([])
 
   const linkedPerson = allPeople.find((p) => p.id === linkedPersonId) ?? null
   const birthdayLabel = formatDate(candidate.birthday_month, candidate.birthday_day, candidate.birthday_year)
@@ -162,6 +257,40 @@ function CandidateCard({
     if (!q) return []
     return allPeople.filter((p) => personLabel(p).toLowerCase().includes(q)).slice(0, 8)
   }, [search, allPeople])
+
+  const selectedGroups = selectedGroupIds
+    .map((id) => allGroups.find((g) => g.id === id))
+    .filter((g): g is GroupRef => !!g)
+
+  function addGroup(id: string) {
+    setSelectedGroupIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
+  }
+
+  function removeGroup(id: string) {
+    setSelectedGroupIds((prev) => prev.filter((g) => g !== id))
+  }
+
+  // Same find-or-create logic as PersonDetail.tsx's confirmSuggestedGroup — case-insensitive
+  // match against existing groups, else create one. The new group is pushed up to the page-level
+  // roster so it's immediately selectable for the next candidate in this same review session too.
+  async function handleCreateGroup(name: string) {
+    const existing = allGroups.find((g) => g.name.toLowerCase() === name.toLowerCase())
+    if (existing) {
+      addGroup(existing.id)
+      return
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const { data: newGroup, error } = await supabase
+      .from('groups')
+      .insert({ user_id: user?.id, name })
+      .select('id, name')
+      .single()
+    if (error || !newGroup) return
+    onGroupCreated(newGroup as GroupRef)
+    addGroup(newGroup.id)
+  }
 
   async function markReviewed(status: 'accepted' | 'rejected', personId: string | null) {
     await supabase
@@ -189,9 +318,9 @@ function CandidateCard({
         .from('people')
         .insert({
           user_id: user?.id,
-          name: candidate.first_name || candidate.full_name.split(' ')[0],
-          last_name: candidate.last_name,
-          middle_name: candidate.middle_name,
+          name: firstNameInput.trim() || candidate.full_name.split(' ')[0],
+          last_name: lastNameInput.trim() || null,
+          middle_name: middleNameInput.trim() || null,
           nicknames: candidate.nickname,
           organization: candidate.organization,
           job_title: candidate.job_title,
@@ -250,16 +379,26 @@ function CandidateCard({
       await supabase.from('notes').insert({ person_id: personId, content: noteContent, source: 'contacts_import' })
     }
 
+    if (selectedGroupIds.length > 0) {
+      await supabase
+        .from('person_groups')
+        .upsert(
+          selectedGroupIds.map((groupId) => ({ person_id: personId, group_id: groupId })),
+          { onConflict: 'person_id,group_id', ignoreDuplicates: true }
+        )
+    }
+
     await markReviewed('accepted', personId)
     setSaving(false)
     setSavedLabel(linkedPerson ? personLabel(linkedPerson) : candidate.full_name)
+    onAccepted()
   }
 
   async function handleReject() {
     setSaving(true)
     await markReviewed('rejected', linkedPersonId)
     setSaving(false)
-    onResolved()
+    onRejected()
   }
 
   if (savedLabel) {
@@ -343,6 +482,57 @@ function CandidateCard({
         )}
       </div>
 
+      {!linkedPerson && (
+        <div style={styles.nameSection}>
+          <p style={styles.body}>Name to save:</p>
+          <div style={styles.nameRow}>
+            <input
+              value={firstNameInput}
+              onChange={(e) => setFirstNameInput(e.target.value)}
+              placeholder="First"
+              style={styles.nameInput}
+            />
+            <input
+              value={middleNameInput}
+              onChange={(e) => setMiddleNameInput(e.target.value)}
+              placeholder="Middle"
+              style={styles.nameInput}
+            />
+            <input
+              value={lastNameInput}
+              onChange={(e) => setLastNameInput(e.target.value)}
+              placeholder="Last"
+              style={styles.nameInput}
+            />
+          </div>
+        </div>
+      )}
+
+      <div style={styles.groupSection}>
+        <p style={styles.body}>Add to groups:</p>
+        {selectedGroups.length > 0 && (
+          <div style={styles.chipRow}>
+            {selectedGroups.map((g) => (
+              <span key={g.id} style={styles.chip}>
+                {g.name}
+                <button type="button" onClick={() => removeGroup(g.id)} style={styles.chipRemove} aria-label={`Remove ${g.name}`}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <SearchAddPicker
+          items={allGroups.filter((g) => !selectedGroupIds.includes(g.id)).map((g) => ({ id: g.id, label: g.name }))}
+          placeholder="Tag a group…"
+          onSelect={(item) => addGroup(item.id)}
+          onCreateNew={handleCreateGroup}
+          createLabel={(q) => `+ Create group "${q}"`}
+          emptyText="No groups match."
+          browseAll
+        />
+      </div>
+
       <div style={styles.buttonRow}>
         <button type="button" onClick={handleAccept} disabled={saving} style={styles.acceptButton}>
           {saving ? '…' : 'Accept'}
@@ -414,4 +604,48 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
   },
   confirmText: { color: '#3A7A4A', fontSize: '0.95rem', margin: 0 },
+  nameSection: { margin: '0 0 0.75rem' },
+  nameRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
+  nameInput: {
+    flex: '1 1 120px',
+    fontSize: '0.9rem',
+    padding: '0.45rem 0.6rem',
+    borderRadius: '6px',
+    border: '1px solid #CCC',
+    fontFamily: 'Georgia, serif',
+    color: '#2E2E2E',
+  },
+  groupSection: { margin: '0 0 1rem' },
+  chipRow: { display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem' },
+  chip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.35rem',
+    fontSize: '0.85rem',
+    padding: '0.3rem 0.5rem',
+    borderRadius: '999px',
+    backgroundColor: '#EAF1EC',
+    color: '#2E4034',
+  },
+  chipRemove: {
+    background: 'none',
+    border: 'none',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    lineHeight: 1,
+    padding: 0,
+  },
+  pagination: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', marginTop: '0.5rem' },
+  pageButton: {
+    fontSize: '0.85rem',
+    padding: '0.4rem 0.85rem',
+    borderRadius: '8px',
+    border: '1px solid #2E4034',
+    backgroundColor: '#FFF',
+    color: '#2E4034',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  pageLabel: { fontSize: '0.85rem', color: '#666' },
 }
