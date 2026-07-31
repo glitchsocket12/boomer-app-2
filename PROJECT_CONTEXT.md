@@ -291,6 +291,13 @@ src/
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
 │   │                            update" CTA, cached suggestion cards w/ refresh.
+│   │                            "Across everyone using Boomer" databox (2026-07-30)
+│   │                            right below the personal count tiles — platform-wide
+│   │                            totals (people/events/groups/datapoints) across every
+│   │                            account, via the `platform_stats()` RPC (§6/§10, needs
+│   │                            founder to run the migration). `HomeView`'s optional
+│   │                            `platformStats` prop, so `DemoHome.tsx` is unaffected
+│   │                            (just doesn't pass it, box doesn't render).
 │   │                            Chat input bar floats fixed to viewport bottom
 │   │                            (same stickyBarWrapper pattern as PersonDetail's
 │   │                            fact bar, 2026-07-20). "Connections to make" card
@@ -1130,6 +1137,8 @@ photos        id, user_id, moment_id? (FK moments), photo_cluster_id? (FK, null 
 
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
 
+`platform_stats()` — one deliberate exception to "RLS on everything": a `SECURITY DEFINER` SQL function (`migrations_manual/2026-07-30-platform-stats.sql`) returning cross-account totals (people/moments/groups/notes) for Home's platform-wide databox (§3). Granted to anon/authenticated, callable via `supabase.rpc('platform_stats')` — needs the founder to run it in the SQL Editor before the box appears (fails open until then, see §10).
+
 ## 7. What's built (all live unless noted in §10)
 
 - **Auth:** sign up / log in. Email confirmation DISABLED for testing — must re-enable before real users.
@@ -1235,6 +1244,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 ## 10. Pending manual steps, open bugs, cleanup
 
+- **Founder action needed: run `migrations_manual/2026-07-30-platform-stats.sql`** — creates the `platform_stats()` SQL function backing Home's new "Across everyone using Boomer" databox (§3/§6). Frontend deployed and verified in browser preview (personal stats tiles unaffected, new box fails open — just doesn't render — since the function doesn't exist yet, no console error). Paste the file into the Supabase SQL Editor; no token available this session to run it directly.
 - **Founder action needed: add the Geoapify key to Vercel's production env vars (2026-07-26)** — key created, verified working live in local dev/browser preview (real Denver, CO address suggestions returned and selectable on ImportReview's Location field). Local `.env` already has `VITE_GEOAPIFY_API_KEY` set. Still needs adding to the Vercel project's Environment Variables (Settings → Environment Variables) — `.env` isn't committed, so the deployed build has no key yet and only shows previously-typed-address suggestions in production until this is done. Also worth restricting the key to the production domain + localhost under "Referrer restrictions" in the Geoapify dashboard (currently unrestricted).
 - **Founder action needed: run `migrations_manual/2026-07-26-group-suggestions-default-off.sql`** — flips the `groups.suggestions_enabled` (item 57) default from true to false, and sets every existing group's value to false, per founder feedback 2026-07-26 ("not using it for anyone"). Code-side defaults (GroupDetail.tsx, suggestConnections.ts) already updated and verified in browser preview; no token available this session to run it directly (see `project_boomer_infra.md`), so paste this file into the Supabase SQL Editor. Until it runs, existing groups keep whatever value they already have (mixed true/false — some groups were already manually toggled off).
 - ~~Redeploy 4 edge functions for the family tree relationship-sync fix~~ — **DONE 2026-07-25.** `add-fact`/`converse`/`update-moment`/`update-group` all redeployed with the fixed `_shared/relationships.ts` (founder-provided token, confirmed success on all 4).
