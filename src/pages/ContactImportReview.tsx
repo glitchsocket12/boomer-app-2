@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
+import { groupDisplayName } from '../lib/groupDisplayName'
 
 type LabeledValue = { label: string; value: string }
 type Address = { label: string; street: string | null; city: string | null; state: string | null; zip: string | null; country: string | null }
@@ -34,7 +35,7 @@ type Candidate = {
   match_confidence: 'high' | 'none'
 }
 type PersonRef = { id: string; name: string; last_name: string | null }
-type GroupRef = { id: string; name: string }
+type GroupRef = { id: string; name: string; parent_group_id?: string | null }
 
 const PAGE_SIZE = 20
 
@@ -51,6 +52,20 @@ function formatDate(month: number | null, day: number | null, year: number | nul
 
 function personLabel(p: PersonRef): string {
   return p.last_name ? `${p.name} ${p.last_name}` : p.name
+}
+
+// Same gold dot-badge look as components/Chips.tsx's GroupChip (used app-wide for group tiles),
+// but static rather than a real button: that component is always a navigation affordance, and
+// navigating away mid-review would unmount this whole paginated page, losing any unsaved name/
+// group edits on every OTHER card on it too — a cost this read-only "proof it's really them"
+// display shouldn't carry.
+function ExistingGroupChip({ label }: { label: string }) {
+  return (
+    <span style={styles.existingGroupChip}>
+      <span style={styles.existingGroupChipDot} />
+      {label}
+    </span>
+  )
 }
 
 function normalizeValue(v: string): string {
@@ -117,7 +132,7 @@ export default function ContactImportReview({ onBack, backLabel }: { onBack: () 
   async function loadRoster() {
     const [peopleRes, groupsRes] = await Promise.all([
       supabase.from('people').select('id, name, last_name').order('name'),
-      supabase.from('groups').select('id, name').order('name'),
+      supabase.from('groups').select('id, name, parent_group_id').order('name'),
     ])
     setAllPeople((peopleRes.data as PersonRef[]) ?? [])
     setAllGroups((groupsRes.data as GroupRef[]) ?? [])
@@ -296,6 +311,9 @@ function CandidateCard({
   const [existingPersonGroups, setExistingPersonGroups] = useState<GroupRef[]>([])
 
   const linkedPerson = allPeople.find((p) => p.id === linkedPersonId) ?? null
+  // Built from the full roster so a subgroup's parent name resolves even when the parent isn't
+  // itself one of this person's existing/selected groups.
+  const groupNameById = useMemo(() => new Map(allGroups.map((g) => [g.id, g.name])), [allGroups])
   const birthdayLabel = formatDate(candidate.birthday_month, candidate.birthday_day, candidate.birthday_year)
   const anniversaryLabel = formatDate(candidate.anniversary_month, candidate.anniversary_day, candidate.anniversary_year)
 
@@ -307,7 +325,7 @@ function CandidateCard({
     let cancelled = false
     supabase
       .from('person_groups')
-      .select('groups(id, name)')
+      .select('groups(id, name, parent_group_id)')
       .eq('person_id', linkedPersonId)
       .then(({ data }) => {
         if (cancelled) return
@@ -508,9 +526,14 @@ function CandidateCard({
               </button>
             </p>
             {existingPersonGroups.length > 0 && (
-              <p style={styles.matchGroupsText}>
-                Already in: {existingPersonGroups.map((g) => g.name).join(', ')}
-              </p>
+              <div style={styles.existingGroupsBlock}>
+                <p style={styles.matchGroupsLabel}>Already in:</p>
+                <div style={styles.chipRow}>
+                  {existingPersonGroups.map((g) => (
+                    <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById)} />
+                  ))}
+                </div>
+              </div>
             )}
           </>
         ) : (
@@ -519,9 +542,14 @@ function CandidateCard({
               {linkedPerson ? 'Confirm who this belongs to:' : "Couldn't match this to anyone on file — add as a new person, or link to someone existing:"}
             </p>
             {linkedPerson && existingPersonGroups.length > 0 && (
-              <p style={styles.matchGroupsText}>
-                {personLabel(linkedPerson)} is already in: {existingPersonGroups.map((g) => g.name).join(', ')}
-              </p>
+              <div style={styles.existingGroupsBlock}>
+                <p style={styles.matchGroupsLabel}>{personLabel(linkedPerson)} is already in:</p>
+                <div style={styles.chipRow}>
+                  {existingPersonGroups.map((g) => (
+                    <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById)} />
+                  ))}
+                </div>
+              </div>
             )}
             <SearchBox value={search} onChange={setSearch} placeholder="Search your people…" />
             {searchResults.length > 0 && (
@@ -595,8 +623,8 @@ function CandidateCard({
           <div style={styles.chipRow}>
             {selectedGroups.map((g) => (
               <span key={g.id} style={styles.chip}>
-                {g.name}
-                <button type="button" onClick={() => removeGroup(g.id)} style={styles.chipRemove} aria-label={`Remove ${g.name}`}>
+                {groupDisplayName(g, groupNameById)}
+                <button type="button" onClick={() => removeGroup(g.id)} style={styles.chipRemove} aria-label={`Remove ${groupDisplayName(g, groupNameById)}`}>
                   ×
                 </button>
               </span>
@@ -606,7 +634,7 @@ function CandidateCard({
         <SearchAddPicker
           items={allGroups
             .filter((g) => !selectedGroupIds.includes(g.id) && !existingPersonGroups.some((eg) => eg.id === g.id))
-            .map((g) => ({ id: g.id, label: g.name }))}
+            .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
           placeholder="Tag a group…"
           onSelect={(item) => addGroup(item.id)}
           onCreateNew={handleCreateGroup}
@@ -665,7 +693,29 @@ const styles: { [key: string]: React.CSSProperties } = {
   cardTitle: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.25rem', fontWeight: 'bold' },
   metaText: { fontSize: '0.85rem', color: '#666', margin: '0 0 0.25rem' },
   linkSection: { margin: '0.75rem 0' },
-  matchGroupsText: { fontSize: '0.85rem', color: '#3A7A4A', margin: '0 0 0.5rem', fontStyle: 'italic' },
+  existingGroupsBlock: { margin: '0 0 0.5rem' },
+  matchGroupsLabel: { fontSize: '0.8rem', color: '#666', margin: '0 0 0.35rem' },
+  existingGroupChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.4rem',
+    fontSize: '0.8rem',
+    fontWeight: 700,
+    padding: '0.3rem 0.7rem 0.3rem 0.6rem',
+    borderRadius: '8px',
+    border: '1px solid #B08B2E',
+    backgroundColor: '#FBF3E0',
+    color: '#8A6A1F',
+    fontFamily: 'Georgia, serif',
+    letterSpacing: '0.02em',
+  },
+  existingGroupChipDot: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '50%',
+    backgroundColor: '#B08B2E',
+    flexShrink: 0,
+  },
   linkButton: {
     background: 'none',
     border: 'none',

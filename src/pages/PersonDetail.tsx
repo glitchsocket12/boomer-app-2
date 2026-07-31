@@ -15,6 +15,7 @@ import RelationshipSuggestionBanners, {
   type RelationshipSuggestion,
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
+import { groupDisplayName } from '../lib/groupDisplayName'
 
 export type Note = {
   id: string
@@ -27,7 +28,7 @@ export type Note = {
   groups: { id: string; name: string } | null
 }
 
-export type GroupRef = { id: string; name: string }
+export type GroupRef = { id: string; name: string; parent_group_id?: string | null }
 
 export type PersonRow = {
   name: string
@@ -192,7 +193,7 @@ export default function PersonDetail({
   // Full group roster for the manual "tag a group" search box below — separate from `groups`
   // (this person's actual memberships), same split EventDetail.tsx uses for its own group tagger.
   async function loadGroupsList() {
-    const { data } = await supabase.from('groups').select('id, name').order('name')
+    const { data } = await supabase.from('groups').select('id, name, parent_group_id').order('name')
     setAllGroupsList((data as GroupRef[]) ?? [])
   }
 
@@ -278,7 +279,7 @@ export default function PersonDetail({
         )
         .eq('person_id', personId)
         .order('created_at', { ascending: false }),
-      supabase.from('person_groups').select('groups(id, name)').eq('person_id', personId),
+      supabase.from('person_groups').select('groups(id, name, parent_group_id)').eq('person_id', personId),
       supabase
         .from('people')
         .select('name, last_name, middle_name, goes_by_kind, goes_by_other, deceased_date')
@@ -880,6 +881,10 @@ export function PersonDetailView({
   const allEvents = Array.from(affiliatedEvents.values())
   const shownEvents = allEvents.slice(0, AFFILIATION_LIMIT)
 
+  // Built from the full roster so a subgroup's parent name resolves even when the parent isn't
+  // itself tagged to this person.
+  const groupNameById = new Map(allGroupsList.map((g) => [g.id, g.name]))
+
   const fullName = person ? computeFullName(person) : personName
   const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => f.category === c.category))
   const showNudge = !readOnly && (notes.length === 0 || missingFactCategories.length > 0)
@@ -1040,6 +1045,7 @@ export function PersonDetailView({
                   <AffiliatedGroupChip
                     key={g.id}
                     group={g}
+                    displayName={groupDisplayName(g, groupNameById)}
                     onSelect={() => onSelectGroup(g)}
                     onRemove={readOnly ? undefined : () => onUntagGroup(g.id)}
                   />
@@ -1051,7 +1057,7 @@ export function PersonDetailView({
             <SearchAddPicker
               items={allGroupsList
                 .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-                .map((g) => ({ id: g.id, label: g.name }))}
+                .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
               placeholder="Tag this person to a group…"
               onSelect={(item) => onTagGroup(item.id)}
               emptyText="No groups match."
@@ -1322,10 +1328,12 @@ const TRASH_ICON = (
 // read-only mode) simply never shows the hover badge.
 function AffiliatedGroupChip({
   group,
+  displayName,
   onSelect,
   onRemove,
 }: {
   group: GroupRef
+  displayName?: string
   onSelect: () => void
   onRemove?: () => void
 }) {
@@ -1335,7 +1343,7 @@ function AffiliatedGroupChip({
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <button onClick={onSelect} style={styles.groupChip}>
         <span style={styles.groupDot} />
-        {group.name}
+        {displayName ?? group.name}
       </button>
       {hovered && onRemove && (
         <button
@@ -1343,7 +1351,7 @@ function AffiliatedGroupChip({
             e.stopPropagation()
             onRemove()
           }}
-          aria-label={`Untag ${group.name} from this person`}
+          aria-label={`Untag ${displayName ?? group.name} from this person`}
           style={styles.cornerBadge}
         >
           {TRASH_ICON}
