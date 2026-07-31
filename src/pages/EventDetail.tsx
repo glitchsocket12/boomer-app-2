@@ -16,9 +16,15 @@ import { sortByLastName } from '../lib/people'
 import { findOrCreateTagId } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
+import { groupDisplayName } from '../lib/groupDisplayName'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
-export type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
+export type GroupRef = {
+  id: string
+  name: string
+  parent_group_id?: string | null
+  person_groups?: { people: PersonRef | null }[]
+}
 export type TagRef = { id: string; name: string }
 export type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null; source: string | null }
 export type OtherEvent = { id: string; occasion: string | null; raw_description: string }
@@ -170,7 +176,7 @@ export default function EventDetail({
   async function loadPickerLists() {
     const [peopleRes, groupsRes, tagsRes] = await Promise.all([
       supabase.from('people').select('id, name, last_name').order('name'),
-      supabase.from('groups').select('id, name').order('name'),
+      supabase.from('groups').select('id, name, parent_group_id').order('name'),
       supabase.from('tags').select('id, name').order('name'),
     ])
     setAllPeople((peopleRes.data as PersonRef[]) ?? [])
@@ -183,7 +189,7 @@ export default function EventDetail({
     const { data } = await supabase
       .from('moments')
       .select(
-        'id, occasion, location, when_text, event_date, event_end_date, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, person_groups(people(id, name, last_name)))), moment_tags(tags(id, name)), dismissed_person_ids'
+        'id, occasion, location, when_text, event_date, event_end_date, raw_description, summary, details, created_at, notes(id, content, created_at, source, people(id, name, last_name)), moment_groups(groups(id, name, parent_group_id, person_groups(people(id, name, last_name)))), moment_tags(tags(id, name)), dismissed_person_ids'
       )
       .eq('id', eventId)
       .single()
@@ -620,6 +626,10 @@ export function EventDetailView({
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
 
+  // Built from the full roster (not just tagged groups) so a subgroup's parent name resolves
+  // even when the parent itself isn't tagged to this event.
+  const groupNameById = new Map(allGroupsList.map((g) => [g.id, g.name]))
+
   const attendees = new Map<string, PersonRef>()
   for (const n of moment.notes ?? []) {
     if (n.people) attendees.set(n.people.id, n.people)
@@ -753,6 +763,7 @@ export function EventDetailView({
               <AssociatedGroupChip
                 key={g.id}
                 group={g}
+                displayName={groupDisplayName(g, groupNameById)}
                 onSelect={() => onSelectGroup(g)}
                 onRemove={readOnly ? undefined : () => onUntagGroup(g.id)}
               />
@@ -767,7 +778,7 @@ export function EventDetailView({
           <SearchAddPicker
             items={allGroupsList
               .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-              .map((g) => ({ id: g.id, label: g.name }))}
+              .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
             placeholder="Tag this event to a group…"
             onSelect={(item) => onTagGroup(item.id)}
             emptyText="No groups match."
@@ -1167,10 +1178,12 @@ function AttendeeChip({
 // `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
 function AssociatedGroupChip({
   group,
+  displayName,
   onSelect,
   onRemove,
 }: {
   group: GroupRef
+  displayName?: string
   onSelect: () => void
   onRemove?: () => void
 }) {
@@ -1180,7 +1193,7 @@ function AssociatedGroupChip({
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <button onClick={onSelect} style={styles.groupChip}>
         <span style={styles.groupDot} />
-        {group.name}
+        {displayName ?? group.name}
       </button>
       {hovered && onRemove && (
         <button
@@ -1188,7 +1201,7 @@ function AssociatedGroupChip({
             e.stopPropagation()
             onRemove()
           }}
-          aria-label={`Untag ${group.name} from this event`}
+          aria-label={`Untag ${displayName ?? group.name} from this event`}
           style={styles.cornerBadge}
         >
           {TRASH_ICON}

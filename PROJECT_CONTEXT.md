@@ -1058,7 +1058,11 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               school group — one level deep only in the UI, arbitrary depth in schema;
               migrated live 2026-07-26). Subgroup membership is deliberately independent of
               the parent's — no sync trigger. One was added by mistake 2026-07-26 and removed
-              same day before ever being run (contradicted this design decision).
+              same day before ever being run (contradicted this design decision). Group-picker
+              labels everywhere a group is tagged to an event (EventDetail.tsx, ImportReview.tsx)
+              render as "Parent / Subgroup" via lib/groupDisplayName.ts so same-named subgroups
+              under different parents (e.g. two units each with a "Pilots" subgroup) stay
+              distinguishable — added 2026-07-30.
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID

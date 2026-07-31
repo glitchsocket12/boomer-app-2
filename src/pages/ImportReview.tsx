@@ -9,6 +9,7 @@ import SearchAddPicker from '../components/SearchAddPicker'
 import SearchBox from '../components/SearchBox'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import AddressSuggestInput from '../components/AddressSuggestInput'
+import { groupDisplayName } from '../lib/groupDisplayName'
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -36,7 +37,7 @@ type ExistingMoment = {
   created_at: string
 }
 type PersonRef = { id: string; name: string; last_name: string | null }
-type GroupRef = { id: string; name: string; person_groups?: { people: PersonRef | null }[] }
+type GroupRef = { id: string; name: string; parent_group_id?: string | null; person_groups?: { people: PersonRef | null }[] }
 
 function toggleIndex(set: Set<number>, i: number): Set<number> {
   const next = new Set(set)
@@ -180,7 +181,7 @@ export default function ImportReview({
         .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at')
         .order('event_date', { ascending: false, nullsFirst: false }),
       supabase.from('tags').select('id, name').order('name'),
-      supabase.from('groups').select('id, name, person_groups(people(id, name, last_name))').order('name'),
+      supabase.from('groups').select('id, name, parent_group_id, person_groups(people(id, name, last_name))').order('name'),
       supabase.from('calendar_sources').select('id, label'),
       supabase.from('people').select('id, name, last_name'),
       // Whole-account fetch (not scoped per candidate) — this page shows many cards at once and
@@ -327,6 +328,10 @@ function CandidateCard({
   const [savedResult, setSavedResult] = useState<{ kind: 'created' | 'merged' | 'noted'; momentId: string; label: string } | null>(null)
 
   const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
+
+  // Built from the full roster so a subgroup's parent name resolves even if the parent isn't
+  // itself suggested/tagged on this candidate.
+  const groupNameById = useMemo(() => new Map(allGroupsList.map((g) => [g.id, g.name])), [allGroupsList])
 
   const includedGroupIds = useMemo(() => {
     const ids = new Set<string>()
@@ -839,7 +844,7 @@ function CandidateCard({
                   onChange={() => setIncludedGroups((prev) => toggleIndex(prev, i))}
                   disabled={saving}
                 />
-                {group.name}
+                {groupDisplayName(group, groupNameById)}
               </label>
             )
           })}
@@ -879,7 +884,7 @@ function CandidateCard({
             const group = allGroupsList.find((g) => g.id === id)
             return group ? (
               <span key={id} style={styles.personChipOn}>
-                {group.name}
+                {groupDisplayName(group, groupNameById)}
                 <button
                   type="button"
                   onClick={() => setManualGroupIds((prev) => { const n = new Set(prev); n.delete(id); return n })}
@@ -920,7 +925,7 @@ function CandidateCard({
           items={[...allGroupsList]
             .filter((g) => !manualGroupIds.has(g.id))
             .sort((a, b) => a.name.localeCompare(b.name))
-            .map((g) => ({ id: g.id, label: g.name }))}
+            .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
           placeholder="Tag this event to a group…"
           onSelect={(item) => setManualGroupIds((prev) => new Set(prev).add(item.id))}
           emptyText="No groups match."
