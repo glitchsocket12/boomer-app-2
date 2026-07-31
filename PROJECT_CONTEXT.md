@@ -192,6 +192,19 @@ src/
 │   │                            redundant demo tile from Get Started (now just Sign up / Log
 │   │                            in). Section bg alternation re-threaded (privacy → altBg,
 │   │                            get-started → plain) to keep it after the insert.
+│   │                            Pass 5 (2026-07-30): dark-green "platform databox" banner
+│   │                            right after the hero — People/Events/Groups/Datapoints
+│   │                            totals across EVERY account (not the visitor's own, they
+│   │                            have none yet), an enterprise-scale social-proof stat.
+│   │                            First real data fetch on this otherwise-static public page:
+│   │                            reads the `platform_stats()` RPC (§6/§10) directly with the
+│   │                            anon key (function is granted to the `anon` role — no
+│   │                            session needed). Fails open (banner just doesn't render) if
+│   │                            the call errors. Originally built on Home.tsx (the logged-in
+│   │                            dashboard) by mistake, then moved here per founder
+│   │                            correction — "Landing page" (this file) vs. "Home" (the
+│   │                            logged-in dashboard) is the disambiguating terminology
+│   │                            going forward.
 │   ├── Login.tsx              — combined sign up / log in. Takes `initialSignUp` (which
 │   │                            tile/button was clicked sets the starting mode) and
 │   │                            `onBack` (returns to Landing) props, both
@@ -291,13 +304,6 @@ src/
 │   │                            Also: 4 count tiles, Dunbar card, "Recall assists
 │   │                            this month" card, top-3 leaderboard + "due for an
 │   │                            update" CTA, cached suggestion cards w/ refresh.
-│   │                            "Across everyone using Boomer" databox (2026-07-30)
-│   │                            right below the personal count tiles — platform-wide
-│   │                            totals (people/events/groups/datapoints) across every
-│   │                            account, via the `platform_stats()` RPC (§6/§10, needs
-│   │                            founder to run the migration). `HomeView`'s optional
-│   │                            `platformStats` prop, so `DemoHome.tsx` is unaffected
-│   │                            (just doesn't pass it, box doesn't render).
 │   │                            Chat input bar floats fixed to viewport bottom
 │   │                            (same stickyBarWrapper pattern as PersonDetail's
 │   │                            fact bar, 2026-07-20). "Connections to make" card
@@ -725,10 +731,18 @@ Full story: PROJECT_HISTORY.md.
 │   │                            each date-clustered group of newly-imported photos, a card offers
 │   │                            "New event" (default) or an existing-event match (free date-range
 │   │                            heuristic, no AI call — see `_shared/photoClusters.ts`) with a
-│   │                            manual `SearchAddPicker` override. Accept resolves every photo in
-│   │                            that cluster's `moment_id` (creating a blank-shell event first if
-│   │                            "new event"); reject just flips `photo_clusters.status`, photos
-│   │                            stay unattached. `EventDetail.tsx`'s own "Add photos" button is
+│   │                            manual `SearchAddPicker` override, plus (2026-07-30, item 70 — fixes a
+│   │                            bug where the new event silently saved untitled) an optional title
+│   │                            text field shown only in "New event" mode, written to the new
+│   │                            moment's `occasion` on Accept instead of the old hardcoded `null`;
+│   │                            the post-accept confirmation label now shows that real title
+│   │                            (falling back to the date range only when left blank, matching
+│   │                            `momentLabel()`'s own convention) instead of always showing the
+│   │                            date range as if it had been saved as the title. Accept resolves
+│   │                            every photo in that cluster's `moment_id` (creating a blank-shell
+│   │                            event first if "new event"); reject just flips
+│   │                            `photo_clusters.status`, photos stay unattached.
+│   │                            `EventDetail.tsx`'s own "Add photos" button is
 │   │                            the simpler quick-add path — same underlying picker flow
 │   │                            (`lib/googlePhotosImport.ts`) but skips clustering/review
 │   │                            entirely since the target event is already known.
@@ -852,7 +866,12 @@ Full story: PROJECT_HISTORY.md.
 │   │                            (signed Storage URLs, `photos` table) once any exist; falls back
 │   │                            to the original placeholder tiles otherwise, and unchanged for
 │   │                            Person/Group pages (no `momentId` passed — a per-person/group
-│   │                            rollup across their moments is a later pass, item 66 below)
+│   │                            rollup across their moments is a later pass, item 66 below).
+│   │                            Thumbnails are clickable (2026-07-30, item 70) — opens a
+│   │                            full-screen lightbox (Prev/Next, Esc/backdrop/× to close) showing
+│   │                            the same stored ~1600px copy, since Google's own picker URLs are
+│   │                            session-scoped and there's no fuller-quality source to link out to
+│   │                            later.
 │   ├── RefreshButton.tsx      — spinning refresh icon
 │   ├── SearchBox.tsx          — client-side list filter. Optional `onFocus`/`onBlur`
 │   │                            props (item 28 follow-up, 2026-07-22, additive)
@@ -1137,7 +1156,7 @@ photos        id, user_id, moment_id? (FK moments), photo_cluster_id? (FK, null 
 
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
 
-`platform_stats()` — one deliberate exception to "RLS on everything": a `SECURITY DEFINER` SQL function (`migrations_manual/2026-07-30-platform-stats.sql`) returning cross-account totals (people/moments/groups/notes) for Home's platform-wide databox (§3). Granted to anon/authenticated, callable via `supabase.rpc('platform_stats')` — needs the founder to run it in the SQL Editor before the box appears (fails open until then, see §10).
+`platform_stats()` — one deliberate exception to "RLS on everything": a `SECURITY DEFINER` SQL function (`migrations_manual/2026-07-30-platform-stats.sql`) returning cross-account totals (people/moments/groups/notes) for the Landing page's platform databox (§3). Granted to anon/authenticated (public page, no session) — **confirmed live 2026-07-30**, real cross-account totals rendering on Landing.
 
 ## 7. What's built (all live unless noted in §10)
 
@@ -1244,7 +1263,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 
 ## 10. Pending manual steps, open bugs, cleanup
 
-- **Founder action needed: run `migrations_manual/2026-07-30-platform-stats.sql`** — creates the `platform_stats()` SQL function backing Home's new "Across everyone using Boomer" databox (§3/§6). Frontend deployed and verified in browser preview (personal stats tiles unaffected, new box fails open — just doesn't render — since the function doesn't exist yet, no console error). Paste the file into the Supabase SQL Editor; no token available this session to run it directly.
+- ~~Founder action needed: run `migrations_manual/2026-07-30-platform-stats.sql`~~ — **run and confirmed live 2026-07-30**: Landing page's platform databox (§3/§6) shows real cross-account totals, verified in browser preview.
 - **Founder action needed: add the Geoapify key to Vercel's production env vars (2026-07-26)** — key created, verified working live in local dev/browser preview (real Denver, CO address suggestions returned and selectable on ImportReview's Location field). Local `.env` already has `VITE_GEOAPIFY_API_KEY` set. Still needs adding to the Vercel project's Environment Variables (Settings → Environment Variables) — `.env` isn't committed, so the deployed build has no key yet and only shows previously-typed-address suggestions in production until this is done. Also worth restricting the key to the production domain + localhost under "Referrer restrictions" in the Geoapify dashboard (currently unrestricted).
 - **Founder action needed: run `migrations_manual/2026-07-26-group-suggestions-default-off.sql`** — flips the `groups.suggestions_enabled` (item 57) default from true to false, and sets every existing group's value to false, per founder feedback 2026-07-26 ("not using it for anyone"). Code-side defaults (GroupDetail.tsx, suggestConnections.ts) already updated and verified in browser preview; no token available this session to run it directly (see `project_boomer_infra.md`), so paste this file into the Supabase SQL Editor. Until it runs, existing groups keep whatever value they already have (mixed true/false — some groups were already manually toggled off).
 - ~~Redeploy 4 edge functions for the family tree relationship-sync fix~~ — **DONE 2026-07-25.** `add-fact`/`converse`/`update-moment`/`update-group` all redeployed with the fixed `_shared/relationships.ts` (founder-provided token, confirmed success on all 4).

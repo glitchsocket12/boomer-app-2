@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
+
 const COMPARISON_ROWS: { feature: string; boomer: boolean; social: boolean; journal: boolean; crm: boolean }[] = [
   { feature: 'Private — no public profile', boomer: true, social: false, journal: true, crm: true },
   { feature: 'No feed / no algorithm', boomer: true, social: false, journal: true, crm: true },
@@ -19,6 +22,25 @@ function scrollToTop() {
 }
 
 export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' | 'signup' | 'demo') => void }) {
+  const [platformStats, setPlatformStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
+
+  // Public, logged-out page — no session/anon-key restriction here, so this reads the
+  // SECURITY DEFINER `platform_stats()` RPC directly (see migrations_manual/2026-07-30-
+  // platform-stats.sql, granted to the `anon` role). Fails open (banner just doesn't
+  // render) if the migration hasn't been run yet or the call errors.
+  useEffect(() => {
+    supabase.rpc('platform_stats').then(({ data, error }) => {
+      if (error || !data || !data[0]) return
+      const row = data[0]
+      setPlatformStats({
+        people: row.people_count ?? 0,
+        events: row.events_count ?? 0,
+        groups: row.groups_count ?? 0,
+        notes: row.notes_count ?? 0,
+      })
+    })
+  }, [])
+
   return (
     <div style={styles.page}>
       <nav style={styles.nav}>
@@ -47,6 +69,30 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
           Just want to look around? See a live demo →
         </button>
       </section>
+
+      {platformStats && (platformStats.people > 0 || platformStats.events > 0 || platformStats.groups > 0 || platformStats.notes > 0) && (
+        <section style={styles.platformBanner}>
+          <div style={styles.platformRow}>
+            <div style={styles.platformStat}>
+              <div style={styles.platformNumber}>{platformStats.people.toLocaleString()}</div>
+              <div style={styles.platformLabel}>People</div>
+            </div>
+            <div style={styles.platformStat}>
+              <div style={styles.platformNumber}>{platformStats.events.toLocaleString()}</div>
+              <div style={styles.platformLabel}>Events</div>
+            </div>
+            <div style={styles.platformStat}>
+              <div style={styles.platformNumber}>{platformStats.groups.toLocaleString()}</div>
+              <div style={styles.platformLabel}>Groups</div>
+            </div>
+            <div style={styles.platformStat}>
+              <div style={styles.platformNumber}>{platformStats.notes.toLocaleString()}</div>
+              <div style={styles.platformLabel}>Datapoints</div>
+            </div>
+          </div>
+          <p style={styles.platformCaption}>and growing every day</p>
+        </section>
+      )}
 
       <section id="what-is-boomer" style={styles.section}>
         <p style={styles.body}>
@@ -325,6 +371,37 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginLeft: 'auto',
     marginRight: 'auto',
     padding: '0 1.5rem',
+  },
+  platformBanner: {
+    textAlign: 'center',
+    backgroundColor: '#2E4034',
+    padding: '2rem 1.5rem 2.25rem',
+  },
+  platformRow: {
+    display: 'flex',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: '2.5rem',
+    maxWidth: '760px',
+    margin: '0 auto',
+  },
+  platformStat: {},
+  platformNumber: {
+    fontSize: 'clamp(1.75rem, 4vw, 2.5rem)',
+    fontWeight: 700,
+    color: '#FFFFFF',
+    lineHeight: 1.2,
+  },
+  platformLabel: {
+    fontSize: '0.9rem',
+    color: '#CFE0D6',
+    marginTop: '0.15rem',
+  },
+  platformCaption: {
+    fontSize: '0.9rem',
+    color: '#CFE0D6',
+    margin: '1rem 0 0',
+    fontStyle: 'italic',
   },
   statCallout: {
     display: 'flex',

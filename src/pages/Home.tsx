@@ -71,7 +71,6 @@ export default function Home({
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const [stats, setStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
-  const [platformStats, setPlatformStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
   const [recallAssists, setRecallAssists] = useState<number | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [pendingImportCount, setPendingImportCount] = useState(0)
@@ -103,22 +102,6 @@ export default function Home({
       })
       .finally(() => setSuggestionsLoading(false))
   }
-
-  // Cross-account totals for the "living databox" — a single SECURITY DEFINER RPC
-  // (see migrations_manual/2026-07-30-platform-stats.sql) since RLS scopes every plain
-  // table query to just the signed-in user.
-  useEffect(() => {
-    supabase.rpc('platform_stats').then(({ data, error }) => {
-      if (error || !data || !data[0]) return
-      const row = data[0]
-      setPlatformStats({
-        people: row.people_count ?? 0,
-        events: row.events_count ?? 0,
-        groups: row.groups_count ?? 0,
-        notes: row.notes_count ?? 0,
-      })
-    })
-  }, [])
 
   // Head-only count queries — cheap, no rows transferred, just the total for each table.
   useEffect(() => {
@@ -276,7 +259,6 @@ export default function Home({
       onSend={handleSend}
       onSuggestionClick={handleSuggestionClick}
       stats={stats}
-      platformStats={platformStats}
       recallAssists={recallAssists}
       leaderboard={leaderboard}
       suggestions={suggestions}
@@ -322,7 +304,6 @@ export function HomeView({
   onSend,
   onSuggestionClick,
   stats,
-  platformStats = null,
   recallAssists,
   leaderboard,
   suggestions,
@@ -360,7 +341,6 @@ export function HomeView({
   onSend: () => void
   onSuggestionClick: (text: string) => void
   stats: { people: number; events: number; groups: number; notes: number } | null
-  platformStats?: { people: number; events: number; groups: number; notes: number } | null
   recallAssists: number | null
   leaderboard: LeaderboardEntry[]
   suggestions: string[]
@@ -450,30 +430,6 @@ export function HomeView({
               <div style={styles.statTile}>
                 <div style={styles.statNumber}>{stats.notes}</div>
                 <div style={styles.statLabel}>Datapoints</div>
-              </div>
-            </div>
-          )}
-
-          {platformStats && (platformStats.people > 0 || platformStats.events > 0 || platformStats.groups > 0 || platformStats.notes > 0) && (
-            <div style={styles.platformBox}>
-              <div style={styles.platformTitle}>Across everyone using Boomer</div>
-              <div style={styles.platformRow}>
-                <div style={styles.platformStat}>
-                  <div style={styles.platformNumber}>{platformStats.people.toLocaleString()}</div>
-                  <div style={styles.platformLabel}>People</div>
-                </div>
-                <div style={styles.platformStat}>
-                  <div style={styles.platformNumber}>{platformStats.events.toLocaleString()}</div>
-                  <div style={styles.platformLabel}>Events</div>
-                </div>
-                <div style={styles.platformStat}>
-                  <div style={styles.platformNumber}>{platformStats.groups.toLocaleString()}</div>
-                  <div style={styles.platformLabel}>Groups</div>
-                </div>
-                <div style={styles.platformStat}>
-                  <div style={styles.platformNumber}>{platformStats.notes.toLocaleString()}</div>
-                  <div style={styles.platformLabel}>Datapoints</div>
-                </div>
               </div>
             </div>
           )}
@@ -690,24 +646,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   statNumber: { fontSize: '1.5rem', color: '#2E4034', fontWeight: 'bold', lineHeight: 1.2 },
   statLabel: { fontSize: '0.8rem', color: '#666', marginTop: '0.15rem' },
-  platformBox: {
-    marginTop: '0.75rem',
-    backgroundColor: '#2E4034',
-    borderRadius: '10px',
-    padding: '0.85rem 1rem 0.95rem',
-  },
-  platformTitle: {
-    fontSize: '0.78rem',
-    color: '#CFE0D6',
-    textTransform: 'uppercase',
-    letterSpacing: '0.03em',
-    textAlign: 'center',
-    marginBottom: '0.6rem',
-  },
-  platformRow: { display: 'flex', gap: '0.75rem' },
-  platformStat: { flex: 1, textAlign: 'center' },
-  platformNumber: { fontSize: '1.3rem', color: '#FFF', fontWeight: 'bold', lineHeight: 1.2 },
-  platformLabel: { fontSize: '0.75rem', color: '#CFE0D6', marginTop: '0.15rem' },
   signalsSection: { marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' },
   signalCardsRow: { display: 'flex', gap: '0.75rem' },
   signalCard: {
