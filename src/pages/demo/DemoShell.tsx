@@ -93,6 +93,7 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
         backLabel={parentLabel}
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
+        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
       />
     )
   } else if (current?.type === 'familyTree') {

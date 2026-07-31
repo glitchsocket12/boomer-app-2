@@ -8,12 +8,14 @@ export default function DemoEventDetail({
   backLabel,
   onSelectPerson,
   onSelectGroup,
+  onSelectEvent,
 }: {
   eventId: string
   onBack: () => void
   backLabel: string
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
   const [notesOpen, setNotesOpen] = useState(false)
 
@@ -65,6 +67,7 @@ export default function DemoEventDetail({
       moment={moment}
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
       onBack={onBack}
       backLabel={backLabel}
       notesOpen={notesOpen}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
-import { eventSortDate, formatEventWhen } from '../lib/dates'
+import { eventSortDate, formatEventWhen, formatFullDate } from '../lib/dates'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 
@@ -19,6 +19,16 @@ export type Moment = {
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: { id: string; name: string } | null }[]
   moment_tags: { tags: { id: string; name: string } | null }[]
+}
+
+export type ChildEventRef = {
+  id: string
+  occasion: string | null
+  event_date: string | null
+  event_end_date: string | null
+  created_at: string
+  parent_moment_id: string
+  notes: { people: { id: string } | null }[]
 }
 
 export type DecoratedMoment = {
@@ -97,10 +107,35 @@ export default function Events({
   const [tagFilter, setTagFilter] = useState('all')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [childrenByParentId, setChildrenByParentId] = useState<Map<string, ChildEventRef[]>>(new Map())
 
   useEffect(() => {
     loadMoments()
+    loadChildEvents()
   }, [])
+
+  // Isolated from loadMoments' shared select on purpose — that query has no error handling
+  // today, so bolting an unmigrated column onto it would turn a missing-migration case into a
+  // full outage instead of a degraded one. Fails open to "no sub-events" (same reasoning as
+  // GroupDetail.tsx's loadSubgroups) so a not-yet-run migration doesn't break this list.
+  async function loadChildEvents() {
+    const { data, error } = await supabase
+      .from('moments')
+      .select('id, occasion, event_date, event_end_date, created_at, parent_moment_id, notes(people(id))')
+      .not('parent_moment_id', 'is', null)
+      .order('event_date', { ascending: true, nullsFirst: false })
+    if (error || !data) {
+      setChildrenByParentId(new Map())
+      return
+    }
+    const map = new Map<string, ChildEventRef[]>()
+    for (const row of data as unknown as ChildEventRef[]) {
+      const list = map.get(row.parent_moment_id) ?? []
+      list.push(row)
+      map.set(row.parent_moment_id, list)
+    }
+    setChildrenByParentId(map)
+  }
 
   async function loadMoments() {
     setLoading(true)
@@ -190,6 +225,7 @@ export default function Events({
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
+      childrenByParentId={childrenByParentId}
     />
   )
 }
@@ -211,6 +247,7 @@ export function EventsView({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  childrenByParentId = new Map(),
   readOnly = false,
 }: {
   moments: Moment[]
@@ -226,12 +263,30 @@ export function EventsView({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  childrenByParentId?: Map<string, ChildEventRef[]>
   readOnly?: boolean
 }) {
-  const decorated = decorateMoments(moments)
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
+
+  // Sub-events are visually bundled under their parent (see the card rendering below) rather
+  // than shown as their own independent chronological entries, so they're excluded here before
+  // decorating/filtering/grouping — otherwise a vacation's days would show up twice: once nested
+  // under the trip, once again as flat standalone cards.
+  const childIds = new Set(Array.from(childrenByParentId.values()).flat().map((c) => c.id))
+  const rootMoments = moments.filter((m) => !childIds.has(m.id))
+  const decorated = decorateMoments(rootMoments)
   const filteredMoments = filterMoments(decorated, search, tagFilter)
   const yearGroups = groupMomentsByYear(filteredMoments)
   const query = search.trim().toLowerCase()
+
+  function toggleExpanded(momentId: string) {
+    setExpandedParents((prev) => {
+      const next = new Set(prev)
+      if (next.has(momentId)) next.delete(momentId)
+      else next.add(momentId)
+      return next
+    })
+  }
 
   return (
     <div style={styles.page}>
@@ -289,38 +344,75 @@ export function EventsView({
           <div key={year}>
             <h2 style={styles.yearHeading}>{year}</h2>
             <div style={styles.yearCards}>
-              {items.map(({ moment, attendees, summary, groups }) => (
-                <div key={moment.id} style={styles.card}>
-                  <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
-                    {moment.occasion || 'Untitled moment'}
-                  </button>
-                  <p style={styles.meta}>
-                    {[formatEventWhen(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
-                  </p>
+              {items.map(({ moment, attendees, summary, groups }) => {
+                const children = childrenByParentId.get(moment.id) ?? []
+                const expanded = expandedParents.has(moment.id)
+                return (
+                  <div key={moment.id}>
+                    <div style={styles.card}>
+                      <div style={styles.cardHeaderRow}>
+                        <div style={styles.cardHeaderMain}>
+                          <button onClick={() => onSelectEvent({ id: moment.id, summary })} style={styles.titleButton}>
+                            {moment.occasion || 'Untitled moment'}
+                          </button>
+                          <p style={styles.meta}>
+                            {[formatEventWhen(moment), moment.location].filter(Boolean).join(' · ') || 'No date or location yet'}
+                          </p>
+                        </div>
+                        {children.length > 0 && (
+                          <button type="button" onClick={() => toggleExpanded(moment.id)} style={styles.subEventToggle}>
+                            {children.length} sub-event{children.length === 1 ? '' : 's'} {expanded ? '▾' : '▸'}
+                          </button>
+                        )}
+                      </div>
 
-                  {attendees.size === 0 ? (
-                    <p style={styles.empty}>No one tagged yet.</p>
-                  ) : (
-                    <div style={styles.chipRow}>
-                      {Array.from(attendees.values()).map((p) => (
-                        <PersonChip
-                          key={p.id}
-                          label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-                          onClick={() => onSelectPerson(p)}
-                        />
-                      ))}
-                    </div>
-                  )}
+                      {attendees.size === 0 ? (
+                        <p style={styles.empty}>No one tagged yet.</p>
+                      ) : (
+                        <div style={styles.chipRow}>
+                          {Array.from(attendees.values()).map((p) => (
+                            <PersonChip
+                              key={p.id}
+                              label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
+                              onClick={() => onSelectPerson(p)}
+                            />
+                          ))}
+                        </div>
+                      )}
 
-                  {groups.length > 0 && (
-                    <div style={styles.chipRow}>
-                      {groups.map((g) => (
-                        <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
-                      ))}
+                      {groups.length > 0 && (
+                        <div style={styles.chipRow}>
+                          {groups.map((g) => (
+                            <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    {children.length > 0 && expanded && (
+                      <div style={styles.childEventList}>
+                        {children.map((ce) => {
+                          const attendeeCount = new Set((ce.notes ?? []).filter((n) => n.people).map((n) => n.people!.id)).size
+                          return (
+                            <button
+                              key={ce.id}
+                              type="button"
+                              onClick={() => onSelectEvent({ id: ce.id, summary: ce.occasion || 'Untitled moment' })}
+                              style={styles.childEventCard}
+                            >
+                              <span style={styles.childEventName}>{ce.occasion || 'Untitled moment'}</span>
+                              <span style={styles.childEventMeta}>
+                                {formatFullDate(ce)}
+                                {attendeeCount > 0 ? ` · ${attendeeCount} ${attendeeCount === 1 ? 'person' : 'people'}` : ''}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         ))}
@@ -387,6 +479,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '1.25rem',
     boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
   },
+  cardHeaderRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' },
+  cardHeaderMain: { flex: 1, minWidth: 0 },
   titleButton: {
     display: 'block',
     margin: '0 0 0.25rem 0',
@@ -401,4 +495,40 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#666', fontStyle: 'italic' },
   chipRow: { display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' },
+  subEventToggle: {
+    flexShrink: 0,
+    fontSize: '0.85rem',
+    background: 'none',
+    border: 'none',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily: 'Georgia, serif',
+    whiteSpace: 'nowrap',
+  },
+  childEventList: {
+    marginLeft: '1.4rem',
+    borderLeft: '2px solid #E5DCC3',
+    paddingLeft: '1rem',
+    marginTop: '0.5rem',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+  },
+  childEventCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: '0.15rem',
+    textAlign: 'left',
+    backgroundColor: '#FFF',
+    border: '1px solid #ECE7DA',
+    borderRadius: '10px',
+    padding: '0.6rem 0.85rem',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+    width: '100%',
+  },
+  childEventName: { fontSize: '0.95rem', color: '#2E2E2E' },
+  childEventMeta: { fontSize: '0.8rem', color: '#888' },
 }

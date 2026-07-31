@@ -28,6 +28,14 @@ export type GroupRef = {
 export type TagRef = { id: string; name: string }
 export type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null; source: string | null }
 export type OtherEvent = { id: string; occasion: string | null; raw_description: string }
+export type ChildEventRef = {
+  id: string
+  occasion: string | null
+  event_date: string | null
+  event_end_date: string | null
+  created_at: string
+  notes: { people: PersonRef | null }[]
+}
 
 export type MomentDetail = {
   id: string
@@ -50,6 +58,7 @@ export default function EventDetail({
   eventId,
   onSelectPerson,
   onSelectGroup,
+  onSelectEvent,
   onBack,
   backLabel,
   onRenamed,
@@ -58,6 +67,7 @@ export default function EventDetail({
   eventId: string
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
   onBack: () => void
   backLabel: string
   onRenamed?: (newSummary: string) => void
@@ -90,10 +100,15 @@ export default function EventDetail({
   const [photosError, setPhotosError] = useState<string | null>(null)
   const [photosRefreshKey, setPhotosRefreshKey] = useState(0)
   const photosImportHandle = useRef<{ cancel: () => void } | null>(null)
+  const [parentEvent, setParentEvent] = useState<OtherEvent | null>(null)
+  const [childEvents, setChildEvents] = useState<ChildEventRef[]>([])
+  const [addingSubEvent, setAddingSubEvent] = useState(false)
+  const [subEventError, setSubEventError] = useState<string | null>(null)
 
   useEffect(() => {
     loadMoment()
     loadPickerLists()
+    loadChildEvents()
     setEditingTitle(false)
     setEditingDescription(false)
     setDeleteConfirming(false)
@@ -182,6 +197,73 @@ export default function EventDetail({
     setAllPeople((peopleRes.data as PersonRef[]) ?? [])
     setAllGroupsList((groupsRes.data as GroupRef[]) ?? [])
     setAllTagsList((tagsRes.data as TagRef[]) ?? [])
+  }
+
+  // Isolated from loadMoment's shared select on purpose — same fail-open reasoning as
+  // GroupDetail.tsx's loadParent/loadSubgroups: if parent_moment_id doesn't exist yet (migration
+  // not run, see PROJECT_CONTEXT.md §10), fail open to "no parent" instead of breaking the event
+  // page above.
+  async function loadParentEvent() {
+    const { data, error } = await supabase.from('moments').select('parent_moment_id').eq('id', eventId).single()
+    const parentId = error ? null : (data as { parent_moment_id: string | null } | null)?.parent_moment_id ?? null
+    if (!parentId) {
+      setParentEvent(null)
+      return
+    }
+    const { data: parent } = await supabase.from('moments').select('id, occasion, raw_description').eq('id', parentId).single()
+    setParentEvent((parent as OtherEvent) ?? null)
+  }
+
+  // Item 35 (2026-07-30): sub-events nested one level under this one — e.g. a specific day of a
+  // multi-day vacation. Only ever rendered when this event is itself a root event (no
+  // parentEvent) — a sub-event doesn't get its own child sub-events in the UI, even though the
+  // schema would technically allow it. Same fail-open-on-missing-column reasoning as
+  // loadParentEvent.
+  async function loadChildEvents() {
+    const { data, error } = await supabase
+      .from('moments')
+      .select('id, occasion, event_date, event_end_date, created_at, notes(people(id, name, last_name))')
+      .eq('parent_moment_id', eventId)
+      .order('event_date', { ascending: true, nullsFirst: false })
+    setChildEvents(error ? [] : (data as unknown as ChildEventRef[]) ?? [])
+    loadParentEvent()
+  }
+
+  // No form up front, same reasoning as GroupDetail.tsx's handleAddSubgroup — creates a blank
+  // shell and drops straight onto its own page. Inherits the parent's event_date (a low-stakes,
+  // trivially-editable default that's very often correct for "one sub-event per day of a trip"),
+  // but deliberately does NOT auto-tag the founder as an attendee the way the top-level "+ Add
+  // Event" flow does — a sub-event carved out of a bigger event isn't necessarily one the founder
+  // personally attended.
+  async function handleAddSubEvent() {
+    if (!moment) return
+    setAddingSubEvent(true)
+    setSubEventError(null)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    const { data, error } = await supabase
+      .from('moments')
+      .insert({
+        user_id: user?.id,
+        occasion: null,
+        raw_description: '',
+        location: null,
+        when_text: null,
+        event_date: moment.event_date,
+        parent_moment_id: eventId,
+      })
+      .select()
+      .single()
+
+    setAddingSubEvent(false)
+    if (error || !data) {
+      setSubEventError("Couldn't create a sub-event — please try again.")
+      return
+    }
+
+    onSelectEvent({ id: data.id, summary: 'Untitled moment' })
   }
 
   async function loadMoment(silent = false) {
@@ -413,6 +495,13 @@ export default function EventDetail({
         .upsert({ moment_id: survivorId, group_id: g.group_id }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
     }
     await supabase.from('moment_groups').delete().eq('moment_id', duplicateId)
+
+    // Reparent the duplicate's own sub-events onto the survivor, so a merged-away parent event's
+    // sub-events aren't silently orphaned to root. Same reasoning/guard as GroupDetail.tsx's
+    // subgroup reparenting on merge. Fails open if parent_moment_id doesn't exist yet (migration
+    // not run) — nothing to reparent in that case anyway.
+    await supabase.from('moments').update({ parent_moment_id: survivorId }).eq('parent_moment_id', duplicateId).neq('id', survivorId)
+
     await supabase.from('moments').delete().eq('id', duplicateId)
     await supabase.from('moments').update({ summary: null }).eq('id', survivorId)
 
@@ -430,6 +519,12 @@ export default function EventDetail({
       moment={moment}
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
+      parentEvent={parentEvent}
+      childEvents={childEvents}
+      addingSubEvent={addingSubEvent}
+      subEventError={subEventError}
+      onAddSubEvent={handleAddSubEvent}
       onBack={onBack}
       backLabel={backLabel}
       allPeople={allPeople}
@@ -504,6 +599,12 @@ export function EventDetailView({
   moment,
   onSelectPerson,
   onSelectGroup,
+  onSelectEvent,
+  parentEvent = null,
+  childEvents = [],
+  addingSubEvent = false,
+  subEventError = null,
+  onAddSubEvent = () => {},
   onBack,
   backLabel,
   allPeople = [],
@@ -565,6 +666,12 @@ export function EventDetailView({
   moment: MomentDetail
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+  parentEvent?: OtherEvent | null
+  childEvents?: ChildEventRef[]
+  addingSubEvent?: boolean
+  subEventError?: string | null
+  onAddSubEvent?: () => void
   onBack: () => void
   backLabel: string
   allPeople?: PersonRef[]
@@ -697,6 +804,16 @@ export function EventDetailView({
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
+      {parentEvent && (
+        <button
+          type="button"
+          onClick={() => onSelectEvent({ id: parentEvent.id, summary: parentEvent.occasion || 'Untitled moment' })}
+          style={styles.parentLink}
+        >
+          ↑ Part of {parentEvent.occasion || 'Untitled moment'}
+        </button>
+      )}
+
       {editingTitle ? (
         <form onSubmit={onSaveTitle} style={styles.renameForm}>
           <input
@@ -744,6 +861,42 @@ export function EventDetailView({
           formatFullDate(moment)
         )}
       </p>
+
+      {!parentEvent && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <h2 style={styles.subheading}>Sub-events</h2>
+            {!readOnly && (
+              <button type="button" onClick={onAddSubEvent} style={styles.addButton} disabled={addingSubEvent}>
+                {addingSubEvent ? '…' : '+ New Sub-event'}
+              </button>
+            )}
+          </div>
+          {subEventError && <p style={styles.factErrorBanner}>{subEventError}</p>}
+          {childEvents.length === 0 ? (
+            <p style={styles.empty}>No sub-events yet.</p>
+          ) : (
+            <div style={styles.childEventGrid}>
+              {childEvents.map((ce) => {
+                const attendeeCount = new Set((ce.notes ?? []).filter((n) => n.people).map((n) => n.people!.id)).size
+                return (
+                  <button
+                    key={ce.id}
+                    type="button"
+                    onClick={() => onSelectEvent({ id: ce.id, summary: ce.occasion || 'Untitled moment' })}
+                    style={styles.childEventTile}
+                  >
+                    <span style={styles.childEventTileName}>{ce.occasion || 'Untitled moment'}</span>
+                    <span style={styles.childEventTileMeta}>
+                      {formatFullDate(ce)} · {attendeeCount} {attendeeCount === 1 ? 'person' : 'people'}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </>
+      )}
 
       <div style={styles.suggestionHeaderRow}>
         <h2 style={styles.subheading}>Associated Groups</h2>
@@ -1046,7 +1199,12 @@ export function EventDetailView({
 
           {deleteConfirming && (
             <div style={styles.suggestBanner}>
-              <span>Delete this event permanently? This removes all of its notes. This can't be undone.</span>
+              <span>
+                Delete this event permanently? This removes all of its notes.
+                {childEvents.length > 0 &&
+                  ` Its ${childEvents.length} sub-event${childEvents.length === 1 ? '' : 's'} will become independent top-level event${childEvents.length === 1 ? '' : 's'}, not deleted.`}{' '}
+                This can't be undone.
+              </span>
               <div style={styles.suggestButtonRow}>
                 <button type="button" onClick={onConfirmDelete} style={styles.dangerDeleteButton} disabled={actionBusy}>
                   {actionBusy ? 'Deleting…' : 'Yes, delete'}
@@ -1314,6 +1472,38 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   meta: { margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: '#888' },
+  parentLink: {
+    display: 'block',
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    marginBottom: '0.75rem',
+    fontSize: '0.9rem',
+    color: '#8A6A1F',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  childEventGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+    gap: '0.75rem',
+    marginBottom: '0.75rem',
+  },
+  childEventTile: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: '0.2rem',
+    textAlign: 'left',
+    backgroundColor: '#FFF',
+    border: '1px solid #E0E0E0',
+    borderRadius: '10px',
+    padding: '0.75rem 0.9rem',
+    cursor: 'pointer',
+    fontFamily: 'Georgia, serif',
+  },
+  childEventTileName: { fontSize: '1rem', color: '#2E2E2E' },
+  childEventTileMeta: { fontSize: '0.8rem', color: '#888' },
   locationLink: { color: '#1a56db', textDecoration: 'underline', cursor: 'pointer' },
   notesHeaderRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', margin: '1.5rem 0 0.25rem 0' },
   notesToggle: {
