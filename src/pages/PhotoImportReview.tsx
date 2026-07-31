@@ -41,6 +41,7 @@ export default function PhotoImportReview({
   const [clusters, setClusters] = useState<ClusterView[] | null>(null)
   const [moments, setMoments] = useState<MomentOption[]>([])
   const [selectedMomentId, setSelectedMomentId] = useState<Record<string, string | null>>({})
+  const [titleByCluster, setTitleByCluster] = useState<Record<string, string>>({})
   const [resolvingId, setResolvingId] = useState<string | null>(null)
   const [justAdded, setJustAdded] = useState<{ id: string; label: string } | null>(null)
 
@@ -154,12 +155,13 @@ export default function PhotoImportReview({
         data: { user },
       } = await supabase.auth.getUser()
       const dateLabel = cluster.dateRangeStart ? formatDateRange(cluster.dateRangeStart, cluster.dateRangeEnd) : null
+      const title = (titleByCluster[cluster.id] ?? '').trim() || null
       const { data: newMoment, error } = await supabase
         .from('moments')
         .insert({
           user_id: user?.id,
           raw_description: '',
-          occasion: null,
+          occasion: title,
           location: null,
           when_text: dateLabel,
           event_date: cluster.dateRangeStart,
@@ -173,7 +175,9 @@ export default function PhotoImportReview({
         return
       }
       momentId = newMoment.id
-      label = dateLabel ?? 'New event'
+      // Matches momentLabel()'s own occasion-first-then-date-range fallback, so this never implies
+      // a title was saved when it wasn't.
+      label = title ?? dateLabel ?? 'New event'
     }
 
     await supabase.from('photos').update({ moment_id: momentId, photo_cluster_id: null }).eq('photo_cluster_id', cluster.id)
@@ -279,6 +283,16 @@ export default function PhotoImportReview({
                       />
                     </div>
                   </div>
+                  {isNew && (
+                    <input
+                      type="text"
+                      value={titleByCluster[cluster.id] ?? ''}
+                      onChange={(e) => setTitleByCluster((prev) => ({ ...prev, [cluster.id]: e.target.value }))}
+                      placeholder="Give it a title (optional)"
+                      style={styles.titleInput}
+                      disabled={resolvingId === cluster.id}
+                    />
+                  )}
                   <div style={styles.clusterActions}>
                     <button onClick={() => handleAccept(cluster)} style={styles.actionButtonPrimary} disabled={resolvingId === cluster.id}>
                       {resolvingId === cluster.id ? 'Working…' : 'Accept'}
@@ -336,6 +350,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   thumbMore: { width: '64px', height: '64px', borderRadius: '8px', backgroundColor: '#EAF1EC', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem', color: '#2E4034' },
   clusterDate: { fontSize: '0.9rem', color: '#2E2E2E', margin: '0 0 0.25rem', fontWeight: 'bold' },
   clusterChoice: { fontSize: '0.85rem', color: '#666', margin: '0 0 0.5rem' },
+  titleInput: {
+    display: 'block',
+    width: '100%',
+    boxSizing: 'border-box',
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.7rem',
+    borderRadius: '6px',
+    border: '1px solid #CCC',
+    fontFamily: 'Georgia, serif',
+    marginBottom: '0.5rem',
+  },
   clusterActions: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' },
   choiceButton: { fontSize: '0.85rem', padding: '0.4rem 0.75rem', borderRadius: '8px', border: '1px solid #CCC', backgroundColor: '#FFF', color: '#2E2E2E', cursor: 'pointer', fontFamily: 'Georgia, serif' },
   choiceButtonActive: { fontSize: '0.85rem', padding: '0.4rem 0.75rem', borderRadius: '8px', border: '1px solid #2E4034', backgroundColor: '#EAF1EC', color: '#2E4034', cursor: 'pointer', fontFamily: 'Georgia, serif' },

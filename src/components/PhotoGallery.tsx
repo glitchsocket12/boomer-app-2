@@ -12,12 +12,76 @@ function CameraIcon() {
   )
 }
 
+// Full-screen viewer for a gallery's real photos. The images shown are the same signed URLs the
+// thumbnails already use (the ~1600px copy stored at import time — see DOWNLOAD_WIDTH in
+// google-photos-picker-session-import/index.ts) — Google's own picker URLs are session-scoped and
+// expire, so there's no fuller-quality source left to link out to once the picker session is over.
+function PhotoLightbox({
+  photos,
+  index,
+  onIndexChange,
+  onClose,
+}: {
+  photos: { id: string; url: string | null }[]
+  index: number
+  onIndexChange: (i: number) => void
+  onClose: () => void
+}) {
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+      else if (e.key === 'ArrowLeft') onIndexChange((index - 1 + photos.length) % photos.length)
+      else if (e.key === 'ArrowRight') onIndexChange((index + 1) % photos.length)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [index, photos.length, onIndexChange, onClose])
+
+  const photo = photos[index]
+
+  return (
+    <div style={styles.overlay} onClick={onClose}>
+      <button onClick={onClose} style={styles.closeButton} aria-label="Close">
+        ×
+      </button>
+      {photos.length > 1 && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onIndexChange((index - 1 + photos.length) % photos.length)
+          }}
+          style={{ ...styles.navButton, left: '0.5rem' }}
+          aria-label="Previous photo"
+        >
+          ‹
+        </button>
+      )}
+      {photo?.url && (
+        <img src={photo.url} alt="" style={styles.fullImage} onClick={(e) => e.stopPropagation()} />
+      )}
+      {photos.length > 1 && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onIndexChange((index + 1) % photos.length)
+          }}
+          style={{ ...styles.navButton, right: '0.5rem' }}
+          aria-label="Next photo"
+        >
+          ›
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Renders real photos for `momentId` once any exist (see PROJECT_CONTEXT.md §2/§6 — the Google
 // Photos import feature), falling back to the original placeholder tiles otherwise. Person/Group
 // pages don't pass momentId and keep the placeholder unchanged — a per-person/group rollup across
-// their moments is a later pass, not this one.
+// their moments is a later pass, not this one. Real thumbnails open a full-screen lightbox on click.
 export default function PhotoGallery({ momentId, count = 4 }: { momentId?: string; count?: number }) {
   const [photos, setPhotos] = useState<{ id: string; url: string | null }[] | null>(null)
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
   useEffect(() => {
     if (!momentId) {
@@ -54,14 +118,28 @@ export default function PhotoGallery({ momentId, count = 4 }: { momentId?: strin
       <div style={styles.wrap}>
         <h2 style={styles.heading}>Gallery</h2>
         <div style={styles.row}>
-          {photos.map((p) =>
+          {photos.map((p, i) =>
             p.url ? (
-              <img key={p.id} src={p.url} alt="" style={styles.photoTile} />
+              <img
+                key={p.id}
+                src={p.url}
+                alt=""
+                style={{ ...styles.photoTile, cursor: 'pointer' }}
+                onClick={() => setLightboxIndex(i)}
+              />
             ) : (
               <div key={p.id} style={{ ...styles.tile, backgroundColor: PLACEHOLDER_COLORS[0] }} />
             )
           )}
         </div>
+        {lightboxIndex !== null && (
+          <PhotoLightbox
+            photos={photos}
+            index={lightboxIndex}
+            onIndexChange={setLightboxIndex}
+            onClose={() => setLightboxIndex(null)}
+          />
+        )}
       </div>
     )
   }
@@ -103,5 +181,45 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: '10px',
     objectFit: 'cover',
     border: '1px solid rgba(0,0,0,0.06)',
+  },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    backgroundColor: 'rgba(0,0,0,0.88)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  fullImage: {
+    maxWidth: '92vw',
+    maxHeight: '90vh',
+    objectFit: 'contain',
+    borderRadius: '6px',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: '1rem',
+    right: '1.25rem',
+    background: 'none',
+    border: 'none',
+    color: '#FFF',
+    fontSize: '2.25rem',
+    lineHeight: 1,
+    cursor: 'pointer',
+    padding: '0.25rem 0.5rem',
+  },
+  navButton: {
+    position: 'absolute',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'rgba(255,255,255,0.12)',
+    border: 'none',
+    color: '#FFF',
+    fontSize: '2.5rem',
+    lineHeight: 1,
+    cursor: 'pointer',
+    padding: '0.25rem 0.9rem',
+    borderRadius: '8px',
   },
 }
