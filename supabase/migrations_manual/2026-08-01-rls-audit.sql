@@ -43,11 +43,14 @@
 --               Anything saying "*** WIDE OPEN ***" is a lock that's never
 --               locked. Anything saying "READ THIS ONE MANUALLY" needs eyes.
 --
---   Section 3 - the WITH CHECK expressions (the rules for WRITING rows).
---               Every row should mention auth.uid(). A bare "true" here would
---               let someone create rows owned by another account — data being
---               pushed in rather than pulled out, so less severe than a read
---               leak, but still wrong.
+--   Section 3 - the rules for WRITING rows. Every row should say either
+--               "scoped to owner - good", "inherits the read rule - good", or
+--               "n/a". A bare "true" here would let someone create rows owned
+--               by another account — data pushed in rather than pulled out, so
+--               less severe than a read leak, but still wrong.
+--               Don't misread a blank write condition as a hole: for FOR ALL
+--               and FOR UPDATE policies Postgres reuses the read expression as
+--               the write condition automatically.
 --
 --   Section 4 - the auto-protect hook's source, for reference.
 --
@@ -96,11 +99,17 @@ union all
 select
   '3. WHAT EACH RULE SAYS (writing)',
   tablename || ' / ' || policyname,
-  case when with_check is null              then 'no write rule (read-only policy)'
+  -- IMPORTANT: a NULL with_check does NOT mean writes are unprotected. For
+  -- FOR ALL and FOR UPDATE policies, Postgres falls back to using the USING
+  -- expression as the write condition too. Only SELECT/DELETE policies have
+  -- no write condition at all, because neither creates a row.
+  case when cmd in ('SELECT', 'DELETE')     then 'n/a - governs reading only'
+       when with_check is null              then 'inherits the read rule - good'
        when btrim(with_check) = 'true'      then '*** WIDE OPEN - can write rows owned by others ***'
        when with_check ilike '%auth.uid()%' then 'scoped to owner - good'
        else '*** READ THIS ONE MANUALLY ***' end,
-  coalesce(with_check, '')
+  case when cmd in ('SELECT', 'DELETE') then ''
+       else coalesce(with_check, qual, '') end
 from pg_policies
 where schemaname = 'public' or (schemaname = 'storage' and tablename = 'objects')
 
