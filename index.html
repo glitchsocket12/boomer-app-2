@@ -5,6 +5,24 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Boomer.App</title>
+
+    <!-- Home-screen app ("Add to Home Screen" on iPhone). See PWA.md.
+         NOTE: the viewport above deliberately does NOT set viewport-fit=cover.
+         Without it, iOS insets the whole web view away from the home indicator
+         automatically, which keeps the fixed-to-bottom chat bar clear of it
+         with no CSS changes anywhere. Adding viewport-fit=cover would push
+         content under the indicator and require safe-area padding on every
+         fixed element - don't add it casually. -->
+    <meta name="description" content="A private place to keep the texture of your relationships — who was there, what's going on with them, what you don't want to forget." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#2E4034" />
+
+    <!-- iOS specifics: it ignores the manifest's icon list and needs a real PNG. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Boomer" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   </head>
   <body>
     <div id="root"></div>
