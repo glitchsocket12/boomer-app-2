@@ -6,3 +6,38 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ---------------------------------------------------------------------------
+   Touch devices (phones/tablets). Found 2026-08-01 opening the app on a real
+   iPhone for the first time. These are correctness fixes, NOT the mobile
+   redesign — see PWA.md.
+   --------------------------------------------------------------------------- */
+
+@media (hover: none) {
+  /* iOS Safari zooms the whole page in whenever you focus a text field whose
+     font is under 16px, and does not zoom back out afterwards. Seven inputs
+     across the app were between 0.85rem and 0.95rem, so tapping a search box
+     or the chat bar left the layout stranded mid-zoom. 16px is the exact
+     threshold, so this is the minimum change that stops it. */
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+
+  /* Action buttons that were previously hover-only are now always visible on
+     touch (see lib/touch.ts). At their desktop size — 18px with a 10px icon —
+     they'd be an easy mis-tap, and some of them delete things. Give them a
+     real target without changing how they look on desktop. Apple's guideline
+     is 44px; these sit inside chips where that would break the layout, so 32px
+     is a deliberate compromise, revisited in the redesign. */
+  .touch-action {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .touch-action svg {
+    width: 14px;
+    height: 14px;
+  }
+}

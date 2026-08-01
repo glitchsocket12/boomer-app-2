@@ -16,6 +16,7 @@ import RelationshipSuggestionBanners, {
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
 import { groupDisplayName } from '../lib/groupDisplayName'
+import { IS_TOUCH } from '../lib/touch'
 
 export type Note = {
   id: string
@@ -1345,14 +1346,14 @@ function AffiliatedGroupChip({
         <span style={styles.groupDot} />
         {displayName ?? group.name}
       </button>
-      {hovered && onRemove && (
+      {(hovered || IS_TOUCH) && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
             onRemove()
           }}
           aria-label={`Untag ${displayName ?? group.name} from this person`}
-          style={styles.cornerBadge}
+          className="touch-action" style={styles.cornerBadge}
         >
           {TRASH_ICON}
         </button>
@@ -1473,10 +1474,10 @@ function NoteCard({
         </div>
       </div>
 
-      {hovered && (onEdit || onDelete) && (
+      {(hovered || IS_TOUCH) && (onEdit || onDelete) && (
         <div style={styles.noteBadgeRow}>
           {onEdit && (
-            <button onClick={startEditing} aria-label="Edit this note" style={styles.noteBadge}>
+            <button onClick={startEditing} aria-label="Edit this note" className="touch-action" style={styles.noteBadge}>
               <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 20h9" />
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
@@ -1484,7 +1485,7 @@ function NoteCard({
             </button>
           )}
           {onDelete && (
-            <button onClick={() => onDelete(note.id)} aria-label="Delete this note" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
+            <button onClick={() => { if (confirm("Delete this note? This cannot be undone.")) onDelete(note.id) }} aria-label="Delete this note" className="touch-action" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
               <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 6h18" />
                 <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
