@@ -43,6 +43,25 @@ If the camera roll ever becomes the thing you actually need, that's the trigger 
 
 ---
 
+## What the backlog loses by not going native
+
+Checked against §8's open items on 2026-08-01, so it doesn't get re-derived later.
+
+| Backlog item | Status on a PWA |
+|---|---|
+| **18. Real-time voice transcription** | **The one genuine loss.** Apple's live speech recognition is native-only, and the item's own note already rules out the web option on iPhone. Recording-then-transcribing (today's Whisper flow) stays the only option. |
+| **27 / 69. Camera-roll sync + photo rollups** | Already documented as native-only. Google Photos import is the existing workaround and is unaffected. |
+| **65. iPhone Contacts import** | Native could read Contacts directly; the shipped vCard export-and-upload path already sidesteps this. No new loss. |
+| Face ID lock on the app | Native-only. Face ID *login* is achievable in a PWA via passkeys, if that was the actual goal. |
+| On-device AI (→ real E2EE, `SECURITY.md` §4) | Native-only. Long-term, not near-term. |
+| **17. Long story/voice-note handling** | Works, with one catch: iOS stops the recording if you switch apps mid-way. Fine for talking directly into it, not for background capture. |
+| 14/30 search, 20 data viz, 21 internet lookup, 26 ratings, 31 memory lane, 58–60 UI fixes | Unaffected — all web or server-side. |
+| 15's background group-connection scanning, calendar sync | Unaffected — these run server-side (`pg_cron` + Edge Functions), not on the device. |
+
+**One thing better than §9 assumes:** §9 records "email over push (scope)", which reads like a platform limit. It isn't — Apple added Web Push for home-screen-installed web apps in iOS 16.4 (2023). Push is available to this PWA whenever it's worth building; nothing about it requires going native.
+
+---
+
 ## When you change the app name
 
 The name lives in exactly four places. It's a five-minute job — deliberately, so the pending rename doesn't become a reason to delay.
