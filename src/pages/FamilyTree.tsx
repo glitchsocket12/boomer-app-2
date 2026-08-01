@@ -21,6 +21,7 @@ import {
 import { linkRelationship, createAndLinkRelationship, unlinkRelationship, syncFamilyClique, invalidateKeyFacts, type CircleCategory } from '../lib/writeRelationship'
 import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
+import { IS_TOUCH } from '../lib/touch'
 
 const TRASH_ICON = (
   <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1078,14 +1079,14 @@ function RemoveChip({
       >
         {name} <span style={styles.removeChipRel}>({relLabel})</span>
       </span>
-      {hovered && (
+      {(hovered || IS_TOUCH) && (
         <button
           onClick={(e) => {
             e.stopPropagation()
             onRemove()
           }}
           aria-label={`Remove ${name} as a ${relLabel}`}
-          style={styles.cornerBadge}
+          className="touch-action" style={styles.cornerBadge}
         >
           {TRASH_ICON}
         </button>

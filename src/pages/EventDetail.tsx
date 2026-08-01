@@ -17,6 +17,7 @@ import { findOrCreateTagId } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import { groupDisplayName } from '../lib/groupDisplayName'
+import { IS_TOUCH } from '../lib/touch'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 export type GroupRef = {
@@ -1467,14 +1468,14 @@ function AttendeeChip({
       <button onClick={onSelect} style={styles.attendeeChip}>
         {label}
       </button>
-      {hovered && onRemove && (
+      {(hovered || IS_TOUCH) && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
             onRemove()
           }}
           aria-label={`Untag ${label} from this event`}
-          style={styles.cornerBadge}
+          className="touch-action" style={styles.cornerBadge}
         >
           {TRASH_ICON}
         </button>
@@ -1506,14 +1507,14 @@ function AssociatedGroupChip({
         <span style={styles.groupDot} />
         {displayName ?? group.name}
       </button>
-      {hovered && onRemove && (
+      {(hovered || IS_TOUCH) && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
             onRemove()
           }}
           aria-label={`Untag ${displayName ?? group.name} from this event`}
-          style={styles.cornerBadge}
+          className="touch-action" style={styles.cornerBadge}
         >
           {TRASH_ICON}
         </button>
@@ -1531,14 +1532,14 @@ function TagChip({ tag, onRemove }: { tag: TagRef; onRemove?: () => void }) {
   return (
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <span style={styles.tagChip}>#{tag.name}</span>
-      {hovered && onRemove && (
+      {(hovered || IS_TOUCH) && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
             onRemove()
           }}
           aria-label={`Untag ${tag.name} from this event`}
-          style={styles.cornerBadge}
+          className="touch-action" style={styles.cornerBadge}
         >
           {TRASH_ICON}
         </button>
@@ -1567,14 +1568,14 @@ function SuggestedAttendeeChip({
       <button onClick={onApprove} style={styles.suggestChip}>
         + {label}
       </button>
-      {hovered && (
+      {(hovered || IS_TOUCH) && (
         <button
           onClick={(e) => {
             e.stopPropagation()
             onDeny()
           }}
           aria-label={`Don't suggest ${label} for this event again`}
-          style={styles.cornerBadge}
+          className="touch-action" style={styles.cornerBadge}
         >
           ×
         </button>
