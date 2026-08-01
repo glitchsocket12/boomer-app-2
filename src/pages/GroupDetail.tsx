@@ -4,6 +4,7 @@ import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { GROUP_TYPES } from '../lib/groupTypes'
+import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import EditButton from '../components/EditButton'
@@ -51,6 +52,7 @@ export default function GroupDetail({
   onBack,
   backLabel,
   onRenamed,
+  onDisplayLabel,
   onMerged,
   onOpenFamilyTree,
 }: {
@@ -62,6 +64,12 @@ export default function GroupDetail({
   onBack: () => void
   backLabel: string
   onRenamed?: (newName: string) => void
+  // Reports this group's qualified "Parent / Child" title up to the nav stack so breadcrumbs and
+  // "← Back to …" read unambiguously. Deliberately SEPARATE from onRenamed: that one rewrites the
+  // crumb's real name, which comes back down as `groupName` and seeds the rename input — feeding a
+  // qualified string through it would prefill the rename box with "Parent / Child" after a refresh
+  // and let a save rewrite the group's actual name to it.
+  onDisplayLabel?: (label: string) => void
   onMerged: (group: { id: string; name: string }) => void
   // memberIds, when present, scopes the tree to that group's own lineage (buildDescendantTree)
   // instead of the single centered person's full ego graph.
@@ -109,6 +117,16 @@ export default function GroupDetail({
   const [subgroups, setSubgroups] = useState<SubgroupRef[]>([])
   const [addingSubgroup, setAddingSubgroup] = useState(false)
   const [subgroupError, setSubgroupError] = useState<string | null>(null)
+
+  const roster = useGroupRoster()
+
+  // Built from local state, not the roster, so it's already correct the instant a rename saves
+  // instead of waiting on a refetch.
+  const displayTitle = parentGroup ? `${parentGroup.name} / ${name}` : name
+  useEffect(() => {
+    onDisplayLabel?.(displayTitle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayTitle])
 
   // Account-wide, fetched once — lets member chips show "You" instead of the founder's own name
   // (same pattern as EventDetail.tsx's selfId for attendee chips).
@@ -256,8 +274,17 @@ export default function GroupDetail({
   // loadSuggestionsEnabled: if parent_group_id doesn't exist yet (migration not run, see
   // PROJECT_CONTEXT.md §10), fail open to "no parent" instead of breaking the member list above.
   async function loadParent() {
-    const { data, error } = await supabase.from('groups').select('parent_group_id').eq('id', groupId).single()
-    const parentId = error ? null : (data as { parent_group_id: string | null } | null)?.parent_group_id ?? null
+    const { data, error } = await supabase.from('groups').select('name, parent_group_id').eq('id', groupId).single()
+    // Also re-seeds the heading from the DB, not just the crumb label: on a pasted URL or a cleared
+    // sessionStorage, parseNavFromPath (App.tsx) has only the id to use as a label, so the heading
+    // and rename field would otherwise show a raw UUID. Safe to overwrite here — this runs on mount
+    // (via loadSubgroups), never after handleSaveName.
+    const row = error ? null : (data as { name: string; parent_group_id: string | null } | null)
+    if (row?.name && row.name !== groupName) {
+      setName(row.name)
+      setNameInput(row.name)
+    }
+    const parentId = row?.parent_group_id ?? null
     if (!parentId) {
       setParentGroup(null)
       return
@@ -337,7 +364,7 @@ export default function GroupDetail({
   // family's downward fan from its eldest known generation instead of an arbitrary person's view.
   function handleGenerateFamilyTree() {
     const memberIds = explicitMembers.map((p) => p.id)
-    onOpenFamilyTree(memberIds[0] ?? '', `${name} family tree`, memberIds)
+    onOpenFamilyTree(memberIds[0] ?? '', `${displayTitle} family tree`, memberIds)
   }
 
   // Candidate associated groups sourced from members: any OTHER group this group's own explicit
@@ -769,12 +796,17 @@ export default function GroupDetail({
   for (const g of memberSharedGroups) {
     if (!confirmedGroupIds.has(g.id) && !dismissedGroupIdSet.has(g.id) && !hierarchyGroupIds.has(g.id)) suggestedGroupsById.set(g.id, g)
   }
-  const suggestedAssociatedGroups = [...suggestedGroupsById.values()].sort((a, b) => a.name.localeCompare(b.name))
+  // Sorted by the label that actually gets rendered, so a subgroup files under its parent's name
+  // rather than jumping the list under its own.
+  const suggestedAssociatedGroups = [...suggestedGroupsById.values()].sort((a, b) =>
+    roster.label(a.id, a.name).localeCompare(roster.label(b.id, b.name))
+  )
 
   return (
     <GroupDetailView
       groupId={groupId}
       name={name}
+      groupLabel={roster.label}
       groupType={groupType}
       summary={summary}
       moments={moments}
@@ -884,6 +916,7 @@ export default function GroupDetail({
 // fills with `UpdateGroupChat` — the demo simply doesn't pass it.
 export function GroupDetailView({
   name,
+  groupLabel = (_id, fallbackName) => fallbackName,
   groupType,
   summary,
   moments,
@@ -965,6 +998,9 @@ export function GroupDetailView({
 }: {
   groupId: string
   name: string
+  // Qualifies a subgroup as "Parent / Child" wherever it's shown out of context. Defaults to the
+  // bare name so the landing-page demo (whose static data has no subgroups) needs no change.
+  groupLabel?: GroupLabelFn
   groupType: string | null
   summary: string | null
   moments: Moment[]
@@ -1052,12 +1088,16 @@ export function GroupDetailView({
   const visibleExplicitMembers =
     membersExpanded || memberQuery ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
   const visibleSuggestedMembers = suggestedMembers.slice(0, MEMBER_SUGGESTION_LIMIT)
-  const sortedConfirmedAssociatedGroups = [...confirmedAssociatedGroups].sort((a, b) => a.name.localeCompare(b.name))
+  const sortedConfirmedAssociatedGroups = [...confirmedAssociatedGroups].sort((a, b) =>
+    groupLabel(a.id, a.name).localeCompare(groupLabel(b.id, b.name))
+  )
 
   const groupPickerQuery = groupPickerSearch.trim().toLowerCase()
   const confirmedGroupIds = new Set(confirmedAssociatedGroups.map((g) => g.id))
+  // Searches the same string that's displayed, so typing a parent's name surfaces its subgroups
+  // and a visible row can never fail to match its own visible text.
   const filteredPickableGroups = pickableGroups.filter(
-    (g) => !confirmedGroupIds.has(g.id) && (!groupPickerQuery || g.name.toLowerCase().includes(groupPickerQuery))
+    (g) => !confirmedGroupIds.has(g.id) && (!groupPickerQuery || groupLabel(g.id, g.name).toLowerCase().includes(groupPickerQuery))
   )
 
   return (
@@ -1312,7 +1352,7 @@ export function GroupDetailView({
           ) : (
             <div style={{ ...styles.chipRow, marginBottom: '0.5rem' }}>
               {filteredPickableGroups.map((g) => (
-                <GroupChip key={g.id} label={g.name} onClick={() => onApproveGroupSuggestion(g)} />
+                <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onApproveGroupSuggestion(g)} />
               ))}
             </div>
           )}
@@ -1327,6 +1367,7 @@ export function GroupDetailView({
             <AssociatedGroupChip
               key={g.id}
               group={g}
+              label={groupLabel(g.id, g.name)}
               onSelect={() => onSelectGroup(g)}
               onRemove={readOnly ? undefined : () => onRemoveAssociatedGroup(g)}
             />
@@ -1349,6 +1390,7 @@ export function GroupDetailView({
               <GroupSuggestionChip
                 key={g.id}
                 group={g}
+                label={groupLabel(g.id, g.name)}
                 onApprove={() => onApproveGroupSuggestion(g)}
                 onDeny={() => onDenyGroupSuggestion(g)}
               />
@@ -1387,7 +1429,7 @@ export function GroupDetailView({
               {groups.length > 0 && (
                 <div style={styles.chipRow}>
                   {groups.map((g) => (
-                    <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                    <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onSelectGroup(g)} />
                   ))}
                 </div>
               )}
@@ -1525,7 +1567,9 @@ export function GroupDetailView({
                   <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search groups…" />
                   <div style={styles.mergeResultsList}>
                     {otherGroups
-                      .filter((g) => (mergeSearch.trim() ? g.name.toLowerCase().includes(mergeSearch.trim().toLowerCase()) : false))
+                      .filter((g) =>
+                        mergeSearch.trim() ? groupLabel(g.id, g.name).toLowerCase().includes(mergeSearch.trim().toLowerCase()) : false
+                      )
                       .slice(0, 8)
                       .map((g) => (
                         <button
@@ -1534,7 +1578,7 @@ export function GroupDetailView({
                           onClick={() => onSelectMergeCandidate(g)}
                           style={styles.mergeResultButton}
                         >
-                          {g.name}
+                          {groupLabel(g.id, g.name)}
                         </button>
                       ))}
                   </div>
@@ -1547,7 +1591,7 @@ export function GroupDetailView({
               ) : (
                 <>
                   <span>
-                    Merge this group into "{mergeCandidate.name}"? All membership, event tags, associated groups, and notes
+                    Merge this group into "{groupLabel(mergeCandidate.id, mergeCandidate.name)}"? All membership, event tags, associated groups, and notes
                     move there, this group is deleted, and you'll be taken to the kept group. This can't be undone.
                   </span>
                   <div style={styles.suggestButtonRow}>
@@ -1748,14 +1792,17 @@ function SuggestionChip({
 // mode) simply never shows the hover badge.
 function AssociatedGroupChip({
   group,
+  label,
   onSelect,
   onRemove,
 }: {
   group: GroupRef
+  label?: string
   onSelect: () => void
   onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
+  const shown = label ?? group.name
 
   return (
     <div
@@ -1763,14 +1810,14 @@ function AssociatedGroupChip({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <GroupChip label={group.name} onClick={onSelect} />
+      <GroupChip label={shown} onClick={onSelect} />
       {hovered && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
             onRemove()
           }}
-          aria-label={`Remove ${group.name} as an associated group`}
+          aria-label={`Remove ${shown} as an associated group`}
           style={styles.denyBadge}
         >
           <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1790,14 +1837,17 @@ function AssociatedGroupChip({
 // as SuggestionChip above. Hovering reveals a small "×" badge that dismisses the suggestion.
 function GroupSuggestionChip({
   group,
+  label,
   onApprove,
   onDeny,
 }: {
   group: GroupRef
+  label?: string
   onApprove: () => void
   onDeny: () => void
 }) {
   const [hovered, setHovered] = useState(false)
+  const shown = label ?? group.name
 
   return (
     <div
@@ -1807,7 +1857,7 @@ function GroupSuggestionChip({
     >
       <button onClick={onApprove} style={styles.groupEventOnlyChip}>
         <span style={styles.groupDot} />
-        {group.name}
+        {shown}
       </button>
       {hovered && (
         <button
@@ -1815,7 +1865,7 @@ function GroupSuggestionChip({
             e.stopPropagation()
             onDeny()
           }}
-          aria-label={`Don't suggest ${group.name} again`}
+          aria-label={`Don't suggest ${shown} again`}
           style={styles.denyBadge}
         >
           ×

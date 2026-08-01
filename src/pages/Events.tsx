@@ -4,6 +4,7 @@ import { summarize } from '../lib/summarize'
 import { eventSortDate, formatEventWhen, formatFullDate } from '../lib/dates'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
+import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 
@@ -59,14 +60,21 @@ export function decorateMoments(moments: Moment[]): DecoratedMoment[] {
   })
 }
 
-export function filterMoments(decorated: DecoratedMoment[], search: string, tagFilter: string): DecoratedMoment[] {
+export function filterMoments(
+  decorated: DecoratedMoment[],
+  search: string,
+  tagFilter: string,
+  // Searches the same qualified string the chips display, so typing a parent group's name also
+  // finds events tagged to its subgroups. Defaults to the bare name (landing-page demo).
+  groupLabel: GroupLabelFn = (_id, fallbackName) => fallbackName
+): DecoratedMoment[] {
   const query = search.trim().toLowerCase()
   return decorated.filter(({ moment, attendees, summary, groups, tags }) => {
     if (tagFilter === 'untagged' && tags.length > 0) return false
     if (tagFilter !== 'all' && tagFilter !== 'untagged' && !tags.some((t) => t.name === tagFilter)) return false
     if (!query) return true
     const attendeeNames = Array.from(attendees.values()).map((p) => `${p.name} ${p.last_name ?? ''}`)
-    const groupNames = groups.map((g) => g.name)
+    const groupNames = groups.map((g) => groupLabel(g.id, g.name))
     const tagNames = tags.map((t) => t.name)
     const haystack = [moment.occasion, moment.location, summary, ...attendeeNames, ...groupNames, ...tagNames]
       .filter(Boolean)
@@ -108,6 +116,7 @@ export default function Events({
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [childrenByParentId, setChildrenByParentId] = useState<Map<string, ChildEventRef[]>>(new Map())
+  const groupRoster = useGroupRoster()
 
   useEffect(() => {
     loadMoments()
@@ -226,6 +235,7 @@ export default function Events({
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
       childrenByParentId={childrenByParentId}
+      groupLabel={groupRoster.label}
     />
   )
 }
@@ -248,6 +258,7 @@ export function EventsView({
   onSelectGroup,
   onSelectEvent,
   childrenByParentId = new Map(),
+  groupLabel = (_id, fallbackName) => fallbackName,
   readOnly = false,
 }: {
   moments: Moment[]
@@ -264,6 +275,8 @@ export function EventsView({
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   childrenByParentId?: Map<string, ChildEventRef[]>
+  // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
+  groupLabel?: GroupLabelFn
   readOnly?: boolean
 }) {
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
@@ -275,7 +288,7 @@ export function EventsView({
   const childIds = new Set(Array.from(childrenByParentId.values()).flat().map((c) => c.id))
   const rootMoments = moments.filter((m) => !childIds.has(m.id))
   const decorated = decorateMoments(rootMoments)
-  const filteredMoments = filterMoments(decorated, search, tagFilter)
+  const filteredMoments = filterMoments(decorated, search, tagFilter, groupLabel)
   const yearGroups = groupMomentsByYear(filteredMoments)
   const query = search.trim().toLowerCase()
 
@@ -383,7 +396,7 @@ export function EventsView({
                       {groups.length > 0 && (
                         <div style={styles.chipRow}>
                           {groups.map((g) => (
-                            <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                            <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onSelectGroup(g)} />
                           ))}
                         </div>
                       )}

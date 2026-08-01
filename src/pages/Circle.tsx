@@ -10,6 +10,7 @@ import { getRelationshipsForPerson } from '../lib/relationshipsTable'
 import { linkRelationship, createAndLinkRelationship, type CircleCategory } from '../lib/writeRelationship'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 import { PersonChip } from '../components/Chips'
+import { useGroupRoster } from '../lib/groupRoster'
 import SearchBox from '../components/SearchBox'
 
 type SelfPerson = { id: string; name: string; last_name: string | null }
@@ -51,6 +52,7 @@ export default function Circle({
   const [circleIds, setCircleIds] = useState<CircleIds>({ spouse: [], kids: [], parents: [], siblings: [] })
   const [groups, setGroups] = useState<GroupRef[]>([])
   const [reminders, setReminders] = useState<ReminderRef[]>([])
+  const groupRoster = useGroupRoster()
   const [onboardSearch, setOnboardSearch] = useState('')
   const [onboardBusy, setOnboardBusy] = useState(false)
 
@@ -244,14 +246,14 @@ export default function Circle({
               style={styles.familyGroupCard}
             >
               <div>
-                <div style={styles.groupName}>{g.name}</div>
+                <div style={styles.groupName}>{groupRoster.label(g.id, g.name)}</div>
                 <span style={styles.familyBadge}>Family</span>
               </div>
               <span style={styles.treeLink}>Tree →</span>
             </button>
           ) : (
             <button key={g.id} onClick={() => onSelectGroup(g)} style={styles.groupCard}>
-              <div style={styles.groupName}>{g.name}</div>
+              <div style={styles.groupName}>{groupRoster.label(g.id, g.name)}</div>
               {g.group_type && <span style={styles.groupBadge}>{g.group_type}</span>}
             </button>
           )

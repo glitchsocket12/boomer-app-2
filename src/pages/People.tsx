@@ -4,6 +4,7 @@ import { summarize } from '../lib/summarize'
 import { daysUntilNextOccurrence } from '../lib/dates'
 import { GroupChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
+import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 
 type GroupRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
@@ -84,6 +85,7 @@ export default function People({
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>('name-asc')
+  const groupRoster = useGroupRoster()
 
   // Load the current user's people, along with which groups and events
   // they're tied to, when the page opens
@@ -150,6 +152,7 @@ export default function People({
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
+      groupLabel={groupRoster.label}
     />
   )
 }
@@ -169,6 +172,7 @@ export function PeopleView({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  groupLabel = (_id, fallbackName) => fallbackName,
   readOnly = false,
 }: {
   peopleCount: number
@@ -183,6 +187,8 @@ export function PeopleView({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
+  groupLabel?: GroupLabelFn
   readOnly?: boolean
 }) {
   return (
@@ -229,6 +235,7 @@ export function PeopleView({
             onViewPerson={onSelectPerson}
             onSelectGroup={onSelectGroup}
             onSelectEvent={onSelectEvent}
+            groupLabel={groupLabel}
           />
         ))}
       </div>
@@ -244,11 +251,13 @@ function PersonCard({
   onViewPerson,
   onSelectGroup,
   onSelectEvent,
+  groupLabel,
 }: {
   person: Person
   onViewPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  groupLabel: GroupLabelFn
 }) {
   const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
 
@@ -278,7 +287,7 @@ function PersonCard({
           {shownGroups.length > 0 && (
             <div style={styles.chipRow}>
               {shownGroups.map((g) => (
-                <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onSelectGroup(g)} />
               ))}
               {groups.length > AFFILIATION_LIMIT && (
                 <span style={styles.moreText}>+{groups.length - AFFILIATION_LIMIT} more</span>

@@ -39,7 +39,10 @@ type Tab = 'home' | 'people' | 'events' | 'calendar' | 'groups'
 type AuthView = 'landing' | 'login' | 'signup' | 'demo'
 type Crumb =
   | { type: 'person'; id: string; label: string }
-  | { type: 'group'; id: string; label: string }
+  // displayLabel is what breadcrumbs and "← Back to …" SHOW; label stays the record's real name.
+  // Only groups set it, so a subgroup reads "Parent / Child" in the trail without that qualified
+  // string ever feeding back into GroupDetail's heading or rename field (which read `label`).
+  | { type: 'group'; id: string; label: string; displayLabel?: string }
   | { type: 'event'; id: string; label: string }
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
@@ -368,6 +371,18 @@ export default function App() {
     setNavStack((s) => (s.length === 0 ? s : [...s.slice(0, -1), { ...s[s.length - 1], label: newLabel }]))
   }
 
+  // A detail page reporting the label it wants SHOWN, which can differ from the record's own name
+  // (a subgroup shows "Parent / Child"). Kept separate from renameCurrentCrumb so the crumb's
+  // `label` — the string that comes back down as the page's own name — is never overwritten.
+  // Bails when unchanged so the reporting effect can't loop.
+  function setCurrentCrumbDisplayLabel(displayLabel: string) {
+    setNavStack((s) => {
+      const last = s[s.length - 1]
+      if (!last || last.type !== 'group' || last.displayLabel === displayLabel) return s
+      return [...s.slice(0, -1), { ...last, displayLabel }]
+    })
+  }
+
   if (checkingSession) {
     return <p style={{ textAlign: 'center', marginTop: '4rem' }}>Loading…</p>
   }
@@ -404,8 +419,11 @@ export default function App() {
   }
 
   const current = navStack[navStack.length - 1] ?? null
-  const parentLabel = navStack.length >= 2 ? navStack[navStack.length - 2].label : TAB_LABELS[view]
-  const feedbackPageLabel = current?.label ?? TAB_LABELS[view]
+  // Everything the founder READS (breadcrumb trail, "← Back to …", the feedback widget's page
+  // name) goes through this; anything a page consumes as a record's own name uses `label`.
+  const shownLabel = (crumb: Crumb) => ('displayLabel' in crumb && crumb.displayLabel) || crumb.label
+  const parentLabel = navStack.length >= 2 ? shownLabel(navStack[navStack.length - 2]) : TAB_LABELS[view]
+  const feedbackPageLabel = current ? shownLabel(current) : TAB_LABELS[view]
 
   const breadcrumbItems =
     navStack.length > 0
@@ -413,7 +431,7 @@ export default function App() {
           { label: 'Home', onClick: () => goToTab('home') },
           ...(view !== 'home' ? [{ label: TAB_LABELS[view], onClick: () => setNavStack([]) }] : []),
           ...navStack.map((crumb, i) =>
-            i === navStack.length - 1 ? { label: crumb.label } : { label: crumb.label, onClick: () => jumpTo(i) }
+            i === navStack.length - 1 ? { label: shownLabel(crumb) } : { label: shownLabel(crumb), onClick: () => jumpTo(i) }
           ),
         ]
       : null
@@ -445,6 +463,7 @@ export default function App() {
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onRenamed={renameCurrentCrumb}
+        onDisplayLabel={setCurrentCrumbDisplayLabel}
         onMerged={(g) => replaceCurrentCrumb({ type: 'group', id: g.id, label: g.name })}
         onOpenFamilyTree={(personId, label, memberIds) => pushCrumb({ type: 'familyTree', id: personId, label, memberIds })}
       />

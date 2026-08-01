@@ -46,6 +46,17 @@ src/
 │   ├── people.ts              — sortByLastName
 │   ├── groupTypes.ts          — GROUP_TYPES fixed list (Family/Friend group/School/
 │   │                            Team/Work), shared by Groups.tsx + GroupDetail.tsx
+│   ├── groupDisplayName.ts    — groupDisplayName(group, nameById) → "Parent / Child" for a
+│   │                            subgroup, bare name otherwise. Always qualifies (no
+│   │                            collision check). Single source of the format.
+│   ├── groupRoster.ts         — (2026-08-01) useGroupRoster() → { nameById, label(id,
+│   │                            fallbackName) }. One small `groups` select on mount, no
+│   │                            cache (converse can create a group server-side mid-chat, so
+│   │                            there's no reliable invalidation point). Fails open to the
+│   │                            bare name on error or unknown id. Used by Home/People/
+│   │                            Events/Circle/GroupDetail, which hold only {id, name} —
+│   │                            PersonDetail/EventDetail/the import-review pages already
+│   │                            load a full roster and call groupDisplayName directly.
 │   ├── relationshipsTable.ts  — browser-side upsertRelationship/getRelationshipsForPerson
 │   │                            against the `relationships` table (mirrors the Deno copy in
 │   │                            supabase/functions/_shared/)
@@ -1095,12 +1106,18 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               school group — one level deep only in the UI, arbitrary depth in schema;
               migrated live 2026-07-26). Subgroup membership is deliberately independent of
               the parent's — no sync trigger. One was added by mistake 2026-07-26 and removed
-              same day before ever being run (contradicted this design decision). Group-picker
-              labels everywhere a group gets tagged to something (EventDetail.tsx,
-              ImportReview.tsx, ContactImportReview.tsx, PersonDetail.tsx) render as
-              "Parent / Subgroup" via lib/groupDisplayName.ts so same-named subgroups under
-              different parents (e.g. two units each with a "Pilots" subgroup) stay
-              distinguishable — added 2026-07-30.
+              same day before ever being run (contradicted this design decision). Subgroup
+              names render as "Parent / Subgroup" APP-WIDE (2026-08-01, was pickers-only
+              2026-07-30) so same-named subgroups under different parents (e.g. two units each
+              with a "Pilots") stay distinguishable — lib/groupDisplayName.ts owns the format,
+              lib/groupRoster.ts's useGroupRoster() hook serves label(id, fallbackName) to any
+              site holding only {id, name}. Two deliberate BARE exceptions: a group's own h1 on
+              GroupDetail (has "↑ Part of X" one line below, and the rename field edits the bare
+              name) and the subgroup tiles on the parent's own page. Search filters match on the
+              qualified string, so typing a parent's name finds its subgroups.
+              Groups.tsx is intentionally untouched — its .is('parent_group_id', null) filter
+              means it can only ever list root groups; IF that root-only filter is ever removed,
+              its card title and search haystack must be qualified at the same time.
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
@@ -1345,6 +1362,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 69. **Photo gallery for Person/Group pages** — deferred from item 27's Google Photos build (2026-07-30). `PhotoGallery.tsx` only shows real photos when passed a `momentId` (EventDetail); Person/Group pages still show the original placeholder. Would mean aggregating photos across everything a person/group is tagged to (their moments) rather than one moment's own `photos` rows — not scoped yet.
 70. **`ContactImportReview.tsx` paginated + name-editable (2026-07-30)** — founder was facing all 1300+ `selected` candidates rendered on one page at once (unusable) with no way to fix a parsed-vCard name before it became a real profile. Now paginated at 20/card (mirrors `ContactSelection.tsx`'s pattern, smaller page since these cards are heavier); unmatched (new-person) candidates get editable First/Middle/Last inputs prefilled from the parsed name. Accept keeps its existing in-place "Saved contact info for X" confirmation (only refreshes the footer count); Reject refetches the page so the next candidate slides in. Verified live against the founder's real queue (1304 real selected candidates) with a temporary synthetic batch, fully cleaned up after — see PROJECT_HISTORY.md for that story. **Extended same day:** matched cards now show the linked person's current groups ("Already in: X, Y") fetched per-card on `linkedPersonId` change, so a match comes with visible proof it's really them (and those groups are excluded from the "Add to groups" picker to avoid offering a duplicate tag); a 3-way "All / Already in Boomer / New people" filter (keyed on `matched_person_id` being set, not `match_confidence`) lets the founder batch through quick confirms separately from the new-person decisions that need real attention.
 - ~~Google Photos import (item 27) is BUILT but NOT LIVE~~ — **backend fully deployed 2026-07-30**: founder completed Google Cloud Console setup (OAuth consent screen + Client ID/Secret), ran the migration, and created the private `photos` Storage bucket directly; `GOOGLE_PHOTOS_CLIENT_ID`/`GOOGLE_PHOTOS_CLIENT_SECRET` set as Supabase Edge Function secrets and all 3 Edge Functions (`google-photos-oauth-callback`/`google-photos-picker-session-create`/`google-photos-picker-session-import`) deployed via founder-provided access token — confirmed live via the token-free check (each returns `UNAUTHORIZED_NO_AUTH_HEADER`, not Supabase's `NOT_FOUND`), and `photo_connections`/`photo_clusters`/`photos` + all RLS policies (including `storage.objects`) confirmed present via a direct Management-API read. Vercel env var + Google Cloud client wiring done by the founder same day. **Bug found and fixed 2026-07-30 during live testing:** `App.tsx`'s mount-time history-state-sync effect called `window.history.replaceState(state, '', window.location.pathname)` — passing only the pathname (no search string) silently stripped any `?query` on every page load, including Google's `?code=...&state=...` on the OAuth callback redirect, so `GooglePhotosOAuthCallback.tsx` always saw an empty URL and failed with a false "That connection link looks invalid or expired" — 100% reproducible, not a flaky/stale-state issue as first suspected. Fixed by omitting the `url` argument entirely (`replaceState(state, '')`), which correctly leaves the current URL untouched — matching what the effect's own comment already said it was supposed to do. Verified locally: a callback URL with real query params now correctly reaches the token-exchange call instead of failing at the pre-check. **Known limitation, not a bug:** while the OAuth consent screen stays in Google's Testing mode, only Google accounts explicitly added as test users can connect — not real end users — until Google's app verification review completes.
+- **Founder action needed: deploy the 4 AI functions for subgroup-aware group names (2026-08-01)** — the display fix (§3 groupRoster.ts) is frontend-only and live. Underneath, `converse`/`add-fact`/`update-moment`/`scan-calendar-sources` still build their group rosters from BARE names and resolve the model's chosen group by lowercase name match, so two subgroups sharing a name silently collapse to whichever row won the index — a wrong-subgroup TAGGING bug, not just a display one. Confirmed live 2026-08-01: asked the real account "Who is in the Pilots subgroup?" and `converse` replied it couldn't tell the two "Pilots" apart. Fix = feed qualified "Parent / Child" names into the rosters and resolve back to ids by that string. No code written yet (founder scoped this session to screens only); needs a founder-provided access token to deploy.
 - Not production-hardened generally: no 2FA/access-control story, minimal tests.
 - **Founder action needed: deploy `add-fact` (item 61 fix)** — `npx supabase functions deploy add-fact --project-ref dedtnytxhzzjimkozncc` with a founder-provided access token (no token available this session). Until deployed, the live function still has the first-person misattribution bug.
 - **Founder action needed: run `migrations_manual/2026-07-26-gender.sql`** (item 44) — adds the nullable `people.gender` column. Code (PersonDetail's gender dropdown, FamilyTree's ♂/♀ glyph) already deployed and verified in browser preview — it fails open (no crash, no icons/saves) until this runs, so nothing breaks in the gap, but nothing persists either.

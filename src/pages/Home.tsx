@@ -11,6 +11,7 @@ import RelationshipSuggestionBanners, {
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
 import DevOnboardingReset from '../components/DevOnboardingReset'
+import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import {
   loadConnectionSuggestions,
   acceptConnectionSuggestion,
@@ -80,6 +81,7 @@ export default function Home({
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [connectionSuggestions, setConnectionSuggestions] = useState<ConnectionSuggestion[]>([])
+  const groupRoster = useGroupRoster()
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -268,6 +270,7 @@ export default function Home({
       setRelationshipSuggestions={setRelationshipSuggestions}
       newPersonSuggestions={newPersonSuggestions}
       setNewPersonSuggestions={setNewPersonSuggestions}
+      groupLabel={groupRoster.label}
       connectionSuggestions={connectionSuggestions}
       onAcceptConnection={handleAcceptConnection}
       onDismissConnection={handleDismissConnection}
@@ -313,6 +316,7 @@ export function HomeView({
   setRelationshipSuggestions,
   newPersonSuggestions,
   setNewPersonSuggestions,
+  groupLabel = (_id, fallbackName) => fallbackName,
   connectionSuggestions = [],
   onAcceptConnection,
   onDismissConnection,
@@ -350,6 +354,8 @@ export function HomeView({
   setRelationshipSuggestions: Dispatch<SetStateAction<RelationshipSuggestion[]>>
   newPersonSuggestions: NewPersonSuggestion[]
   setNewPersonSuggestions: Dispatch<SetStateAction<NewPersonSuggestion[]>>
+  // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
+  groupLabel?: GroupLabelFn
   connectionSuggestions?: ConnectionSuggestion[]
   onAcceptConnection?: (suggestion: ConnectionSuggestion) => void
   onDismissConnection?: (suggestion: ConnectionSuggestion) => void
@@ -497,7 +503,7 @@ export function HomeView({
                         </button>{' '}
                         to{' '}
                         <button onClick={() => onSelectGroup(s.group)} style={styles.connectionLink}>
-                          {s.group.name}
+                          {groupLabel(s.group.id, s.group.name)}
                         </button>
                         ?
                       </span>
@@ -556,7 +562,7 @@ export function HomeView({
                   <EventChip key={e.id} label={e.summary} onClick={() => onSelectEvent(e)} />
                 ))}
                 {m.groups?.map((g) => (
-                  <GroupChip key={g.id} label={g.name} onClick={() => onSelectGroup(g)} />
+                  <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onSelectGroup(g)} />
                 ))}
               </div>
             )}

@@ -25,7 +25,7 @@ export type Note = {
   moments: { id: string; occasion: string | null; raw_description: string } | null
   source: string | null
   source_group_id: string | null
-  groups: { id: string; name: string } | null
+  groups: { id: string; name: string; parent_group_id?: string | null } | null
 }
 
 export type GroupRef = { id: string; name: string; parent_group_id?: string | null }
@@ -197,6 +197,15 @@ export default function PersonDetail({
     setAllGroupsList((data as GroupRef[]) ?? [])
   }
 
+  // The "✓ Also added … to …" banner names a group the same way the chips above it do, so a
+  // subgroup doesn't read as a bare "Pilots". A group created by the very call that produced the
+  // banner isn't in allGroupsList yet — that falls back to the bare name it came back with.
+  function labelForGroupId(id: string | null | undefined, fallbackName: string): string {
+    const group = allGroupsList.find((g) => g.id === id)
+    if (!group) return fallbackName
+    return groupDisplayName(group, new Map(allGroupsList.map((g) => [g.id, g.name])))
+  }
+
   useEffect(() => {
     if (loading || person?.last_name) {
       if (!loading) setLastNameSuggestion(null)
@@ -275,7 +284,7 @@ export default function PersonDetail({
       supabase
         .from('notes')
         .select(
-          'id, content, created_at, moment_id, moments(id, occasion, raw_description), source, source_group_id, groups:groups!notes_source_group_id_fkey(id, name)'
+          'id, content, created_at, moment_id, moments(id, occasion, raw_description), source, source_group_id, groups:groups!notes_source_group_id_fkey(id, name, parent_group_id)'
         )
         .eq('person_id', personId)
         .order('created_at', { ascending: false }),
@@ -321,7 +330,7 @@ export default function PersonDetail({
       return
     }
 
-    if (data?.groupTag) setGroupTagMessage(data.groupTag.name)
+    if (data?.groupTag) setGroupTagMessage(labelForGroupId(data.groupTag.id, data.groupTag.name))
     if (data?.suggestedGroup) setSuggestedGroup(data.suggestedGroup)
     if (data?.familyTags?.length > 0) {
       const names: string[] = data.familyTags.map((t: { name: string }) => t.name)
@@ -487,7 +496,7 @@ export default function PersonDetail({
       await supabase
         .from('person_groups')
         .upsert({ person_id: personId, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
-      setGroupTagMessage(match?.name ?? groupName)
+      setGroupTagMessage(labelForGroupId(match?.id, match?.name ?? groupName))
       loadData()
     }
   }
@@ -1200,6 +1209,7 @@ export function PersonDetailView({
                 <NoteCard
                   key={note.id}
                   note={note}
+                  sourceGroupLabel={note.groups ? groupDisplayName(note.groups, groupNameById) : null}
                   onSelectEvent={onSelectEvent}
                   onSelectGroup={onSelectGroup}
                   onEdit={readOnly ? undefined : onEditNote}
@@ -1398,12 +1408,16 @@ function KeyFactItem({
 // `onEdit`/`onDelete` omitted (demo read-only mode) simply never shows the hover badges.
 function NoteCard({
   note,
+  sourceGroupLabel = null,
   onSelectEvent,
   onSelectGroup,
   onEdit,
   onDelete,
 }: {
   note: Note
+  // Pre-qualified "Parent / Child" for the source group, built by the caller from the full
+  // roster. Null (the demo's default) falls back to the bare name below.
+  sourceGroupLabel?: string | null
   onSelectEvent: (event: { id: string; summary: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onEdit?: (noteId: string, newContent: string) => void
@@ -1463,7 +1477,7 @@ function NoteCard({
               style={styles.noteSourceButton}
               onClick={() => onSelectGroup({ id: note.groups!.id, name: note.groups!.name })}
             >
-              From: {note.groups.name}
+              From: {sourceGroupLabel ?? note.groups.name}
             </button>
           ) : note.source === 'home' ? (
             <span style={styles.noteSourceTag}>From Home</span>
