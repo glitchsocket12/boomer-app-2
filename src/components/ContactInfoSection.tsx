@@ -4,7 +4,9 @@ import { upsertReminder } from '../lib/reminders'
 import AddressSuggestInput from './AddressSuggestInput'
 import EditButton from './EditButton'
 
-type LabeledValue = { label: string; value: string }
+// Exported for PetsSection, which reuses LabeledValueEditor below for a pet's free-form "Details"
+// rows (Barn, Tank, Vet…) — same {label, value} shape, same editor, no second implementation.
+export type LabeledValue = { label: string; value: string }
 type Address = { label: string; street: string | null; city: string | null; state: string | null; zip: string | null; country: string | null }
 type ContactData = {
   organization: string | null
@@ -241,16 +243,18 @@ function DateFields({ label, value, onChange }: { label: string; value: Birthday
   )
 }
 
-function LabeledValueEditor({
+export function LabeledValueEditor({
   label,
   items,
   onChange,
   valuePlaceholder,
+  labelPlaceholder = 'Label (Home, Work…)',
 }: {
   label: string
   items: LabeledValue[]
   onChange: (items: LabeledValue[]) => void
   valuePlaceholder: string
+  labelPlaceholder?: string
 }) {
   const [newLabel, setNewLabel] = useState('')
   const [newValue, setNewValue] = useState('')
@@ -272,7 +276,7 @@ function LabeledValueEditor({
         </div>
       ))}
       <div style={styles.addRow}>
-        <input type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (Home, Work…)" style={styles.addLabelInput} />
+        <input type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder={labelPlaceholder} style={styles.addLabelInput} />
         <input type="text" value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder={valuePlaceholder} style={styles.addValueInput} />
         <button type="button" onClick={add} style={styles.addButton}>+ Add</button>
       </div>

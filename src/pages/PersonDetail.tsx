@@ -6,6 +6,8 @@ import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import PhotoGallery from '../components/PhotoGallery'
 import ContactInfoSection from '../components/ContactInfoSection'
+import PetsSection from '../components/PetsSection'
+import type { Pet } from '../lib/pets'
 import RefreshButton from '../components/RefreshButton'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
@@ -760,6 +762,9 @@ export function PersonDetailView({
   gender = null,
   savingGender = false,
   onChangeGender = () => {},
+  // Left undefined by the live container on purpose — PetsSection runs its own isolated query.
+  // Only the demo passes this, so the public demo makes no Supabase call for pets.
+  pets = undefined,
   newFact = '',
   onNewFactChange = () => {},
   saving = false,
@@ -841,6 +846,7 @@ export function PersonDetailView({
   gender?: string | null
   savingGender?: boolean
   onChangeGender?: (value: string) => void
+  pets?: Pet[]
   newFact?: string
   onNewFactChange?: (v: string) => void
   saving?: boolean
@@ -1041,6 +1047,8 @@ export function PersonDetailView({
       )}
 
       {!loading && <ContactInfoSection personId={personId} readOnly={readOnly} />}
+
+      {!loading && <PetsSection personId={personId} readOnly={readOnly} pets={pets} />}
 
       {!loading && (
         <>

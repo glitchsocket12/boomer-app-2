@@ -63,6 +63,9 @@ export default function DemoPersonDetail({
       onSelectEvent={onSelectEvent}
       onOpenFamilyTree={onOpenFamilyTree}
       onRefreshFacts={() => {}}
+      // Static (empty) rather than left undefined: passing it stops PetsSection querying Supabase,
+      // which the public demo must never do. Demo pet content is a later content pass.
+      pets={[]}
       readOnly
     />
   )
