@@ -7,6 +7,7 @@ import {
   FAMILY_SIGNAL_JSON_FIELD_SINGLE_SUBJECT,
 } from "../_shared/relationships.ts"
 import { findSelfPerson } from "../_shared/selfContext.ts"
+import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,8 +53,11 @@ serve(async (req) => {
     const anniversary = reminders.find((r) => r.label === "Anniversary")
     const personFullName = person ? (person.last_name ? `${person.name} ${person.last_name}` : person.name) : "this person"
 
-    const { data: existingGroups } = await supabaseClient.from("groups").select("id, name")
-    const groupsRoster = (existingGroups ?? []).map((g) => g.name).join(", ")
+    const { data: existingGroups } = await supabaseClient.from("groups").select("id, name, parent_group_id")
+    // Qualified "Parent / Child" names so a subgroup can be told apart from a same-named one under
+    // a different parent — see _shared/groupNames.ts.
+    const groupIndex = buildGroupNameIndex(existingGroups ?? [])
+    const groupsRoster = (existingGroups ?? []).map((g) => groupIndex.nameById[g.id]).join(", ")
 
     const { data: allPeople } = await supabaseClient
       .from("people")
@@ -116,6 +120,7 @@ Respond ONLY with a JSON object in this exact shape:
 - If the text strongly implies a shared group-like affiliation but is too vague/generic to be sure it should reuse or create a specific group (e.g. "was a high school friend of mine", "we used to work together", "friend from my running club"), set {"group_name": "<your best short label for it, e.g. 'High School Friends'>", "confidence": "medium"}.
 - If there's no group affiliation signal at all (most facts — a relationship, a preference, a physical description, a birthday, etc.), set "group_signal" to null.
 Never set a group_signal for a single one-off event or a bare location mention.
+- A group on file written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "Parent". When you mean one already on file, copy its name EXACTLY as listed, including that "Parent / Child" form — a bare "Pilots" when two are on file cannot be resolved and the tag is dropped. Only use that form for a brand-new group if you specifically mean a new subgroup under an existing parent.
 
 ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
 
@@ -203,21 +208,24 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
     let suggestedGroup: string | null = null
 
     if (result.group_signal?.group_name && user) {
-      const key = result.group_signal.group_name.toLowerCase()
-      const match = (existingGroups ?? []).find((g) => g.name.toLowerCase() === key)
+      const matchId = groupIndex.resolve(result.group_signal.group_name)
 
       if (result.group_signal.confidence === "high") {
-        let groupId = match?.id ?? null
-        let groupName = match?.name ?? result.group_signal.group_name
+        let groupId = matchId
+        let groupName = matchId ? groupIndex.nameById[matchId] : result.group_signal.group_name
         if (!groupId) {
+          // "<existing group> / Something" becomes a real subgroup rather than a group literally
+          // named that — same reasoning as converse's findOrCreateGroupId.
+          const { parentId, childName } = groupIndex.splitParent(result.group_signal.group_name)
           const { data: newGroup } = await supabaseClient
             .from("groups")
-            .insert({ user_id: user.id, name: result.group_signal.group_name })
+            .insert({ user_id: user.id, name: childName, parent_group_id: parentId })
             .select()
             .single()
           if (newGroup) {
+            groupIndex.add(newGroup)
             groupId = newGroup.id
-            groupName = newGroup.name
+            groupName = groupIndex.nameById[newGroup.id]
           }
         }
         if (groupId) {
@@ -227,7 +235,7 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
           groupTag = { id: groupId, name: groupName }
         }
       } else if (result.group_signal.confidence === "medium") {
-        suggestedGroup = match?.name ?? result.group_signal.group_name
+        suggestedGroup = matchId ? groupIndex.nameById[matchId] : result.group_signal.group_name
       }
     }
 

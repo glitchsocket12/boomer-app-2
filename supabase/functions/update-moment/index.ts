@@ -10,6 +10,7 @@ import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
+import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
 
 const corsHeaders = {
@@ -63,7 +64,7 @@ serve(async (req) => {
       supabaseClient
         .from("people")
         .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self"),
-      supabaseClient.from("groups").select("id, name"),
+      supabaseClient.from("groups").select("id, name, parent_group_id"),
       supabaseClient.from("moment_groups").select("group_id").eq("moment_id", momentId),
       supabaseClient.from("moments").select("occasion, when_text").neq("id", momentId),
     ])
@@ -73,17 +74,15 @@ serve(async (req) => {
       .filter(Boolean)
       .join(", ")
 
-    const groupNameById: Record<string, string> = {}
-    const idByGroupName: Record<string, string> = {}
-    for (const g of existingGroups ?? []) {
-      groupNameById[g.id] = g.name
-      idByGroupName[g.name.toLowerCase()] = g.id
-    }
+    // Qualified "Parent / Child" names so a subgroup can be told apart from a same-named one under
+    // a different parent — see _shared/groupNames.ts.
+    const groupIndex = buildGroupNameIndex(existingGroups ?? [])
+    const groupNameById = groupIndex.nameById
     const taggedGroupIds = new Set((existingMomentGroups ?? []).map((mg: any) => mg.group_id))
     const taggedGroupNames = Array.from(taggedGroupIds)
       .map((id) => groupNameById[id])
       .filter(Boolean)
-    const groupsRoster = (existingGroups ?? []).map((g) => g.name).join(", ")
+    const groupsRoster = (existingGroups ?? []).map((g) => groupNameById[g.id]).join(", ")
 
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
@@ -166,7 +165,7 @@ CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "a
 - "location" / "occasion": only set when the user is giving new or corrected info for that specific field.
 Leave any of these five keys null when the user didn't touch that field this turn.
 
-"add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Associated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster provided in this prompt if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail.`
+"add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Associated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster provided in this prompt if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail. A group in the roster written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "Parent" — when you mean one already on file, copy its name EXACTLY as listed including that form, since a bare "Pilots" when two are on file can't be resolved and the tag is dropped. If the user's phrasing doesn't make clear which same-named subgroup they mean, ask instead of guessing. Only use the "Parent / Child" form for a new group when you specifically mean a new subgroup under an existing parent.`
 
     // Roster tier — people/groups/other-events, which barely change while the user is mid-
     // conversation adding detail to just this one moment. Its own breakpoint, ordered BEFORE this
@@ -355,17 +354,19 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
 
     let groupsTagged = 0
     for (const groupName of parsed.add_groups ?? []) {
-      const key = groupName.toLowerCase()
-      let groupId = idByGroupName[key]
+      let groupId = groupIndex.resolve(groupName)
       if (!groupId) {
+        // "<existing group> / Something" becomes a real subgroup rather than a group literally
+        // named that — same reasoning as converse's findOrCreateGroupId.
+        const { parentId, childName } = groupIndex.splitParent(groupName)
         const { data: newGroup } = await supabaseClient
           .from("groups")
-          .insert({ user_id: user.id, name: groupName })
+          .insert({ user_id: user.id, name: childName, parent_group_id: parentId })
           .select()
           .single()
         if (newGroup) {
+          groupIndex.add(newGroup)
           groupId = newGroup.id
-          idByGroupName[key] = groupId
         }
       }
       if (groupId && !taggedGroupIds.has(groupId)) {

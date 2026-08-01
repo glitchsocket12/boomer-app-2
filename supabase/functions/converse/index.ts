@@ -11,6 +11,7 @@ import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 import { buildChatToneInstruction, getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone, fullDateInTimeZone } from "../_shared/tz.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
+import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -67,7 +68,7 @@ serve(async (req) => {
         .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
         .order("id")
         .order("created_at", { foreignTable: "notes" }),
-      supabaseClient.from("groups").select("id, name").order("id"),
+      supabaseClient.from("groups").select("id, name, parent_group_id").order("id"),
       supabaseClient
         .from("person_groups")
         .select("person_id, group_id")
@@ -122,12 +123,11 @@ serve(async (req) => {
     }
     for (const key of ambiguousKeys) delete idByName[key]
 
-    const groupNameById: Record<string, string> = {}
-    const idByGroupName: Record<string, string> = {}
-    for (const g of groups ?? []) {
-      groupNameById[g.id] = g.name
-      idByGroupName[g.name.toLowerCase()] = g.id
-    }
+    // Qualified "Parent / Child" names throughout — the model sees them in the roster below and
+    // hands them back, and groupIndex.resolve maps them to a real id. A bare name shared by two
+    // subgroups deliberately resolves to nothing rather than to whichever was indexed last.
+    const groupIndex = buildGroupNameIndex(groups ?? [])
+    const groupNameById = groupIndex.nameById
 
     const tagNameById: Record<string, string> = {}
     const idByTagName: Record<string, string> = {}
@@ -163,7 +163,7 @@ serve(async (req) => {
       .join("\n")
 
     const groupsContext = (groups ?? [])
-      .map((g: any) => `${g.name} (members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"})`)
+      .map((g: any) => `${groupNameById[g.id]} (members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"})`)
       .join("\n")
 
     const tagsContext = (tags ?? []).map((t: any) => t.name).join(", ")
@@ -199,6 +199,7 @@ A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, 
 - If the user explicitly says a specific person belongs to one of these same affiliations — e.g. "he was on my Pop Warner team too," "she went through the Academy with me" — tag that person into the group via "person_group_tags" (this is turn-level, not tied to any one moment entry).
 - Don't invent a group from a passing mention of a place or a single unaffiliated event. Only tag a group when the user's own framing is about a recurring school/team/unit/organization, not a one-time location.
 - Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in that entry's "moment_groups" rather than waiting for a second, more explicit mention.
+- SUBGROUPS: a group in the roster written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "22 AS". When you mean an existing group, copy its name from the roster EXACTLY, including the "Parent / Child" form — a bare "Pilots" when the roster has two of them cannot be resolved and the tag will be dropped. Two different parents can each have a subgroup with the same short name, so if the user's phrasing doesn't make clear which one they mean, ask a quick clarifying question instead of guessing. When you're deliberately creating a NEW subgroup under an existing parent, write it in that same "Parent / Child" form; for any other new group, just give its plain name with no prefix.
 
 A TAG is completely different from a group: it describes WHAT KIND of thing a moment was (e.g. "milestone," "vacation," "medical," "tradition," "reunion"), not WHO it's affiliated with. Never put the same word in both "moment_groups" and "moment_tags" for one entry — a Pop Warner story gets "Pop Warner" as a group (who/what recurring affiliation) and, separately, maybe "milestone" as a tag (what kind of thing it was), only if it genuinely reads as a big/notable moment. When a moment's content clearly suggests a kind of event worth categorizing this way, add 1-3 tags to that entry's "moment_tags" — never more than 3, and always prefer reusing an exact (case-insensitive) match from the tags already created (shown below) over coining a new, similar-but-different one (e.g. reuse "milestone" rather than adding "big milestone" or "major milestone" as a separate tag). If nothing about the moment clearly fits an existing or obviously-new category, leave "moment_tags" empty rather than forcing one.
 
@@ -420,15 +421,21 @@ ${context || "(none recorded yet)"}`
     )
 
     async function findOrCreateGroupId(name: string): Promise<string | null> {
-      const key = name.toLowerCase()
-      if (idByGroupName[key]) return idByGroupName[key]
+      const existing = groupIndex.resolve(name)
+      if (existing) return existing
+      // Nothing matched. If the model wrote "<existing group> / Something", it's asking for a
+      // subgroup under that parent — create it as one rather than as a group literally named
+      // "22 AS / Something". A bare name with two existing owners resolves to null above and
+      // lands here too; splitParent leaves it alone, so we'd create a genuinely new group rather
+      // than guess which of the two the user meant.
+      const { parentId, childName } = groupIndex.splitParent(name)
       const { data: newGroup } = await supabaseClient
         .from("groups")
-        .insert({ user_id: user.id, name })
+        .insert({ user_id: user.id, name: childName, parent_group_id: parentId })
         .select()
         .single()
       if (newGroup) {
-        idByGroupName[key] = newGroup.id
+        groupIndex.add(newGroup)
         return newGroup.id
       }
       return null

@@ -4,6 +4,7 @@ import { parseIcs, icsDateToIsoDate, icsEndDateToIsoDate, type IcsEvent } from "
 import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
 import { formatEventDateText } from "../_shared/eventDates.ts"
+import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,7 +31,7 @@ Don't guess at dates — the exact start/end date is already known from the cale
 
 "suggested_tags": 1-3 short tags that fit this event. Reusing an existing tag from the roster given separately below is strongly preferred — check whether a word right in the event's own title (e.g. "wedding", "reunion", "graduation", "birthday") matches or is a close synonym of an existing tag name (case-insensitive) before proposing anything new. Only coin a genuinely new tag name when nothing existing is even a close fit — don't create a near-duplicate of a tag that already covers the same idea (e.g. don't add "grad party" if "graduation" already exists). Empty array if nothing fits.
 
-"suggested_group": at most one group this event clearly belongs to, from the EXISTING groups roster given separately below — copy its name EXACTLY. A group is a recurring, ongoing affiliation (a school, team, workplace, military unit, or friend circle), not a one-off detail. Only set this when the event title/description clearly signals that recurring affiliation (e.g. an event named after a known group). Never invent a new group name here — use null if nothing in the roster clearly fits.
+"suggested_group": at most one group this event clearly belongs to, from the EXISTING groups roster given separately below — copy its name EXACTLY. A group is a recurring, ongoing affiliation (a school, team, workplace, military unit, or friend circle), not a one-off detail. Only set this when the event title/description clearly signals that recurring affiliation (e.g. an event named after a known group). Never invent a new group name here — use null if nothing in the roster clearly fits. A roster entry written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "Parent"; copy that whole form exactly, since a bare "Pilots" when two are on file resolves to nothing and the suggestion is dropped. If you can't tell which same-named subgroup an event belongs to, use null.
 
 "mentioned_people": specific individuals named directly in the title or description (e.g. "Sid and Kate's wedding" → ["Sid", "Kate"]; "Catching up with Connor Chavez" → ["Connor Chavez"]) — first name alone is fine if that's all the title gives. Don't include the calendar owner, generic roles ("the team", "family"), or places/things that aren't a person's name. These get cross-checked separately against the founder's own people — you don't need the roster for this field, just pull out whatever names are actually written in the text. Empty array if no one is named.
 
@@ -230,7 +231,7 @@ async function scanUser(
     supabase.from("calendar_sources").select("id, ical_url, label, source_type").eq("user_id", userId),
     supabase.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self").eq("user_id", userId),
     supabase.from("tags").select("name").eq("user_id", userId),
-    supabase.from("groups").select("id, name").eq("user_id", userId),
+    supabase.from("groups").select("id, name, parent_group_id").eq("user_id", userId),
     supabase.from("moment_import_candidates").select("id, ical_uid, status, event_date, event_end_date").eq("user_id", userId),
     supabase.from("birthday_import_candidates").select("ical_uid").eq("user_id", userId),
   ])
@@ -289,9 +290,11 @@ async function scanUser(
   const selfPersonId = (peopleRes.data ?? []).find((p: any) => p.is_self)?.id ?? null
 
   const tagNames = (tagsRes.data ?? []).map((t: any) => t.name)
-  const idByGroupName: Record<string, string> = {}
-  for (const g of groupsRes.data ?? []) idByGroupName[String(g.name).toLowerCase()] = g.id
-  const groupNames = (groupsRes.data ?? []).map((g: any) => g.name)
+  // Qualified "Parent / Child" names so a subgroup can be told apart from a same-named one under
+  // a different parent — see _shared/groupNames.ts. This function only ever resolves to an
+  // existing group (it never creates one), so an unresolvable name simply suggests nothing.
+  const groupIndex = buildGroupNameIndex((groupsRes.data ?? []) as any)
+  const groupNames = (groupsRes.data ?? []).map((g: any) => groupIndex.nameById[g.id])
 
   // Group affiliation, for the "two+ resolved attendees share a group" inference below (e.g. a
   // wedding whose bride and groom both trace to "East High" gets that group suggested even
@@ -559,7 +562,7 @@ async function scanUser(
             }
           }
 
-          const groupIdFromTitle = r.suggested_group ? idByGroupName[r.suggested_group.toLowerCase()] : null
+          const groupIdFromTitle = r.suggested_group ? groupIndex.resolve(r.suggested_group) : null
           const resolvedPersonIds = suggestedPeople.map((p) => p.matched_person_id).filter((id): id is string => Boolean(id))
           const groupIdsFromSharedMembership = groupsSharedByMultiple(resolvedPersonIds)
           // A family-name match is already a strong, explicit per-person signal (the text named
