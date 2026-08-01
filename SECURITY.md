@@ -69,20 +69,25 @@ This is the thing that would keep two users' notes apart. It's the right way to 
 
 Read plainly: the foundation is sound. Whoever told you this would be too complex to look at was wrong — it took an afternoon, and it's in better shape than most.
 
-### What I could not verify, and why it matters
+### The isolation wall — VERIFIED 2026-08-01
 
-**The oldest tables have no proof.**
+This was the open question in the first draft of this document: `people`, `moments`, `notes`, `groups`, `person_groups`, `reminders`, `home_suggestions` were created by hand in the Supabase dashboard before the project started recording database changes, so nothing proved they'd been given the rule.
 
-`people`, `moments`, `notes`, `groups`, `person_groups`, `reminders`, `home_suggestions` were created by hand in the Supabase dashboard, early on, before the project started writing down a record of every database change. Every table created *since* has that record, and every one of them has the rule. The old ones probably do too — but "probably" is doing real work in that sentence, and those are the tables with all your actual content in them.
+**They had it. All of them.** The founder ran `supabase/migrations_manual/2026-08-01-rls-audit.sql` against the live database:
 
-**Run `supabase/migrations_manual/2026-08-01-rls-audit.sql`.** Paste it into the Supabase SQL Editor and hit Run. It only looks; it changes nothing. It prints every table alongside whether the rule is on and what the rule says, and the file itself explains what a good result and a bad result look like.
+- **All 23 tables protected**, including `storage.objects` (the photos bucket).
+- **Every read rule scoped to the owner** — either `auth.uid() = user_id` directly, or an ownership check through the parent table for the join tables (`person_groups`, `moment_tags`, `moment_groups`, `notes`, `reminders`, `group_associations`).
+- **Nothing wide open.** No policy anywhere evaluates to a bare `true`.
 
-That's a five-minute job and it converts the biggest unknown here into a known.
+**Why the undocumented tables were covered anyway:** the database has an event trigger called `rls_auto_enable`, installed by the original Bolt/StackBlitz scaffold, which automatically switches RLS on for every table created in `public`. It's been catching them the whole time. It's also written correctly — it pins its own `search_path`, which is the right hardening for a `SECURITY DEFINER` function. **Leave it in place.** Re-run the audit script any time to re-confirm; it's read-only and safe to repeat.
+
+This is the single most important line in this document: **the wall is real, and it's verified, not assumed.**
 
 ### The gaps, honestly
 
 Ranked by how much they'd actually matter:
 
+0. **Two small loose ends from the 2026-08-01 audit**, both low severity, neither a read leak. (a) `group_associations`' rule only checks `group_id_a` belongs to you, not `group_id_b` — so a hand-crafted API call could link your group to a stranger's. Nothing leaks (reading the other group is still blocked by `groups`' own rule), it just allows junk rows; the app itself never writes that shape. (b) Four INSERT policies (`home_suggestions`, `notes_group_insert`, `photo_connections`, `relationships_insert_own`) showed blank in the audit's read column, because INSERT rules only have a *write* condition. Two of them (`photo_connections`, `relationships_insert_own`) are confirmed correct from their checked-in migration files; the other two have no migration file, so they're **still unverified**. Section 3 of the audit script now prints these — re-run it to close this out. Worst case if one is wrong: someone could create rows owned by another account, which is data being pushed in rather than pulled out. Also worth knowing: `notes` carries six overlapping rules because a note can hang off a person, a moment, or a group. It's correct today, but it's the most intricate rule set in the database — **if a fourth kind of note is ever added, re-run the audit and re-read that group specifically.**
 1. **No limit on how fast anyone can use the AI.** Section 1 mostly handles this by removing the strangers. Real rate limiting is still worth adding before beta testers.
 2. **Anyone with your Supabase dashboard login can read every note.** That's you today. It stays true for any employee or contractor you ever add. Only real end-to-end encryption changes it — see section 4.
 3. **Email confirmation is switched off**, so accounts can be made with addresses that don't exist. Needs turning back on before real users, along with a working confirmation email.

@@ -4,174 +4,128 @@
 --
 -- WHAT THIS IS FOR
 --
--- Every table in Boomer is supposed to have a rule attached that says "only
--- hand back rows belonging to the person asking." That rule is called RLS
--- (Row Level Security). It's enforced by the database itself, not by app
--- code — which is what makes it trustworthy.
+-- Every table is supposed to have a rule attached saying "only hand back rows
+-- belonging to the person asking." That's RLS (Row Level Security), and it's
+-- enforced by the database itself rather than by app code — which is what
+-- makes it trustworthy.
 --
--- The problem: the oldest tables (people, moments, notes, groups,
+-- The original worry: the oldest tables (people, moments, notes, groups,
 -- person_groups, reminders, home_suggestions) were created by hand in the
--- Supabase dashboard, before we started writing migration files down. So
--- there is no record in this repo proving they got that rule. PROJECT_CONTEXT
--- says "RLS on everything" — but that's a claim, not evidence.
+-- Supabase dashboard before migrations were being written down, so nothing in
+-- this repo proved they'd got the rule.
 --
--- This script produces the evidence.
+-- RESULT, 2026-08-01: all 23 tables protected, every read rule scoped to the
+-- owner, nothing wide open. The reason the undocumented tables were covered is
+-- `rls_auto_enable` (section 3 below) — an event trigger installed by the
+-- original Bolt/StackBlitz scaffold that switches RLS on automatically for
+-- every new table in `public`. Re-run this script any time to re-confirm.
 --
 -- HOW TO RUN IT
 --
 --   1. Supabase Dashboard -> SQL Editor -> New query
 --   2. Paste this whole file, click Run
---   3. Read the results below (four separate result sets)
+--   3. Read the single table of results
 --
 -- It only ever SELECTs. It cannot break anything. Run it as often as you like.
 --
+-- NOTE: this is deliberately ONE query returning one combined table. An
+-- earlier version used four separate statements, and Supabase's SQL Editor
+-- only displays the LAST result set — so three quarters of the audit silently
+-- vanished. If you extend this, keep it to a single UNION'd statement.
+--
+-- WHAT GOOD LOOKS LIKE
+--
+--   Section 1 - every row says "protected".
+--               Anything saying "*** NOT PROTECTED - LEAK ***" means that
+--               table is readable by any logged-in account. Fix immediately.
+--
+--   Section 2 - every row says "scoped to owner - good" or "write-only rule".
+--               Anything saying "*** WIDE OPEN ***" is a lock that's never
+--               locked. Anything saying "READ THIS ONE MANUALLY" needs eyes.
+--
+--   Section 3 - the WITH CHECK expressions (the rules for WRITING rows).
+--               Every row should mention auth.uid(). A bare "true" here would
+--               let someone create rows owned by another account — data being
+--               pushed in rather than pulled out, so less severe than a read
+--               leak, but still wrong.
+--
+--   Section 4 - the auto-protect hook's source, for reference.
+--
+--   Section 5 - functions allowed to ignore RLS entirely. Should be exactly
+--               ONE: platform_stats, the Landing page's counter, which returns
+--               four numbers and nothing else. Anything else here, especially
+--               anything returning rows, is a public data leak.
+--
 -- ============================================================================
 
+with t as (
+  select
+    n.nspname  as sch,
+    c.relname  as obj,
+    c.relrowsecurity as rls_on,
+    (select count(*) from pg_policies p
+      where p.schemaname = n.nspname and p.tablename = c.relname) as pols
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where c.relkind = 'r'
+    and (n.nspname = 'public' or (n.nspname = 'storage' and c.relname = 'objects'))
+)
+select
+  '1. IS THE TABLE PROTECTED'                     as section,
+  sch || '.' || obj                               as item,
+  case when rls_on then 'protected'
+       else '*** NOT PROTECTED - LEAK ***' end    as verdict,
+  pols || ' rule(s)'                              as detail
+from t
 
--- ----------------------------------------------------------------------------
--- QUERY 1 — Is the rule switched on for every table?
--- ----------------------------------------------------------------------------
---
--- WHAT GOOD LOOKS LIKE:  every row shows rls_enabled = true
---                        and policy_count of 1 or more.
---
--- WHAT BAD LOOKS LIKE:   any row showing rls_enabled = false.
---                        That table is readable by ANY logged-in account,
---                        not just its owner. That is a live data leak.
---
--- Results are sorted so that any problem rows appear at the TOP.
--- ----------------------------------------------------------------------------
+union all
 
 select
-  n.nspname                                                as schema,
-  c.relname                                                as table_name,
-  c.relrowsecurity                                         as rls_enabled,
-  c.relforcerowsecurity                                    as rls_forced,
-  (select count(*)
-     from pg_policies p
-    where p.schemaname = n.nspname
-      and p.tablename  = c.relname)                        as policy_count
-from pg_class c
-join pg_namespace n on n.oid = c.relnamespace
-where c.relkind = 'r'                       -- ordinary tables only
-  and (
-        n.nspname = 'public'
-     or (n.nspname = 'storage' and c.relname = 'objects')  -- the photos bucket
-      )
-order by
-  c.relrowsecurity asc,                     -- false (bad) floats to the top
-  n.nspname,
-  c.relname;
-
-
--- ----------------------------------------------------------------------------
--- QUERY 2 — What does each rule actually SAY?
--- ----------------------------------------------------------------------------
---
--- A table can have the rule switched ON and still be wide open, if the rule
--- itself says "allow everything." Query 1 can't see that. This one can.
---
--- WHAT GOOD LOOKS LIKE:  using_expression reads something like
---                          (auth.uid() = user_id)
---                        i.e. it mentions auth.uid(). That's the database
---                        comparing the logged-in person against the row's
---                        owner.
---
--- WHAT BAD LOOKS LIKE:   using_expression is literally  true
---                        That is a door with a lock on it that's never
---                        actually locked. Same effect as no rule at all.
---
--- KNOWN EXCEPTION, not a bug: storage.objects uses
---   (bucket_id = 'photos' AND auth.uid()::text = (storage.foldername(name))[1])
--- which is the same idea expressed against a file path instead of a column.
--- ----------------------------------------------------------------------------
-
-select
-  schemaname   as schema,
-  tablename    as table_name,
-  policyname   as policy_name,
-  cmd          as applies_to,          -- SELECT / INSERT / UPDATE / DELETE / ALL
-  roles        as applies_to_roles,
-  qual         as using_expression,    -- the rule for READING rows
-  with_check   as with_check_expression -- the rule for WRITING rows
+  '2. WHAT EACH RULE SAYS (reading)',
+  tablename || ' / ' || policyname,
+  case when qual is null              then 'write-only rule'
+       when btrim(qual) = 'true'      then '*** WIDE OPEN ***'
+       when qual ilike '%auth.uid()%' then 'scoped to owner - good'
+       else '*** READ THIS ONE MANUALLY ***' end,
+  coalesce(qual, '')
 from pg_policies
-where schemaname = 'public'
-   or (schemaname = 'storage' and tablename = 'objects')
-order by tablename, policyname;
+where schemaname = 'public' or (schemaname = 'storage' and tablename = 'objects')
 
-
--- ----------------------------------------------------------------------------
--- QUERY 3 — Tables where the rule is ON but there are NO rules written
--- ----------------------------------------------------------------------------
---
--- This combination means "deny everybody." It is not a leak — it's the safe
--- direction to fail — but it usually means a feature is quietly broken,
--- because the app can't read its own data either.
---
--- WHAT GOOD LOOKS LIKE:  zero rows returned.
--- ----------------------------------------------------------------------------
+union all
 
 select
-  n.nspname  as schema,
-  c.relname  as table_name,
-  'RLS is on but no policies exist - nobody can read or write this table'
-             as what_this_means
-from pg_class c
-join pg_namespace n on n.oid = c.relnamespace
-where c.relkind = 'r'
-  and n.nspname = 'public'
-  and c.relrowsecurity = true
-  and not exists (
-        select 1
-          from pg_policies p
-         where p.schemaname = n.nspname
-           and p.tablename  = c.relname
-      )
-order by c.relname;
+  '3. WHAT EACH RULE SAYS (writing)',
+  tablename || ' / ' || policyname,
+  case when with_check is null              then 'no write rule (read-only policy)'
+       when btrim(with_check) = 'true'      then '*** WIDE OPEN - can write rows owned by others ***'
+       when with_check ilike '%auth.uid()%' then 'scoped to owner - good'
+       else '*** READ THIS ONE MANUALLY ***' end,
+  coalesce(with_check, '')
+from pg_policies
+where schemaname = 'public' or (schemaname = 'storage' and tablename = 'objects')
 
-
--- ----------------------------------------------------------------------------
--- QUERY 4 — Functions that are allowed to ignore the rules
--- ----------------------------------------------------------------------------
---
--- A "SECURITY DEFINER" function runs with the permissions of whoever created
--- it, which means it can see across every account regardless of RLS. That's
--- sometimes exactly what you want — but each one is a deliberate hole in the
--- wall, and there should be a very short list of them.
---
--- WHAT GOOD LOOKS LIKE:  exactly ONE row -> platform_stats
---                        That's the Landing page's "X people, Y events"
---                        counter. It returns four numbers and nothing else,
---                        which is why it's safe to expose publicly.
---
--- WHAT BAD LOOKS LIKE:   any function you don't recognise, especially one
---                        that returns rows rather than counts.
--- ----------------------------------------------------------------------------
+union all
 
 select
-  n.nspname                              as schema,
-  p.proname                              as function_name,
-  pg_get_userbyid(p.proowner)            as runs_as,
-  has_function_privilege('anon', p.oid, 'EXECUTE')
-                                         as callable_without_logging_in,
-  has_function_privilege('authenticated', p.oid, 'EXECUTE')
-                                         as callable_by_any_logged_in_user,
-  pg_get_function_result(p.oid)          as returns
+  '4. THE AUTO-PROTECT HOOK',
+  p.proname,
+  'enables RLS automatically on every new table in public',
+  pg_get_functiondef(p.oid)
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
-where n.nspname = 'public'
-  and p.prosecdef = true                 -- SECURITY DEFINER only
-order by p.proname;
+where n.nspname = 'public' and p.proname = 'rls_auto_enable'
 
+union all
 
--- ============================================================================
--- AFTER YOU RUN IT
---
--- Query 1 all true, Query 2 all mentioning auth.uid(), Query 3 empty, and
--- Query 4 showing only platform_stats
---   -> the isolation wall is real and verified. Nothing further to do.
---
--- Anything else
---   -> paste the output back and it becomes the top priority, ahead of
---      everything else on the list.
--- ============================================================================
+select
+  '5. FUNCTIONS THAT BYPASS RLS',
+  p.proname,
+  case when p.proname = 'platform_stats' then 'expected - counts only'
+       when p.prorettype = 'pg_catalog.event_trigger'::regtype then 'event trigger - cannot be called directly'
+       else '*** UNEXPECTED - CHECK THIS ***' end,
+  pg_get_function_result(p.oid)
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.prosecdef = true
+
+order by section, item;
