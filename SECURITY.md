@@ -8,7 +8,9 @@ This is the honest version, not the "we take security seriously" version. It cov
 
 ---
 
-## 1. Do this first: close public signup
+> **Status, 2026-08-01: sections 1 and 2 are DONE.** Founder confirmed public signup is closed and two-factor is on. Combined with the verified isolation in section 3, the four things that actually prevent a breach are now three-quarters done — only tested backups remain unconfirmed. The rest of this document is reference and the deferred list.
+
+## 1. Close public signup — DONE 2026-08-01
 
 Right now, anyone who finds the site can create an account. Nobody has, but nothing stops it.
 
@@ -23,7 +25,7 @@ Your own account keeps working exactly as it does now. You're already signed up;
 
 ---
 
-## 2. Then: lock down your own logins
+## 2. Lock down your own logins — DONE 2026-08-01
 
 **This is the most likely way Boomer actually gets breached — not a flaw in the code.** Nobody is going to find a clever hole in the app. Somebody might phish your password. Every one of these accounts is a key to some part of the system.
 
@@ -129,12 +131,14 @@ And keep the Privacy page as honest as it currently is. It explicitly declines t
 
 ## 5. The order to do things in
 
-**You, in a browser, this week:**
+**You, in a browser — ALL DONE 2026-08-01:**
 
-1. Close public signup (section 1) — five minutes
-2. Run the audit script and read the output (section 3) — five minutes
-3. Two-factor on Google, GitHub, Supabase (section 2) — one evening
-4. Two-factor on the rest (section 2) — whenever
+1. ~~Close public signup (section 1)~~ — done
+2. ~~Run the audit script and read the output (section 3)~~ — done, came back clean on both passes
+3. ~~Two-factor on Google, GitHub, Supabase (section 2)~~ — done
+4. Two-factor on the remaining accounts (Vercel, Anthropic, OpenAI, Google Cloud, Geoapify) — worth confirming these were included; they're money-and-keys rather than user data, so lower stakes either way.
+
+**One thing never checked, and it's the last of the four that matter:** Supabase takes automatic backups, but a backup you've never restored is a hope, not a backup. Worth confirming the plan you're on actually retains them for as long as you think, and that a restore works. Cheaper to find out now than after you need it.
 
 **In code, later, roughly this order:**
 
