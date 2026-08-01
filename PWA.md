@@ -43,6 +43,20 @@ If the camera roll ever becomes the thing you actually need, that's the trigger 
 
 ---
 
+## Known: it isn't designed for a phone yet
+
+Opening the installed app on a real iPhone (2026-08-01) surfaced three things. Two were outright bugs and are fixed; the third is the redesign and is deliberately untouched.
+
+**Fixed — hover-only controls were unreachable.** Thirteen controls across five screens only appeared on mouse-hover: the "×" to remove a group member, an event attendee, a tag or an associated group, the relationship remove on the family tree, and edit/delete on note cards. A touchscreen can't hover, so those features existed but could not be used at all from a phone. `src/lib/touch.ts` now detects a no-hover device once (`matchMedia('(hover: none)')`, so a touchscreen laptop keeps the tidy hover behaviour) and every one of those renders on `hovered || IS_TOUCH`.
+
+**Fixed — iOS zoomed the page whenever you tapped a text box.** Safari force-zooms any input under 16px and doesn't zoom back out; seven inputs sat between 0.85rem and 0.95rem. `index.css` now floors input/textarea/select at 16px on touch devices only.
+
+**Safety, because of the first fix:** those delete buttons are 18px with a 10px icon, sized for a mouse, and note deletion is permanent with no confirmation. Always-visible + tiny + irreversible is how you lose a note to a stray thumb. They now get a 32px minimum target on touch (`.touch-action`), and deleting a note asks first. Apple's guideline is 44px — 32px is a compromise because these sit inside chips, and it's the redesign's job to do better.
+
+**NOT fixed — everything is still too small.** Body text is mostly 0.85–0.9rem and the layout is built for a mouse. That's a real redesign, not a patch, and doing it piecemeal would mean doing it twice. Left alone on purpose.
+
+---
+
 ## What the backlog loses by not going native
 
 Checked against §8's open items on 2026-08-01, so it doesn't get re-derived later.

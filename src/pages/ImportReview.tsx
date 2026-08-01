@@ -10,6 +10,7 @@ import SearchBox from '../components/SearchBox'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import AddressSuggestInput from '../components/AddressSuggestInput'
 import { groupDisplayName } from '../lib/groupDisplayName'
+import { IS_TOUCH } from '../lib/touch'
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -123,7 +124,7 @@ function GroupSuggestionChip({
       <button type="button" onClick={onApprove} style={styles.suggestChip}>
         + {label}
       </button>
-      {hovered && (
+      {(hovered || IS_TOUCH) && (
         <button
           type="button"
           onClick={(e) => {
@@ -131,7 +132,7 @@ function GroupSuggestionChip({
             onDeny()
           }}
           aria-label={`Don't suggest ${label} for this event again`}
-          style={styles.cornerBadge}
+          className="touch-action" style={styles.cornerBadge}
         >
           ×
         </button>
