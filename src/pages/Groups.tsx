@@ -4,6 +4,7 @@ import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 import { GROUP_TYPES } from '../lib/groupTypes'
+import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 
 type PersonRef = { id: string; name: string; last_name: string | null; is_self?: boolean }
 type MomentRef = { id: string; occasion: string | null; raw_description: string }
@@ -13,6 +14,7 @@ export type Group = {
   name: string
   summary: string | null
   group_type: string | null
+  parent_group_id?: string | null
   person_groups: { people: PersonRef | null }[]
   moment_groups: { moments: MomentRef | null }[]
 }
@@ -23,7 +25,14 @@ const AFFILIATION_LIMIT = 4
 // to dominate the whole page. Full roster is still visible by clicking into the group.
 const MEMBER_LIMIT = 5
 
-export function filterGroups(groups: Group[], search: string, typeFilter: string): { group: Group; explicitMembers: PersonRef[]; events: { id: string; summary: string }[] }[] {
+export function filterGroups(
+  groups: Group[],
+  search: string,
+  typeFilter: string,
+  // Matches on the qualified "Parent / Child" label, so searching a parent's name turns up its
+  // subgroups. Defaults to the bare name (landing-page demo, which has no subgroups).
+  groupLabel: GroupLabelFn = (_id, fallbackName) => fallbackName
+): { group: Group; explicitMembers: PersonRef[]; events: { id: string; summary: string }[] }[] {
   const decorated = groups.map((group) => {
     const explicitMembers = (group.person_groups ?? [])
       .map((pg) => pg.people)
@@ -44,12 +53,17 @@ export function filterGroups(groups: Group[], search: string, typeFilter: string
   return decorated.filter(({ group, explicitMembers }) => {
     if (typeFilter === 'untyped' && group.group_type) return false
     if (typeFilter !== 'all' && typeFilter !== 'untyped' && group.group_type !== typeFilter) return false
-    if (!query) return true
+    // Subgroups stay OUT of the resting list — that's the deliberate item-19 decision (they live
+    // under their parent's own page, same list-pollution lesson as the self-membership revert).
+    // But a search is the founder looking for something specific, and hiding a real group behind
+    // a filter they can't see just reads as "it's not in here" (2026-08-01). So they surface as
+    // soon as there's a query, labelled "Parent / Child" so it's obvious which one it is.
+    if (!query) return !group.parent_group_id
     // Excludes the founder's own name from the match — searching your own name should surface
     // groups that mention someone ELSE by that name, or that are literally named for it, not
     // every group you happen to personally belong to.
     const memberNames = explicitMembers.filter((p) => !p.is_self).map((p) => `${p.name} ${p.last_name ?? ''}`)
-    const haystack = [group.name, group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
+    const haystack = [groupLabel(group.id, group.name), group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
     return haystack.includes(query)
   })
 }
@@ -83,6 +97,7 @@ export default function Groups({
   const [addingGroup, setAddingGroup] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const requestedSummaries = useRef(new Set<string>())
+  const groupRoster = useGroupRoster()
 
   useEffect(() => {
     loadGroups()
@@ -103,20 +118,26 @@ export default function Groups({
     setLoading(true)
     const baseSelect =
       'id, name, summary, group_type, person_groups(people(id, name, last_name, is_self)), moment_groups(moments(id, occasion, raw_description))'
-    // Subgroups (item 19, 2026-07-26) live only under their parent's own page, not this top-level
-    // list — same list-pollution lesson as the self-membership revert (§25). Falls open to the
-    // unfiltered list if parent_group_id doesn't exist yet (migration not run, see
-    // PROJECT_CONTEXT.md §10) rather than erroring out to an empty page.
-    let { data, error } = await supabase.from('groups').select(baseSelect).is('parent_group_id', null).order('name')
+    // Loads subgroups too, but filterGroups keeps them out of the resting list — they only appear
+    // once there's a search query (see the comment there). Falls open to the narrower select if
+    // parent_group_id doesn't exist yet (migration not run, see PROJECT_CONTEXT.md §10) rather
+    // than erroring out to an empty page; without the column nothing has a parent anyway.
+    let { data, error } = await supabase.from('groups').select(`${baseSelect}, parent_group_id`).order('name')
     if (error) {
-      ;({ data } = await supabase.from('groups').select(baseSelect).order('name'))
+      const fallback = await supabase.from('groups').select(baseSelect).order('name')
+      data = fallback.data as typeof data
     }
 
     const loaded = (data as unknown as Group[]) ?? []
     setGroups(loaded)
     setLoading(false)
 
+    // Only for groups this list actually shows at rest. Subgroups get their summary generated on
+    // demand by GroupDetail's own loadSummary when opened — auto-generating one here for every
+    // subgroup would be a real `summarize-group` call each, for cards nobody asked to see
+    // (CLAUDE.md rule 3).
     for (const g of loaded) {
+      if (g.parent_group_id) continue
       if (!g.summary && !requestedSummaries.current.has(g.id)) {
         requestedSummaries.current.add(g.id)
         generateSummary(g.id)
@@ -171,6 +192,7 @@ export default function Groups({
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
+      groupLabel={groupRoster.label}
     />
   )
 }
@@ -189,6 +211,7 @@ export function GroupsView({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  groupLabel = (_id, fallbackName) => fallbackName,
   readOnly = false,
 }: {
   groups: Group[]
@@ -202,9 +225,11 @@ export function GroupsView({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
+  groupLabel?: GroupLabelFn
   readOnly?: boolean
 }) {
-  const filteredGroups = filterGroups(groups, search, typeFilter)
+  const filteredGroups = filterGroups(groups, search, typeFilter, groupLabel)
 
   return (
     <div style={styles.page}>
@@ -259,7 +284,7 @@ export function GroupsView({
             <div key={group.id} style={styles.card}>
               <div style={styles.titleRow}>
                 <button onClick={() => onSelectGroup(group)} style={styles.titleButton}>
-                  {group.name}
+                  {groupLabel(group.id, group.name)}
                 </button>
                 {group.group_type && <span style={styles.typeBadge}>{group.group_type}</span>}
               </div>
