@@ -1115,9 +1115,11 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               GroupDetail (has "↑ Part of X" one line below, and the rename field edits the bare
               name) and the subgroup tiles on the parent's own page. Search filters match on the
               qualified string, so typing a parent's name finds its subgroups.
-              Groups.tsx is intentionally untouched — its .is('parent_group_id', null) filter
-              means it can only ever list root groups; IF that root-only filter is ever removed,
-              its card title and search haystack must be qualified at the same time.
+              Groups.tsx (2026-08-01) loads subgroups but shows them ONLY while a search query is
+              active — the resting list stays root-only per item 19, since a search is a targeted
+              lookup, not browsing. Its summary auto-generation stays root-only too (a subgroup's
+              summary is generated on demand by GroupDetail's loadSummary when opened; doing it
+              here would be one summarize-group call per unopened subgroup — CLAUDE.md rule 3).
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
