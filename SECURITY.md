@@ -37,9 +37,9 @@ Ordered by how much damage a stolen password does:
 | **GitHub** (`glitchsocket12`) | Pushing code to `main` deploys straight to the live site with no review step — so this is the ability to run any code they want against all your data. | **Do first** |
 | **Supabase** | Direct read and write access to every note, person, and event in the database. Also the master key that bypasses all the protections in section 3. | **Do first** |
 | **Vercel** | Control over what gets deployed, plus every environment variable. | High |
-| **Anthropic Console** | Your API key and billing. Costs money; can't read your data. | Medium |
-| **OpenAI Platform** | Same — your voice-transcription key and billing. | Medium |
-| **Google Cloud Console** | The Google Photos connection credentials. | Medium |
+| **Anthropic Console** | Your API key and billing. Costs money; can't read your data. | Medium — signs in via Google, no separate password, inherits Gmail's 2FA |
+| **OpenAI Platform** | Same — your voice-transcription key and billing. | Medium — signs in via Google, same inheritance |
+| **Google Cloud Console** | The Google Photos connection credentials. | Medium — same Google account |
 | **Geoapify** | An address-autocomplete key with a 3,000/day cap. Genuinely minor. | Low |
 
 **Three notes worth more than the table:**
@@ -136,7 +136,12 @@ And keep the Privacy page as honest as it currently is. It explicitly declines t
 1. ~~Close public signup (section 1)~~ — done
 2. ~~Run the audit script and read the output (section 3)~~ — done, came back clean on both passes
 3. ~~Two-factor on Google, GitHub, Supabase (section 2)~~ — done
-4. Two-factor on the remaining accounts (Vercel, Anthropic, OpenAI, Google Cloud, Geoapify) — worth confirming these were included; they're money-and-keys rather than user data, so lower stakes either way.
+4. ~~Two-factor on the remaining accounts~~ — done. Vercel directly; **Anthropic, OpenAI and Google Cloud all sign in through Google**, so they have no separate password and inherit Gmail's two-factor automatically. Nothing missing there.
+
+**The consequence of that, worth knowing:** the Google account is now the single key to five of the eight services. Two things that matter more than adding another factor:
+
+- **Check Google's account-recovery settings.** If recovery runs through a phone number, someone who convinces your carrier to move your number can reset the account — and the authenticator app won't stop them, because recovery goes *around* it. That's the real back door on an otherwise well-secured Google account.
+- **Recovery codes must not live in Gmail or Google Drive.** Circular, and the most common version of this mistake.
 
 **One thing never checked, and it's the last of the four that matter:** Supabase takes automatic backups, but a backup you've never restored is a hope, not a backup. Worth confirming the plan you're on actually retains them for as long as you think, and that a restore works. Cheaper to find out now than after you need it.
 
