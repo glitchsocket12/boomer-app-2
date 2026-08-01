@@ -27,6 +27,15 @@ src/
 ├── main.tsx / index.css       — entry, global styles (incl. `spin` keyframe)
 ├── lib/
 │   ├── supabase.ts            — shared client (reads VITE_* env)
+│   ├── theme.ts               — (2026-08-01) design tokens: `colors`/`radius`/`fontSize`/
+│   │                            `fontFamily`/`space`/`maxWidth`/`shadow`/`border`. Step 1 of the
+│   │                            mobile redesign (§8 item 72). Extracted from what the code already
+│   │                            used (90 distinct hexes, 976 occurrences across 46 files) — every
+│   │                            value is a no-op substitution, not a redesign. The app has no CSS
+│   │                            framework; everything is inline `style={{}}`, so this is the only
+│   │                            single source of truth for the palette. **The 45-file sweep that
+│   │                            makes item 72 step 1 actually pay off is NOT done** — only
+│   │                            `Chips.tsx` is converted, as the reference example.
 │   ├── geoapify.ts             — (2026-07-26) fetchAddressSuggestions(): thin client for
 │   │                            Geoapify's Address Autocomplete API (key restricted by referrer,
 │   │                            safe client-side, no proxy). Reads `VITE_GEOAPIFY_API_KEY`; returns

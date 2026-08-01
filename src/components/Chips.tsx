@@ -3,6 +3,8 @@
 // (gold badge), or an event (blue card). Every chip here is always clickable — it's a
 // navigation affordance, not just a label.
 
+import { border, colors, fontFamily, fontSize, radius } from '../lib/theme'
+
 export function PersonChip({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button onClick={onClick} style={styles.person}>
@@ -31,51 +33,52 @@ export function EventChip({ label, onClick }: { label: string; onClick: () => vo
 
 const styles: { [key: string]: React.CSSProperties } = {
   person: {
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.35rem 0.8rem',
-    borderRadius: '999px',
-    border: '1px solid #2E4034',
+    borderRadius: radius.pill,
+    border: border.ink,
     backgroundColor: 'transparent',
-    color: '#2E4034',
+    color: colors.ink,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   group: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '0.45rem',
+    // Deliberately 0.88rem, a hair smaller than fontSize.body, because this chip is bold.
     fontSize: '0.88rem',
     fontWeight: 700,
     padding: '0.35rem 0.85rem 0.35rem 0.7rem',
-    borderRadius: '8px',
-    border: '1px solid #B08B2E',
-    backgroundColor: '#FBF3E0',
-    color: '#8A6A1F',
+    borderRadius: radius.md,
+    border: border.suggestFill,
+    backgroundColor: colors.suggestBg,
+    color: colors.suggest,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     letterSpacing: '0.02em',
   },
   groupDot: {
     width: '7px',
     height: '7px',
-    borderRadius: '50%',
-    backgroundColor: '#B08B2E',
+    borderRadius: radius.circle,
+    backgroundColor: colors.suggestFill,
     flexShrink: 0,
   },
   event: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '0.35rem',
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     fontStyle: 'italic',
     padding: '0.4rem 0.8rem',
-    borderRadius: '6px',
-    border: '1px solid #3B6EA5',
-    backgroundColor: '#EAF1FA',
-    color: '#2C5079',
+    borderRadius: radius.sm,
+    border: border.event,
+    backgroundColor: colors.eventBg,
+    color: colors.event,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     textAlign: 'left',
   },
-  eventArrow: { fontWeight: 'bold', fontSize: '1rem', fontStyle: 'normal' },
+  eventArrow: { fontWeight: 'bold', fontSize: fontSize.base, fontStyle: 'normal' },
 }
