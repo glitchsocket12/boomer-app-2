@@ -13,6 +13,7 @@ import Events from './pages/Events'
 import Calendar from './pages/Calendar'
 import Groups from './pages/Groups'
 import GroupDetail from './pages/GroupDetail'
+import PetDetail from './pages/PetDetail'
 import EventDetail from './pages/EventDetail'
 import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
@@ -44,6 +45,7 @@ type Crumb =
   // string ever feeding back into GroupDetail's heading or rename field (which read `label`).
   | { type: 'group'; id: string; label: string; displayLabel?: string }
   | { type: 'event'; id: string; label: string }
+  | { type: 'pet'; id: string; label: string }
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
   | { type: 'manageTags'; id: string; label: string }
@@ -66,6 +68,7 @@ const CRUMB_TYPES = [
   'person',
   'group',
   'event',
+  'pet',
   'dunbar',
   'nudges',
   'manageTags',
@@ -447,6 +450,7 @@ export default function App() {
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+        onSelectPet={(p) => pushCrumb({ type: 'pet', id: p.id, label: p.name })}
         onMerged={(p) => replaceCurrentCrumb({ type: 'person', id: p.id, label: p.name })}
         onRenamed={renameCurrentCrumb}
         onOpenFamilyTree={(personId, label, memberIds) => pushCrumb({ type: 'familyTree', id: personId, label, memberIds })}
@@ -479,6 +483,18 @@ export default function App() {
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onRenamed={renameCurrentCrumb}
         onMerged={(e) => replaceCurrentCrumb({ type: 'event', id: e.id, label: e.summary })}
+      />
+    )
+  } else if (current?.type === 'pet') {
+    content = (
+      <PetDetail
+        petId={current.id}
+        petName={current.label}
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+        onRenamed={renameCurrentCrumb}
+        onDeleted={popCrumb}
       />
     )
   } else if (current?.type === 'dunbar') {
@@ -596,6 +612,7 @@ export default function App() {
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
             onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+            onSelectPet={(p) => pushCrumb({ type: 'pet', id: p.id, label: p.name })}
           />
         )}
         {view === 'events' && (

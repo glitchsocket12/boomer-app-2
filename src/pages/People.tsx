@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { daysUntilNextOccurrence } from '../lib/dates'
-import { GroupChip, EventChip } from '../components/Chips'
+import { GroupChip, EventChip, PersonChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
+import { formatPetLine, loadAllPets, loadOwnersByPetId, isMemorial, petEmoji, type Pet, type PetOwner } from '../lib/pets'
 
 type GroupRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
@@ -40,26 +41,65 @@ function nearestUpcomingDays(person: Person): number {
   return days.length > 0 ? Math.min(...days) : Infinity
 }
 
-export function sortPeople(people: Person[], mode: SortMode): Person[] {
-  const sorted = [...people]
+// Pets share this list with people (founder's call, 2026-08-01: "having a pet in the People list
+// would be funny... a paw icon to let people see it's not a person"). They are NOT people and never
+// become them — separate tables, and the heading count below still counts people only, so the
+// Dunbar math and the "560 People" tile are untouched. This is purely a display merge.
+export type PetRow = { pet: Pet; owners: PetOwner[] }
+export type ListRow = { kind: 'person'; person: Person } | { kind: 'pet'; pet: Pet; owners: PetOwner[] }
+
+function rowSortName(row: ListRow): string {
+  return row.kind === 'person' ? row.person.name : row.pet.name
+}
+
+function rowCreatedAt(row: ListRow): number {
+  return new Date(row.kind === 'person' ? row.person.created_at : row.pet.created_at).getTime()
+}
+
+// A pet has no notes, so "Most notes" always sorts them last rather than salting the top of the
+// list with zero-note rows.
+function rowNoteCount(row: ListRow): number {
+  return row.kind === 'person' ? row.person.notes?.length ?? 0 : -1
+}
+
+// A pet's birthday counts as an upcoming date, so "Upcoming dates" surfaces it alongside people's.
+function rowUpcomingDays(row: ListRow): number {
+  if (row.kind === 'person') return nearestUpcomingDays(row.person)
+  const birth = row.pet.birth_date
+  if (!birth) return Infinity
+  const [, month, day] = birth.split('-').map(Number)
+  return daysUntilNextOccurrence(month, day)
+}
+
+export function sortRows(rows: ListRow[], mode: SortMode): ListRow[] {
+  const sorted = [...rows]
   switch (mode) {
     case 'name-desc':
-      return sorted.sort((a, b) => b.name.localeCompare(a.name))
+      return sorted.sort((a, b) => rowSortName(b).localeCompare(rowSortName(a)))
     case 'date-added':
-      return sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      return sorted.sort((a, b) => rowCreatedAt(b) - rowCreatedAt(a))
     case 'relevance':
-      return sorted.sort((a, b) => (b.notes?.length ?? 0) - (a.notes?.length ?? 0))
+      return sorted.sort((a, b) => rowNoteCount(b) - rowNoteCount(a))
     case 'timely':
-      return sorted.sort((a, b) => nearestUpcomingDays(a) - nearestUpcomingDays(b))
+      return sorted.sort((a, b) => rowUpcomingDays(a) - rowUpcomingDays(b))
     case 'name-asc':
     default:
-      return sorted.sort((a, b) => a.name.localeCompare(b.name))
+      return sorted.sort((a, b) => rowSortName(a).localeCompare(rowSortName(b)))
   }
 }
 
-export function filterPeople(people: Person[], search: string): Person[] {
+export function filterRows(rows: ListRow[], search: string): ListRow[] {
   const query = search.trim().toLowerCase()
-  return people.filter((person) => {
+  return rows.filter((row) => {
+    if (row.kind === 'pet') {
+      // Searching an owner's name should surface their pets too — "Chen" finding Biscuit is the
+      // point of putting pets in this list at all.
+      const ownerNames = row.owners.map((o) => o.name).join(' ')
+      return `${row.pet.name} ${row.pet.species ?? ''} ${row.pet.breed ?? ''} ${ownerNames}`
+        .toLowerCase()
+        .includes(query)
+    }
+    const person = row.person
     const fullName = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
     return (
       fullName.toLowerCase().includes(query) ||
@@ -74,12 +114,15 @@ export default function People({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  onSelectPet,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onSelectPet: (pet: { id: string; name: string }) => void
 }) {
   const [people, setPeople] = useState<Person[]>([])
+  const [petRows, setPetRows] = useState<PetRow[]>([])
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -91,6 +134,7 @@ export default function People({
   // they're tied to, when the page opens
   useEffect(() => {
     loadPeople()
+    loadPets()
   }, [])
 
   async function loadPeople() {
@@ -107,6 +151,14 @@ export default function People({
       setPeople(data as unknown as Person[])
     }
     setLoading(false)
+  }
+
+  // Separate from loadPeople on purpose, and never embedded into the select above: pets depend on
+  // a migration the founder runs by hand, and a `.select()` naming a table that doesn't exist yet
+  // fails the WHOLE query — which would blank the People list, not just hide the pets.
+  async function loadPets() {
+    const [pets, ownersByPetId] = await Promise.all([loadAllPets(), loadOwnersByPetId()])
+    setPetRows(pets.map((pet) => ({ pet, owners: ownersByPetId[pet.id] ?? [] })))
   }
 
   // No form up front — matches "add an event": creates a blank shell immediately and drops
@@ -136,12 +188,16 @@ export default function People({
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
-  const filteredPeople = sortPeople(filterPeople(people, search), sortMode)
+  const allRows: ListRow[] = [
+    ...people.map((person) => ({ kind: 'person' as const, person })),
+    ...petRows.map((r) => ({ kind: 'pet' as const, pet: r.pet, owners: r.owners })),
+  ]
+  const filteredRows = sortRows(filterRows(allRows, search), sortMode)
 
   return (
     <PeopleView
       peopleCount={people.length}
-      filteredPeople={filteredPeople}
+      filteredRows={filteredRows}
       search={search}
       onSearchChange={setSearch}
       sortMode={sortMode}
@@ -152,6 +208,7 @@ export default function People({
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
+      onSelectPet={onSelectPet}
       groupLabel={groupRoster.label}
     />
   )
@@ -161,7 +218,7 @@ export default function People({
 // fed by static data, with no Supabase calls. `readOnly` hides "+ Add Person" (a real insert).
 export function PeopleView({
   peopleCount,
-  filteredPeople,
+  filteredRows,
   search,
   onSearchChange,
   sortMode,
@@ -172,11 +229,12 @@ export function PeopleView({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  onSelectPet = () => {},
   groupLabel = (_id, fallbackName) => fallbackName,
   readOnly = false,
 }: {
   peopleCount: number
-  filteredPeople: Person[]
+  filteredRows: ListRow[]
   search: string
   onSearchChange: (value: string) => void
   sortMode: SortMode
@@ -187,6 +245,7 @@ export function PeopleView({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onSelectPet?: (pet: { id: string; name: string }) => void
   // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
   groupLabel?: GroupLabelFn
   readOnly?: boolean
@@ -225,19 +284,29 @@ export function PeopleView({
 
       <div style={styles.list}>
         {peopleCount === 0 && <p style={styles.empty}>No one added yet — add someone above.</p>}
-        {peopleCount > 0 && filteredPeople.length === 0 && (
+        {peopleCount > 0 && filteredRows.length === 0 && (
           <p style={styles.empty}>No one matches "{search}".</p>
         )}
-        {filteredPeople.map((person) => (
-          <PersonCard
-            key={person.id}
-            person={person}
-            onViewPerson={onSelectPerson}
-            onSelectGroup={onSelectGroup}
-            onSelectEvent={onSelectEvent}
-            groupLabel={groupLabel}
-          />
-        ))}
+        {filteredRows.map((row) =>
+          row.kind === 'pet' ? (
+            <PetCard
+              key={`pet-${row.pet.id}`}
+              pet={row.pet}
+              owners={row.owners}
+              onViewPet={onSelectPet}
+              onSelectPerson={onSelectPerson}
+            />
+          ) : (
+            <PersonCard
+              key={row.person.id}
+              person={row.person}
+              onViewPerson={onSelectPerson}
+              onSelectGroup={onSelectGroup}
+              onSelectEvent={onSelectEvent}
+              groupLabel={groupLabel}
+            />
+          )
+        )}
       </div>
     </div>
   )
@@ -310,6 +379,46 @@ function PersonCard({
   )
 }
 
+// A pet's tile in the People list. Same shape as PersonCard so the list reads as one list, but the
+// species emoji in front of the name is the whole point — it's what tells you at a glance that this
+// row isn't a person. Owner chips underneath do the job the group/event chips do on a person.
+function PetCard({
+  pet,
+  owners,
+  onViewPet,
+  onSelectPerson,
+}: {
+  pet: Pet
+  owners: PetOwner[]
+  onViewPet: (pet: { id: string; name: string }) => void
+  onSelectPerson: (person: { id: string; name: string }) => void
+}) {
+  return (
+    <div style={styles.card}>
+      <button
+        onClick={() => onViewPet({ id: pet.id, name: pet.name })}
+        style={isMemorial(pet) ? { ...styles.titleButton, ...styles.memorialTitle } : styles.titleButton}
+      >
+        <span style={styles.petEmoji}>{petEmoji(pet)}</span> {formatPetLine(pet)}
+        {isMemorial(pet) && <span style={styles.memorialTag}> · In memory</span>}
+      </button>
+
+      {owners.length > 0 && (
+        <div style={styles.affiliations}>
+          <div style={styles.chipRow}>
+            {owners.slice(0, AFFILIATION_LIMIT).map((o) => (
+              <PersonChip key={o.id} label={o.name} onClick={() => onSelectPerson({ id: o.id, name: o.name })} />
+            ))}
+            {owners.length > AFFILIATION_LIMIT && (
+              <span style={styles.moreText}>+{owners.length - AFFILIATION_LIMIT} more</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: '840px', margin: '0 auto', padding: '2rem 1.5rem', fontFamily: 'Georgia, serif' },
   headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' },
@@ -359,6 +468,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'left',
     cursor: 'pointer',
   },
+  petEmoji: { fontStyle: 'normal' },
+  memorialTitle: { color: '#666' },
+  memorialTag: { fontSize: '0.85rem', color: '#888', fontStyle: 'italic' },
   affiliations: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' },
   chipRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' },
   moreText: { fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },

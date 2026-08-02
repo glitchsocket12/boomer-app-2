@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PeopleView, sortPeople, filterPeople, type Person, type SortMode } from '../People'
+import { PeopleView, sortRows, filterRows, type ListRow, type Person, type SortMode } from '../People'
 import { DEMO_PEOPLE, DEMO_GROUPS, DEMO_NOTES, DEMO_MOMENTS, DEMO_REMINDERS } from '../../lib/demoData'
 
 function toPerson(id: string): Person {
@@ -41,12 +41,14 @@ export default function DemoPeople({
   const [search, setSearch] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>('name-asc')
 
-  const filteredPeople = sortPeople(filterPeople(ALL_PEOPLE, search), sortMode)
+  // No pet rows in the demo — pet content for the Pemberton persona is a later content pass.
+  const allRows: ListRow[] = ALL_PEOPLE.map((person) => ({ kind: 'person' as const, person }))
+  const filteredRows = sortRows(filterRows(allRows, search), sortMode)
 
   return (
     <PeopleView
       peopleCount={ALL_PEOPLE.length}
-      filteredPeople={filteredPeople}
+      filteredRows={filteredRows}
       search={search}
       onSearchChange={setSearch}
       sortMode={sortMode}

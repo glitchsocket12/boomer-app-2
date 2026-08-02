@@ -1,5 +1,51 @@
 import { describe, expect, it } from 'vitest'
-import { formatPetDates, formatPetLine, isMemorial } from './pets'
+import { formatPetDates, formatPetLine, isMemorial, petEmoji, PET_FALLBACK_EMOJI } from './pets'
+
+describe('petEmoji', () => {
+  it('matches the obvious species', () => {
+    expect(petEmoji({ species: 'dog', breed: null })).toBe('🐕')
+    expect(petEmoji({ species: 'cat', breed: null })).toBe('🐈')
+    expect(petEmoji({ species: 'fish', breed: null })).toBe('🐟')
+    expect(petEmoji({ species: 'horse', breed: null })).toBe('🐴')
+  })
+
+  it('matches informal words the founder is likely to actually type', () => {
+    expect(petEmoji({ species: 'pup', breed: null })).toBe('🐕')
+    expect(petEmoji({ species: 'kitty', breed: null })).toBe('🐈')
+  })
+
+  it('falls back to the breed when no species was filled in', () => {
+    expect(petEmoji({ species: null, breed: 'goldendoodle' })).toBe('🐕')
+    expect(petEmoji({ species: null, breed: 'black lab' })).toBe('🐕')
+  })
+
+  // Ordering regressions: each of these contains an EARLIER-looking entry's keyword as a substring.
+  it('does not let a substring of another species win', () => {
+    expect(petEmoji({ species: 'catfish', breed: null })).toBe('🐟') // not cat
+    expect(petEmoji({ species: 'dog', breed: 'bulldog' })).toBe('🐕') // not cow ("bull")
+    expect(petEmoji({ species: 'rattlesnake', breed: null })).toBe('🐍') // not rat
+    expect(petEmoji({ species: 'guinea pig', breed: null })).toBe('🐹') // not pig
+    expect(petEmoji({ species: 'bearded dragon', breed: null })).toBe('🦎')
+  })
+
+  // "wallaby" contains "lab" and read as a dog under plain substring matching.
+  it('does not match a keyword buried mid-word', () => {
+    expect(petEmoji({ species: 'wallaby', breed: null })).toBe(PET_FALLBACK_EMOJI)
+    expect(petEmoji({ species: 'boar', breed: null })).not.toBe('🐍')
+    expect(petEmoji({ species: 'fox', breed: null })).not.toBe('🐄')
+  })
+
+  it('still matches a keyword that ends a compound word', () => {
+    expect(petEmoji({ species: 'dog', breed: 'bulldog' })).toBe('🐕')
+    expect(petEmoji({ species: null, breed: 'black lab' })).toBe('🐕')
+  })
+
+  it('falls back to a paw for anything unrecognized or blank', () => {
+    expect(petEmoji({ species: 'wallaby', breed: null })).toBe(PET_FALLBACK_EMOJI)
+    expect(petEmoji({ species: null, breed: null })).toBe(PET_FALLBACK_EMOJI)
+    expect(petEmoji({ species: '   ', breed: '' })).toBe(PET_FALLBACK_EMOJI)
+  })
+})
 
 describe('formatPetLine', () => {
   it('shows breed and species together', () => {

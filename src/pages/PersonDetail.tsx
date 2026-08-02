@@ -117,6 +117,7 @@ export default function PersonDetail({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  onSelectPet,
   onMerged,
   onRenamed,
   onOpenFamilyTree,
@@ -128,6 +129,7 @@ export default function PersonDetail({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onSelectPet: (pet: { id: string; name: string }) => void
   onMerged: (person: { id: string; name: string }) => void
   onRenamed?: (newName: string) => void
   onOpenFamilyTree: (personId: string, label: string, memberIds?: string[]) => void
@@ -636,6 +638,7 @@ export default function PersonDetail({
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
+      onSelectPet={onSelectPet}
       onOpenFamilyTree={onOpenFamilyTree}
       onRefreshFacts={() => loadFacts(true)}
       editingName={editingName}
@@ -765,6 +768,7 @@ export function PersonDetailView({
   // Left undefined by the live container on purpose — PetsSection runs its own isolated query.
   // Only the demo passes this, so the public demo makes no Supabase call for pets.
   pets = undefined,
+  onSelectPet = undefined,
   newFact = '',
   onNewFactChange = () => {},
   saving = false,
@@ -847,6 +851,9 @@ export function PersonDetailView({
   savingGender?: boolean
   onChangeGender?: (value: string) => void
   pets?: Pet[]
+  // Undefined in the demo, which has no pet pages to navigate to — PetsSection renders the pets
+  // as plain (disabled) rows in that case rather than dead links.
+  onSelectPet?: (pet: { id: string; name: string }) => void
   newFact?: string
   onNewFactChange?: (v: string) => void
   saving?: boolean
@@ -1048,7 +1055,7 @@ export function PersonDetailView({
 
       {!loading && <ContactInfoSection personId={personId} readOnly={readOnly} />}
 
-      {!loading && <PetsSection personId={personId} readOnly={readOnly} pets={pets} />}
+      {!loading && <PetsSection personId={personId} readOnly={readOnly} pets={pets} onSelectPet={onSelectPet} />}
 
       {!loading && (
         <>

@@ -16,9 +16,13 @@ export type Pet = {
   deceased_date: string | null
   notes: string | null
   attributes: PetAttribute[]
+  created_at: string
 }
 
-export const PET_COLUMNS = 'id, name, species, breed, birth_date, adopted_date, deceased_date, notes, attributes'
+export type PetOwner = { id: string; name: string }
+
+export const PET_COLUMNS =
+  'id, name, species, breed, birth_date, adopted_date, deceased_date, notes, attributes, created_at'
 
 const EMPTY: Pet[] = []
 
@@ -33,6 +37,7 @@ function normalize(row: any): Pet {
     deceased_date: row.deceased_date ?? null,
     notes: row.notes ?? null,
     attributes: Array.isArray(row.attributes) ? row.attributes : [],
+    created_at: row.created_at,
   }
 }
 
@@ -66,6 +71,45 @@ export async function loadAllPets(): Promise<Pet[]> {
   const { data } = await supabase.from('pets').select(PET_COLUMNS).order('name')
   if (!data) return EMPTY
   return (data as any[]).map(normalize)
+}
+
+export async function loadPet(petId: string): Promise<Pet | null> {
+  const { data } = await supabase.from('pets').select(PET_COLUMNS).eq('id', petId).maybeSingle()
+  return data ? normalize(data) : null
+}
+
+function ownerName(row: any): string {
+  return row.last_name ? `${row.name} ${row.last_name}` : row.name
+}
+
+export async function loadPetOwners(petId: string): Promise<PetOwner[]> {
+  const { data } = await supabase.from('person_pets').select('people(id, name, last_name)').eq('pet_id', petId)
+  if (!data) return []
+  return (data as any[])
+    .map((r) => r.people)
+    .filter(Boolean)
+    .map((p) => ({ id: p.id, name: ownerName(p) }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// Every pet's owners in one round trip, keyed by pet id — the People list needs this for all pets
+// at once and must not fire a query per pet.
+export async function loadOwnersByPetId(): Promise<Record<string, PetOwner[]>> {
+  const { data } = await supabase.from('person_pets').select('pet_id, people(id, name, last_name)')
+  const byPet: Record<string, PetOwner[]> = {}
+  for (const row of (data ?? []) as any[]) {
+    if (!row.people) continue
+    ;(byPet[row.pet_id] ??= []).push({ id: row.people.id, name: ownerName(row.people) })
+  }
+  for (const owners of Object.values(byPet)) owners.sort((a, b) => a.name.localeCompare(b.name))
+  return byPet
+}
+
+// Real deletion, for the pet's own page — distinct from unlinkPet, which only detaches it from one
+// profile. person_pets rows cascade on the FK.
+export async function deletePet(petId: string): Promise<void> {
+  const { error } = await supabase.from('pets').delete().eq('id', petId)
+  if (error) console.error('Pet delete failed', error)
 }
 
 export async function createAndLinkPet(personId: string, fields: Partial<Pet> & { name: string }): Promise<Pet | null> {
@@ -118,6 +162,56 @@ export async function updatePet(petId: string, fields: Partial<Pet>): Promise<vo
 
 export function isMemorial(pet: Pick<Pet, 'deceased_date'>): boolean {
   return !!pet.deceased_date
+}
+
+export const PET_FALLBACK_EMOJI = '🐾'
+
+// Species is free text, so this is a best-effort keyword match over species AND breed together —
+// "pup", "goldendoodle" and "black lab" all need to land on the dog. ORDER IS LOAD-BEARING: each
+// entry wins on the first substring hit, so anything whose keyword contains another entry's keyword
+// must come first — fish before cat ("catfish"), dog before cow ("bulldog"), snake before the
+// rodents ("rattlesnake"), "guinea pig" before "pig". Falls back to a paw, which reads as "this is
+// a pet" rather than a wrong guess, so an unmatched species is never actually wrong.
+const SPECIES_EMOJI: [string, string[]][] = [
+  ['🐟', ['fish', 'betta', 'guppy', 'koi', 'tetra', 'cichlid', 'molly', 'oscar']],
+  ['🐕', ['dog', 'pup', 'doggo', 'doggy', 'hound', 'terrier', 'retriever', 'poodle', 'doodle', 'shepherd', 'lab', 'corgi', 'beagle', 'dachshund', 'chihuahua', 'husky', 'collie', 'spaniel', 'pug', 'mutt', 'boxer', 'mastiff', 'dane']],
+  ['🐈', ['cat', 'kitten', 'kitty', 'tabby', 'siamese', 'persian', 'feline']],
+  ['🐹', ['guinea pig', 'hamster', 'gerbil', 'chinchilla', 'degu']],
+  ['🐍', ['snake', 'python', 'viper', 'boa constrictor']],
+  ['🐁', ['mouse', 'mice', 'rat']],
+  ['🦎', ['lizard', 'gecko', 'dragon', 'iguana', 'chameleon', 'skink', 'monitor']],
+  ['🐢', ['turtle', 'tortoise', 'terrapin']],
+  ['🐸', ['frog', 'toad', 'axolotl', 'newt']],
+  ['🐰', ['rabbit', 'bunny', 'hare']],
+  ['🐴', ['horse', 'pony', 'mare', 'gelding', 'stallion', 'filly', 'mustang', 'appaloosa']],
+  ['🦜', ['parrot', 'macaw', 'cockatoo', 'cockatiel', 'parakeet', 'budgie', 'lovebird', 'conure']],
+  ['🐔', ['chicken', 'hen', 'rooster', 'chick']],
+  ['🦆', ['duck', 'goose', 'gosling']],
+  ['🐦', ['bird', 'finch', 'canary', 'dove', 'pigeon']],
+  ['🐐', ['goat']],
+  ['🐖', ['pig', 'hog']],
+  ['🐄', ['cow', 'calf', 'heifer', 'steer', 'bull']],
+  ['🐑', ['sheep', 'lamb', 'ram']],
+  ['🕷️', ['spider', 'tarantula']],
+  ['🦀', ['crab']],
+  ['🦔', ['hedgehog']],
+]
+
+// A keyword counts only if it lines up with a word boundary on at least ONE side. Plain substring
+// matching read "wallaby" as a dog (it contains "lab"); requiring boundaries on BOTH sides would
+// miss "bulldog" and "goldendoodle", which are exactly the words people type. One side is the rule
+// that gets all three right.
+function mentions(haystack: string, keyword: string): boolean {
+  return new RegExp(`\\b${keyword}|${keyword}\\b`).test(haystack)
+}
+
+export function petEmoji(pet: Pick<Pet, 'species' | 'breed'>): string {
+  const haystack = `${pet.species ?? ''} ${pet.breed ?? ''}`.toLowerCase()
+  if (!haystack.trim()) return PET_FALLBACK_EMOJI
+  for (const [emoji, keywords] of SPECIES_EMOJI) {
+    if (keywords.some((k) => mentions(haystack, k))) return emoji
+  }
+  return PET_FALLBACK_EMOJI
 }
 
 // "Biscuit — golden retriever (dog)", "Mochi — cat", "Nemo". Breed leads because it's the more

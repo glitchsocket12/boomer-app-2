@@ -1,49 +1,50 @@
 import { useEffect, useState } from 'react'
 import {
   createAndLinkPet,
+  formatPetDates,
+  formatPetLine,
   isMemorial,
   linkPet,
   loadAllPets,
   loadPetsForPerson,
-  formatPetDates,
-  formatPetLine,
+  petEmoji,
   unlinkPet,
-  updatePet,
   type Pet,
 } from '../lib/pets'
-import { LabeledValueEditor } from './ContactInfoSection'
-import AutoGrowTextarea from './AutoGrowTextarea'
-import EditButton from './EditButton'
 import SearchAddPicker from './SearchAddPicker'
 import { border, colors, fontFamily, fontSize, radius } from '../lib/theme'
 
 // Collapsible "Pets" card on a person's profile (2026-08-01). Deliberately shaped like
 // ContactInfoSection: its own isolated query rather than folding into PersonDetail's main select,
-// so a database where the pets migration hasn't been run yet degrades to an empty card instead of
+// so a database where the pets migration hasn't been run yet degrades to no card at all instead of
 // blanking the whole profile page.
 //
-// A pet is a shared record, not a field on this person — the picker at the bottom searches every
-// pet on the account, so tagging the spouse's dog onto this profile is the same gesture as adding
-// a brand-new one, and removing it here only unlinks.
+// This card LISTS and ATTACHES; it doesn't edit. Tapping a pet opens its own page, which owns the
+// edit form — same split as groups and events (chips here, editing on the detail page), so there's
+// only one pet form to maintain.
+//
+// A pet is a shared record, not a field on this person — the picker searches every pet on the
+// account, so tagging the spouse's dog onto this profile is the same gesture as adding a brand-new
+// one, and removing it here only unlinks.
 export default function PetsSection({
   personId,
   readOnly = false,
   pets: petsOverride,
+  onSelectPet,
 }: {
   personId: string
   readOnly?: boolean
   // When supplied, no query fires at all — the logged-out demo renders from static data and makes
   // zero Supabase calls.
   pets?: Pet[]
+  onSelectPet?: (pet: { id: string; name: string }) => void
 }) {
   const [loading, setLoading] = useState(!petsOverride)
   const [available, setAvailable] = useState(true)
   const [pets, setPets] = useState<Pet[]>(petsOverride ?? [])
   const [allPets, setAllPets] = useState<Pet[]>([])
   const [open, setOpen] = useState((petsOverride ?? []).length > 0)
-  const [editing, setEditing] = useState(false)
-  const [drafts, setDrafts] = useState<Pet[]>([])
-  const [saving, setSaving] = useState(false)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (petsOverride) {
@@ -65,53 +66,28 @@ export default function PetsSection({
     setLoading(false)
   }
 
-  function startEditing() {
-    setDrafts(pets.map((p) => ({ ...p, attributes: [...p.attributes] })))
-    setEditing(true)
-    setOpen(true)
-  }
-
-  async function handleSave() {
-    setSaving(true)
-    for (const draft of drafts) {
-      const original = pets.find((p) => p.id === draft.id)
-      if (!original) continue
-      const name = draft.name.trim()
-      // A blank name would leave an unfindable pet on the profile — keep what was there.
-      await updatePet(draft.id, {
-        name: name || original.name,
-        species: draft.species?.trim() || null,
-        breed: draft.breed?.trim() || null,
-        birth_date: draft.birth_date || null,
-        adopted_date: draft.adopted_date || null,
-        deceased_date: draft.deceased_date || null,
-        notes: draft.notes?.trim() || null,
-        attributes: draft.attributes,
-      })
-    }
-    setSaving(false)
-    setEditing(false)
-    await load()
-  }
-
   async function handleAddExisting(petId: string) {
+    setBusy(true)
     await linkPet(personId, petId)
     await load()
+    setBusy(false)
   }
 
   async function handleCreate(name: string) {
-    await createAndLinkPet(personId, { name })
+    setBusy(true)
+    const created = await createAndLinkPet(personId, { name })
     await load()
+    setBusy(false)
+    // Straight onto the new pet's page to fill in the details — same "create a shell, then build it
+    // up" flow as "+ Add Person" and "+ Add Event".
+    if (created && onSelectPet) onSelectPet({ id: created.id, name: created.name })
   }
 
   async function handleUnlink(petId: string) {
+    setBusy(true)
     await unlinkPet(personId, petId)
-    setDrafts((d) => d.filter((p) => p.id !== petId))
     await load()
-  }
-
-  function updateDraft(petId: string, patch: Partial<Pet>) {
-    setDrafts((d) => d.map((p) => (p.id === petId ? { ...p, ...patch } : p)))
+    setBusy(false)
   }
 
   if (loading) return null
@@ -122,7 +98,7 @@ export default function PetsSection({
   const linkedIds = new Set(pets.map((p) => p.id))
   const pickerItems = allPets
     .filter((p) => !linkedIds.has(p.id))
-    .map((p) => ({ id: p.id, label: formatPetLine(p) }))
+    .map((p) => ({ id: p.id, label: `${petEmoji(p)} ${formatPetLine(p)}` }))
 
   return (
     <div style={styles.section}>
@@ -130,24 +106,40 @@ export default function PetsSection({
         <button type="button" onClick={() => setOpen((o) => !o)} style={styles.toggleButton}>
           {open ? '▾' : '▸'} Pets
         </button>
-        {!readOnly && open && !editing && pets.length > 0 && <EditButton label="Edit pets" onClick={startEditing} />}
       </div>
 
-      {open && !editing && (
+      {open && (
         <div style={styles.displayList}>
           {pets.map((pet) => (
-            <div key={pet.id} style={styles.displayPet}>
-              <p style={isMemorial(pet) ? { ...styles.petName, ...styles.memorialName } : styles.petName}>
-                {formatPetLine(pet)}
-                {isMemorial(pet) && <span style={styles.memorialTag}> · In memory</span>}
-              </p>
-              {formatPetDates(pet) && <p style={styles.petMeta}>{formatPetDates(pet)}</p>}
-              {pet.attributes.map((a, i) => (
-                <p key={i} style={styles.petMeta}>
-                  {a.label}: {a.value}
-                </p>
-              ))}
-              {pet.notes && <p style={styles.petNotes}>{pet.notes}</p>}
+            <div key={pet.id} style={styles.petRow}>
+              <button
+                type="button"
+                onClick={() => onSelectPet?.({ id: pet.id, name: pet.name })}
+                disabled={!onSelectPet}
+                style={
+                  isMemorial(pet)
+                    ? { ...styles.petButton, ...styles.memorialButton }
+                    : styles.petButton
+                }
+              >
+                <span style={styles.petName}>
+                  {petEmoji(pet)} {formatPetLine(pet)}
+                  {isMemorial(pet) && <span style={styles.memorialTag}> · In memory</span>}
+                </span>
+                {formatPetDates(pet) && <span style={styles.petMeta}>{formatPetDates(pet)}</span>}
+              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => handleUnlink(pet.id)}
+                  disabled={busy}
+                  title="Remove from this profile (the pet itself is kept)"
+                  aria-label={`Remove ${pet.name} from this profile`}
+                  style={styles.removeButton}
+                >
+                  ×
+                </button>
+              )}
             </div>
           ))}
           {pets.length === 0 && (
@@ -166,90 +158,6 @@ export default function PetsSection({
               />
             </div>
           )}
-        </div>
-      )}
-
-      {open && editing && (
-        <div style={styles.editForm}>
-          {drafts.map((pet) => (
-            <div key={pet.id} style={styles.editPet}>
-              <label style={styles.fieldLabel}>Name</label>
-              <input
-                type="text"
-                value={pet.name}
-                onChange={(e) => updateDraft(pet.id, { name: e.target.value })}
-                style={styles.input}
-              />
-              <label style={styles.fieldLabel}>Kind of animal</label>
-              <input
-                type="text"
-                value={pet.species ?? ''}
-                onChange={(e) => updateDraft(pet.id, { species: e.target.value })}
-                placeholder="Dog, cat, horse, parrot…"
-                style={styles.input}
-              />
-              <label style={styles.fieldLabel}>Breed</label>
-              <input
-                type="text"
-                value={pet.breed ?? ''}
-                onChange={(e) => updateDraft(pet.id, { breed: e.target.value })}
-                placeholder="Optional"
-                style={styles.input}
-              />
-
-              <label style={styles.fieldLabel}>Birthday</label>
-              <input
-                type="date"
-                value={pet.birth_date ?? ''}
-                onChange={(e) => updateDraft(pet.id, { birth_date: e.target.value || null })}
-                style={styles.input}
-              />
-              <label style={styles.fieldLabel}>Adopted</label>
-              <input
-                type="date"
-                value={pet.adopted_date ?? ''}
-                onChange={(e) => updateDraft(pet.id, { adopted_date: e.target.value || null })}
-                style={styles.input}
-              />
-              <label style={styles.fieldLabel}>Passed away</label>
-              <input
-                type="date"
-                value={pet.deceased_date ?? ''}
-                onChange={(e) => updateDraft(pet.id, { deceased_date: e.target.value || null })}
-                style={styles.input}
-              />
-
-              <LabeledValueEditor
-                label="Details"
-                items={pet.attributes}
-                onChange={(attributes) => updateDraft(pet.id, { attributes })}
-                labelPlaceholder="Label (Vet, Barn…)"
-                valuePlaceholder="Anything worth remembering"
-              />
-
-              <label style={styles.fieldLabel}>Notes</label>
-              <AutoGrowTextarea
-                value={pet.notes ?? ''}
-                onChange={(v) => updateDraft(pet.id, { notes: v })}
-                placeholder="Anything else about this pet…"
-                style={styles.textarea}
-              />
-
-              {/* Unlink, not delete — this pet may also be on a spouse's profile. */}
-              <button type="button" onClick={() => handleUnlink(pet.id)} style={styles.removeButton}>
-                Remove from this profile
-              </button>
-            </div>
-          ))}
-
-          <div style={styles.buttonRow}>
-            <button type="button" onClick={handleSave} disabled={saving} style={styles.saveButton}>
-              {saving ? '…' : 'Save'}
-            </button>
-            <button type="button" onClick={() => setEditing(false)} style={styles.cancelButton}>
-              Cancel
-            </button>
-          </div>
         </div>
       )}
     </div>
@@ -276,70 +184,34 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
   },
   displayList: { marginTop: '0.6rem' },
-  displayPet: { marginBottom: '0.7rem' },
-  petName: { fontSize: fontSize.body, color: colors.inkPlain, margin: '0 0 0.15rem', fontWeight: 'bold' },
-  memorialName: { color: colors.textMuted, fontWeight: 'normal' },
-  memorialTag: { fontSize: fontSize.small, color: colors.textFaint, fontStyle: 'italic', fontWeight: 'normal' },
-  petMeta: { fontSize: fontSize.label, color: colors.textMuted, margin: '0 0 0.15rem' },
-  petNotes: { fontSize: fontSize.label, color: colors.textBody, margin: '0.2rem 0 0', whiteSpace: 'pre-wrap' },
-  emptyText: { fontSize: fontSize.label, color: colors.textFaintest, margin: 0 },
-  pickerWrap: { marginTop: '0.75rem' },
-  editForm: { marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' },
-  editPet: {
+  petRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' },
+  petButton: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.15rem',
-    paddingBottom: '0.85rem',
-    marginBottom: '0.5rem',
-    borderBottom: border.light,
-  },
-  fieldLabel: { fontSize: fontSize.small, color: colors.textMuted, marginTop: '0.5rem' },
-  input: {
-    fontSize: fontSize.bodyLg,
-    padding: '0.5rem 0.65rem',
-    borderRadius: radius.md,
-    border: border.default,
+    alignItems: 'flex-start',
+    gap: '0.1rem',
+    flex: 1,
+    minWidth: 0,
+    background: 'none',
+    border: 'none',
+    textAlign: 'left',
+    padding: '0.3rem 0',
+    cursor: 'pointer',
     fontFamily,
   },
-  textarea: {
-    fontSize: fontSize.body,
-    padding: '0.5rem 0.65rem',
-    borderRadius: radius.md,
-    border: border.default,
-    fontFamily,
-    width: '100%',
-    boxSizing: 'border-box',
-  },
+  memorialButton: { opacity: 0.75 },
+  petName: { fontSize: fontSize.body, color: colors.inkPlain, fontWeight: 'bold' },
+  memorialTag: { fontSize: fontSize.small, color: colors.textFaint, fontStyle: 'italic', fontWeight: 'normal' },
+  petMeta: { fontSize: fontSize.label, color: colors.textMuted },
+  emptyText: { fontSize: fontSize.label, color: colors.textFaintest, margin: 0 },
   removeButton: {
-    alignSelf: 'flex-start',
-    marginTop: '0.6rem',
     background: 'none',
     border: 'none',
     color: colors.danger,
-    fontSize: fontSize.label,
-    fontFamily,
+    fontSize: fontSize.base,
     cursor: 'pointer',
-    padding: 0,
+    padding: '0.3rem',
+    flexShrink: 0,
   },
-  buttonRow: { display: 'flex', gap: '0.6rem', marginTop: '0.25rem' },
-  saveButton: {
-    fontSize: fontSize.body,
-    padding: '0.5rem 1rem',
-    borderRadius: radius.md,
-    border: 'none',
-    backgroundColor: colors.ink,
-    color: colors.onFill,
-    cursor: 'pointer',
-    fontFamily,
-  },
-  cancelButton: {
-    fontSize: fontSize.body,
-    padding: '0.5rem 1rem',
-    borderRadius: radius.md,
-    border: border.default,
-    backgroundColor: colors.surface,
-    color: colors.textMuted,
-    cursor: 'pointer',
-    fontFamily,
-  },
+  pickerWrap: { marginTop: '0.75rem' },
 }
