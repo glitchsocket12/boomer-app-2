@@ -519,6 +519,10 @@ export default function PersonDetail({
       supabase.from('notes').delete().eq('person_id', personId),
       supabase.from('reminders').delete().eq('person_id', personId),
       supabase.from('person_groups').delete().eq('person_id', personId),
+      // person_pets cascades on the people FK, so this is belt-and-braces for symmetry with the
+      // other dependents. It sits in the same Promise.all, which aborts the delete on ANY error —
+      // safe only now that 2026-08-01-pets.sql has actually been run (confirmed live 2026-08-01).
+      supabase.from('person_pets').delete().eq('person_id', personId),
     ])
     const dependentsError = results.find((r) => r.error)?.error
     if (dependentsError) {
@@ -562,12 +566,13 @@ export default function PersonDetail({
     const survivorId = mergeCandidate.id
     const duplicateId = personId
 
-    const [dupPersonRes, survivorPersonRes, survivorRemindersRes, dupRemindersRes, dupGroupsRes] = await Promise.all([
+    const [dupPersonRes, survivorPersonRes, survivorRemindersRes, dupRemindersRes, dupGroupsRes, dupPetsRes] = await Promise.all([
       supabase.from('people').select('name, last_name, nicknames, middle_name, goes_by_other').eq('id', duplicateId).single(),
       supabase.from('people').select('nicknames').eq('id', survivorId).single(),
       supabase.from('reminders').select('id, label').eq('person_id', survivorId),
       supabase.from('reminders').select('id, label').eq('person_id', duplicateId),
       supabase.from('person_groups').select('group_id').eq('person_id', duplicateId),
+      supabase.from('person_pets').select('pet_id').eq('person_id', duplicateId),
     ])
 
     if (dupPersonRes.error || survivorPersonRes.error) {
@@ -593,6 +598,16 @@ export default function PersonDetail({
         .upsert({ person_id: survivorId, group_id: g.group_id }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
     }
     await supabase.from('person_groups').delete().eq('person_id', duplicateId)
+
+    // Pets follow the same union-then-detach rule as groups. Without this the duplicate's pets
+    // would vanish with the record (person_pets cascades on delete) — and since a pet can be on
+    // several profiles, a plain re-point would collide where the survivor already has it.
+    for (const p of dupPetsRes.data ?? []) {
+      await supabase
+        .from('person_pets')
+        .upsert({ person_id: survivorId, pet_id: p.pet_id }, { onConflict: 'person_id,pet_id', ignoreDuplicates: true })
+    }
+    await supabase.from('person_pets').delete().eq('person_id', duplicateId)
 
     const dup = dupPersonRes.data
     const dupNames = [
@@ -1312,7 +1327,7 @@ export function PersonDetailView({
                 <>
                   <span>
                     Merge "{fullName}" into "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}"?
-                    All notes, reminders, and group memberships move to "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}",
+                    All notes, reminders, pets, and group memberships move to "{mergeCandidate.name}{mergeCandidate.last_name ? ` ${mergeCandidate.last_name}` : ''}",
                     "{fullName}" is deleted, and you'll be taken to the kept profile. This can't be undone.
                   </span>
                   <div style={styles.suggestButtonRow}>
