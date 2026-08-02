@@ -41,6 +41,12 @@ export type TreePerson = {
   // Divorce specifically, never death — only set on rootDirect.spouses, where it drives the
   // "mark ended"/"undo" controls (a death-caused ending isn't something the UI should offer to undo).
   endedByDivorce?: boolean
+  // Which relationships-table `kind` actually backs this marriage line: 'spouse' (married) or
+  // 'partner' (dating — written by the chat/fact pipeline, see _shared/relationships.ts). The tree
+  // renders both identically, but the remove/mark-ended controls have to DELETE/UPDATE the right
+  // kind — assuming 'spouse' made both silently no-op on a partner pair (0 rows matched, no error).
+  // Only set on rootDirect.spouses, the only place those controls read from.
+  spouseKind?: 'spouse' | 'partner'
   relationLabel?: string
 }
 export type Union = { a: TreePerson; spouses: TreePerson[] }
@@ -78,10 +84,19 @@ export type Graph = {
   // Optional — real loadGraph() always populates it, but the demo dataset and test fixtures build
   // a Graph by hand without it, and there's nothing gender-specific for them to get wrong by omitting it.
   genderById?: Map<string, string>
+  // Keyed by unionKey(a, b) — 'partner' for a dating pair, absent/'spouse' for a marriage. Also
+  // optional for the same hand-built-Graph reason; spouseKindBetween defaults to 'spouse'.
+  spouseKindByPair?: Map<string, 'spouse' | 'partner'>
 }
 
 function unionKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`
+}
+
+// Which relationships-table kind backs the marriage line between a and b — see TreePerson.spouseKind
+// for why the UI's write path can't just assume 'spouse'.
+export function spouseKindBetween(g: Graph, a: string, b: string): 'spouse' | 'partner' {
+  return g.spouseKindByPair?.get(unionKey(a, b)) ?? 'spouse'
 }
 
 // A union between a and b reads as ended if it was explicitly ended (divorce) OR either party has
@@ -128,6 +143,7 @@ async function loadGraph(): Promise<Graph> {
   const spousesOf = new Map<string, string[]>()
   const siblingsOf = new Map<string, string[]>()
   const endedPairs = new Set<string>()
+  const spouseKindByPair = new Map<string, 'spouse' | 'partner'>()
   for (const r of rels ?? []) {
     if (r.kind === 'parent') {
       push(parentsOf, r.person_b_id, r.person_a_id)
@@ -135,13 +151,17 @@ async function loadGraph(): Promise<Graph> {
     } else if (r.kind === 'spouse' || r.kind === 'partner') {
       push(spousesOf, r.person_a_id, r.person_b_id)
       push(spousesOf, r.person_b_id, r.person_a_id)
-      if (r.ended_reason) endedPairs.add(unionKey(r.person_a_id, r.person_b_id))
+      // 'spouse' wins if a pair somehow has both rows on file — the stronger claim, and the one
+      // whose downstream effects (syncSpouseParenthood) were already applied.
+      const key = unionKey(r.person_a_id, r.person_b_id)
+      if (r.kind === 'spouse' || !spouseKindByPair.has(key)) spouseKindByPair.set(key, r.kind)
+      if (r.ended_reason) endedPairs.add(key)
     } else if (r.kind === 'sibling') {
       push(siblingsOf, r.person_a_id, r.person_b_id)
       push(siblingsOf, r.person_b_id, r.person_a_id)
     }
   }
-  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs, genderById }
+  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs, genderById, spouseKindByPair }
 }
 
 function node(g: Graph, id: string, kind: TreePersonKind, parentId: string | undefined, side?: TreeSide): TreePerson {
@@ -533,6 +553,7 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
     ...node(g, id, 'direct', undefined),
     endedWithAnchor: isUnionEnded(g, rootId, id),
     endedByDivorce: g.endedPairs.has(unionKey(rootId, id)),
+    spouseKind: spouseKindBetween(g, rootId, id),
   }))
   const siblingNodes: TreePerson[] = rootSiblings.map((id) => node(g, id, 'direct', rootAnchor))
   // Each sibling's own spouse rides along as an in-law (no parentId — same treatment as the root's

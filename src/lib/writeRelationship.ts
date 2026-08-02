@@ -215,8 +215,20 @@ export async function unlinkRelationship(
 ): Promise<void> {
   await deleteNoteIfPresent(targetId, NOTE_FOR_TARGET[category](subjectName))
   await deleteNoteIfPresent(subjectId, NOTE_FOR_SUBJECT[category](targetName))
-  if (category === 'spouse') await removeRelationship(subjectId, targetId, 'spouse')
-  else if (category === 'siblings') await removeRelationship(subjectId, targetId, 'sibling')
+  if (category === 'spouse') {
+    // Both kinds, unconditionally: the family tree renders a 'partner' (dating) pair in the exact
+    // same spouse position as a married one, so "remove this spouse" has to clear whichever kind is
+    // actually on file. Deleting only 'spouse' matched zero rows for a partner pair and failed
+    // silently — the reported bug (2026-08-01). The unmatched delete is a harmless no-op, and it
+    // also cleans up a contradictory pair carrying both rows.
+    await removeRelationship(subjectId, targetId, 'spouse')
+    await removeRelationship(subjectId, targetId, 'partner')
+    // Same reason for the notes: a partner pair's reciprocal note reads "In a relationship with X."
+    // (supabase/functions/_shared/relationships.ts's RECIPROCAL_NOTE), not "Married to X.", so the
+    // "Married to" delete above leaves it behind claiming a relationship that no longer exists.
+    await deleteNoteIfPresent(targetId, `In a relationship with ${subjectName}.`)
+    await deleteNoteIfPresent(subjectId, `In a relationship with ${targetName}.`)
+  } else if (category === 'siblings') await removeRelationship(subjectId, targetId, 'sibling')
   else if (category === 'parents') await removeRelationship(targetId, subjectId, 'parent')
   else if (category === 'kids') await removeRelationship(subjectId, targetId, 'parent')
 }

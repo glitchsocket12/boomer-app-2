@@ -273,8 +273,10 @@ type SpouseSuggestion = { aId: string; aName: string; bId: string; bName: string
 type CoParentSuggestion = { parentId: string; parentName: string; childId: string; childName: string }
 // Divorce keeps the relationship row (unlike RemoveTarget, which deletes it) — only the root's own
 // CURRENT spouses/partners are offered this, one hop out isn't handled here for the same reason
-// RemoveTarget isn't (see confirmRemove's comment).
-type DivorceTarget = { targetId: string; targetName: string; label: string }
+// RemoveTarget isn't (see confirmRemove's comment). `kind` is the relationships-table kind actually
+// backing this pair ('spouse' or 'partner') — the UPDATE has to target the row that exists, not an
+// assumed 'spouse' one (see TreePerson.spouseKind in familyTree.ts).
+type DivorceTarget = { targetId: string; targetName: string; label: string; kind: 'spouse' | 'partner' }
 
 export default function FamilyTree({
   personId,
@@ -460,7 +462,7 @@ export default function FamilyTree({
   async function confirmDivorce() {
     if (!data || !divorceConfirm) return
     setDivorcing(true)
-    await setRelationshipEndedReason(data.rootId, divorceConfirm.targetId, 'spouse', 'divorce')
+    await setRelationshipEndedReason(data.rootId, divorceConfirm.targetId, divorceConfirm.kind, 'divorce')
     const refreshed = await buildFamilyTree(data.rootId)
     setData(refreshed)
     setDivorcing(false)
@@ -469,10 +471,10 @@ export default function FamilyTree({
 
   // No confirm banner here, unlike confirmDivorce — this is a correction, not a destructive step,
   // same treatment PersonDetail.tsx gives "Undo" on the deceased-date field.
-  async function undoDivorce(targetId: string) {
+  async function undoDivorce(targetId: string, kind: 'spouse' | 'partner') {
     if (!data) return
     setUndoingDivorceId(targetId)
-    await setRelationshipEndedReason(data.rootId, targetId, 'spouse', null)
+    await setRelationshipEndedReason(data.rootId, targetId, kind, null)
     const refreshed = await buildFamilyTree(data.rootId)
     setData(refreshed)
     setUndoingDivorceId(null)
@@ -575,7 +577,7 @@ export function FamilyTreeView({
   onRequestDivorce?: (target: DivorceTarget) => void
   onConfirmDivorce?: () => void
   onCancelDivorce?: () => void
-  onUndoDivorce?: (targetId: string) => void
+  onUndoDivorce?: (targetId: string, kind: 'spouse' | 'partner') => void
   undoingDivorceId?: string | null
   onCancelRemove?: () => void
   spouseSuggestions?: SpouseSuggestion[]
@@ -677,15 +679,17 @@ export function FamilyTreeView({
           targetName: p.name,
           label: `Remove ${p.name} as ${data.rootName}'s parent?`,
         })),
+        // relLabel/label follow the row's actual kind — calling a dating partner someone's "spouse"
+        // in the confirm banner reads as the app having recorded the wrong fact.
         ...data.rootDirect.spouses.map((p) => ({
           key: `rm-spouse-${p.id}`,
-          relLabel: 'spouse',
+          relLabel: p.spouseKind === 'partner' ? 'partner' : 'spouse',
           category: 'spouse' as CircleCategory,
           subjectId: data.rootId,
           subjectName: data.rootName,
           targetId: p.id,
           targetName: p.name,
-          label: `Remove ${p.name} as ${data.rootName}'s spouse?`,
+          label: `Remove ${p.name} as ${data.rootName}'s ${p.spouseKind === 'partner' ? 'partner' : 'spouse'}?`,
         })),
         ...data.rootDirect.siblings.map((p) => ({
           key: `rm-sibling-${p.id}`,
@@ -721,16 +725,25 @@ export function FamilyTreeView({
           key: `div-spouse-${p.id}`,
           targetId: p.id,
           targetName: p.name,
-          label: `Mark ${data.rootName} and ${p.name} as divorced?`,
+          kind: p.spouseKind === 'partner' ? ('partner' as const) : ('spouse' as const),
+          label:
+            p.spouseKind === 'partner'
+              ? `Mark ${data.rootName} and ${p.name}'s relationship as ended?`
+              : `Mark ${data.rootName} and ${p.name} as divorced?`,
         }))
 
   // Spouses already marked ended by divorce specifically (not death — see endedByDivorce's comment
   // in familyTree.ts) get an "Undo" link instead of the "mark ended" link above.
-  const endedSlots: { key: string; targetId: string; targetName: string }[] = readOnly
+  const endedSlots: { key: string; targetId: string; targetName: string; kind: 'spouse' | 'partner' }[] = readOnly
     ? []
     : data.rootDirect.spouses
         .filter((p) => p.endedByDivorce)
-        .map((p) => ({ key: `ended-spouse-${p.id}`, targetId: p.id, targetName: p.name }))
+        .map((p) => ({
+          key: `ended-spouse-${p.id}`,
+          targetId: p.id,
+          targetName: p.name,
+          kind: p.spouseKind === 'partner' ? ('partner' as const) : ('spouse' as const),
+        }))
 
   // Plain-language legend, dynamic since which colors actually appear depends on the data (a
   // one-parent person only has one side to name, a group's descendants-mode tree has neither
@@ -971,7 +984,7 @@ export function FamilyTreeView({
           <div style={styles.addRow}>
             {divorceSlots.map((slot) => (
               <button key={slot.key} type="button" onClick={() => onRequestDivorce(slot)} style={styles.textLinkButton}>
-                Mark {slot.targetName}'s marriage to {data.rootName} as ended
+                Mark {slot.targetName}'s {slot.kind === 'partner' ? 'relationship' : 'marriage'} with {data.rootName} as ended
               </button>
             ))}
           </div>
@@ -987,7 +1000,7 @@ export function FamilyTreeView({
                 {slot.targetName}
                 <button
                   type="button"
-                  onClick={() => onUndoDivorce(slot.targetId)}
+                  onClick={() => onUndoDivorce(slot.targetId, slot.kind)}
                   disabled={undoingDivorceId === slot.targetId}
                   style={styles.textLinkButton}
                 >
@@ -1001,10 +1014,13 @@ export function FamilyTreeView({
 
       {divorceConfirm && (
         <div style={styles.suggestBanner}>
-          <span>{divorceConfirm.label} They'll both stay on the tree — the marriage line just shows as ended.</span>
+          <span>
+            {divorceConfirm.label} They'll both stay on the tree — the{' '}
+            {divorceConfirm.kind === 'partner' ? 'relationship' : 'marriage'} line just shows as ended.
+          </span>
           <div style={styles.suggestButtonRow}>
             <button type="button" onClick={onConfirmDivorce} style={styles.dangerDeleteButton} disabled={divorcing}>
-              {divorcing ? 'Saving…' : 'Yes, mark divorced'}
+              {divorcing ? 'Saving…' : divorceConfirm.kind === 'partner' ? 'Yes, mark ended' : 'Yes, mark divorced'}
             </button>
             <button type="button" onClick={onCancelDivorce} style={styles.suggestNoButton} disabled={divorcing}>
               Cancel
