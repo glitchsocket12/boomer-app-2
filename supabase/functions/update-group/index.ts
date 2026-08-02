@@ -138,7 +138,9 @@ ${familySignalPromptMultiSubject()}
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
 {"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
-This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.`
+This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.
+
+A PET IS NOT A PERSON. If the user mentions someone's animal, never put the animal's name in "add_people" — that would create a fake human profile in their People list and Dunbar count, and make it a member of this group. Record it as ordinary note text instead. Pets have their own place in the app, recorded from the Home chat or a profile's Pets section, not here.`
 
     // People roster — changes only when someone new is added/renamed elsewhere in the app, much
     // less often than this group's own membership/events change while the user is actively

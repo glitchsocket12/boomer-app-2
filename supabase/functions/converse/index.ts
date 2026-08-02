@@ -49,8 +49,13 @@ serve(async (req) => {
     // guarantee row order without one, so the exact same data can come back reshuffled between
     // calls — which reshuffles this text and breaks the prompt-cache prefix match on every turn
     // even when nothing changed (see the cache_control breakpoint below, and CLAUDE.md's
-    // "serialize deterministically" rule). Fired together with Promise.all — the six queries are
+    // "serialize deterministically" rule). Fired together with Promise.all — the eight queries are
     // independent of each other, so there's no reason to pay for them one round-trip at a time.
+    //
+    // pets/person_pets are two SEPARATE top-level queries, deliberately never an embed on the
+    // people select: a `.select()` naming a table that doesn't exist yet fails the WHOLE query, so
+    // an embed would take the entire people roster — and with it this function — down on any
+    // database where the pets migration hasn't been run. Separate queries fail independently.
     const [
       { data: people },
       { data: moments },
@@ -58,6 +63,8 @@ serve(async (req) => {
       { data: personGroups },
       { data: momentGroups },
       { data: tags },
+      { data: pets },
+      { data: personPets },
     ] = await Promise.all([
       supabaseClient
         .from("people")
@@ -80,6 +87,11 @@ serve(async (req) => {
         .order("moment_id")
         .order("group_id"),
       supabaseClient.from("tags").select("id, name").order("id"),
+      supabaseClient
+        .from("pets")
+        .select("id, name, species, breed, birth_date, adopted_date, deceased_date, notes, attributes")
+        .order("id"),
+      supabaseClient.from("person_pets").select("person_id, pet_id").order("person_id").order("pet_id"),
     ])
 
     const nameById: Record<string, string> = {}
@@ -143,6 +155,39 @@ serve(async (req) => {
       ;(groupMemberNamesById[pg.group_id] ??= []).push(personName)
     }
 
+    // Pets are their own records joined to people via person_pets, so a household dog is one row
+    // owned by both spouses. That's what makes "Braden's dog" answerable here without walking the
+    // relationships graph at all — the pet is already linked to both of them.
+    const petOwnerNamesById: Record<string, string[]> = {}
+    const petOwnerIdsById: Record<string, string[]> = {}
+    for (const pp of personPets ?? []) {
+      const personName = nameById[pp.person_id]
+      if (!personName) continue
+      ;(petOwnerNamesById[pp.pet_id] ??= []).push(personName)
+      ;(petOwnerIdsById[pp.pet_id] ??= []).push(pp.person_id)
+    }
+
+    // Pet names are NOT unique account-wide (deliberately no unique index — two people can each
+    // have a dog named Bella), so this mirrors the people `ambiguousKeys` guard exactly: a bare
+    // name with two owners resolves to nothing rather than to whichever was indexed last.
+    const petNameById: Record<string, string> = {}
+    const idByPetName: Record<string, string> = {}
+    const idByOwnerAndPetName: Record<string, string> = {}
+    const ambiguousPetKeys = new Set<string>()
+    for (const p of pets ?? []) {
+      const key = p.name.toLowerCase()
+      petNameById[p.id] = p.name
+      if (idByPetName[key] && idByPetName[key] !== p.id) {
+        ambiguousPetKeys.add(key)
+      } else {
+        idByPetName[key] = p.id
+      }
+      for (const ownerId of petOwnerIdsById[p.id] ?? []) {
+        idByOwnerAndPetName[`${ownerId}|${key}`] = p.id
+      }
+    }
+    for (const key of ambiguousPetKeys) delete idByPetName[key]
+
     const momentGroupNamesById: Record<string, string[]> = {}
     for (const mg of momentGroups ?? []) {
       const groupName = groupNameById[mg.group_id]
@@ -167,6 +212,24 @@ serve(async (req) => {
       .join("\n")
 
     const tagsContext = (tags ?? []).map((t: any) => t.name).join(", ")
+
+    const petsRoster = (pets ?? [])
+      .map((p: any) => {
+        const owners = (petOwnerNamesById[p.id] ?? []).join(", ") || "no one on file"
+        const kind = [p.species, p.breed].filter(Boolean).join(", ")
+        const dates = [
+          p.birth_date ? `born ${p.birth_date}` : null,
+          p.adopted_date ? `adopted ${p.adopted_date}` : null,
+          p.deceased_date ? `PASSED AWAY ${p.deceased_date}` : null,
+        ]
+          .filter(Boolean)
+          .join("; ")
+        const attrs = (Array.isArray(p.attributes) ? p.attributes : [])
+          .map((a: any) => `${a.label}: ${a.value}`)
+          .join("; ")
+        return `${p.name}${kind ? ` (${kind})` : ""} — belongs to: ${owners}${dates ? ` | ${dates}` : ""}${attrs ? ` | ${attrs}` : ""}${p.notes ? ` | ${p.notes}` : ""}`
+      })
+      .join("\n")
 
     const peopleRoster = (people ?? [])
       .map((p: any) => {
@@ -201,6 +264,17 @@ A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, 
 - Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in that entry's "moment_groups" rather than waiting for a second, more explicit mention.
 - SUBGROUPS: a group in the roster written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "22 AS". When you mean an existing group, copy its name from the roster EXACTLY, including the "Parent / Child" form — a bare "Pilots" when the roster has two of them cannot be resolved and the tag will be dropped. Two different parents can each have a subgroup with the same short name, so if the user's phrasing doesn't make clear which one they mean, ask a quick clarifying question instead of guessing. When you're deliberately creating a NEW subgroup under an existing parent, write it in that same "Parent / Child" form; for any other new group, just give its plain name with no prefix.
 
+A PET is an animal belonging to one or more people — a dog, cat, horse, fish, bird, reptile, anything. Pets are recorded in their own "pets" field, and the roster provided in this prompt lists every pet already on file with its owner(s).
+
+- CRITICAL — A PET IS NOT A PERSON. Never put a pet's name in "new_people", "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", "nickname_updates", or "family_signals". A pet's name belongs in the "pets" field and nowhere else. Writing a pet into "new_people" creates a fake human profile that pollutes the user's People list and their Dunbar count, which is a real and annoying mess to clean up.
+- Record a pet only when the user states one exists (e.g. "Sarah got a puppy named Biscuit", "our cat Mochi", "Tom's horse Willow"). A passing mention of an animal that isn't someone's pet is NOT a pet — "we went to the dog park", "we saw a deer", "the neighbor's dog barked all night" record nothing.
+- Every pet you record MUST have at least one owner in its "owners" list, named exactly as they appear in the people roster (or a person being created this same turn via "new_people"). A pet with no resolvable owner can't be shown on anyone's profile, so it would be silently lost — never emit one.
+- Reuse an existing pet rather than coining a near-duplicate: if the roster already lists "Biscuit", don't record "Biscuits". To attach an existing pet to an ADDITIONAL owner (e.g. "Biscuit is Tom's dog too"), emit the same pet name with the extra person in "owners" — that adds the link, it doesn't create a second pet.
+- If two pets in the roster share a name, you must identify which by its owner. If the user's phrasing doesn't make clear which one they mean, ask a quick clarifying question instead of guessing — same rule as two people named Bob.
+- Only fill in "species"/"breed" when the user actually says so. Leave them null rather than guessing — "puppy" tells you it's a dog, not what breed it is.
+- If the user says a pet died, set "deceased_date" (resolve the date the same way as event_date). Any pet the roster marks "PASSED AWAY" must be spoken about in the past tense, and never ask a follow-up question that assumes it's still alive.
+- Answering questions about pets ("what's Sarah's dog called?", "how old is Biscuit?") comes straight from the roster — match on the owner and the kind of animal. If the person has no pet on file, say so rather than inventing one.
+
 A TAG is completely different from a group: it describes WHAT KIND of thing a moment was (e.g. "milestone," "vacation," "medical," "tradition," "reunion"), not WHO it's affiliated with. Never put the same word in both "moment_groups" and "moment_tags" for one entry — a Pop Warner story gets "Pop Warner" as a group (who/what recurring affiliation) and, separately, maybe "milestone" as a tag (what kind of thing it was), only if it genuinely reads as a big/notable moment. When a moment's content clearly suggests a kind of event worth categorizing this way, add 1-3 tags to that entry's "moment_tags" — never more than 3, and always prefer reusing an exact (case-insensitive) match from the tags already created (shown below) over coining a new, similar-but-different one (e.g. reuse "milestone" rather than adding "big milestone" or "major milestone" as a separate tag). If nothing about the moment clearly fits an existing or obviously-new category, leave "moment_tags" empty rather than forcing one.
 
 Each time the user writes something, figure out what they're doing:
@@ -221,7 +295,7 @@ ${familySignalPromptMultiSubject()}
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
 
 IMPORTANT — capture EVERY concrete detail the user gives about an event, not just who attended. A "notes" entry doesn't have to be about a specific person: anything the user says about the event itself — what was done, eaten, said, how it went, the weather, an activity, a gift, a reaction — belongs in its own "notes" entry with "person" set to null, UNLESS it's naturally about one specific attendee (in which case attach it to that person's own note instead). Never let a real detail the user typed disappear just because it wasn't about a named person — the event's own page shows these general notes alongside the per-person ones. Don't pad a note with filler if the user gave no detail (that's what "Was there." is for — see below); but when they DID give detail, capture it, even if it means several separate notes entries for one event.
@@ -261,7 +335,10 @@ ${groupsContext || "(none yet)"}
 Here are the tags already created: ${tagsContext || "(none yet)"}
 
 Here is everyone already recorded, by full name where a last name is known:
-${peopleRoster || "(none yet)"}${selfInstruction}${chatToneInstruction}`
+${peopleRoster || "(none yet)"}
+
+Here are the pets already recorded, and who each one belongs to:
+${petsRoster || "(none yet)"}${selfInstruction}${chatToneInstruction}`
 
     // Moments tier — changes on every new capture, the most frequent write in the app, so it's
     // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier
@@ -320,13 +397,18 @@ ${context || "(none recorded yet)"}`
     }
 
     const data = await response.json()
+    // Cache-health check required whenever this function is touched (CLAUDE.md rule 3): on a repeat
+    // turn with no writes between, cache_read_input_tokens must be non-zero. If it's zero, some
+    // per-request value is leaking into a cached tier — check the .order() clauses on the roster
+    // queries first. No PII: counts only.
+    console.log("usage", JSON.stringify(data.usage ?? null))
     const textBlock = data.content?.find((b: any) => b.type === "text")
 
     if (!textBlock) {
       console.error("Anthropic response had no text block", JSON.stringify(data))
     }
 
-    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], moments: [], family_signals: [] }
+    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], pets: [], moments: [], family_signals: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -419,6 +501,97 @@ ${context || "(none recorded yet)"}`
       { idByName, nameById, lastNameById },
       user.id
     )
+
+    // Pets are written AFTER new_people/renames/applyFamilySignals so an owner created earlier in
+    // this same turn resolves — same ordering reasoning as the group tags below.
+    for (const entry of parsed.pets ?? []) {
+      const petName = String(entry?.name ?? "").trim()
+      if (!petName) continue
+
+      const ownerIds = [
+        ...new Set(
+          (Array.isArray(entry.owners) ? entry.owners : [])
+            .map((n: any) => idByName[String(n).trim().toLowerCase()])
+            .filter(Boolean)
+        ),
+      ] as string[]
+
+      // A pet with no resolvable owner shows on nobody's profile — it would be a silent orphan
+      // write while the reply cheerfully claims it saved. The roster is complete and new_people has
+      // already run, so this should be unreachable; log loudly rather than write junk.
+      if (ownerIds.length === 0) {
+        console.error("Pet skipped: no owner resolved", petName, JSON.stringify(entry.owners ?? null))
+        continue
+      }
+
+      const key = petName.toLowerCase()
+      // Owner-scoped first, so two dogs named Bella stay distinct; then a unique bare name.
+      let petId: string | null = null
+      for (const ownerId of ownerIds) {
+        const scoped = idByOwnerAndPetName[`${ownerId}|${key}`]
+        if (scoped) {
+          petId = scoped
+          break
+        }
+      }
+      if (!petId && !ambiguousPetKeys.has(key)) petId = idByPetName[key] ?? null
+
+      const incoming: Record<string, any> = {
+        species: entry.species ? String(entry.species).trim() : null,
+        breed: entry.breed ? String(entry.breed).trim() : null,
+        birth_date: sanitizeIsoDate(entry.birth_date),
+        adopted_date: sanitizeIsoDate(entry.adopted_date),
+        deceased_date: sanitizeIsoDate(entry.deceased_date),
+      }
+      const incomingAttributes = (Array.isArray(entry.attributes) ? entry.attributes : [])
+        .filter((a: any) => a && a.label && a.value)
+        .slice(0, 5)
+        .map((a: any) => ({ label: String(a.label).trim(), value: String(a.value).trim() }))
+
+      if (petId) {
+        // ADDITIVE ONLY: fill fields that are currently blank, never overwrite what's already on
+        // file. Chat is a lossy channel and the profile form is the deliberate one — same
+        // never-lose-existing-data rule the contacts import merge follows.
+        const existing = (pets ?? []).find((p: any) => p.id === petId) as Record<string, any> | undefined
+        const patch: Record<string, any> = {}
+        for (const [field, value] of Object.entries(incoming)) {
+          if (value && !existing?.[field]) patch[field] = value
+        }
+        if (incomingAttributes.length > 0) {
+          const merged = Array.isArray(existing?.attributes) ? [...existing.attributes] : []
+          for (const attr of incomingAttributes) {
+            if (!merged.some((m: any) => String(m.label).toLowerCase() === attr.label.toLowerCase())) merged.push(attr)
+          }
+          if (merged.length !== (existing?.attributes?.length ?? 0)) patch.attributes = merged
+        }
+        if (Object.keys(patch).length > 0) {
+          const { error } = await supabaseClient.from("pets").update(patch).eq("id", petId)
+          if (error) console.error("Pet update failed", petName, error.message)
+        }
+      } else {
+        const { data: newPet, error } = await supabaseClient
+          .from("pets")
+          .insert({ user_id: user.id, name: petName, ...incoming, attributes: incomingAttributes })
+          .select("id")
+          .single()
+        if (error || !newPet) {
+          console.error("Pet insert failed", petName, error?.message)
+          continue
+        }
+        petId = newPet.id as string
+        idByPetName[key] = petId
+        petNameById[petId] = petName
+      }
+
+      const resolvedPetId: string = petId
+      for (const ownerId of ownerIds) {
+        const { error } = await supabaseClient
+          .from("person_pets")
+          .upsert({ person_id: ownerId, pet_id: resolvedPetId }, { onConflict: "person_id,pet_id", ignoreDuplicates: true })
+        if (error) console.error("Pet link failed", petName, error.message)
+        idByOwnerAndPetName[`${ownerId}|${key}`] = resolvedPetId
+      }
+    }
 
     async function findOrCreateGroupId(name: string): Promise<string | null> {
       const existing = groupIndex.resolve(name)
