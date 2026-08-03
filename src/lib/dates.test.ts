@@ -77,10 +77,10 @@ describe('formatFullDate with event_end_date', () => {
 })
 
 describe('formatEventWhen with event_end_date', () => {
-  it('is unchanged when event_end_date is null', () => {
+  it('includes the day when event_end_date is null', () => {
     expect(
       formatEventWhen({ event_date: '2026-03-15', event_end_date: null, when_text: 'mid-March', created_at: '2026-07-01T12:00:00Z' })
-    ).toBe('March 2026')
+    ).toBe('March 15, 2026')
   })
 
   it('renders a range when event_end_date differs', () => {

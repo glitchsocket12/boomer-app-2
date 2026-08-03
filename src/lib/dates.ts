@@ -46,9 +46,9 @@ export function formatEventWhen(moment: {
   if (moment.event_date && moment.event_end_date && moment.event_end_date !== moment.event_date) {
     return formatDateRange(moment.event_date, moment.event_end_date)
   }
-  if (moment.event_date) return formatMonthYear(moment)
+  if (moment.event_date) return formatFullDate(moment)
   if (moment.when_text) return moment.when_text
-  return formatMonthYear(moment)
+  return formatFullDate(moment)
 }
 
 // Next occurrence of a month/day reminder (birthday, anniversary) from today, wrapping into
