@@ -1014,4 +1014,62 @@ The foundation came back sound, which was worth saying plainly to a founder brac
 
 ---
 
+## 30. Family tree centered person drifting off-screen (2026-08-03)
+
+**The report.** Founder noticed that clicking through people's family trees, the centered (purple)
+person seemed to slowly drift toward the right edge of the canvas, and the connector lines started
+overlapping — pointed at Caroline Volin's and Clare Sucre's trees as clear examples.
+
+**The investigation.** Loaded the real app in the browser preview, logged in as the test account,
+opened Caroline Volin's family tree, and pulled the rendered SVG's actual `rect` coordinates via
+`javascript_tool` rather than guessing from a screenshot. Canvas width was 4244px; Caroline's own box
+sat at x≈3316 (center ≈3386) — nearly 80% of the way across, nowhere near the canvas center (2122).
+Checking box fill colors confirmed every single "extended" family member (17 grandparents/aunts/
+uncles/cousins) rendered in the same blue "side a" — `SIDE_COLORS.b` (rose) never appeared anywhere
+in the tree, even though Caroline's two parents (Mark Berzins, Margaret Berzins) are two distinct
+people who should anchor two different sides.
+
+**Root cause.** `familyTree.ts`'s `sideOfParent` determined which "side" (a/b) a grandparent/aunt/
+uncle/cousin's lineage belonged to by looking up which entry of `parentCouples` — built via
+`groupIntoCouples(g, treeParents)` — a given parent id fell into. `groupIntoCouples` pairs up any two
+ids in the list who are each other's spouse. Since root's own two parents are almost always married
+to *each other* (the ordinary case), they collapsed into a single couple (`[[mark, margaret]]`), so
+`sideOfParent` returned side `'a'` for literally everyone — both of root's parents' entire extended
+families ended up bucketed into `leftExtended`/`leftCousinBranches`, and `rightExtended`/
+`rightCousinBranches` stayed permanently empty. `FamilyTree.tsx`'s canvas centers on the tree's total
+content bounding box (not on the root's own position), so cramming 100% of the extended family onto
+one side systematically dragged the root's box toward the opposite edge. This affected essentially
+every person in the app whose parents are (or were) married — i.e. most people — which is why it
+read as a general, worsening problem rather than an isolated one-off.
+
+The "couple" grouping wasn't arbitrary — an earlier fix (`cbfcb80`, "Color-code family tree by focal
+person and family side") deliberately moved off *within-branch position* (0 for whoever's listed
+first) to *couple-index parity*, specifically to handle divorced/separated parents who were never
+linked to each other via a spouse relationship on file (each landing in their own single-person
+branch, both index 0, both side 'a' under the old logic). That fix solved the divorced case but
+broke the far more common married case, since it never separated "the couple root's two parents
+happen to form" from "the two distinct blood lines those two parents each represent."
+
+**The fix.** Replaced `groupIntoCouples`/`sideOfParent` with `buildParentSides(g, rootParents,
+treeParents)`: assigns side directly from `rootParents` (root's own distinct parent ids, by index
+parity — `0 → 'a'`, `1 → 'b'`, alternating for a 3rd+ parent on file), independent of whether those
+parents are married to each other. Any `treeParents` entry added by `expandParentsWithSpouses` (a
+deceased spouse of a recorded parent, added to recover a lost blood line — see §29/history item 20)
+inherits the side of whichever `rootParent` it was expanded from, since it's standing in for that
+same blood line.
+
+**Verification.** Build (`tsc -b && vite build`) and the full vitest suite (70 tests) both passed.
+Re-checked Caroline Volin's tree live: `Pat Carroll`/`Mimi Carroll` (Margaret's own parents) and the
+Leonard/Carroll/Crigler cousins now render in rose (`#F8EEF1`), Mark's side (Ruskaup/Berzins) stays
+blue — both colors now actually appear, matching the legend's claim. Root's box position also moved
+from ~78% across the canvas to ~21% — no longer pinned to one extreme edge. The remaining offset from
+dead-center reflects genuine data asymmetry (Margaret's side has more people recorded than Mark's),
+not a bug — a perfectly-centered root isn't achievable without either wasting canvas space or
+clipping whichever side has more recorded family, and centering on total content width is the
+existing, intentional design (see item covering the 2026-07-22 layout centering fix, same file).
+Checked Clare Sucre's tree too (Caroline's sister, same parents) — same fix, same improvement.
+Committed and pushed directly per the founder's standing verify-then-push permission (`CLAUDE.md`).
+
+---
+
 _End of document. Update this file as the project progresses — it's meant to be the single source of truth for anyone (human or AI) picking this project up._

@@ -759,6 +759,11 @@ person's direct spouse list stays as literally their own recorded spouses) nor t
 `groupIntoBranches`'s Parents/Grandparents-tier pairing (a separate, already-correct mechanism).
 Deferred: step-sibling/half-sibling labels for sibling-GROUPS (comparing pairs within a rendered
 sibling/cousin set) are a structurally different problem, not yet built.
+**Centered-person-drifts-off-screen bug (2026-08-03 fix, familyTree.ts):** `sideOfParent` grouped
+root's own two parents into couples before assigning tree side — married-to-each-other parents (the
+common case) collapsed into one couple, so 100% of grandparents/aunts/uncles/cousins landed on side
+'a', dragging the root's box off-center. Side is now assigned per-parent (`buildParentSides`), not
+per-couple.
 Full story: PROJECT_HISTORY.md.
 │   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
 │   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
