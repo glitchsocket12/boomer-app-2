@@ -575,6 +575,19 @@ src/
 │   │                            note box mirrors GroupDetail's own (plain
 │   │                            textarea, direct `notes` insert, `person_id:
 │   │                            null`, no AI). Verified live in browser preview.
+│   │                            Note edit/delete (2026-08-03, founder
+│   │                            feedback: AI-fabricated note text had no fix
+│   │                            short of deleting the event) — same hover
+│   │                            pencil/trash pattern as PersonDetail/
+│   │                            GroupDetail's note cards. A displayed card
+│   │                            can represent more than one underlying
+│   │                            `notes` row (everyone tagged together with
+│   │                            identical text, e.g. a bulk "Was there.") —
+│   │                            edit/delete act on every row in the group at
+│   │                            once, and both clear the cached summary so
+│   │                            it regenerates without the old text.
+│   │                            Verified live (single note + a 2-person
+│   │                            grouped note).
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
 │   ├── ManageTags.tsx         — (item 28 follow-up, 2026-07-22) reached via "Manage

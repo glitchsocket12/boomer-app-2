@@ -29,6 +29,11 @@ export type GroupRef = {
 }
 export type TagRef = { id: string; name: string }
 export type NoteWithPerson = { id: string; content: string; created_at: string; people: PersonRef | null; source: string | null }
+// A displayed notes-list card: one or more `notes` rows sharing identical trimmed content (see
+// noteGroups in EventDetailView below) — bulk-tagging "Was there." across several attendees at
+// once is the common case. `ids` is every underlying row the card represents, so editing/deleting
+// the card can act on all of them together.
+export type NoteGroup = { key: string; content: string; created_at: string; source: string | null; people: PersonRef[]; ids: string[] }
 export type OtherEvent = { id: string; occasion: string | null; raw_description: string }
 export type ChildEventRef = {
   id: string
@@ -398,6 +403,25 @@ export default function EventDetail({
     await handleNoteSaved()
   }
 
+  // Editing a note directly fixes wrong/fabricated content wherever it's read from — this page,
+  // the attributed person's own profile, and the next AI summary regeneration below — instead of
+  // leaving it on file forever. A displayed card can back more than one underlying `notes` row
+  // (everyone tagged together with identical text), so this rewrites all of them at once to keep
+  // the card's text and its rows in sync.
+  async function handleEditNote(noteIds: string[], newContent: string) {
+    await supabase.from('notes').update({ content: newContent }).in('id', noteIds)
+    await handleNoteSaved()
+  }
+
+  // Real delete, unlike handleRemoveAttendee's non-destructive untag above — this is the fix for
+  // bad note content, so it has to actually go away, including from whoever it's attributed to.
+  // If this was someone's only note tying them to this event, they'll no longer show under Who
+  // Was There, which is correct: nothing else here still claims they came.
+  async function handleDeleteNote(noteIds: string[]) {
+    await supabase.from('notes').delete().in('id', noteIds)
+    await handleNoteSaved()
+  }
+
   // Denying a suggestion just means "stop suggesting them for this event" — remembered on the
   // moment itself, same reasoning/pattern as groups.dismissed_person_ids on GroupDetail.tsx.
   async function handleDenySuggestion(person: PersonRef) {
@@ -609,6 +633,8 @@ export default function EventDetail({
       onUntagMoment={handleUntagMoment}
       onAddAttendee={handleAddAttendee}
       onRemoveAttendee={handleRemoveAttendee}
+      onEditNote={handleEditNote}
+      onDeleteNote={handleDeleteNote}
       onDenySuggestion={handleDenySuggestion}
       onDenyAllSuggestions={handleDenyAllSuggestions}
       notesOpen={notesOpen}
@@ -696,6 +722,8 @@ export function EventDetailView({
   onUntagMoment = () => {},
   onAddAttendee = () => {},
   onRemoveAttendee = () => {},
+  onEditNote = () => {},
+  onDeleteNote = () => {},
   onDenySuggestion = () => {},
   onDenyAllSuggestions = () => {},
   notesOpen = false,
@@ -772,6 +800,8 @@ export function EventDetailView({
   onUntagMoment?: (tagId: string) => void
   onAddAttendee?: (person: PersonRef) => void
   onRemoveAttendee?: (person: PersonRef) => void
+  onEditNote?: (noteIds: string[], newContent: string) => void
+  onDeleteNote?: (noteIds: string[]) => void
   onDenySuggestion?: (person: PersonRef) => void
   onDenyAllSuggestions?: (people: PersonRef[]) => void
   notesOpen?: boolean
@@ -810,16 +840,17 @@ export function EventDetailView({
   // person (see converse/index.ts's per-attendee insert loop) — collapse those into one card
   // listing everyone instead of repeating the same sentence once per person. Notes added
   // separately (edits, follow-up chat) naturally won't share exact text, so they stay distinct.
-  const noteGroups: { key: string; content: string; created_at: string; source: string | null; people: PersonRef[] }[] = []
-  const noteGroupsByContent = new Map<string, (typeof noteGroups)[number]>()
+  const noteGroups: NoteGroup[] = []
+  const noteGroupsByContent = new Map<string, NoteGroup>()
   for (const n of moment.notes ?? []) {
     const key = n.content.trim()
     let group = noteGroupsByContent.get(key)
     if (!group) {
-      group = { key, content: n.content, created_at: n.created_at, source: n.source, people: [] }
+      group = { key, content: n.content, created_at: n.created_at, source: n.source, people: [], ids: [] }
       noteGroupsByContent.set(key, group)
       noteGroups.push(group)
     }
+    group.ids.push(n.id)
     if (n.people && !group.people.some((p) => p.id === n.people!.id)) {
       group.people.push(n.people)
     }
@@ -1251,18 +1282,12 @@ export function EventDetailView({
           {notesOpen && moment.notes.length > 0 && (
             <div style={styles.notesList}>
               {noteGroups.map((group) => (
-                <div key={group.key} style={styles.noteCard}>
-                  <p style={styles.noteContent}>{group.content}</p>
-                  <div style={styles.noteMetaRow}>
-                    <span style={styles.noteMeta}>
-                      {group.people.length > 0
-                        ? `${group.people.map((p) => `${p.name}${p.last_name ? ` ${p.last_name}` : ''}`).join(', ')} · `
-                        : ''}
-                      {new Date(group.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-                    </span>
-                    {group.source === 'home' && <span style={styles.noteSourceTag}>From Home</span>}
-                  </div>
-                </div>
+                <EventNoteCard
+                  key={group.key}
+                  group={group}
+                  onEdit={readOnly ? undefined : onEditNote}
+                  onDelete={readOnly ? undefined : onDeleteNote}
+                />
               ))}
             </div>
           )}
@@ -1381,6 +1406,13 @@ const TRASH_ICON = (
     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     <path d="M10 11v6" />
     <path d="M14 11v6" />
+  </svg>
+)
+
+const PENCIL_ICON = (
+  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 )
 
@@ -1519,6 +1551,89 @@ function SuggestedAttendeeChip({
         >
           ×
         </button>
+      )}
+    </div>
+  )
+}
+
+// One notes-list card — same hover-reveals-edit/delete pattern as PersonDetail.tsx's NoteCard /
+// GroupDetail.tsx's GroupNoteCard, adapted to act on a content GROUP (see noteGroups above)
+// rather than a single note row, since a card here can represent more than one underlying
+// `notes` id shared by everyone tagged with identical text. Editing rewrites every id in the
+// group to the same new text (so it's still one collapsed card next load); deleting removes all
+// of them. `onEdit`/`onDelete` omitted (demo read-only mode) simply never shows the hover badges.
+function EventNoteCard({
+  group,
+  onEdit,
+  onDelete,
+}: {
+  group: NoteGroup
+  onEdit?: (noteIds: string[], newContent: string) => void
+  onDelete?: (noteIds: string[]) => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  function startEditing() {
+    setDraft(group.content)
+    setEditing(true)
+  }
+
+  function commitEdit() {
+    if (draft.trim()) onEdit?.(group.ids, draft.trim())
+    setEditing(false)
+  }
+
+  function handleDeleteClick() {
+    const names = group.people.map((p) => p.name).join(', ')
+    const message = names
+      ? `Delete this note? It'll no longer show for ${names}. This can't be undone.`
+      : "Delete this note? This can't be undone."
+    if (confirm(message)) onDelete?.(group.ids)
+  }
+
+  if (editing) {
+    return (
+      <div style={styles.noteCard}>
+        <form onSubmit={(e) => { e.preventDefault(); commitEdit() }} style={styles.noteEditForm}>
+          <AutoGrowTextarea value={draft} onChange={setDraft} onEnter={commitEdit} style={styles.noteEditInput} />
+          <div style={styles.noteEditButtonRow}>
+            <button type="submit" style={styles.noteSaveButton}>Save</button>
+            <button type="button" onClick={() => setEditing(false)} style={styles.noteCancelButton}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
+  return (
+    <div style={styles.noteCardWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <div style={styles.noteCard}>
+        <p style={styles.noteContent}>{group.content}</p>
+        <div style={styles.noteMetaRow}>
+          <span style={styles.noteMeta}>
+            {group.people.length > 0
+              ? `${group.people.map((p) => `${p.name}${p.last_name ? ` ${p.last_name}` : ''}`).join(', ')} · `
+              : ''}
+            {new Date(group.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+          </span>
+          {group.source === 'home' && <span style={styles.noteSourceTag}>From Home</span>}
+        </div>
+      </div>
+      {(hovered || IS_TOUCH) && (onEdit || onDelete) && (
+        <div style={styles.noteBadgeRow}>
+          {onEdit && (
+            <button onClick={startEditing} aria-label="Edit this note" className="touch-action" style={styles.noteBadge}>
+              {PENCIL_ICON}
+            </button>
+          )}
+          {onDelete && (
+            <button onClick={handleDeleteClick} aria-label="Delete this note" className="touch-action" style={{ ...styles.noteBadge, ...styles.noteDeleteBadge }}>
+              {TRASH_ICON}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
@@ -1758,6 +1873,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     boxShadow: shadow.button,
   },
   notesList: { display: 'flex', flexDirection: 'column', gap: space.xl },
+  noteCardWrapper: { position: 'relative' },
   noteCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -1775,6 +1891,43 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: neutral.warm100,
     color: colors.textSubtle,
     fontFamily,
+  },
+  noteBadgeRow: { position: 'absolute', top: '-6px', right: '-6px', display: 'flex', gap: '0.3rem' },
+  noteBadge: {
+    width: '20px',
+    height: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.circle,
+    border: '1px solid #999',
+    backgroundColor: colors.surface,
+    color: colors.textBody,
+    padding: 0,
+    cursor: 'pointer',
+    boxShadow: shadow.button,
+  },
+  noteDeleteBadge: { borderColor: colors.danger, color: colors.danger },
+  noteEditForm: { display: 'flex', flexDirection: 'column', gap: '0.4rem' },
+  noteEditInput: { fontSize: fontSize.bodyLg, padding: '0.5rem', borderRadius: radius.sm, border: border.default },
+  noteEditButtonRow: { display: 'flex', gap: space.md },
+  noteSaveButton: {
+    fontSize: fontSize.label,
+    padding: '0.3rem 0.7rem',
+    borderRadius: radius.sm,
+    border: border.ink,
+    backgroundColor: 'transparent',
+    color: colors.ink,
+    cursor: 'pointer',
+  },
+  noteCancelButton: {
+    fontSize: fontSize.label,
+    padding: '0.3rem 0.7rem',
+    borderRadius: radius.sm,
+    border: '1px solid #999',
+    backgroundColor: 'transparent',
+    color: colors.textMuted,
+    cursor: 'pointer',
   },
   factErrorBanner: { fontSize: fontSize.body, color: neutral.redDeep, marginBottom: space.xxxl },
   suggestBanner: {
