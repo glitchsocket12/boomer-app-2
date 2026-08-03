@@ -7,6 +7,8 @@ import RelationshipSuggestionBanners, {
   type RelationshipSuggestion,
   type NewPersonSuggestion,
 } from './RelationshipSuggestions'
+import MentionedPeopleSuggestionBanners, { type MentionedPersonSuggestion } from './MentionedPeopleSuggestions'
+import { border, colors, fontSize, neutral, radius, space } from '../lib/theme'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 
@@ -17,6 +19,7 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
   const [done, setDone] = useState(false)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
+  const [mentionedPeopleSuggestions, setMentionedPeopleSuggestions] = useState<MentionedPersonSuggestion[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -54,15 +57,27 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
     if (data.newPersonSuggestions?.length > 0) {
       setNewPersonSuggestions((prev) => [...prev, ...toStagedNewPersonSuggestions(data.newPersonSuggestions)])
     }
+    if (data.mentionedPeopleSuggestions?.length > 0) {
+      setMentionedPeopleSuggestions((prev) => [...prev, ...data.mentionedPeopleSuggestions])
+    }
   }
 
   const suggestionBanners = (
-    <RelationshipSuggestionBanners
-      relationshipSuggestions={relationshipSuggestions}
-      setRelationshipSuggestions={setRelationshipSuggestions}
-      newPersonSuggestions={newPersonSuggestions}
-      setNewPersonSuggestions={setNewPersonSuggestions}
-    />
+    <>
+      <RelationshipSuggestionBanners
+        relationshipSuggestions={relationshipSuggestions}
+        setRelationshipSuggestions={setRelationshipSuggestions}
+        newPersonSuggestions={newPersonSuggestions}
+        setNewPersonSuggestions={setNewPersonSuggestions}
+      />
+      {/* onSaved reloads the event page, so a confirmed profile appears under "Who was there"
+          straight away rather than after a manual refresh. */}
+      <MentionedPeopleSuggestionBanners
+        suggestions={mentionedPeopleSuggestions}
+        setSuggestions={setMentionedPeopleSuggestions}
+        onApplied={onSaved}
+      />
+    </>
   )
 
   if (done) {
@@ -119,22 +134,22 @@ export default function UpdateMomentChat({ momentId, onSaved }: { momentId: stri
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  box: { marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' },
-  thread: { display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '340px', overflowY: 'auto', padding: '0.25rem' },
-  userBubble: { alignSelf: 'flex-end', backgroundColor: '#2E4034', color: '#FFF', padding: '0.5rem 0.85rem', borderRadius: '10px', maxWidth: '85%', fontSize: '0.95rem' },
-  assistantBubble: { alignSelf: 'flex-start', backgroundColor: '#F1F1EE', color: '#222', padding: '0.5rem 0.85rem', borderRadius: '10px', maxWidth: '85%', fontSize: '0.95rem' },
-  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem' },
-  input: { flex: 1, fontSize: '0.95rem', padding: '0.5rem', borderRadius: '6px', border: '1px solid #CCC' },
-  button: { fontSize: '0.95rem', padding: '0.5rem 0.9rem', borderRadius: '6px', border: 'none', backgroundColor: '#2E4034', color: '#FFF', cursor: 'pointer' },
-  doneText: { marginTop: '0.75rem', fontSize: '0.95rem', color: '#2E4034' },
+  box: { marginTop: space.lg, display: 'flex', flexDirection: 'column', gap: space.md },
+  thread: { display: 'flex', flexDirection: 'column', gap: space.md, maxHeight: '340px', overflowY: 'auto', padding: space.xs },
+  userBubble: { alignSelf: 'flex-end', backgroundColor: colors.ink, color: colors.onFill, padding: '0.5rem 0.85rem', borderRadius: radius.lg, maxWidth: '85%', fontSize: fontSize.bodyLg },
+  assistantBubble: { alignSelf: 'flex-start', backgroundColor: neutral.warm150, color: colors.textStrong, padding: '0.5rem 0.85rem', borderRadius: radius.lg, maxWidth: '85%', fontSize: fontSize.bodyLg },
+  inputRow: { display: 'flex', alignItems: 'flex-end', gap: space.md },
+  input: { flex: 1, fontSize: fontSize.bodyLg, padding: space.md, borderRadius: radius.sm, border: border.default },
+  button: { fontSize: fontSize.bodyLg, padding: '0.5rem 0.9rem', borderRadius: radius.sm, border: 'none', backgroundColor: colors.ink, color: colors.onFill, cursor: 'pointer' },
+  doneText: { marginTop: space.lg, fontSize: fontSize.bodyLg, color: colors.ink },
   addAnotherLink: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     background: 'none',
     border: 'none',
-    color: '#777',
+    color: colors.textSubtle,
     textDecoration: 'underline',
     cursor: 'pointer',
     padding: 0,
-    marginTop: '0.25rem',
+    marginTop: space.xs,
   },
 }

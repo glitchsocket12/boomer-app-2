@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type RefObject, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
+import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import { EventChip, GroupChip } from '../components/Chips'
@@ -10,6 +11,9 @@ import RelationshipSuggestionBanners, {
   type RelationshipSuggestion,
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
+import MentionedPeopleSuggestionBanners, {
+  type MentionedPersonSuggestion,
+} from '../components/MentionedPeopleSuggestions'
 import DevOnboardingReset from '../components/DevOnboardingReset'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import {
@@ -80,6 +84,7 @@ export default function Home({
   const [pendingContactUndecidedCount, setPendingContactUndecidedCount] = useState(0)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
+  const [mentionedPeopleSuggestions, setMentionedPeopleSuggestions] = useState<MentionedPersonSuggestion[]>([])
   const [connectionSuggestions, setConnectionSuggestions] = useState<ConnectionSuggestion[]>([])
   const groupRoster = useGroupRoster()
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -250,6 +255,9 @@ export default function Home({
     if (data.newPersonSuggestions?.length > 0) {
       setNewPersonSuggestions((prev) => [...prev, ...toStagedNewPersonSuggestions(data.newPersonSuggestions)])
     }
+    if (data.mentionedPeopleSuggestions?.length > 0) {
+      setMentionedPeopleSuggestions((prev) => [...prev, ...data.mentionedPeopleSuggestions])
+    }
   }
 
   return (
@@ -270,6 +278,8 @@ export default function Home({
       setRelationshipSuggestions={setRelationshipSuggestions}
       newPersonSuggestions={newPersonSuggestions}
       setNewPersonSuggestions={setNewPersonSuggestions}
+      mentionedPeopleSuggestions={mentionedPeopleSuggestions}
+      setMentionedPeopleSuggestions={setMentionedPeopleSuggestions}
       groupLabel={groupRoster.label}
       connectionSuggestions={connectionSuggestions}
       onAcceptConnection={handleAcceptConnection}
@@ -316,6 +326,10 @@ export function HomeView({
   setRelationshipSuggestions,
   newPersonSuggestions,
   setNewPersonSuggestions,
+  // Optional with a no-op default so the landing-page demo (DemoHome.tsx) doesn't have to pass
+  // suggestion plumbing it can never produce — it makes no Edge Function calls at all.
+  mentionedPeopleSuggestions = [],
+  setMentionedPeopleSuggestions = () => {},
   groupLabel = (_id, fallbackName) => fallbackName,
   connectionSuggestions = [],
   onAcceptConnection,
@@ -354,6 +368,8 @@ export function HomeView({
   setRelationshipSuggestions: Dispatch<SetStateAction<RelationshipSuggestion[]>>
   newPersonSuggestions: NewPersonSuggestion[]
   setNewPersonSuggestions: Dispatch<SetStateAction<NewPersonSuggestion[]>>
+  mentionedPeopleSuggestions?: MentionedPersonSuggestion[]
+  setMentionedPeopleSuggestions?: Dispatch<SetStateAction<MentionedPersonSuggestion[]>>
   // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
   groupLabel?: GroupLabelFn
   connectionSuggestions?: ConnectionSuggestion[]
@@ -579,6 +595,11 @@ export function HomeView({
         setNewPersonSuggestions={setNewPersonSuggestions}
       />
 
+      <MentionedPeopleSuggestionBanners
+        suggestions={mentionedPeopleSuggestions}
+        setSuggestions={setMentionedPeopleSuggestions}
+      />
+
       <div style={styles.stickyBarWrapper}>
         <div style={styles.stickyBarInner}>
           <div style={styles.inputRow}>
@@ -607,74 +628,74 @@ export function HomeView({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '840px', margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily: 'Georgia, serif', display: 'flex', flexDirection: 'column', minHeight: '75vh' },
-  heading: { fontSize: '2rem', color: '#2E4034', marginBottom: '0.5rem', textAlign: 'center' },
-  emptyState: { color: '#777', textAlign: 'center', marginTop: '1rem' },
+  page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily, display: 'flex', flexDirection: 'column', minHeight: '75vh' },
+  heading: { fontSize: fontSize.h1, color: colors.ink, marginBottom: space.md, textAlign: 'center' },
+  emptyState: { color: colors.textSubtle, textAlign: 'center', marginTop: space.xl },
   importNudge: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%',
-    fontSize: '0.95rem',
+    fontSize: fontSize.bodyLg,
     padding: '0.85rem 1rem',
-    borderRadius: '10px',
-    border: '1px solid #CFE0D6',
-    backgroundColor: '#F4F8F5',
-    color: '#2E4034',
+    borderRadius: radius.lg,
+    border: border.inkPale,
+    backgroundColor: colors.inkWash,
+    color: colors.ink,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
-    marginTop: '1.25rem',
+    fontFamily,
+    marginTop: space.xxl,
   },
   importNudgeSecondary: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%',
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.6rem 1rem',
-    borderRadius: '10px',
+    borderRadius: radius.lg,
     border: '1px solid #E5E5E5',
     backgroundColor: 'transparent',
-    color: '#999',
+    color: colors.textFaintest,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
-    marginTop: '0.5rem',
+    fontFamily,
+    marginTop: space.md,
   },
-  statsRow: { display: 'flex', gap: '0.75rem', marginTop: '1.25rem' },
+  statsRow: { display: 'flex', gap: space.lg, marginTop: space.xxl },
   statTile: {
     flex: 1,
     textAlign: 'center',
-    backgroundColor: '#F4F8F5',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.inkWash,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '0.75rem 0.5rem',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
-  statNumber: { fontSize: '1.5rem', color: '#2E4034', fontWeight: 'bold', lineHeight: 1.2 },
-  statLabel: { fontSize: '0.8rem', color: '#666', marginTop: '0.15rem' },
-  signalsSection: { marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' },
-  signalCardsRow: { display: 'flex', gap: '0.75rem' },
+  statNumber: { fontSize: fontSize.h2, color: colors.ink, fontWeight: 'bold', lineHeight: 1.2 },
+  statLabel: { fontSize: fontSize.small, color: colors.textMuted, marginTop: '0.15rem' },
+  signalsSection: { marginTop: space.xxl, display: 'flex', flexDirection: 'column', gap: space.lg },
+  signalCardsRow: { display: 'flex', gap: space.lg },
   signalCard: {
     flex: 1,
     textAlign: 'left',
-    backgroundColor: '#FFF',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.surface,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '0.85rem 1rem',
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
-  signalNumber: { fontSize: '1.4rem', color: '#2E4034', fontWeight: 'bold', lineHeight: 1.2 },
-  signalTitle: { fontSize: '0.9rem', color: '#333', marginTop: '0.3rem', lineHeight: 1.3 },
-  signalSubtext: { fontSize: '0.78rem', color: '#888', marginTop: '0.2rem', lineHeight: 1.3 },
+  signalNumber: { fontSize: '1.4rem', color: colors.ink, fontWeight: 'bold', lineHeight: 1.2 },
+  signalTitle: { fontSize: fontSize.body, color: neutral.grey900, marginTop: '0.3rem', lineHeight: 1.3 },
+  signalSubtext: { fontSize: '0.78rem', color: colors.textFaint, marginTop: space.xxs, lineHeight: 1.3 },
   leaderboardCard: {
-    backgroundColor: '#FFF',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.surface,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '1rem 1.1rem',
   },
-  leaderboardTitle: { fontSize: '1rem', color: '#2E4034', margin: 0 },
-  leaderboardSubtitle: { fontSize: '0.82rem', color: '#888', margin: '0.2rem 0 0.85rem' },
+  leaderboardTitle: { fontSize: fontSize.base, color: colors.ink, margin: 0 },
+  leaderboardSubtitle: { fontSize: '0.82rem', color: colors.textFaint, margin: '0.2rem 0 0.85rem' },
   leaderboardRow: {
     display: 'flex',
     alignItems: 'center',
@@ -685,145 +706,145 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     borderTop: '1px solid #F0EEE8',
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     textAlign: 'left',
   },
-  leaderboardRank: { fontSize: '0.85rem', color: '#AAA', width: '1rem', flexShrink: 0 },
+  leaderboardRank: { fontSize: fontSize.label, color: neutral.grey400, width: '1rem', flexShrink: 0 },
   leaderboardAvatar: {
     flexShrink: 0,
     width: '2rem',
     height: '2rem',
-    borderRadius: '50%',
-    backgroundColor: '#F4F8F5',
-    border: '1px solid #CFE0D6',
-    color: '#2E4034',
-    fontSize: '0.75rem',
+    borderRadius: radius.circle,
+    backgroundColor: colors.inkWash,
+    border: border.inkPale,
+    color: colors.ink,
+    fontSize: fontSize.tiny,
     fontWeight: 'bold',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  leaderboardName: { flex: 1, fontSize: '0.95rem', color: '#222' },
-  leaderboardCount: { fontSize: '0.8rem', color: '#777' },
-  leaderboardEmpty: { fontSize: '0.88rem', color: '#888', lineHeight: 1.4, margin: '0.3rem 0 0.6rem' },
+  leaderboardName: { flex: 1, fontSize: fontSize.bodyLg, color: colors.textStrong },
+  leaderboardCount: { fontSize: fontSize.small, color: colors.textSubtle },
+  leaderboardEmpty: { fontSize: '0.88rem', color: colors.textFaint, lineHeight: 1.4, margin: '0.3rem 0 0.6rem' },
   leaderboardFooter: {
     display: 'block',
     width: '100%',
     textAlign: 'left',
-    marginTop: '0.75rem',
-    paddingTop: '0.75rem',
+    marginTop: space.lg,
+    paddingTop: space.lg,
     background: 'none',
     border: 'none',
     borderTop: '1px solid #F0EEE8',
-    color: '#2E4034',
-    fontSize: '0.9rem',
-    fontFamily: 'Georgia, serif',
+    color: colors.ink,
+    fontSize: fontSize.body,
+    fontFamily,
     cursor: 'pointer',
   },
   connectionRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '0.75rem',
+    gap: space.lg,
     flexWrap: 'wrap',
     padding: '0.5rem 0',
     borderTop: '1px solid #F0EEE8',
   },
-  connectionText: { fontSize: '0.9rem', color: '#333', lineHeight: 1.5 },
+  connectionText: { fontSize: fontSize.body, color: neutral.grey900, lineHeight: 1.5 },
   connectionLink: {
     background: 'none',
     border: 'none',
     padding: 0,
-    color: '#2E4034',
+    color: colors.ink,
     fontWeight: 'bold',
     fontSize: 'inherit',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     textDecoration: 'underline',
     cursor: 'pointer',
   },
-  connectionButtons: { display: 'flex', gap: '0.5rem', flexShrink: 0 },
+  connectionButtons: { display: 'flex', gap: space.md, flexShrink: 0 },
   connectionYesButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.35rem 0.8rem',
-    borderRadius: '6px',
+    borderRadius: radius.sm,
     border: 'none',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
+    backgroundColor: colors.ink,
+    color: colors.surface,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   connectionNoButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.35rem 0.8rem',
-    borderRadius: '6px',
-    border: '1px solid #B08B2E',
+    borderRadius: radius.sm,
+    border: border.suggestFill,
     backgroundColor: 'transparent',
-    color: '#8A6A1F',
+    color: colors.suggest,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   suggestionsLoadingRow: {
     display: 'flex',
     alignItems: 'center',
     gap: '0.6rem',
-    marginTop: '1.25rem',
+    marginTop: space.xxl,
     padding: '0.85rem 1rem',
-    borderRadius: '10px',
+    borderRadius: radius.lg,
     border: '1px solid #E5E3DE',
-    color: '#777',
-    fontSize: '0.95rem',
+    color: colors.textSubtle,
+    fontSize: fontSize.bodyLg,
     lineHeight: 1.4,
   },
   spinner: {
     flexShrink: 0,
     width: '16px',
     height: '16px',
-    borderRadius: '50%',
+    borderRadius: radius.circle,
     border: '2px solid #CFE0D6',
-    borderTopColor: '#2E4034',
+    borderTopColor: colors.ink,
     animation: 'spin 0.8s linear infinite',
   },
-  suggestionList: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1.25rem' },
+  suggestionList: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: space.xxl },
   suggestionsHeadingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  suggestionsHeading: { fontSize: '0.85rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.03em' },
+  suggestionsHeading: { fontSize: fontSize.label, color: colors.textFaint, textTransform: 'uppercase', letterSpacing: '0.03em' },
   suggestionCard: {
-    fontFamily: 'Georgia, serif',
-    fontSize: '1rem',
+    fontFamily,
+    fontSize: fontSize.base,
     textAlign: 'left',
     padding: '0.85rem 1rem',
-    borderRadius: '10px',
-    border: '1px solid #CFE0D6',
-    backgroundColor: '#F4F8F5',
-    color: '#2E4034',
+    borderRadius: radius.lg,
+    border: border.inkPale,
+    backgroundColor: colors.inkWash,
+    color: colors.ink,
     cursor: 'pointer',
     lineHeight: 1.4,
   },
-  thread: { flex: 1, display: 'flex', flexDirection: 'column', gap: '0.6rem', overflowY: 'auto', paddingBottom: '1rem' },
+  thread: { flex: 1, display: 'flex', flexDirection: 'column', gap: '0.6rem', overflowY: 'auto', paddingBottom: space.xl },
   userBubble: {
     alignSelf: 'flex-end',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
+    backgroundColor: colors.ink,
+    color: colors.surface,
     padding: '0.65rem 1rem',
-    borderRadius: '12px',
+    borderRadius: radius.xl,
     maxWidth: '80%',
   },
   assistantBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: '#FFF',
-    color: '#222',
+    backgroundColor: colors.surface,
+    color: colors.textStrong,
     padding: '0.65rem 1rem',
-    borderRadius: '12px',
+    borderRadius: radius.xl,
     maxWidth: '80%',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
   },
-  peopleRow: { display: 'flex', gap: '0.5rem', marginTop: '0.4rem', flexWrap: 'wrap' },
+  peopleRow: { display: 'flex', gap: space.md, marginTop: '0.4rem', flexWrap: 'wrap' },
   personChip: {
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.35rem 0.8rem',
-    borderRadius: '999px',
-    border: '1px solid #2E4034',
+    borderRadius: radius.pill,
+    border: border.ink,
     backgroundColor: 'transparent',
-    color: '#2E4034',
+    color: colors.ink,
     cursor: 'pointer',
   },
   stickyBarWrapper: {
@@ -831,22 +852,22 @@ const styles: { [key: string]: React.CSSProperties } = {
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#F7F5F2',
+    backgroundColor: colors.appBg,
     borderTop: '1px solid #E2DFD6',
     boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
     padding: '0.6rem 0',
     zIndex: 20,
   },
-  stickyBarInner: { maxWidth: '840px', margin: '0 auto', padding: '0 1.5rem' },
-  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '0.75rem' },
-  input: { flex: 1, fontSize: '1.1rem', padding: '0.65rem', borderRadius: '8px', border: '1px solid #CCC' },
+  stickyBarInner: { maxWidth: maxWidth.page, margin: '0 auto', padding: '0 1.5rem' },
+  inputRow: { display: 'flex', alignItems: 'flex-end', gap: space.lg },
+  input: { flex: 1, fontSize: fontSize.lead, padding: '0.65rem', borderRadius: radius.md, border: border.default },
   button: {
-    fontSize: '1.1rem',
+    fontSize: fontSize.lead,
     padding: '0.65rem 1.25rem',
-    borderRadius: '8px',
+    borderRadius: radius.md,
     border: 'none',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
+    backgroundColor: colors.ink,
+    color: colors.surface,
     cursor: 'pointer',
   },
 }

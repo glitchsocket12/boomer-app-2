@@ -149,16 +149,23 @@ When the user shares a new detail, don't finish right away — first ask a short
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "additional_notes": [{"person": "Name1, or null for a general note about the event itself", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1, or null for a general note about the event itself", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
-This is saved immediately after every single turn, so only include in "new_people"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
+This is saved immediately after every single turn, so only include in "new_people"/"mentioned_names"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
 
-A PET IS NOT A PERSON. If the user mentions someone's animal (e.g. "we brought our dog Biscuit"), never put the animal's name in "new_people" — that would create a fake human profile in their People list and Dunbar count. Record it as ordinary note text instead (attached to the owner, or as a general note). Pets have their own place in the app, recorded from the Home chat or a profile's Pets section, not here.
+CRITICAL — NEVER create a profile for someone just because they came up in the story. Not everyone the user mentions is someone they want a contact for: a couple they got talking to, a waiter, a friend-of-a-friend. Creating profiles for those clutters their People list and their Dunbar count, and it is annoying to undo.
+- "new_people" is ONLY for someone the user EXPLICITLY asked you to add — "add Jim as a contact", "make a profile for Dave". If they didn't ask, it doesn't go here.
+- EVERYONE ELSE who is brand-new (not already in the roster provided in this prompt) goes in "mentioned_names" instead. No profile is created; the user is asked separately whether they want one.
+- Someone already in the roster is NOT brand-new — use them normally in "additional_notes" exactly as before, and never put them in "mentioned_names".
+- Each "mentioned_names" entry is {"name": "Rachel", "note": "..."} and the "note" is REQUIRED. That note is the ONLY record of this person, so it must carry enough to answer a question about them months later — who they are, how they came up, who they were with (e.g. "One of a couple we got talking to at the bar, there with Matt."). NEVER write "Was there." for a mentioned name; that placeholder is only for a person who already has a profile.
+- Do NOT also list a mentioned name in "additional_notes" — the "mentioned_names" note is saved onto this event by itself. And don't say in your "reply" that you created a profile for them.
+
+A PET IS NOT A PERSON. If the user mentions someone's animal (e.g. "we brought our dog Biscuit"), never put the animal's name in "new_people" or "mentioned_names" — that would create a fake human profile in their People list and Dunbar count. Record it as ordinary note text instead (attached to the owner, or as a general note). Pets have their own place in the app, recorded from the Home chat or a profile's Pets section, not here.
 
 IMPORTANT — capture EVERY concrete new detail the user gives, not just who attended. An "additional_notes" entry doesn't have to be about a specific person: anything the user says about the event itself — an activity, food, weather, a gift, how it went — belongs in its own entry with "person" set to null, unless it's naturally about one specific attendee (attach it to that person's own note instead). Never let a real detail disappear just because it wasn't about a named person.
 
-CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "additional_notes": a person only shows up as having attended if they have at least one note tied to this moment. So whenever the user mentions someone was AT this event — even in passing, even with no other detail about them — you MUST still include an entry for them in "additional_notes" (e.g. {"person": "Name1", "note": "Was there."}) so they get linked. Do not just add them to "new_people" and stop — a person with no note attached will silently NOT appear as having attended, which is the whole point of recording them. But "Was there." is a LAST RESORT for someone named with zero detail — if the user actually described what that person did, said, or brought, capture that in their note instead of flattening it to "Was there.".
+CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "additional_notes": a person only shows up as having attended if they have at least one note tied to this moment. So whenever the user mentions that someone ALREADY IN THE ROSTER (or someone they explicitly asked you to add via "new_people") was AT this event — even in passing, even with no other detail about them — you MUST still include an entry for them in "additional_notes" (e.g. {"person": "Name1", "note": "Was there."}) so they get linked. Do not just add them to "new_people" and stop — a person with no note attached will silently NOT appear as having attended, which is the whole point of recording them. But "Was there." is a LAST RESORT for someone named with zero detail — if the user actually described what that person did, said, or brought, capture that in their note instead of flattening it to "Was there.".
 
 "moment_field_updates" is for the moment's own top-level fields, not a person-specific fact. Use it when the user gives new or corrected info about the event itself:
 - "when_text": the user's own words describing timing (e.g. "fall of 2025"), only when they give timing info different from what's already known.
@@ -194,6 +201,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       reply: "Sorry, I didn't get a response there — please try again.",
       done: false,
       new_people: [],
+      mentioned_names: [],
       additional_notes: [],
       moment_field_updates: null,
       add_groups: [],
@@ -340,6 +348,56 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       }
     }
 
+    // A name the founder merely MENTIONED never becomes a profile on its own — same rule and same
+    // mechanism as converse/index.ts (see the long comment there). The note is written immediately
+    // as a general note on this event so nothing is lost, and the profile is offered afterward as a
+    // banner that just re-points this note at the new person.
+    const mentionedPeopleSuggestions: {
+      name: string
+      note: string
+      noteId: string | null
+      momentId: string | null
+      momentLabel: string | null
+    }[] = []
+    const suggestedNameKeys = new Set<string>(
+      (familyResult.newPersonSuggestions ?? []).map((s: any) => String(s.rawName ?? "").trim().toLowerCase())
+    )
+    for (const entry of Array.isArray(parsed.mentioned_names) ? parsed.mentioned_names : []) {
+      const name = String(entry?.name ?? "").trim()
+      const note = String(entry?.note ?? "").trim()
+      if (!name || !note) continue
+
+      const key = name.toLowerCase()
+      // Already on file — attach the note to them as usual, and don't ask about a profile they have.
+      const existingId = idByName[key]
+      if (existingId) {
+        const { error } = await supabaseClient
+          .from("notes")
+          .insert({ person_id: existingId, moment_id: momentId, content: note })
+        if (error) console.error("Failed to save mentioned-name note", error.message, name)
+        else notesAdded++
+        continue
+      }
+      // Anyone the family-signal path is already asking about gets one banner, not two.
+      if (suggestedNameKeys.has(key)) continue
+      suggestedNameKeys.add(key)
+
+      const { data: newNote, error } = await supabaseClient
+        .from("notes")
+        .insert({ person_id: null, moment_id: momentId, content: note })
+        .select("id")
+        .single()
+      if (error) console.error("Mentioned-name note insert failed", name, error.message)
+      else notesAdded++
+      mentionedPeopleSuggestions.push({
+        name,
+        note,
+        noteId: newNote?.id ?? null,
+        momentId,
+        momentLabel: moment?.occasion ?? null,
+      })
+    }
+
     const fieldUpdates: Record<string, string> = {}
     const updates = parsed.moment_field_updates
     if (updates?.occasion) fieldUpdates.occasion = updates.occasion
@@ -398,6 +456,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
         changed,
         relationshipSuggestions: familyResult.relationshipSuggestions,
         newPersonSuggestions: familyResult.newPersonSuggestions,
+        mentionedPeopleSuggestions,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )

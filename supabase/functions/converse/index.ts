@@ -197,9 +197,20 @@ serve(async (req) => {
 
     const context = (moments ?? [])
       .map((m: any) => {
-        const notePeople = (m.notes ?? []).map((n: any) => nameById[n.person_id] ?? "someone")
+        // A note with no person_id is a general detail about the event itself, not an attendee —
+        // it must not show up in "People" as a phantom guest called "someone", and its text reads
+        // as a plain fact rather than as a quote attributed to a mystery person. This matters most
+        // for the notes recording someone the founder deliberately DIDN'T create a profile for
+        // (see mentioned_names below): those are person_id-less by design, and "someone: met a
+        // couple, Rachel and Matt" would otherwise imply a recorded person named "someone".
+        const notePeople = (m.notes ?? [])
+          .filter((n: any) => n.person_id && nameById[n.person_id])
+          .map((n: any) => nameById[n.person_id])
         const noteLines = (m.notes ?? [])
-          .map((n: any) => `${nameById[n.person_id] ?? "someone"}: ${n.content}`)
+          .map((n: any) => {
+            const personName = n.person_id ? nameById[n.person_id] : null
+            return personName ? `${personName}: ${n.content}` : n.content
+          })
           .join("; ")
         const recordedOn = new Date(m.created_at).toDateString()
         const momentGroupNames = momentGroupNamesById[m.id] ?? []
@@ -266,7 +277,7 @@ A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, 
 
 A PET is an animal belonging to one or more people — a dog, cat, horse, fish, bird, reptile, anything. Pets are recorded in their own "pets" field, and the roster provided in this prompt lists every pet already on file with its owner(s).
 
-- CRITICAL — A PET IS NOT A PERSON. Never put a pet's name in "new_people", "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", "nickname_updates", or "family_signals". A pet's name belongs in the "pets" field and nowhere else. Writing a pet into "new_people" creates a fake human profile that pollutes the user's People list and their Dunbar count, which is a real and annoying mess to clean up.
+- CRITICAL — A PET IS NOT A PERSON. Never put a pet's name in "new_people", "mentioned_names", "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", "nickname_updates", or "family_signals". A pet's name belongs in the "pets" field and nowhere else. Writing a pet into "new_people" creates a fake human profile that pollutes the user's People list and their Dunbar count, which is a real and annoying mess to clean up.
 - Record a pet only when the user states one exists (e.g. "Sarah got a puppy named Biscuit", "our cat Mochi", "Tom's horse Willow"). A passing mention of an animal that isn't someone's pet is NOT a pet — "we went to the dog park", "we saw a deer", "the neighbor's dog barked all night" record nothing.
 - Every pet you record MUST have at least one owner in its "owners" list, named exactly as they appear in the people roster (or a person being created this same turn via "new_people"). A pet with no resolvable owner can't be shown on anyone's profile, so it would be silently lost — never emit one.
 - Reuse an existing pet rather than coining a near-duplicate: if the roster already lists "Biscuit", don't record "Biscuits". To attach an existing pet to an ADDITIONAL owner (e.g. "Biscuit is Tom's dog too"), emit the same pet name with the extra person in "owners" — that adds the link, it doesn't create a second pet.
@@ -295,7 +306,7 @@ ${familySignalPromptMultiSubject()}
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
 
 IMPORTANT — capture EVERY concrete detail the user gives about an event, not just who attended. A "notes" entry doesn't have to be about a specific person: anything the user says about the event itself — what was done, eaten, said, how it went, the weather, an activity, a gift, a reaction — belongs in its own "notes" entry with "person" set to null, UNLESS it's naturally about one specific attendee (in which case attach it to that person's own note instead). Never let a real detail the user typed disappear just because it wasn't about a named person — the event's own page shows these general notes alongside the per-person ones. Don't pad a note with filler if the user gave no detail (that's what "Was there." is for — see below); but when they DID give detail, capture it, even if it means several separate notes entries for one event.
@@ -304,7 +315,14 @@ IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere i
 
 IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", "relevant_people", "notes", etc.), copy their spelling EXACTLY as it appears in the roster provided in this prompt, character for character — same capitalization, same spelling. Never respell, "correct," or reformat a name from the roster, even if it looks unusual. This is what makes their name in your reply clickable — a respelled name breaks that link.
 
-CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions someone was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them. But "Was there." is a LAST RESORT for someone the user named with zero detail — if the user actually described what that person did, said, or brought, put THAT in their note instead of flattening it to "Was there." (e.g. user says "my brother Jake came and brought his new girlfriend" → Jake's note should say he brought his new girlfriend, not just "Was there.").
+CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions that someone ALREADY IN THE ROSTER (or someone they explicitly asked you to add via "new_people") was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them. But "Was there." is a LAST RESORT for someone the user named with zero detail — if the user actually described what that person did, said, or brought, put THAT in their note instead of flattening it to "Was there." (e.g. user says "my brother Jake came and brought his new girlfriend" → Jake's note should say he brought his new girlfriend, not just "Was there.").
+
+CRITICAL — NEVER create a profile for someone just because they came up in a story. Not everyone the user mentions is someone they want a contact for: a couple they got talking to at a bar, a waiter, a friend-of-a-friend, someone's colleague who came up once. Creating profiles for those clutters their People list and their Dunbar count, and it is annoying to undo.
+- "new_people" is ONLY for someone the user EXPLICITLY asked you to add — "add Jim as a contact", "make a profile for my new neighbor Dave", "save Sarah's sister". If they didn't ask, it doesn't go here.
+- EVERYONE ELSE who is brand-new (not already in the roster provided in this prompt) goes in "mentioned_names" instead — on the entry in "moments" for the event they came up at, or in the top-level "mentioned_names" if this turn isn't about an event at all. No profile is created; the user is asked separately whether they want one.
+- Someone already in the roster is NOT brand-new. Use them normally in "notes"/"relevant_people" exactly as before — never put an existing person in "mentioned_names".
+- Each "mentioned_names" entry is {"name": "Rachel", "note": "..."} and the "note" is REQUIRED. That note is the ONLY record of this person, so it must carry enough to answer a question about them months later — who they are, how they came up, who they were with, anything the user said about them (e.g. "One of a couple we got talking to at the bar, there with Matt."). NEVER write "Was there." for a mentioned name; that placeholder is only for a person who already has a profile.
+- Do NOT also list a mentioned name in that moment's "notes" — the "mentioned_names" note is saved onto the event by itself. And don't say in your "reply" that you created a profile for them; they're saved as part of the event's notes, which is enough.
 
 Leave "moments" as an empty array when nothing is being captured or updated — most simple questions have no moments at all. Only set "new_moment": true and fill that entry's "moment_fields" (occasion, location, when_text, event_date) when you're capturing a genuinely brand-new event.
 
@@ -408,7 +426,7 @@ ${context || "(none recorded yet)"}`
       console.error("Anthropic response had no text block", JSON.stringify(data))
     }
 
-    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], pets: [], moments: [], family_signals: [] }
+    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -652,6 +670,68 @@ ${context || "(none recorded yet)"}`
     const touchedMomentIds = new Set<string>()
     const rawDescription = messages.filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n")
 
+    // A name the founder merely MENTIONED in a story never becomes a profile on its own — see the
+    // "NEVER create a profile for someone just because they came up in a story" block in the
+    // instructions above. Two things have to be true at once: the detail must never be lost (so the
+    // archive can still answer "what was the name of that couple we met at Pup Dog?"), and their
+    // People list must not fill up with strangers. So the note is written immediately as a general
+    // note on the event (person_id: null — the same shape as any other event-level detail), and the
+    // profile is offered afterward as a one-tap banner which, if accepted, just re-points that same
+    // note at the newly created person. Ignoring the banner loses nothing.
+    const mentionedPeopleSuggestions: {
+      name: string
+      note: string
+      noteId: string | null
+      momentId: string | null
+      momentLabel: string | null
+    }[] = []
+    // Names already spoken for this turn: anyone the family-signal path is already asking about via
+    // its own banner, plus anyone collected earlier in this same turn. Two banners for one person
+    // reads as a bug, not as thoroughness.
+    const suggestedNameKeys = new Set<string>(
+      (familyResult.newPersonSuggestions ?? []).map((s: any) => String(s.rawName ?? "").trim().toLowerCase())
+    )
+
+    async function collectMentionedNames(entries: any, momentId: string | null, momentLabel: string | null) {
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const name = String(entry?.name ?? "").trim()
+        const note = String(entry?.note ?? "").trim()
+        // A mentioned name with no note would be a banner offering to create a profile for someone
+        // with nothing recorded about them — worse than useless. Drop it.
+        if (!name || !note) continue
+
+        const key = name.toLowerCase()
+        // Only brand-new names belong here, but if the model hands back someone already on file the
+        // right move is the ordinary one: attach the note to them, and don't ask about a profile
+        // they already have.
+        const existingId = idByName[key]
+        if (existingId) {
+          if (momentId) {
+            await supabaseClient
+              .from("notes")
+              .insert({ person_id: existingId, moment_id: momentId, content: note, source: "home" })
+          }
+          continue
+        }
+        if (suggestedNameKeys.has(key)) continue
+        suggestedNameKeys.add(key)
+
+        // Written NOW rather than on confirm: the note is the whole point, and it has to survive the
+        // founder never answering the banner (or closing the tab before they do).
+        let noteId: string | null = null
+        if (momentId) {
+          const { data: newNote, error } = await supabaseClient
+            .from("notes")
+            .insert({ person_id: null, moment_id: momentId, content: note, source: "home" })
+            .select("id")
+            .single()
+          if (error) console.error("Mentioned-name note insert failed", name, error.message)
+          noteId = newNote?.id ?? null
+        }
+        mentionedPeopleSuggestions.push({ name, note, noteId, momentId, momentLabel })
+      }
+    }
+
     for (const momentEntry of parsed.moments ?? []) {
       let momentId: string | null = momentEntry.moment_id ?? null
 
@@ -722,6 +802,14 @@ ${context || "(none recorded yet)"}`
         })
       )
 
+      // After this moment's own notes, so a name the model put in BOTH places (against
+      // instructions) has already been handled once and gets deduped rather than double-written.
+      const momentLabel =
+        momentEntry.moment_fields?.occasion ??
+        (moments ?? []).find((m: any) => m.id === momentId)?.occasion ??
+        null
+      await collectMentionedNames(momentEntry.mentioned_names, momentId, momentLabel)
+
       for (const groupName of momentEntry.moment_groups ?? []) {
         const groupId = await findOrCreateGroupId(groupName)
         if (groupId) {
@@ -742,6 +830,11 @@ ${context || "(none recorded yet)"}`
         }
       }
     }
+
+    // A new name that came up outside any event ("I should call my new neighbor Dave"). There's no
+    // moment to hang a note on, so nothing is written unless the founder accepts the banner — the
+    // frontend writes it as a plain profile note at that point.
+    await collectMentionedNames(parsed.mentioned_names, null, null)
 
     for (const tag of parsed.person_group_tags ?? []) {
       const personId = idByName[tag.person?.trim().toLowerCase()]
@@ -788,6 +881,7 @@ ${context || "(none recorded yet)"}`
         tags: taggedTagRefs,
         relationshipSuggestions: familyResult.relationshipSuggestions,
         newPersonSuggestions: familyResult.newPersonSuggestions,
+        mentionedPeopleSuggestions,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     )

@@ -1166,12 +1166,7 @@ function buildGeneratedRoster(): { people: DemoPerson[]; notes: DemoNote[]; mome
         const eventDate = genDate(i, cat.key.length + 5)
         const momentId = `gm_${cat.key}_${i}`
         moments.push({
-          // event_date is a bare YYYY-MM-DD (matches CORE_MOMENTS and what eventSortDate() expects
-          // to append "T00:00:00" to) — eventDate itself is a full ISO timestamp, reused as-is for
-          // created_at below. Passing the full timestamp as event_date produced a doubled time
-          // suffix ("...T00:00:00ZT00:00:00"), an Invalid Date, and a NaN year-group heading for
-          // every generated event on the demo Events page (found via a demo QA pass, 2026-08-03).
-          id: momentId, occasion, location: null, when_text: null, event_date: eventDate.slice(0, 10),
+          id: momentId, occasion, location: null, when_text: null, event_date: eventDate,
           raw_description: content, summary: content, created_at: eventDate,
           attendeeIds: [id], groupIds: [], tagIds: [cat.tag as string],
         })
