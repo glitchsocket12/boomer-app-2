@@ -600,8 +600,10 @@ src/
 │   │                             for PersonDetail.tsx/GroupDetail.tsx's own links).
 │   │                             No self profile yet → onboarding: search
 │   │                             existing people to flag `is_self`, or create a blank
-│   │                             one (lands on its PersonDetail to name it). Reached
-│   │                             via "My page" in the top bar
+│   │                             one (lands on its PersonDetail to name it). Removed
+│   │                             from the top nav (2026-08-03, founder wasn't using it,
+│   │                             will revisit on redesign) — route/component still
+│   │                             exist, just unreachable from the main menu
 │   ├── FamilyTree.tsx          — real family tree (item 32/15, REPLACED
 │                                 FamilyTreeMock.tsx 2026-07-20). Layout engine rewritten
 │                                 2026-07-21/22 (item 37): root-gen ("You") is the only tier

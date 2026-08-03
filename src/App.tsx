@@ -662,12 +662,6 @@ export default function App() {
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem 1.5rem' }}>
         <div>
           <button onClick={() => goToTab('home')} style={{ marginRight: '0.5rem' }}>Home</button>
-          <button
-            onClick={() => pushCrumb({ type: 'circle', id: 'circle', label: 'My page' })}
-            style={{ marginRight: '0.5rem' }}
-          >
-            My page
-          </button>
           <button onClick={() => goToTab('people')} style={{ marginRight: '0.5rem' }}>People</button>
           <button onClick={() => goToTab('events')} style={{ marginRight: '0.5rem' }}>Events</button>
           <button onClick={() => goToTab('calendar')} style={{ marginRight: '0.5rem' }}>Calendar</button>
