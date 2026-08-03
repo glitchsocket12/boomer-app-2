@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { border, colors, fontFamily, fontSize, maxWidth, radius } from '../lib/theme'
 
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -123,19 +124,19 @@ export default function ContactsImport({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '840px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
-  backButton: { background: 'none', border: 'none', color: '#2E4034', fontSize: '1rem', cursor: 'pointer', marginBottom: '1rem', padding: 0 },
-  heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 0.5rem' },
-  intro: { fontSize: '0.95rem', color: '#666', lineHeight: 1.5, margin: '0 0 1.25rem' },
+  page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily },
+  backButton: { background: 'none', border: 'none', color: colors.ink, fontSize: fontSize.base, cursor: 'pointer', marginBottom: '1rem', padding: 0 },
+  heading: { fontSize: fontSize.h1, color: colors.ink, margin: '0 0 0.5rem' },
+  intro: { fontSize: fontSize.bodyLg, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 1.25rem' },
   section: {
-    backgroundColor: '#FFF',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.surface,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '1rem 1.1rem',
     marginBottom: '1rem',
   },
-  sectionHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem' },
-  body: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5, margin: '0 0 0.75rem' },
-  fileInput: { fontSize: '0.9rem', fontFamily: 'Georgia, serif' },
-  errorText: { color: '#B04A3B', fontSize: '0.85rem', margin: '0.5rem 0 0' },
+  sectionHeading: { fontSize: fontSize.lead, color: colors.ink, margin: '0 0 0.5rem' },
+  body: { fontSize: fontSize.body, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 0.75rem' },
+  fileInput: { fontSize: fontSize.body, fontFamily },
+  errorText: { color: colors.danger, fontSize: fontSize.label, margin: '0.5rem 0 0' },
 }

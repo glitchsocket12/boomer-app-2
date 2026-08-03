@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { border, colors, fontFamily, fontSize, maxWidth, radius, space } from '../lib/theme'
 
 type PersonRef = { id: string; name: string }
 type Row = { id: string; name: string; lastUpdate: string | null }
@@ -90,23 +91,23 @@ export default function DueForUpdate({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '840px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily },
   backButton: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
-    fontSize: '1rem',
+    color: colors.ink,
+    fontSize: fontSize.base,
     cursor: 'pointer',
-    marginBottom: '1rem',
+    marginBottom: space.xl,
     padding: 0,
   },
-  heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 0.5rem' },
-  body: { fontSize: '0.95rem', color: '#666', lineHeight: 1.5, margin: '0 0 1.25rem' },
-  loading: { color: '#777' },
+  heading: { fontSize: fontSize.h1, color: colors.ink, margin: '0 0 0.5rem' },
+  body: { fontSize: fontSize.bodyLg, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 1.25rem' },
+  loading: { color: colors.textSubtle },
   list: {
-    backgroundColor: '#FFF',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.surface,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '0.25rem 1.1rem',
   },
   row: {
@@ -117,11 +118,11 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.75rem 0',
     background: 'none',
     border: 'none',
-    borderTop: '1px solid #F0EEE8',
+    borderTop: `1px solid ${colors.divider}`,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     textAlign: 'left',
   },
-  rowName: { fontSize: '1rem', color: '#222' },
-  rowAgo: { fontSize: '0.85rem', color: '#888' },
+  rowName: { fontSize: fontSize.base, color: colors.textStrong },
+  rowAgo: { fontSize: fontSize.label, color: colors.textFaint },
 }

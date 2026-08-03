@@ -22,6 +22,7 @@ import { linkRelationship, createAndLinkRelationship, unlinkRelationship, syncFa
 import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 import { IS_TOUCH } from '../lib/touch'
+import { border, colors, fontFamily, fontSize, neutral, radius, shadow, space } from '../lib/theme'
 
 const TRASH_ICON = (
   <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -42,11 +43,11 @@ function genderGlyph(gender: string | null | undefined): string {
 }
 
 const COLORS: Record<TreePerson['kind'], { border: string; fill: string; text: string }> = {
-  focal: { border: '#6B4E9E', fill: '#F1EDF9', text: '#4A3C7A' },
-  direct: { border: '#2E4034', fill: '#F4F8F1', text: '#2E4034' },
+  focal: { border: colors.tree, fill: '#F1EDF9', text: '#4A3C7A' },
+  direct: { border: colors.ink, fill: neutral.sageWashLight, text: colors.ink },
   // Fallback for 'extended' people with no side (root's own descendants past Kids, e.g.
   // grandchildren — they're root's own line, not a side branch, so they don't get blue/rose).
-  extended: { border: '#BBB', fill: '#FFFFFF', text: '#888' },
+  extended: { border: neutral.grey300, fill: neutral.white, text: colors.textFaint },
 }
 // The two sides of the extended family (see TreeSide in familyTree.ts) — muted to match the app's
 // existing earthy palette, and deliberately distinct from the #B04A3B delete/danger red used
@@ -807,7 +808,7 @@ export function FamilyTreeView({
                 // connector lines alone shows which cousin group hangs off which side — falls back to
                 // plain gray for anything rooted in a non-sided person (root's own family).
                 const parentSide = layoutAbove.placed.find((pp) => pp.person.id === parentId)?.person.side
-                const lineColor = parentSide ? SIDE_COLORS[parentSide].border : '#CCC'
+                const lineColor = parentSide ? SIDE_COLORS[parentSide].border : colors.line
                 const lineOpacity = parentSide ? 0.6 : 1
                 return (
                   <g key={parentId}>
@@ -834,8 +835,8 @@ export function FamilyTreeView({
             const x = canvasWidth / 2 - w / 2
             return (
               <g key={tier.label + i}>
-                <rect x={x} y={y} width={w} height={BOX_H} rx={6} fill="none" stroke="#BBB" strokeWidth={1} strokeDasharray="4 3" />
-                <text x={x + w / 2} y={y + 27} textAnchor="middle" fontSize="12" fill="#999" fontFamily="Georgia, serif">
+                <rect x={x} y={y} width={w} height={BOX_H} rx={6} fill="none" stroke={neutral.grey300} strokeWidth={1} strokeDasharray="4 3" />
+                <text x={x + w / 2} y={y + 27} textAnchor="middle" fontSize="12" fill={colors.textFaintest} fontFamily={fontFamily}>
                   {emptyLabel}
                 </text>
               </g>
@@ -864,7 +865,7 @@ export function FamilyTreeView({
                   x1: startX + leftPlaced.x + leftPlaced.w,
                   x2: startX + rightPlaced.x,
                   y: y + BOX_H / 2,
-                  color: side ? SIDE_COLORS[side].border : '#CCC',
+                  color: side ? SIDE_COLORS[side].border : colors.line,
                   opacity: side ? 0.6 : 1,
                   ended,
                 })
@@ -894,7 +895,7 @@ export function FamilyTreeView({
                 const x = startX + p.x
                 // Deceased: muted grey instead of the usual kind/side color, plus a small dagger —
                 // still in their normal tree position, just visually marked, not hidden or moved.
-                const fill = p.person.deceased ? '#F2F2F2' : c.fill
+                const fill = p.person.deceased ? neutral.offWhite : c.fill
                 const border = p.person.deceased ? '#AAAAAA' : c.border
                 const textColor = p.person.deceased ? '#888888' : c.text
                 return (
@@ -909,7 +910,7 @@ export function FamilyTreeView({
                       y={p.person.relationLabel ? y + 21 : y + 27}
                       textAnchor="middle"
                       fontSize="14"
-                      fontFamily="Georgia, serif"
+                      fontFamily={fontFamily}
                       fill={textColor}
                     >
                       {genderGlyph(p.person.gender)}
@@ -918,7 +919,7 @@ export function FamilyTreeView({
                       {clickable ? ' ›' : ''}
                     </text>
                     {p.person.relationLabel && (
-                      <text x={x + p.w / 2} y={y + 35} textAnchor="middle" fontSize="9" fontFamily="Georgia, serif" fill="#999">
+                      <text x={x + p.w / 2} y={y + 35} textAnchor="middle" fontSize="9" fontFamily={fontFamily} fill={colors.textFaintest}>
                         {p.person.relationLabel}
                       </text>
                     )}
@@ -1112,52 +1113,52 @@ function RemoveChip({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '1200px', margin: '0 auto', padding: '1rem 1.5rem 3rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: '1200px', margin: '0 auto', padding: '1rem 1.5rem 3rem', fontFamily },
   backButton: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
+    color: colors.ink,
     textDecoration: 'underline',
-    fontSize: '0.9rem',
-    fontFamily: 'Georgia, serif',
+    fontSize: fontSize.body,
+    fontFamily,
     cursor: 'pointer',
     padding: 0,
-    marginBottom: '1rem',
+    marginBottom: space.xl,
   },
-  contextLine: { fontSize: '0.85rem', color: '#888', marginBottom: '1rem' },
+  contextLine: { fontSize: fontSize.label, color: colors.textFaint, marginBottom: space.xl },
   svgScroll: { overflowX: 'auto', margin: '0 -1.5rem', padding: '0 1.5rem' },
   svg: { display: 'block', margin: '0 auto' },
-  addRow: { display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '1.25rem', alignItems: 'flex-start' },
+  addRow: { display: 'flex', flexWrap: 'wrap', gap: space.lg, marginTop: space.xxl, alignItems: 'flex-start' },
   addItem: { display: 'flex', alignItems: 'center', gap: '0.4rem' },
-  addLabel: { fontSize: '0.8rem', color: '#999' },
-  removeSection: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '1.25rem' },
+  addLabel: { fontSize: fontSize.small, color: colors.textFaintest },
+  removeSection: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: space.xxl },
   badgeWrapper: { position: 'relative', display: 'inline-block' },
   removeChip: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '0.25rem',
-    fontSize: '0.85rem',
-    color: '#2E4034',
-    backgroundColor: '#F4F6F3',
-    border: '1px solid #DDE3D8',
-    borderRadius: '999px',
+    fontSize: fontSize.label,
+    color: colors.ink,
+    backgroundColor: neutral.sageWashCool,
+    border: `1px solid ${neutral.sageLine}`,
+    borderRadius: radius.pill,
     padding: '0.3rem 0.7rem',
   },
-  removeChipRel: { color: '#999', fontSize: '0.78rem' },
+  removeChipRel: { color: colors.textFaintest, fontSize: '0.78rem' },
   // Plain action link — not a status chip — so "mark this ended" and "undo" both read as things
   // you can DO, not as a state you're removing (see RemoveChip's trash-icon pattern above, which
   // is right for destructive removal but was confusingly reused for divorce before this).
   textLinkButton: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
+    color: colors.ink,
     textDecoration: 'underline',
-    fontSize: '0.85rem',
-    fontFamily: 'Georgia, serif',
+    fontSize: fontSize.label,
+    fontFamily,
     cursor: 'pointer',
     padding: 0,
   },
-  endedRow: { display: 'inline-flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.85rem', color: '#2E4034' },
+  endedRow: { display: 'inline-flex', alignItems: 'center', gap: '0.6rem', fontSize: fontSize.label, color: colors.ink },
   cornerBadge: {
     position: 'absolute',
     top: '-8px',
@@ -1167,55 +1168,55 @@ const styles: { [key: string]: React.CSSProperties } = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: '50%',
-    border: '1px solid #B04A3B',
-    backgroundColor: '#FFF',
-    color: '#B04A3B',
-    fontSize: '0.8rem',
+    borderRadius: radius.circle,
+    border: border.danger,
+    backgroundColor: colors.surface,
+    color: colors.danger,
+    fontSize: fontSize.small,
     lineHeight: 1,
     padding: 0,
     cursor: 'pointer',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+    boxShadow: shadow.button,
   },
   suggestBanner: {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.6rem',
-    fontSize: '0.9rem',
-    color: '#5A4A20',
-    backgroundColor: '#FBF3E0',
-    border: '1px solid #E6D6AC',
-    borderRadius: '10px',
+    fontSize: fontSize.body,
+    color: colors.suggestDeep,
+    backgroundColor: colors.suggestBg,
+    border: border.suggest,
+    borderRadius: radius.lg,
     padding: '0.85rem 1rem',
-    marginTop: '1rem',
+    marginTop: space.xl,
   },
-  suggestButtonRow: { display: 'flex', gap: '0.5rem' },
+  suggestButtonRow: { display: 'flex', gap: space.md },
   suggestYesButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',
-    borderRadius: '6px',
+    borderRadius: radius.sm,
     border: 'none',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
+    backgroundColor: colors.ink,
+    color: colors.onFill,
     cursor: 'pointer',
   },
   suggestNoButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',
-    borderRadius: '6px',
-    border: '1px solid #CCC',
-    backgroundColor: '#FFF',
-    color: '#555',
+    borderRadius: radius.sm,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
     cursor: 'pointer',
   },
   dangerDeleteButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',
-    borderRadius: '6px',
+    borderRadius: radius.sm,
     border: 'none',
-    backgroundColor: '#B04A3B',
-    color: '#FFF',
+    backgroundColor: colors.danger,
+    color: colors.onFill,
     cursor: 'pointer',
   },
-  legend: { fontSize: '0.78rem', color: '#999', marginTop: '1rem', lineHeight: 1.5 },
+  legend: { fontSize: '0.78rem', color: colors.textFaintest, marginTop: space.xl, lineHeight: 1.5 },
 }

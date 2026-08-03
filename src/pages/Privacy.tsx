@@ -1,3 +1,5 @@
+import { border, colors, fontFamily, fontSize, maxWidth, radius } from '../lib/theme'
+
 export default function Privacy({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
   return (
     <div style={styles.page}>
@@ -107,27 +109,27 @@ export default function Privacy({ onBack, backLabel }: { onBack: () => void; bac
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '840px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily },
   backButton: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
-    fontSize: '1rem',
+    color: colors.ink,
+    fontSize: fontSize.base,
     cursor: 'pointer',
     marginBottom: '1rem',
     padding: 0,
   },
-  heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 0.5rem' },
-  intro: { fontSize: '0.95rem', color: '#2E2E2E', lineHeight: 1.5, margin: '0 0 1.5rem' },
+  heading: { fontSize: fontSize.h1, color: colors.ink, margin: '0 0 0.5rem' },
+  intro: { fontSize: fontSize.bodyLg, color: colors.inkPlain, lineHeight: 1.5, margin: '0 0 1.5rem' },
   section: {
-    backgroundColor: '#FFF',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.surface,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '1rem 1.1rem',
     marginBottom: '1rem',
   },
-  sectionHeading: { fontSize: '1.1rem', color: '#2E4034', margin: '0 0 0.5rem' },
-  body: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5, margin: 0 },
+  sectionHeading: { fontSize: fontSize.lead, color: colors.ink, margin: '0 0 0.5rem' },
+  body: { fontSize: fontSize.body, color: colors.textMuted, lineHeight: 1.5, margin: 0 },
   list: { margin: '0.5rem 0 0', paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' },
-  listItem: { fontSize: '0.9rem', color: '#666', lineHeight: 1.5 },
+  listItem: { fontSize: fontSize.body, color: colors.textMuted, lineHeight: 1.5 },
 }

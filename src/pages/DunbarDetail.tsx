@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
 const DUNBAR_LIMIT = 150
 
@@ -101,35 +102,35 @@ export default function DunbarDetail({ onBack, backLabel }: { onBack: () => void
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '840px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily },
   backButton: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
-    fontSize: '1rem',
+    color: colors.ink,
+    fontSize: fontSize.base,
     cursor: 'pointer',
-    marginBottom: '1rem',
+    marginBottom: space.xl,
     padding: 0,
   },
-  heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 0.75rem' },
-  body: { fontSize: '1rem', color: '#444', lineHeight: 1.55, margin: '0 0 1.5rem' },
-  loading: { color: '#777' },
+  heading: { fontSize: fontSize.h1, color: colors.ink, margin: '0 0 0.75rem' },
+  body: { fontSize: fontSize.base, color: neutral.grey800, lineHeight: 1.55, margin: '0 0 1.5rem' },
+  loading: { color: colors.textSubtle },
   card: {
-    backgroundColor: '#FFF',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.surface,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '1.25rem 1.4rem',
-    marginBottom: '1.25rem',
+    marginBottom: space.xxl,
   },
-  cardHeading: { fontSize: '1.05rem', color: '#2E4034', margin: '0 0 1.1rem', lineHeight: 1.35 },
+  cardHeading: { fontSize: '1.05rem', color: colors.ink, margin: '0 0 1.1rem', lineHeight: 1.35 },
   tierRow: { marginBottom: '0.9rem' },
   tierLabelRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' },
-  tierLabel: { fontSize: '0.92rem', color: '#333' },
-  tierCount: { fontSize: '0.85rem', color: '#888' },
-  tierNames: { fontSize: '0.85rem', color: '#666', margin: '0.4rem 0 0', lineHeight: 1.4 },
-  track: { height: '8px', borderRadius: '999px', backgroundColor: '#EFEDE7', overflow: 'hidden' },
-  fill: { height: '100%', borderRadius: '999px', backgroundColor: '#5C8A6C' },
-  fillOverflow: { backgroundColor: '#B08B2E' },
-  footerLine: { fontSize: '0.9rem', color: '#555', lineHeight: 1.5, marginTop: '1rem', marginBottom: 0, fontStyle: 'italic' },
-  link: { display: 'inline-block', fontSize: '0.95rem', color: '#2E4034' },
+  tierLabel: { fontSize: '0.92rem', color: neutral.grey900 },
+  tierCount: { fontSize: fontSize.label, color: colors.textFaint },
+  tierNames: { fontSize: fontSize.label, color: colors.textMuted, margin: '0.4rem 0 0', lineHeight: 1.4 },
+  track: { height: '8px', borderRadius: radius.pill, backgroundColor: '#EFEDE7', overflow: 'hidden' },
+  fill: { height: '100%', borderRadius: radius.pill, backgroundColor: '#5C8A6C' },
+  fillOverflow: { backgroundColor: colors.suggestFill },
+  footerLine: { fontSize: fontSize.body, color: colors.textBody, lineHeight: 1.5, marginTop: space.xl, marginBottom: 0, fontStyle: 'italic' },
+  link: { display: 'inline-block', fontSize: fontSize.bodyLg, color: colors.ink },
 }

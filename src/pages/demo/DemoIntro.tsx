@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { DEMO_PEOPLE, DEMO_MOMENTS, DEMO_GROUPS } from '../../lib/demoData'
+import { colors, fontFamily, fontSize, neutral, radius } from '../../lib/theme'
 
 type Stage = 'welcome' | 'home' | 'people' | 'events' | 'groups'
 
@@ -115,12 +116,12 @@ const styles: { [key: string]: React.CSSProperties } = {
     display: 'flex',
     alignItems: 'flex-start',
     justifyContent: 'center',
-    backgroundColor: '#FBF3E0',
-    fontFamily: 'Georgia, serif',
+    backgroundColor: colors.suggestBg,
+    fontFamily,
     padding: '2.5rem 1.25rem',
   },
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: neutral.white,
     borderRadius: '14px',
     boxShadow: '0 2px 16px rgba(0,0,0,0.08)',
     padding: '2.5rem',
@@ -129,31 +130,31 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   progressRow: { display: 'flex', justifyContent: 'center', gap: '1.75rem', marginBottom: '2rem' },
   dotWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem' },
-  dot: { width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#E6D6AC' },
-  dotActive: { backgroundColor: '#8A6A1F' },
-  dotDone: { backgroundColor: '#2E4034' },
-  dotLabel: { fontSize: '0.7rem', color: '#999' },
-  title: { fontSize: '1.8rem', color: '#2E4034', margin: '0 0 1rem' },
-  body: { fontSize: '1rem', color: '#444', lineHeight: 1.6, marginBottom: '1.25rem' },
+  dot: { width: '10px', height: '10px', borderRadius: radius.circle, backgroundColor: colors.suggestBorder },
+  dotActive: { backgroundColor: colors.suggest },
+  dotDone: { backgroundColor: colors.ink },
+  dotLabel: { fontSize: fontSize.micro, color: colors.textFaintest },
+  title: { fontSize: '1.8rem', color: colors.ink, margin: '0 0 1rem' },
+  body: { fontSize: fontSize.base, color: neutral.grey800, lineHeight: 1.6, marginBottom: '1.25rem' },
   buttonRow: { display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap', marginTop: '0.5rem' },
   primaryButton: {
     fontSize: '1.05rem',
     padding: '0.75rem 1.5rem',
-    borderRadius: '8px',
+    borderRadius: radius.md,
     border: 'none',
-    backgroundColor: '#2E4034',
-    color: '#FFFFFF',
+    backgroundColor: colors.ink,
+    color: neutral.white,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   skipLink: {
-    fontSize: '0.9rem',
-    color: '#999',
+    fontSize: fontSize.body,
+    color: colors.textFaintest,
     background: 'none',
     border: 'none',
     cursor: 'pointer',
     textDecoration: 'underline',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     padding: 0,
   },
 }

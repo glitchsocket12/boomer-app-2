@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { GOOGLE_PHOTOS_REDIRECT_URI, consumeGooglePhotosOAuthState } from '../lib/googlePhotosAuth'
+import { colors, fontFamily, fontSize, maxWidth } from '../lib/theme'
 
 // Rendered only when the URL is exactly /oauth/google-photos/callback (App.tsx checks this before
 // its normal view/crumb routing) — the redirect target Google's consent screen sends the user back
@@ -58,7 +59,7 @@ export default function GooglePhotosOAuthCallback() {
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '480px', margin: '4rem auto', padding: '0 1.5rem', fontFamily: 'Georgia, serif', textAlign: 'center' },
-  message: { fontSize: '1rem', color: '#2E4034' },
-  link: { color: '#2E4034', textDecoration: 'underline' },
+  page: { maxWidth: maxWidth.dialog, margin: '4rem auto', padding: '0 1.5rem', fontFamily, textAlign: 'center' },
+  message: { fontSize: fontSize.base, color: colors.ink },
+  link: { color: colors.ink, textDecoration: 'underline' },
 }

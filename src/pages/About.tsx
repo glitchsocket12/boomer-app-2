@@ -1,6 +1,8 @@
 // Placeholder page (backlog item 23) — real copy gets drafted together with the founder
 // separately ("I don't want it to be bullshit"); this exists only so the Settings link has
 // somewhere real to land, not as invented final content.
+import { colors, fontFamily, fontSize, maxWidth } from '../lib/theme'
+
 export default function About({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
   return (
     <div style={styles.page}>
@@ -17,16 +19,16 @@ export default function About({ onBack, backLabel }: { onBack: () => void; backL
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  page: { maxWidth: '840px', margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily: 'Georgia, serif' },
+  page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '1rem 1.5rem 2rem', fontFamily },
   backButton: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
-    fontSize: '1rem',
+    color: colors.ink,
+    fontSize: fontSize.base,
     cursor: 'pointer',
     marginBottom: '1rem',
     padding: 0,
   },
-  heading: { fontSize: '2rem', color: '#2E4034', margin: '0 0 0.5rem' },
-  body: { fontSize: '0.95rem', color: '#666', lineHeight: 1.5, margin: '0 0 1.25rem' },
+  heading: { fontSize: fontSize.h1, color: colors.ink, margin: '0 0 0.5rem' },
+  body: { fontSize: fontSize.bodyLg, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 1.25rem' },
 }
