@@ -47,6 +47,15 @@ export default function Login({
     setMessage('')
   }
 
+  async function handleGoogleLogin() {
+    setMessage('')
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    })
+    if (error) setMessage(error.message)
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setMessage('')
@@ -98,6 +107,22 @@ export default function Login({
       <div style={styles.card}>
         <h1 style={styles.title}>Boomer</h1>
         <p style={styles.subtitle}>Stay close to the people who matter.</p>
+
+        <button type="button" onClick={handleGoogleLogin} style={styles.googleButton}>
+          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+            <path fill="#4285F4" d="M19.6 10.23c0-.68-.06-1.36-.18-2.02H10v3.83h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.23c1.9-1.75 2.99-4.32 2.99-7.33z" />
+            <path fill="#34A853" d="M10 20c2.7 0 4.96-.89 6.62-2.42l-3.23-2.5c-.9.6-2.05.96-3.39.96-2.6 0-4.8-1.76-5.59-4.12H1.07v2.59A10 10 0 0 0 10 20z" />
+            <path fill="#FBBC05" d="M4.41 11.92A6 6 0 0 1 4.09 10c0-.67.11-1.32.32-1.92V5.49H1.07A10 10 0 0 0 0 10c0 1.61.39 3.14 1.07 4.51z" />
+            <path fill="#EA4335" d="M10 3.96c1.47 0 2.79.5 3.82 1.5l2.87-2.87C14.95.99 12.7 0 10 0 6.1 0 2.7 2.24 1.07 5.49l3.34 2.59C5.2 5.72 7.4 3.96 10 3.96z" />
+          </svg>
+          Continue with Google
+        </button>
+
+        <div style={styles.divider}>
+          <span style={styles.dividerLine} />
+          <span>or</span>
+          <span style={styles.dividerLine} />
+        </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           {isSignUp && (
@@ -237,6 +262,30 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   title: { fontSize: '2.25rem', marginBottom: '0.25rem', color: colors.ink },
   subtitle: { fontSize: fontSize.lead, color: neutral.grey600, marginBottom: '2rem' },
+  googleButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.md,
+    fontSize: fontSize.base,
+    fontFamily,
+    padding: '0.75rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: neutral.white,
+    color: colors.inkPlain,
+    cursor: 'pointer',
+    width: '100%',
+  },
+  divider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.md,
+    margin: `${space.xl} 0`,
+    color: neutral.grey600,
+    fontSize: fontSize.base,
+  },
+  dividerLine: { flex: 1, height: '1px', backgroundColor: 'rgba(46,64,52,0.15)' },
   form: { display: 'flex', flexDirection: 'column', gap: space.xxl },
   label: { fontSize: fontSize.lead, display: 'flex', flexDirection: 'column', gap: '0.4rem', color: colors.inkPlain },
   input: { fontSize: '1.15rem', padding: space.lg, borderRadius: radius.md, border: border.default },
