@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
+import ReviewNoteField from '../components/ReviewNoteField'
 import { groupDisplayName } from '../lib/groupDisplayName'
 
 type LabeledValue = { label: string; value: string }
@@ -53,9 +54,12 @@ type PersonFields = {
   urls: LabeledValue[]
   social_profiles: LabeledValue[]
 }
+// noteIds (plural) because accepting can write two distinct notes: the vCard-derived one from
+// buildNoteContent(), and whatever the founder typed or dictated into the review box. Undo has to
+// take back both.
 type UndoInfo =
-  | { kind: 'new'; personId: string; noteId: string | null; groupIds: string[]; reminders: ReminderSnapshot[] }
-  | { kind: 'existing'; personId: string; noteId: string | null; groupIds: string[]; reminders: ReminderSnapshot[]; before: PersonFields }
+  | { kind: 'new'; personId: string; noteIds: string[]; groupIds: string[]; reminders: ReminderSnapshot[] }
+  | { kind: 'existing'; personId: string; noteIds: string[]; groupIds: string[]; reminders: ReminderSnapshot[]; before: PersonFields }
 
 const PAGE_SIZE = 20
 
@@ -338,6 +342,12 @@ function CandidateCard({
 
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([])
 
+  // Free-text (typed or dictated) memory of who this person actually is. This review pass is the
+  // only realistic moment anyone will add it — nobody comes back to a name out of a 1000-contact
+  // import later just to write down how they know them.
+  const [noteText, setNoteText] = useState('')
+  const [transcribing, setTranscribing] = useState(false)
+
   // The linked person's CURRENT groups (read-only, distinct from selectedGroupIds above, which
   // are new tags this session is about to add). Shown so a match to an existing person comes with
   // visible proof it's really them — not just a name, but the groups you already know them by.
@@ -463,7 +473,7 @@ function CandidateCard({
         return
       }
       personId = newPerson.id
-      undo = { kind: 'new', personId: personId as string, noteId: null, groupIds: [], reminders: [] }
+      undo = { kind: 'new', personId: personId as string, noteIds: [], groupIds: [], reminders: [] }
     } else {
       const { data: existingPerson } = await supabase
         .from('people')
@@ -473,7 +483,7 @@ function CandidateCard({
       undo = {
         kind: 'existing',
         personId,
-        noteId: null,
+        noteIds: [],
         groupIds: [],
         reminders: [],
         before: {
@@ -526,7 +536,20 @@ function CandidateCard({
         .insert({ person_id: personId, content: noteContent, source: 'contacts_import' })
         .select('id')
         .single()
-      undo.noteId = newNote?.id ?? null
+      if (newNote?.id) undo.noteIds.push(newNote.id)
+    }
+
+    // Kept as its own row rather than appended to the note above: that one is machine-derived
+    // (the vCard's NOTE field, Apple's relationship labels), this one is the founder's own words,
+    // and PersonDetail badges them differently because of it.
+    const typedNote = noteText.trim()
+    if (typedNote) {
+      const { data: newNote } = await supabase
+        .from('notes')
+        .insert({ person_id: personId, content: typedNote, source: 'review_note' })
+        .select('id')
+        .single()
+      if (newNote?.id) undo.noteIds.push(newNote.id)
     }
 
     if (selectedGroupIds.length > 0) {
@@ -563,8 +586,8 @@ function CandidateCard({
     if (!undoInfo) return
     setSaving(true)
 
-    if (undoInfo.noteId) {
-      await supabase.from('notes').delete().eq('id', undoInfo.noteId)
+    if (undoInfo.noteIds.length > 0) {
+      await supabase.from('notes').delete().in('id', undoInfo.noteIds)
     }
     if (undoInfo.groupIds.length > 0) {
       await supabase.from('person_groups').delete().eq('person_id', undoInfo.personId).in('group_id', undoInfo.groupIds)
@@ -595,6 +618,8 @@ function CandidateCard({
     setMiddleNameInput(candidate.middle_name || '')
     setLastNameInput(candidate.last_name || '')
     setSelectedGroupIds([])
+    // noteText is deliberately NOT reset. Everything else here is derived from the candidate, but
+    // this is the founder's own words — undoing a wrong match shouldn't make them retype it.
     setUndoInfo(null)
     setSavedLabel(null)
     setSavedPersonId(null)
@@ -789,8 +814,17 @@ function CandidateCard({
         />
       </div>
 
+      <ReviewNoteField
+        label="Anything you want to remember about them? (optional)"
+        value={noteText}
+        onChange={setNoteText}
+        placeholder="How you know them, who they're related to, anything worth keeping…"
+        disabled={saving}
+        onBusyChange={setTranscribing}
+      />
+
       <div style={styles.buttonRow}>
-        <button type="button" onClick={handleAccept} disabled={saving} style={styles.acceptButton}>
+        <button type="button" onClick={handleAccept} disabled={saving || transcribing} style={styles.acceptButton}>
           {saving ? '…' : 'Accept'}
         </button>
         <button type="button" onClick={handleReject} disabled={saving} style={styles.rejectButton}>

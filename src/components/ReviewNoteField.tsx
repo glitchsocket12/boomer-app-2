@@ -1,0 +1,72 @@
+import { useState } from 'react'
+import AutoGrowTextarea from './AutoGrowTextarea'
+import VoiceInputButton from './VoiceInputButton'
+
+// The "what do you actually know about this person" box on the four import review queues
+// (contacts, birthdays, calendar events, photos).
+//
+// Same textarea + mic shape as the fact bar on PersonDetail, deliberately: the review pass is
+// realistically the only time anyone sits with these people one at a time, so the box has to be
+// visible without a click and cost nothing to skip. Empty means no note is written at all.
+export default function ReviewNoteField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  onBusyChange,
+  textareaStyle,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  disabled?: boolean
+  // Surfaced from VoiceInputButton so the card can disable Accept while a recording is still
+  // being transcribed — accepting mid-transcription would drop what was just said.
+  onBusyChange?: (busy: boolean) => void
+  textareaStyle?: React.CSSProperties
+}) {
+  const [transcribing, setTranscribing] = useState(false)
+
+  function handleBusyChange(busy: boolean) {
+    setTranscribing(busy)
+    onBusyChange?.(busy)
+  }
+
+  return (
+    <div style={styles.wrapper}>
+      <label style={styles.label}>{label}</label>
+      <div style={styles.row}>
+        <AutoGrowTextarea
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          disabled={disabled}
+          style={{ ...styles.textarea, ...textareaStyle }}
+        />
+        <VoiceInputButton
+          disabled={disabled}
+          onBusyChange={handleBusyChange}
+          // Append rather than replace, so dictating twice (or after typing) builds one note
+          // instead of quietly overwriting the earlier half. Mirrors every other mic in the app.
+          onTranscribed={(text) => onChange(value ? `${value} ${text}` : text)}
+        />
+      </div>
+      {transcribing && <p style={styles.hint}>Finishing up your recording…</p>}
+    </div>
+  )
+}
+
+const styles: { [key: string]: React.CSSProperties } = {
+  wrapper: { display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '0.9rem' },
+  label: { fontSize: '0.8rem', color: '#666' },
+  row: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem' },
+  textarea: {
+    fontSize: '0.9rem',
+    padding: '0.5rem 0.6rem',
+    fontFamily: 'Georgia, serif',
+    color: '#2E2E2E',
+  },
+  hint: { fontSize: '0.8rem', color: '#666', margin: '0.1rem 0 0' },
+}

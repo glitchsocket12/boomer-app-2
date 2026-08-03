@@ -36,9 +36,14 @@ const isSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices
 export default function VoiceInputButton({
   onTranscribed,
   disabled,
+  onBusyChange,
 }: {
   onTranscribed: (text: string) => void
   disabled?: boolean
+  // Fires whenever a recording is in progress or still being transcribed. Callers that have a
+  // "save" action sitting next to the mic (the review queues) use this to disable it — otherwise
+  // hitting save mid-transcription silently drops whatever was just said.
+  onBusyChange?: (busy: boolean) => void
 }) {
   const [status, setStatus] = useState<Status>('idle')
   const [errorMessage, setErrorMessage] = useState('')
@@ -53,6 +58,12 @@ export default function VoiceInputButton({
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [])
+
+  // 'error' counts as not-busy on purpose: the recording is already lost at that point, so
+  // blocking the caller's save button would only trap them behind a failure they can't clear.
+  useEffect(() => {
+    onBusyChange?.(status === 'recording' || status === 'transcribing')
+  }, [status])
 
   if (!isSupported) return null
 

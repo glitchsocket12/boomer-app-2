@@ -7,7 +7,7 @@ import { getRelationshipsMap, type PersonRelationships } from '../lib/relationsh
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import SearchAddPicker from '../components/SearchAddPicker'
 import SearchBox from '../components/SearchBox'
-import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import ReviewNoteField from '../components/ReviewNoteField'
 import AddressSuggestInput from '../components/AddressSuggestInput'
 import { groupDisplayName } from '../lib/groupDisplayName'
 import { IS_TOUCH } from '../lib/touch'
@@ -322,6 +322,7 @@ function CandidateCard({
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [personPickerOpen, setPersonPickerOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
   const [dismissedMatch, setDismissedMatch] = useState(false)
   const [mergeTarget, setMergeTarget] = useState<ExistingMoment | null>(null)
   const [manualMergeOpen, setManualMergeOpen] = useState(false)
@@ -660,16 +661,15 @@ function CandidateCard({
 
       {candidate.raw_description && <p style={styles.description}>{candidate.raw_description}</p>}
 
-      <div style={styles.notesField}>
-        <label style={styles.dateLabel}>Your notes (optional)</label>
-        <AutoGrowTextarea
-          value={noteText}
-          onChange={setNoteText}
-          placeholder="Anything you remember about this — who said what, how it went, what made it special…"
-          style={styles.notesInput}
-          disabled={saving}
-        />
-      </div>
+      <ReviewNoteField
+        label="Your notes (optional)"
+        value={noteText}
+        onChange={setNoteText}
+        placeholder="Anything you remember about this — who said what, how it went, what made it special…"
+        textareaStyle={styles.notesInput}
+        disabled={saving}
+        onBusyChange={setTranscribing}
+      />
 
       {(candidate.suggested_people.length > 0 || manualPeople.length > 0 || manualNewPeopleNames.length > 0) && (
         <div style={styles.peopleRow}>
@@ -995,7 +995,7 @@ function CandidateCard({
       )}
 
       <div style={styles.suggestButtonRow}>
-        <button type="button" onClick={mergeTarget ? handleAcceptAsMerge : handleAccept} style={styles.suggestYesButton} disabled={saving}>
+        <button type="button" onClick={mergeTarget ? handleAcceptAsMerge : handleAccept} style={styles.suggestYesButton} disabled={saving || transcribing}>
           {saving ? '…' : mergeTarget ? 'Merge' : 'Accept'}
         </button>
         <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
@@ -1063,7 +1063,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily: 'Georgia, serif',
   },
   description: { fontSize: '0.88rem', color: '#666', lineHeight: 1.5, margin: '0 0 0.75rem' },
-  notesField: { display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '0.9rem' },
   peopleRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.9rem' },
   personChipOn: {
     display: 'inline-flex',

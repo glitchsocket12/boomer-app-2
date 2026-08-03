@@ -4,6 +4,7 @@ import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
 import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { formatDateRange } from '../lib/dates'
 import SearchAddPicker from '../components/SearchAddPicker'
+import ReviewNoteField from '../components/ReviewNoteField'
 
 type MomentOption = { id: string; occasion: string | null; event_date: string | null; event_end_date: string | null }
 
@@ -42,6 +43,10 @@ export default function PhotoImportReview({
   const [moments, setMoments] = useState<MomentOption[]>([])
   const [selectedMomentId, setSelectedMomentId] = useState<Record<string, string | null>>({})
   const [titleByCluster, setTitleByCluster] = useState<Record<string, string>>({})
+  // Mirrors titleByCluster: what the founder types or dictates about a batch of photos, saved as
+  // a note on the resulting event. See components/ReviewNoteField.tsx.
+  const [noteByCluster, setNoteByCluster] = useState<Record<string, string>>({})
+  const [transcribingId, setTranscribingId] = useState<string | null>(null)
   const [resolvingId, setResolvingId] = useState<string | null>(null)
   const [justAdded, setJustAdded] = useState<{ id: string; label: string } | null>(null)
 
@@ -181,6 +186,14 @@ export default function PhotoImportReview({
     }
 
     await supabase.from('photos').update({ moment_id: momentId, photo_cluster_id: null }).eq('photo_cluster_id', cluster.id)
+
+    // Event-only note (no person_id) — legal since 2026-07-25-note-event-only.sql widened the
+    // notes CHECK constraint.
+    const typedNote = (noteByCluster[cluster.id] ?? '').trim()
+    if (typedNote) {
+      await supabase.from('notes').insert({ moment_id: momentId, content: typedNote, source: 'review_note' })
+    }
+
     await supabase.from('photo_clusters').update({ status: 'accepted', reviewed_at: new Date().toISOString() }).eq('id', cluster.id)
     setResolvingId(null)
     setJustAdded({ id: momentId!, label: label ?? 'that event' })
@@ -293,8 +306,20 @@ export default function PhotoImportReview({
                       disabled={resolvingId === cluster.id}
                     />
                   )}
+                  <ReviewNoteField
+                    label="Anything you want to remember about these? (optional)"
+                    value={noteByCluster[cluster.id] ?? ''}
+                    onChange={(v) => setNoteByCluster((prev) => ({ ...prev, [cluster.id]: v }))}
+                    placeholder="Where you were, who was there, what was going on…"
+                    disabled={resolvingId === cluster.id}
+                    onBusyChange={(busy) => setTranscribingId(busy ? cluster.id : null)}
+                  />
                   <div style={styles.clusterActions}>
-                    <button onClick={() => handleAccept(cluster)} style={styles.actionButtonPrimary} disabled={resolvingId === cluster.id}>
+                    <button
+                      onClick={() => handleAccept(cluster)}
+                      style={styles.actionButtonPrimary}
+                      disabled={resolvingId === cluster.id || transcribingId === cluster.id}
+                    >
                       {resolvingId === cluster.id ? 'Working…' : 'Accept'}
                     </button>
                     <button onClick={() => handleReject(cluster)} style={styles.rejectButton} disabled={resolvingId === cluster.id}>

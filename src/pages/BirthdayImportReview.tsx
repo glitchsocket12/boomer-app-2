@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import SearchBox from '../components/SearchBox'
+import ReviewNoteField from '../components/ReviewNoteField'
 
 type Candidate = {
   id: string
@@ -108,6 +109,10 @@ function CandidateCard({
   const [search, setSearch] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedLabel, setSavedLabel] = useState<string | null>(null)
+  // These cards are the thinnest of the four queues — a name and a date — so the free-text box
+  // carries the most weight here. See components/ReviewNoteField.tsx.
+  const [noteText, setNoteText] = useState('')
+  const [transcribing, setTranscribing] = useState(false)
 
   const linkedPerson = allPeople.find((p) => p.id === linkedPersonId) ?? null
   const dateLabel = formatBirthday(candidate.birthday_month, candidate.birthday_day, candidate.birthday_year)
@@ -177,6 +182,12 @@ function CandidateCard({
     }
 
     await upsertBirthday(personId as string)
+
+    const typedNote = noteText.trim()
+    if (typedNote) {
+      await supabase.from('notes').insert({ person_id: personId, content: typedNote, source: 'review_note' })
+    }
+
     await markReviewed('accepted')
     setSaving(false)
     setSavedLabel(linkedPerson ? personLabel(linkedPerson) : candidate.full_name ?? 'this person')
@@ -262,8 +273,17 @@ function CandidateCard({
         )}
       </div>
 
+      <ReviewNoteField
+        label="Anything you want to remember about them? (optional)"
+        value={noteText}
+        onChange={setNoteText}
+        placeholder="How you know them, who they're related to, anything worth keeping…"
+        disabled={saving}
+        onBusyChange={setTranscribing}
+      />
+
       <div style={styles.buttonRow}>
-        <button type="button" onClick={handleAccept} disabled={saving} style={styles.acceptButton}>
+        <button type="button" onClick={handleAccept} disabled={saving || transcribing} style={styles.acceptButton}>
           {saving ? '…' : 'Accept'}
         </button>
         <button type="button" onClick={handleReject} disabled={saving} style={styles.rejectButton}>
