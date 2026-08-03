@@ -10,9 +10,8 @@ import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import { PersonChip, GroupChip } from '../components/Chips'
-import UpdateGroupChat from '../components/UpdateGroupChat'
+import NoteWithDetection from '../components/NoteWithDetection'
 import PhotoGallery from '../components/PhotoGallery'
-import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import SearchBox from '../components/SearchBox'
 import { IS_TOUCH } from '../lib/touch'
@@ -96,8 +95,6 @@ export default function GroupDetail({
   const requestedMomentSummaries = useRef(new Set<string>())
   const [groupNotes, setGroupNotes] = useState<GroupNote[]>([])
   const [notesOpen, setNotesOpen] = useState(true)
-  const [newNote, setNewNote] = useState('')
-  const [savingNote, setSavingNote] = useState(false)
   const [showGroupPicker, setShowGroupPicker] = useState(false)
   const [pickableGroups, setPickableGroups] = useState<GroupRef[]>([])
   const [loadingPickableGroups, setLoadingPickableGroups] = useState(false)
@@ -205,15 +202,6 @@ export default function GroupDetail({
       .eq('group_id', groupId)
       .order('created_at', { ascending: false })
     setGroupNotes((data as unknown as GroupNote[]) ?? [])
-  }
-
-  async function submitGroupNote() {
-    if (!newNote.trim()) return
-    setSavingNote(true)
-    await supabase.from('notes').insert({ group_id: groupId, person_id: null, content: newNote.trim() })
-    setNewNote('')
-    setSavingNote(false)
-    loadGroupNotes()
   }
 
   async function handleEditGroupNote(noteId: string, newContent: string) {
@@ -866,10 +854,6 @@ export default function GroupDetail({
       onDenyAllGroupSuggestions={handleDenyAllGroupSuggestions}
       notesOpen={notesOpen}
       onToggleNotesOpen={() => setNotesOpen((o) => !o)}
-      newNote={newNote}
-      onNewNoteChange={setNewNote}
-      savingNote={savingNote}
-      onSubmitGroupNote={submitGroupNote}
       onEditGroupNote={handleEditGroupNote}
       onDeleteGroupNote={handleDeleteGroupNote}
       deleteConfirming={deleteConfirming}
@@ -888,16 +872,18 @@ export default function GroupDetail({
       onConfirmMerge={handleMergeGroup}
       actionBusy={actionBusy}
       actionError={actionError}
-      editChat={
-        <UpdateGroupChat
-          groupId={groupId}
-          onSaved={({ rename }) => {
+      noteBox={
+        <NoteWithDetection
+          subjectType="group"
+          subjectId={groupId}
+          placeholder={`Add a note about ${name}…`}
+          onSaved={({ rename } = {}) => {
             if (rename) {
               setName(rename)
               onRenamed?.(rename)
             }
-            // Silent: this fires after every chat turn now (not just the final "done" turn), so a
-            // full loading-state flip here would unmount the in-progress chat mid-conversation.
+            // Silent: this fires after every note that changes something, not just once — a full
+            // loading-state flip here would unmount an in-progress clarifying follow-up.
             loadMoments(true)
             loadMembers()
             loadSummary()
@@ -912,10 +898,10 @@ export default function GroupDetail({
 // Pure render — split out (2026-07-22) so the landing-page demo can render the exact same group
 // UI fed by static data, with no Supabase/Edge Function calls. `readOnly` hides every write-only
 // control (rename pencil, type picker → static badge, member add/remove, associated-group
-// picker, suggestion banners, notes add/edit/delete, the "Edit this group" chat, delete) —
-// everything else (summary, membership, moments, associated groups, navigation, the family-tree
-// button) renders and behaves identically either way. `editChat` is a slot the real container
-// fills with `UpdateGroupChat` — the demo simply doesn't pass it.
+// picker, suggestion banners, notes add/edit/delete, the note box, delete) — everything else
+// (summary, membership, moments, associated groups, navigation, the family-tree button) renders
+// and behaves identically either way. `noteBox` is a slot the real container fills with
+// `NoteWithDetection` — the demo simply doesn't pass it.
 export function GroupDetailView({
   name,
   groupLabel = (_id, fallbackName) => fallbackName,
@@ -974,10 +960,6 @@ export function GroupDetailView({
   onDenyAllGroupSuggestions = () => {},
   notesOpen = true,
   onToggleNotesOpen = () => {},
-  newNote = '',
-  onNewNoteChange = () => {},
-  savingNote = false,
-  onSubmitGroupNote = () => {},
   onEditGroupNote = () => {},
   onDeleteGroupNote = () => {},
   deleteConfirming = false,
@@ -996,7 +978,7 @@ export function GroupDetailView({
   onConfirmMerge = () => {},
   actionBusy = false,
   actionError = null,
-  editChat,
+  noteBox,
 }: {
   groupId: string
   name: string
@@ -1058,10 +1040,6 @@ export function GroupDetailView({
   onDenyAllGroupSuggestions?: (groups: GroupRef[]) => void
   notesOpen?: boolean
   onToggleNotesOpen?: () => void
-  newNote?: string
-  onNewNoteChange?: (v: string) => void
-  savingNote?: boolean
-  onSubmitGroupNote?: () => void
   onEditGroupNote?: (noteId: string, newContent: string) => void
   onDeleteGroupNote?: (noteId: string) => void
   deleteConfirming?: boolean
@@ -1080,7 +1058,7 @@ export function GroupDetailView({
   onConfirmMerge?: () => void
   actionBusy?: boolean
   actionError?: string | null
-  editChat?: ReactNode
+  noteBox?: ReactNode
 }) {
   const [memberSearch, setMemberSearch] = useState('')
   const memberQuery = memberSearch.trim().toLowerCase()
@@ -1467,30 +1445,8 @@ export function GroupDetailView({
       </div>
       {!readOnly && (
         <>
-          <p style={styles.chatHint}>Free-form context about this group — no event needed.</p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              onSubmitGroupNote()
-            }}
-            style={styles.addNoteForm}
-          >
-            <AutoGrowTextarea
-              value={newNote}
-              onChange={onNewNoteChange}
-              onEnter={onSubmitGroupNote}
-              placeholder={`Add a note about ${name}…`}
-              style={styles.addNoteInput}
-              disabled={savingNote}
-            />
-            <VoiceInputButton
-              disabled={savingNote}
-              onTranscribed={(text) => onNewNoteChange(newNote ? `${newNote} ${text}` : text)}
-            />
-            <button type="submit" disabled={savingNote || !newNote.trim()} style={styles.addNoteButton}>
-              {savingNote ? '…' : 'Add'}
-            </button>
-          </form>
+          <p style={styles.chatHint}>Free-form context about this group — no event needed. I'll also check for anyone new to add as a member.</p>
+          <div style={styles.noteBoxWrapper}>{noteBox}</div>
         </>
       )}
 
@@ -1505,14 +1461,6 @@ export function GroupDetailView({
             />
           ))}
         </div>
-      )}
-
-      {!readOnly && editChat && (
-        <>
-          <h2 style={styles.editHeading}>Edit this group</h2>
-          <p style={styles.chatHint}>Add or remove someone, tag or untag an event, or rename it — just tell me what to change.</p>
-          {editChat}
-        </>
       )}
 
       {!readOnly && (
@@ -2144,17 +2092,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
     whiteSpace: 'nowrap',
   },
-  addNoteForm: { display: 'flex', alignItems: 'flex-end', gap: space.md, marginBottom: space.xl },
-  addNoteInput: { flex: 1, fontSize: fontSize.base, padding: '0.6rem', borderRadius: radius.md, border: border.default },
-  addNoteButton: {
-    fontSize: fontSize.base,
-    padding: '0.6rem 1.1rem',
-    borderRadius: radius.md,
-    border: 'none',
-    backgroundColor: colors.ink,
-    color: colors.onFill,
-    cursor: 'pointer',
-  },
+  noteBoxWrapper: { marginBottom: space.xl },
   notesList: { display: 'flex', flexDirection: 'column', gap: space.xl, marginBottom: space.xl },
   noteCardWrapper: { position: 'relative' },
   noteBadgeRow: { position: 'absolute', top: '-6px', right: '-6px', display: 'flex', gap: '0.3rem' },

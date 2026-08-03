@@ -142,14 +142,16 @@ Some people in the roster provided in this prompt have a nickname or "goes by" n
 
 IMPORTANT — disambiguating people who share a first name or nickname: check the roster provided in this prompt for any other recorded person with the same first name or nickname as whoever you're about to write into "new_people" or "additional_notes". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
 
-IMPORTANT — a term the user uses might actually be the name of one of the OTHER events listed in this prompt (e.g. a race, trip, or reunion with a distinctive name) rather than what it sounds like literally. Check the other-events roster before assuming a name refers to something else (a medical event, a place, etc). If it's genuinely ambiguous which one they mean — or whether they mean an event at all versus something else entirely — don't guess: ask a short, direct clarifying question in "reply" (e.g. "Just to make sure I've got this right — is 'the triple bypass' the bike race you did a few days ago, or something else?"), set "done": false, and leave the other fields empty for that turn. A clarifying question is still a completely ordinary reply — always wrap it in the same JSON shape as everything else.
+IMPORTANT — a term the user uses might actually be the name of one of the OTHER events listed in this prompt (e.g. a race, trip, or reunion with a distinctive name) rather than what it sounds like literally. Check the other-events roster before assuming a name refers to something else (a medical event, a place, etc). If it's genuinely ambiguous which one they mean — or whether they mean an event at all versus something else entirely — don't guess: ask a short, direct clarifying question in "reply" (e.g. "Just to make sure I've got this right — is 'the triple bypass' the bike race you did a few days ago, or something else?"), set "needs_clarification": true, and leave the other fields empty for that turn. A clarifying question is still a completely ordinary reply — always wrap it in the same JSON shape as everything else.
 
-When the user shares a new detail, don't finish right away — first ask a short, natural follow-up question like "Anything else you remember about this?" so they have a chance to add more. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
+The app already saved the user's exact words as a general note on this moment the instant they submitted it — this call only adds structured detail on top of that (attendee links, relationship signals, field updates, group tags). Because of that: NEVER include a `"person": null` (general/event-level) entry in "additional_notes" — that would duplicate what's already saved verbatim. Only emit an "additional_notes" entry when it's about a specific named attendee (linking them to this moment, or capturing a person-specific detail).
+
+Each call covers exactly one note the user just submitted — there's no back-and-forth to keep open, so don't ask a follow-up like "anything else?". Only set "needs_clarification": true for a genuine ambiguity (see above) that you can't resolve without asking; otherwise leave it false and give a brief, natural acknowledgement in "reply".
 
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "done": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1, or null for a general note about the event itself", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
 This is saved immediately after every single turn, so only include in "new_people"/"mentioned_names"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
@@ -163,7 +165,7 @@ CRITICAL — NEVER create a profile for someone just because they came up in the
 
 A PET IS NOT A PERSON. If the user mentions someone's animal (e.g. "we brought our dog Biscuit"), never put the animal's name in "new_people" or "mentioned_names" — that would create a fake human profile in their People list and Dunbar count. Record it as ordinary note text instead (attached to the owner, or as a general note). Pets have their own place in the app, recorded from the Home chat or a profile's Pets section, not here.
 
-IMPORTANT — capture EVERY concrete new detail the user gives, not just who attended. An "additional_notes" entry doesn't have to be about a specific person: anything the user says about the event itself — an activity, food, weather, a gift, how it went — belongs in its own entry with "person" set to null, unless it's naturally about one specific attendee (attach it to that person's own note instead). Never let a real detail disappear just because it wasn't about a named person.
+General, event-level detail (an activity, food, weather, a gift, how it went) that ISN'T about one specific attendee needs no action from you at all — it's already saved verbatim as the user's own general note. Only add an "additional_notes" entry when a detail is naturally about one specific named attendee (attach it to that person's own note instead of leaving it only in the general text).
 
 CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "additional_notes": a person only shows up as having attended if they have at least one note tied to this moment. So whenever the user mentions that someone ALREADY IN THE ROSTER (or someone they explicitly asked you to add via "new_people") was AT this event — even in passing, even with no other detail about them — you MUST still include an entry for them in "additional_notes" (e.g. {"person": "Name1", "note": "Was there."}) so they get linked. Do not just add them to "new_people" and stop — a person with no note attached will silently NOT appear as having attended, which is the whole point of recording them. But "Was there." is a LAST RESORT for someone named with zero detail — if the user actually described what that person did, said, or brought, capture that in their note instead of flattening it to "Was there.".
 
@@ -199,7 +201,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
 
     const DEFAULT_PARSED = {
       reply: "Sorry, I didn't get a response there — please try again.",
-      done: false,
+      needs_clarification: false,
       new_people: [],
       mentioned_names: [],
       additional_notes: [],
@@ -274,7 +276,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     if (!result.ok) {
       if (result.errorBody) console.error("Anthropic API error", result.errorBody)
       return new Response(
-        JSON.stringify({ reply: "Sorry, I'm having trouble responding right now — please try again in a moment.", done: false, changed: false }),
+        JSON.stringify({ reply: "Sorry, I'm having trouble responding right now — please try again in a moment.", needsClarification: false, changed: false }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
@@ -313,22 +315,11 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     let notesFailed = 0
     for (const note of parsed.additional_notes ?? []) {
       const rawPerson = note.person?.trim()
-      // No person named (or explicitly null) — a general event-level detail, same "notes" table,
-      // just person_id: null, same as GroupDetail's own manual notes. Not a resolution failure, so
-      // it doesn't count against notesFailed.
-      if (!rawPerson) {
-        const { error: noteError } = await supabaseClient.from("notes").insert({
-          person_id: null,
-          moment_id: momentId,
-          content: note.note,
-        })
-        if (noteError) {
-          console.error("Failed to save general note", noteError.message, JSON.stringify(note))
-        } else {
-          notesAdded++
-        }
-        continue
-      }
+      // No person named — the frontend already saved the user's exact words as a general note
+      // before calling this function (see NoteWithDetection.tsx), so a null-person entry here
+      // would just be a paraphrased duplicate of that. The prompt above tells the model not to
+      // emit these; this is a defensive skip in case it does anyway.
+      if (!rawPerson) continue
       const personId = idByName[rawPerson.toLowerCase()]
       if (personId) {
         const { error: noteError } = await supabaseClient.from("notes").insert({
@@ -452,7 +443,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     return new Response(
       JSON.stringify({
         reply,
-        done: parsed.done === true,
+        needsClarification: parsed.needs_clarification === true,
         changed,
         relationshipSuggestions: familyResult.relationshipSuggestions,
         newPersonSuggestions: familyResult.newPersonSuggestions,

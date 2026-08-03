@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
-import UpdateMomentChat from '../components/UpdateMomentChat'
+import NoteWithDetection from '../components/NoteWithDetection'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import PhotoGallery from '../components/PhotoGallery'
@@ -112,10 +112,6 @@ export default function EventDetail({
   const [dateInput, setDateInput] = useState('')
   const [locationInput, setLocationInput] = useState('')
   const [savingMeta, setSavingMeta] = useState(false)
-  // Manual "add a note" box (2026-07-30) — matches GroupDetail's own manual note box, so adding a
-  // general detail to an event no longer requires going through chat.
-  const [newEventNote, setNewEventNote] = useState('')
-  const [savingEventNote, setSavingEventNote] = useState(false)
 
   useEffect(() => {
     loadMoment()
@@ -124,7 +120,6 @@ export default function EventDetail({
     setEditingTitle(false)
     setEditingDescription(false)
     setEditingMeta(false)
-    setNewEventNote('')
     setDeleteConfirming(false)
     setMergeOpen(false)
     setMergeCandidate(null)
@@ -452,18 +447,6 @@ export default function EventDetail({
     setEditingMeta(false)
   }
 
-  // Same insert shape as GroupDetail's submitGroupNote (group_id -> moment_id, still person_id:
-  // null) — a general note about the event itself, no AI classification needed. Reuses
-  // handleNoteSaved so it gets the same "clear cached summary, reload" refresh chat-added notes get.
-  async function handleAddEventNote() {
-    if (!newEventNote.trim()) return
-    setSavingEventNote(true)
-    await supabase.from('notes').insert({ moment_id: eventId, person_id: null, content: newEventNote.trim() })
-    setNewEventNote('')
-    setSavingEventNote(false)
-    await handleNoteSaved()
-  }
-
   async function handleSaveTitle(e: FormEvent) {
     e.preventDefault()
     if (!moment) return
@@ -612,10 +595,6 @@ export default function EventDetail({
       onLocationInputChange={setLocationInput}
       onSaveMeta={handleSaveMeta}
       onCancelEditMeta={() => setEditingMeta(false)}
-      newEventNote={newEventNote}
-      savingEventNote={savingEventNote}
-      onNewEventNoteChange={setNewEventNote}
-      onAddEventNote={handleAddEventNote}
       refreshingSummary={refreshingSummary}
       onRefreshSummary={handleRefreshSummary}
       photosImporting={photosImporting}
@@ -650,7 +629,7 @@ export default function EventDetail({
       onConfirmMerge={handleMergeEvent}
       actionBusy={actionBusy}
       actionError={actionError}
-      updateChat={<UpdateMomentChat momentId={moment.id} onSaved={handleNoteSaved} />}
+      noteBox={<NoteWithDetection subjectType="moment" subjectId={moment.id} onSaved={handleNoteSaved} placeholder="Add a note about this event…" />}
     />
   )
 }
@@ -658,10 +637,10 @@ export default function EventDetail({
 // Pure render — split out (2026-07-22) so the landing-page demo can render the exact same event
 // UI fed by static data, with no Supabase/Edge Function calls. `readOnly` hides every write-only
 // control (rename pencil, description edit, group/tag/attendee pickers, note-source chip
-// hover-untag, suggestion banners, delete/merge, the "Remember something else?" chat) —
-// everything else (summary, groups, tags, attendees, notes, navigation) renders and behaves
-// identically either way. `updateChat` is a slot the real container fills with
-// `UpdateMomentChat` — the demo simply doesn't pass it.
+// hover-untag, suggestion banners, delete/merge, the note box) — everything else (summary,
+// groups, tags, attendees, notes, navigation) renders and behaves identically either way.
+// `noteBox` is a slot the real container fills with `NoteWithDetection` — the demo simply
+// doesn't pass it.
 export function EventDetailView({
   moment,
   onSelectPerson,
@@ -703,10 +682,6 @@ export function EventDetailView({
   onLocationInputChange = () => {},
   onSaveMeta = () => {},
   onCancelEditMeta = () => {},
-  newEventNote = '',
-  savingEventNote = false,
-  onNewEventNoteChange = () => {},
-  onAddEventNote = () => {},
   refreshingSummary = false,
   onRefreshSummary = () => {},
   photosImporting = false,
@@ -741,7 +716,7 @@ export function EventDetailView({
   onConfirmMerge = () => {},
   actionBusy = false,
   actionError = null,
-  updateChat,
+  noteBox,
 }: {
   moment: MomentDetail
   onSelectPerson: (person: { id: string; name: string }) => void
@@ -783,10 +758,6 @@ export function EventDetailView({
   onLocationInputChange?: (v: string) => void
   onSaveMeta?: (e: FormEvent) => void
   onCancelEditMeta?: () => void
-  newEventNote?: string
-  savingEventNote?: boolean
-  onNewEventNoteChange?: (v: string) => void
-  onAddEventNote?: () => void
   refreshingSummary?: boolean
   onRefreshSummary?: () => void
   photosImporting?: boolean
@@ -821,7 +792,7 @@ export function EventDetailView({
   onConfirmMerge?: () => void
   actionBusy?: boolean
   actionError?: string | null
-  updateChat?: ReactNode
+  noteBox?: ReactNode
 }) {
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
@@ -1276,31 +1247,7 @@ export function EventDetailView({
           <p style={styles.notesHint}>
             These are the individual details you shared for this memory — exactly what fed the summary above.
           </p>
-          {!readOnly && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                onAddEventNote()
-              }}
-              style={styles.addNoteForm}
-            >
-              <AutoGrowTextarea
-                value={newEventNote}
-                onChange={onNewEventNoteChange}
-                onEnter={onAddEventNote}
-                placeholder="Add a note about this event…"
-                style={styles.addNoteInput}
-                disabled={savingEventNote}
-              />
-              <VoiceInputButton
-                disabled={savingEventNote}
-                onTranscribed={(text) => onNewEventNoteChange(newEventNote ? `${newEventNote} ${text}` : text)}
-              />
-              <button type="submit" disabled={savingEventNote || !newEventNote.trim()} style={styles.addNoteButton}>
-                {savingEventNote ? '…' : 'Add'}
-              </button>
-            </form>
-          )}
+          {!readOnly && <div style={styles.noteBoxWrapper}>{noteBox}</div>}
           {notesOpen && moment.notes.length > 0 && (
             <div style={styles.notesList}>
               {noteGroups.map((group) => (
@@ -1319,14 +1266,6 @@ export function EventDetailView({
               ))}
             </div>
           )}
-        </>
-      )}
-
-      {!readOnly && updateChat && (
-        <>
-          <h2 style={styles.subheading}>Remember something else?</h2>
-          <p style={styles.chatHint}>Tell me anything more about this — who else was there, how it went, anything you'd want to look back on.</p>
-          {updateChat}
         </>
       )}
 
@@ -1681,17 +1620,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   notesHint: { margin: '0 0 0.75rem 0', fontSize: fontSize.label, color: colors.textFaintest, fontStyle: 'italic' },
-  addNoteForm: { display: 'flex', alignItems: 'flex-end', gap: space.md, marginBottom: space.xl },
-  addNoteInput: { flex: 1, fontSize: fontSize.base, padding: '0.6rem', borderRadius: radius.md, border: border.default },
-  addNoteButton: {
-    fontSize: fontSize.base,
-    padding: '0.6rem 1.1rem',
-    borderRadius: radius.md,
-    border: 'none',
-    backgroundColor: colors.ink,
-    color: colors.onFill,
-    cursor: 'pointer',
-  },
+  noteBoxWrapper: { marginBottom: space.xl },
   description: { fontSize: '1.05rem', color: colors.inkPlain, lineHeight: 1.6, margin: 0, flex: 1 },
   descriptionRow: { display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: space.xxxl },
   descriptionEditForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: space.xxxl },

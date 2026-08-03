@@ -129,14 +129,14 @@ serve(async (req) => {
 
 Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname, and it will still resolve to the same person.
 
-IMPORTANT — disambiguating people who share a first name or nickname: if the user names someone who shares a first name or nickname with another recorded person, use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person they mean from context, ask instead of guessing.
+IMPORTANT — disambiguating people who share a first name or nickname: if the user names someone who shares a first name or nickname with another recorded person, use that person's full name (first + last) instead of just the bare first name or nickname. If you can't tell which same-named person they mean from context, set "needs_clarification": true and ask in "reply" instead of guessing.
 
-The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), tag/untag events, or mention a plain fact about a member that isn't a membership/event change (e.g. "oh, and Bob mentioned he's retiring this fall") — capture that as a note on that person's own profile via "notes" below, using their exact name from the roster provided in this prompt. Don't finish right away — first ask a short, natural follow-up like "Anything else you'd like to change?" so they have a chance to make more edits in one go. Only set "done": true once the user indicates they're finished (says something like "no," "that's all," or "nothing else").
+The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), tag/untag events, or mention a plain fact about a member that isn't a membership/event change (e.g. "oh, and Bob mentioned he's retiring this fall") — capture that as a note on that person's own profile via "notes" below, using their exact name from the roster provided in this prompt. Each call covers exactly one thing the user just said — there's no back-and-forth to keep open, so don't ask a follow-up like "anything else?". Only set "needs_clarification": true for a genuine ambiguity you can't resolve without asking; otherwise leave it false and give a brief, natural acknowledgement in "reply".
 
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "done": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
 This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.
 
@@ -189,7 +189,7 @@ ${otherEvents || "(none)"}`
       const errorBody = await response.text()
       console.error("Anthropic API error", response.status, errorBody)
       return new Response(
-        JSON.stringify({ reply: "Sorry, I'm having trouble responding right now — please try again in a moment.", done: false, changed: false }),
+        JSON.stringify({ reply: "Sorry, I'm having trouble responding right now — please try again in a moment.", needsClarification: false, changed: false }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     }
@@ -199,7 +199,7 @@ ${otherEvents || "(none)"}`
 
     let parsed: any = {
       reply: "Sorry, I didn't get a response there — please try again.",
-      done: false,
+      needs_clarification: false,
       rename: null,
       add_people: [],
       remove_people: [],
@@ -315,7 +315,7 @@ ${otherEvents || "(none)"}`
     return new Response(
       JSON.stringify({
         reply: parsed.reply,
-        done: parsed.done === true,
+        needsClarification: parsed.needs_clarification === true,
         changed,
         rename: appliedRename,
         relationshipSuggestions: familyResult.relationshipSuggestions,
