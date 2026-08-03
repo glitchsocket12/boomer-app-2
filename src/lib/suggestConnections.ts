@@ -111,16 +111,26 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
 
 // Mirrors GroupDetail.tsx's handleAddMember exactly (same upsert shape, same summary
 // invalidation — membership changed, so the cached AI summary would otherwise go stale).
-export async function acceptConnectionSuggestion(personId: string, groupId: string): Promise<void> {
-  await supabase.from('person_groups').upsert({ person_id: personId, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
-  await supabase.from('groups').update({ summary: null }).eq('id', groupId)
+// Returns the error (if any) instead of swallowing it, so the caller can keep the suggestion
+// visible and tell the founder it didn't save rather than silently no-op-ing (bug reported
+// 2026-08-03: clicking "Yes" repeatedly never persisted because both the write's own error and
+// the click handler's fire-and-forget call were silently dropped).
+export async function acceptConnectionSuggestion(personId: string, groupId: string): Promise<{ error: string | null }> {
+  const { error: upsertError } = await supabase
+    .from('person_groups')
+    .upsert({ person_id: personId, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+  if (upsertError) return { error: upsertError.message }
+  const { error: summaryError } = await supabase.from('groups').update({ summary: null }).eq('id', groupId)
+  return { error: summaryError ? summaryError.message : null }
 }
 
 // Mirrors GroupDetail.tsx's handleDenySuggestion — appends to the same dismissed_person_ids
 // column that group's own page reads, so a suggestion dismissed from Home also stays dismissed
 // if the founder later opens that group directly (single source of truth, no new column).
-export async function dismissConnectionSuggestion(personId: string, groupId: string): Promise<void> {
-  const { data } = await supabase.from('groups').select('dismissed_person_ids').eq('id', groupId).single()
+export async function dismissConnectionSuggestion(personId: string, groupId: string): Promise<{ error: string | null }> {
+  const { data, error: fetchError } = await supabase.from('groups').select('dismissed_person_ids').eq('id', groupId).single()
+  if (fetchError) return { error: fetchError.message }
   const updated = [...new Set([...((data?.dismissed_person_ids as string[] | null) ?? []), personId])]
-  await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
+  const { error } = await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
+  return { error: error ? error.message : null }
 }

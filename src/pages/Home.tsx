@@ -22,6 +22,12 @@ import {
   dismissConnectionSuggestion,
   type ConnectionSuggestion,
 } from '../lib/suggestConnections'
+import {
+  loadFamilyTagSuggestions,
+  acceptFamilyTagSuggestion,
+  dismissFamilyTagSuggestion,
+  type FamilyTagSuggestion,
+} from '../lib/suggestFamilyTag'
 
 export type PersonRef = { id: string; name: string }
 export type EventRef = { id: string; summary: string }
@@ -86,6 +92,8 @@ export default function Home({
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [mentionedPeopleSuggestions, setMentionedPeopleSuggestions] = useState<MentionedPersonSuggestion[]>([])
   const [connectionSuggestions, setConnectionSuggestions] = useState<ConnectionSuggestion[]>([])
+  const [familyTagSuggestions, setFamilyTagSuggestions] = useState<FamilyTagSuggestion[]>([])
+  const [suggestionActionError, setSuggestionActionError] = useState<string | null>(null)
   const groupRoster = useGroupRoster()
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -158,6 +166,13 @@ export default function Home({
     loadConnectionSuggestions().then(setConnectionSuggestions)
   }, [])
 
+  // Same "cheap enough to recompute every visit" reasoning as loadConnectionSuggestions —
+  // deterministic name-pattern check, no AI call. Fails open to an empty list (see
+  // loadFamilyTagSuggestions) until the group_type_suggestion_dismissed migration is applied.
+  useEffect(() => {
+    loadFamilyTagSuggestions().then(setFamilyTagSuggestions)
+  }, [])
+
   // "Working as intended" stats: recall assists (matched lookups logged by `converse`, see
   // supabase/functions/converse/index.ts) and the leaderboard (notes added per person), both
   // scoped to the current calendar month.
@@ -195,14 +210,48 @@ export default function Home({
     sendMessage(text)
   }
 
-  function handleAcceptConnection(suggestion: ConnectionSuggestion) {
+  // Only drop the suggestion from local state once the write is confirmed — previously this
+  // removed it optimistically and never checked for an error, so a failed write (silently)
+  // left nothing saved, and since loadConnectionSuggestions recomputes from the DB fresh on
+  // every visit, the same suggestion just reappeared next time (bug reported 2026-08-03).
+  async function handleAcceptConnection(suggestion: ConnectionSuggestion) {
+    setSuggestionActionError(null)
+    const { error } = await acceptConnectionSuggestion(suggestion.person.id, suggestion.group.id)
+    if (error) {
+      setSuggestionActionError(`Couldn't save that — ${error}`)
+      return
+    }
     setConnectionSuggestions((prev) => prev.filter((s) => s !== suggestion))
-    acceptConnectionSuggestion(suggestion.person.id, suggestion.group.id)
   }
 
-  function handleDismissConnection(suggestion: ConnectionSuggestion) {
+  async function handleDismissConnection(suggestion: ConnectionSuggestion) {
+    setSuggestionActionError(null)
+    const { error } = await dismissConnectionSuggestion(suggestion.person.id, suggestion.group.id)
+    if (error) {
+      setSuggestionActionError(`Couldn't save that — ${error}`)
+      return
+    }
     setConnectionSuggestions((prev) => prev.filter((s) => s !== suggestion))
-    dismissConnectionSuggestion(suggestion.person.id, suggestion.group.id)
+  }
+
+  async function handleAcceptFamilyTag(suggestion: FamilyTagSuggestion) {
+    setSuggestionActionError(null)
+    const { error } = await acceptFamilyTagSuggestion(suggestion.id)
+    if (error) {
+      setSuggestionActionError(`Couldn't save that — ${error}`)
+      return
+    }
+    setFamilyTagSuggestions((prev) => prev.filter((s) => s !== suggestion))
+  }
+
+  async function handleDismissFamilyTag(suggestion: FamilyTagSuggestion) {
+    setSuggestionActionError(null)
+    const { error } = await dismissFamilyTagSuggestion(suggestion.id)
+    if (error) {
+      setSuggestionActionError(`Couldn't save that — ${error}`)
+      return
+    }
+    setFamilyTagSuggestions((prev) => prev.filter((s) => s !== suggestion))
   }
 
   function handleSend() {
@@ -284,6 +333,10 @@ export default function Home({
       connectionSuggestions={connectionSuggestions}
       onAcceptConnection={handleAcceptConnection}
       onDismissConnection={handleDismissConnection}
+      familyTagSuggestions={familyTagSuggestions}
+      onAcceptFamilyTag={handleAcceptFamilyTag}
+      onDismissFamilyTag={handleDismissFamilyTag}
+      suggestionActionError={suggestionActionError}
       onSelectPerson={onSelectPerson}
       onSelectEvent={onSelectEvent}
       onSelectGroup={onSelectGroup}
@@ -334,6 +387,10 @@ export function HomeView({
   connectionSuggestions = [],
   onAcceptConnection,
   onDismissConnection,
+  familyTagSuggestions = [],
+  onAcceptFamilyTag,
+  onDismissFamilyTag,
+  suggestionActionError = null,
   onSelectPerson,
   onSelectEvent,
   onSelectGroup,
@@ -375,6 +432,10 @@ export function HomeView({
   connectionSuggestions?: ConnectionSuggestion[]
   onAcceptConnection?: (suggestion: ConnectionSuggestion) => void
   onDismissConnection?: (suggestion: ConnectionSuggestion) => void
+  familyTagSuggestions?: FamilyTagSuggestion[]
+  onAcceptFamilyTag?: (suggestion: FamilyTagSuggestion) => void
+  onDismissFamilyTag?: (suggestion: FamilyTagSuggestion) => void
+  suggestionActionError?: string | null
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
   onSelectGroup: (group: GroupRef) => void
@@ -535,6 +596,34 @@ export function HomeView({
                   ))}
                 </div>
               )}
+
+              {familyTagSuggestions.length > 0 && (
+                <div style={styles.leaderboardCard}>
+                  <h3 style={styles.leaderboardTitle}>Family groups</h3>
+                  <p style={styles.leaderboardSubtitle}>Groups whose name looks like a family — tag them as Family?</p>
+                  {familyTagSuggestions.map((s) => (
+                    <div key={s.id} style={styles.connectionRow}>
+                      <span style={styles.connectionText}>
+                        Tag{' '}
+                        <button onClick={() => onSelectGroup({ id: s.id, name: s.name })} style={styles.connectionLink}>
+                          {groupLabel(s.id, s.name)}
+                        </button>{' '}
+                        as Family?
+                      </span>
+                      <div style={styles.connectionButtons}>
+                        <button onClick={() => onAcceptFamilyTag?.(s)} style={styles.connectionYesButton}>
+                          Yes
+                        </button>
+                        <button onClick={() => onDismissFamilyTag?.(s)} style={styles.connectionNoButton}>
+                          No
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {suggestionActionError && <p style={styles.suggestionActionError}>{suggestionActionError}</p>}
             </div>
           )}
 
@@ -763,6 +852,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   connectionButtons: { display: 'flex', gap: space.md, flexShrink: 0 },
+  suggestionActionError: { fontSize: fontSize.body, color: neutral.redDeep, marginTop: space.md },
   connectionYesButton: {
     fontSize: fontSize.label,
     padding: '0.35rem 0.8rem',
