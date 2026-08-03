@@ -66,8 +66,16 @@ export default function ContactInfoSection({ personId, readOnly = false }: { per
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
+    // readOnly (the public landing-page demo) must make zero Supabase calls — see the contract
+    // documented above PersonDetailView in pages/PersonDetail.tsx. A fake demo personId has no row
+    // to fetch anyway, so skip straight to the empty state instead of hitting the network (found
+    // via a demo QA pass, 2026-08-03).
+    if (readOnly) {
+      setLoading(false)
+      return
+    }
     load()
-  }, [personId])
+  }, [personId, readOnly])
 
   async function load() {
     setLoading(true)

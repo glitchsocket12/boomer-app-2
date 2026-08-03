@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import { EventsView, type Moment } from '../Events'
+import { eventSortDate } from '../../lib/dates'
 import { DEMO_MOMENTS, DEMO_PEOPLE, DEMO_GROUPS, DEMO_TAGS } from '../../lib/demoData'
 
+// Sorted newest-first, same as the real container's loadMoments() — groupMomentsByYear() below
+// only merges a moment into the *previous* group when the year matches, so unsorted input (the
+// CORE_MOMENTS/GENERATED_ROSTER concatenation order) fragmented into one group per moment instead
+// of one per year, with the same year number reused non-consecutively (React duplicate-key
+// warnings; found via a demo QA pass, 2026-08-03).
 const ALL_MOMENTS: Moment[] = DEMO_MOMENTS.map((m) => ({
   id: m.id,
   occasion: m.occasion,
@@ -23,7 +29,7 @@ const ALL_MOMENTS: Moment[] = DEMO_MOMENTS.map((m) => ({
     const t = DEMO_TAGS.find((tt) => tt.id === tid)!
     return { tags: { id: t.id, name: t.name } }
   }),
-}))
+})).sort((a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime())
 
 // Matches how the real Events.tsx container derives it: the distinct set of tag names actually
 // in use, sorted — not a hardcoded list.
