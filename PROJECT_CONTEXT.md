@@ -651,10 +651,12 @@ src/
 │                                 descendant set (blood descendants + their spouses, so an in-law
 │                                 doesn't ALSO get picked as their own spurious founder) explains
 │                                 the most of the group, repeating for any leftover members —
-│                                 then climbs one hop up wherever 2+ picked founders turn out to
-│                                 share a parent who wasn't tagged into the group themselves,
-│                                 unifying siblings under that shared parent instead of showing
-│                                 them as disconnected branches. Verified live: The Berzins' group
+│                                 then climbs every founder with a recorded parent up to their
+│                                 topmost known ancestor (2026-08-03 fix: previously only climbed
+│                                 when 2+ founders shared a parent, so a single founder with a solo
+│                                 parent/grandparent on file — e.g. The Ruskaups group, just Lisa &
+│                                 Ed — stayed capped at Lisa instead of reaching Marilee/Villis
+│                                 Berzins). Verified live: The Berzins' group
 │                                 (13 members, none of them Villis/Marilee Berzins) now correctly
 │                                 unifies under Villis & Marilee as the root couple, with Mark
 │                                 Berzins's and Lisa Ruskaup's full lines underneath — the old
