@@ -471,7 +471,19 @@ src/
 │   │                            card instead, per founder-approved mockup: a
 │   │                            "N sub-events ▸/▾" toggle, collapsed by default,
 │   │                            expands to indented child cards. Migrated and
-│   │                            verified live 2026-07-30.
+│   │                            verified live 2026-07-30. Multi-criteria filter
+│   │                            panel (2026-08-03): the old inline tag `<select>`
+│   │                            replaced by a "Filters" button opening
+│   │                            `FilterPanel.tsx` (new generic bottom-sheet
+│   │                            component, reusable elsewhere) covering tag, date
+│   │                            range (presets + custom), attendee, group, and
+│   │                            location — all AND'd together, options are
+│   │                            distinct-in-use lists (same non-hardcoded pattern
+│   │                            as tags), active filters shown as removable
+│   │                            summary chips below search. Filter state lifted to
+│   │                            App.tsx (`eventsFilters`, same pattern as Groups'
+│   │                            search/typeFilter) so it survives navigating into
+│   │                            an event and back.
 │   ├── Calendar.tsx           — (2026-07-24, item 48 phase 1) new nav tab. Upcoming
 │   │                            list (all future moments + reminder next-occurrences,
 │   │                            soonest first; container caps at 6 visible rows with
