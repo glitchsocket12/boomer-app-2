@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { EventsView, type Moment } from '../Events'
+import { EventsView, DEFAULT_EVENT_FILTERS, type EventFilters, type Moment } from '../Events'
 import { DEMO_MOMENTS, DEMO_PEOPLE, DEMO_GROUPS, DEMO_TAGS } from '../../lib/demoData'
 
 const ALL_MOMENTS: Moment[] = DEMO_MOMENTS.map((m) => ({
@@ -38,17 +38,14 @@ export default function DemoEvents({
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
-  const [search, setSearch] = useState('')
-  const [tagFilter, setTagFilter] = useState('all')
+  const [filters, setFilters] = useState<EventFilters>(DEFAULT_EVENT_FILTERS)
 
   return (
     <EventsView
       moments={ALL_MOMENTS}
       distinctTags={DISTINCT_TAGS}
-      search={search}
-      onSearchChange={setSearch}
-      tagFilter={tagFilter}
-      onTagFilterChange={setTagFilter}
+      filters={filters}
+      onFiltersChange={setFilters}
       onAddEvent={() => {}}
       creating={false}
       createError={null}

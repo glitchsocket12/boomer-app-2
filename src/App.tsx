@@ -9,7 +9,7 @@ import { ensureUserTimeZone } from './lib/ensureUserTimeZone'
 import Onboarding from './pages/Onboarding'
 import Home from './pages/Home'
 import People from './pages/People'
-import Events from './pages/Events'
+import Events, { DEFAULT_EVENT_FILTERS, type EventFilters } from './pages/Events'
 import Calendar from './pages/Calendar'
 import Groups from './pages/Groups'
 import GroupDetail from './pages/GroupDetail'
@@ -187,6 +187,10 @@ export default function App() {
   // only inside it reset every time the in-page back arrow returned you to the list.
   const [groupsSearch, setGroupsSearch] = useState('')
   const [groupsTypeFilter, setGroupsTypeFilter] = useState('all')
+  // Events' own filter state, lifted up here for the same reason as Groups' search/type-filter
+  // above — Events unmounts whenever a crumb is pushed (e.g. clicking into an event), so filters
+  // that lived only inside it would reset every time the in-page back arrow returned to the list.
+  const [eventsFilters, setEventsFilters] = useState<EventFilters>(DEFAULT_EVENT_FILTERS)
   // Scroll position the Groups list was at right before navigating into a group — null except in
   // the brief window between leaving the list and returning to it via its own back arrow. Cleared
   // on a direct tab click (goToTab) so only that back-arrow round trip restores scroll, not every
@@ -617,6 +621,8 @@ export default function App() {
         )}
         {view === 'events' && (
           <Events
+            filters={eventsFilters}
+            onFiltersChange={setEventsFilters}
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
             onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}

@@ -4,6 +4,7 @@ import { summarize } from '../lib/summarize'
 import { eventSortDate, formatEventWhen, formatFullDate } from '../lib/dates'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
+import FilterPanel from '../components/FilterPanel'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -41,6 +42,65 @@ export type DecoratedMoment = {
   tags: { id: string; name: string }[]
 }
 
+export type DateFilterPreset = 'all' | 'thisYear' | 'lastYear' | 'last30' | 'custom'
+export type DateFilter = { preset: DateFilterPreset; customStart: string | null; customEnd: string | null }
+export const DEFAULT_DATE_FILTER: DateFilter = { preset: 'all', customStart: null, customEnd: null }
+
+export type EventFilters = {
+  search: string
+  tagFilter: string
+  personFilter: string
+  groupFilter: string
+  locationFilter: string
+  dateFilter: DateFilter
+}
+
+export const DEFAULT_EVENT_FILTERS: EventFilters = {
+  search: '',
+  tagFilter: 'all',
+  personFilter: 'all',
+  groupFilter: 'all',
+  locationFilter: 'all',
+  dateFilter: DEFAULT_DATE_FILTER,
+}
+
+// How many of the (non-search) filter dimensions are currently narrowing the list — drives the
+// "Filters · N" badge and whether "Clear all" is enabled.
+export function countActiveFilters(filters: EventFilters): number {
+  let count = 0
+  if (filters.tagFilter !== 'all') count++
+  if (filters.personFilter !== 'all') count++
+  if (filters.groupFilter !== 'all') count++
+  if (filters.locationFilter !== 'all') count++
+  if (filters.dateFilter.preset !== 'all') count++
+  return count
+}
+
+function resolveDateRange(filter: DateFilter): { start: Date | null; end: Date | null } {
+  const now = new Date()
+  const startOfYear = (y: number) => new Date(y, 0, 1)
+  const endOfYear = (y: number) => new Date(y, 11, 31, 23, 59, 59, 999)
+  switch (filter.preset) {
+    case 'thisYear':
+      return { start: startOfYear(now.getFullYear()), end: endOfYear(now.getFullYear()) }
+    case 'lastYear':
+      return { start: startOfYear(now.getFullYear() - 1), end: endOfYear(now.getFullYear() - 1) }
+    case 'last30': {
+      const start = new Date(now)
+      start.setDate(start.getDate() - 30)
+      start.setHours(0, 0, 0, 0)
+      return { start, end: now }
+    }
+    case 'custom':
+      return {
+        start: filter.customStart ? new Date(`${filter.customStart}T00:00:00`) : null,
+        end: filter.customEnd ? new Date(`${filter.customEnd}T23:59:59`) : null,
+      }
+    default:
+      return { start: null, end: null }
+  }
+}
+
 export function decorateMoments(moments: Moment[]): DecoratedMoment[] {
   return moments.map((moment) => {
     // Attendees can repeat across multiple notes for the same moment — dedupe by person id
@@ -63,16 +123,31 @@ export function decorateMoments(moments: Moment[]): DecoratedMoment[] {
 
 export function filterMoments(
   decorated: DecoratedMoment[],
-  search: string,
-  tagFilter: string,
+  filters: EventFilters,
   // Searches the same qualified string the chips display, so typing a parent group's name also
   // finds events tagged to its subgroups. Defaults to the bare name (landing-page demo).
   groupLabel: GroupLabelFn = (_id, fallbackName) => fallbackName
 ): DecoratedMoment[] {
+  const { search, tagFilter, personFilter, groupFilter, locationFilter, dateFilter } = filters
   const query = search.trim().toLowerCase()
+  const { start, end } = resolveDateRange(dateFilter)
   return decorated.filter(({ moment, attendees, summary, groups, tags }) => {
     if (tagFilter === 'untagged' && tags.length > 0) return false
     if (tagFilter !== 'all' && tagFilter !== 'untagged' && !tags.some((t) => t.name === tagFilter)) return false
+
+    if (personFilter !== 'all' && !attendees.has(personFilter)) return false
+
+    if (groupFilter !== 'all' && !groups.some((g) => g.id === groupFilter)) return false
+
+    if (locationFilter === 'none' && moment.location) return false
+    if (locationFilter !== 'all' && locationFilter !== 'none' && moment.location !== locationFilter) return false
+
+    if (start || end) {
+      const eventDate = eventSortDate(moment)
+      if (start && eventDate < start) return false
+      if (end && eventDate > end) return false
+    }
+
     if (!query) return true
     const attendeeNames = Array.from(attendees.values()).map((p) => `${p.name} ${p.last_name ?? ''}`)
     const groupNames = groups.map((g) => groupLabel(g.id, g.name))
@@ -100,11 +175,17 @@ export function groupMomentsByYear(filteredMoments: DecoratedMoment[]): { year: 
 }
 
 export default function Events({
+  filters,
+  onFiltersChange,
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
   onManageTags,
 }: {
+  // Lifted up into App.tsx (alongside groupsSearch/groupsTypeFilter) so filters survive
+  // navigating into an event and back, instead of resetting the way page-local state would.
+  filters: EventFilters
+  onFiltersChange: (filters: EventFilters) => void
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
@@ -112,8 +193,6 @@ export default function Events({
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [tagFilter, setTagFilter] = useState('all')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [childrenByParentId, setChildrenByParentId] = useState<Map<string, ChildEventRef[]>>(new Map())
@@ -224,10 +303,8 @@ export default function Events({
     <EventsView
       moments={moments}
       distinctTags={distinctTags}
-      search={search}
-      onSearchChange={setSearch}
-      tagFilter={tagFilter}
-      onTagFilterChange={setTagFilter}
+      filters={filters}
+      onFiltersChange={onFiltersChange}
       onAddEvent={handleAddEvent}
       creating={creating}
       createError={createError}
@@ -241,16 +318,41 @@ export default function Events({
   )
 }
 
+// Distinct-in-use option lists for the attendee/group/location filters — same "growing picklist,
+// not a hardcoded enum" reasoning as distinctTags above. Computed here (off the `moments` prop
+// EventsView already receives) rather than in each container, so the landing-page demo gets
+// working filters for free instead of needing its own copy of this derivation.
+function useFilterOptions(moments: Moment[]) {
+  return useMemo(() => {
+    const attendeeMap = new Map<string, PersonRef>()
+    const groupMap = new Map<string, { id: string; name: string }>()
+    const locationSet = new Set<string>()
+    for (const m of moments) {
+      for (const n of m.notes ?? []) {
+        if (n.people) attendeeMap.set(n.people.id, n.people)
+      }
+      for (const mg of m.moment_groups ?? []) {
+        if (mg.groups) groupMap.set(mg.groups.id, mg.groups)
+      }
+      if (m.location && m.location.trim()) locationSet.add(m.location.trim())
+    }
+    const sortByName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name)
+    return {
+      attendees: [...attendeeMap.values()].sort(sortByName),
+      groups: [...groupMap.values()].sort(sortByName),
+      locations: [...locationSet].sort(),
+    }
+  }, [moments])
+}
+
 // Pure render — split out (2026-07-22) so the landing-page demo can render the exact same list UI
 // fed by static data, with no Supabase calls. `readOnly` hides "+ Add Event" (a real insert) and
 // "Manage tags →" (a separate real page not part of the demo).
 export function EventsView({
   moments,
   distinctTags,
-  search,
-  onSearchChange,
-  tagFilter,
-  onTagFilterChange,
+  filters,
+  onFiltersChange,
   onAddEvent,
   creating,
   createError,
@@ -264,10 +366,8 @@ export function EventsView({
 }: {
   moments: Moment[]
   distinctTags: string[]
-  search: string
-  onSearchChange: (value: string) => void
-  tagFilter: string
-  onTagFilterChange: (value: string) => void
+  filters: EventFilters
+  onFiltersChange: (filters: EventFilters) => void
   onAddEvent: () => void
   creating: boolean
   createError: string | null
@@ -281,6 +381,8 @@ export function EventsView({
   readOnly?: boolean
 }) {
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false)
+  const filterOptions = useFilterOptions(moments)
 
   // Sub-events are visually bundled under their parent (see the card rendering below) rather
   // than shown as their own independent chronological entries, so they're excluded here before
@@ -289,9 +391,10 @@ export function EventsView({
   const childIds = new Set(Array.from(childrenByParentId.values()).flat().map((c) => c.id))
   const rootMoments = moments.filter((m) => !childIds.has(m.id))
   const decorated = decorateMoments(rootMoments)
-  const filteredMoments = filterMoments(decorated, search, tagFilter, groupLabel)
+  const filteredMoments = filterMoments(decorated, filters, groupLabel)
   const yearGroups = groupMomentsByYear(filteredMoments)
-  const query = search.trim().toLowerCase()
+  const query = filters.search.trim().toLowerCase()
+  const activeCount = countActiveFilters(filters)
 
   function toggleExpanded(momentId: string) {
     setExpandedParents((prev) => {
@@ -299,6 +402,59 @@ export function EventsView({
       if (next.has(momentId)) next.delete(momentId)
       else next.add(momentId)
       return next
+    })
+  }
+
+  function patchFilters(patch: Partial<EventFilters>) {
+    onFiltersChange({ ...filters, ...patch })
+  }
+
+  const dateFilterLabel: Record<DateFilterPreset, string> = {
+    all: 'All time',
+    thisYear: 'This year',
+    lastYear: 'Last year',
+    last30: 'Last 30 days',
+    custom: 'Custom range',
+  }
+
+  // One summary chip per active dimension, each removable on its own — lets the founder see the
+  // current filter state at a glance without opening the panel.
+  const activeFilterChips: { key: string; label: string; onRemove: () => void }[] = []
+  if (filters.tagFilter !== 'all') {
+    activeFilterChips.push({
+      key: 'tag',
+      label: filters.tagFilter === 'untagged' ? 'No tags' : `Tag: ${filters.tagFilter}`,
+      onRemove: () => patchFilters({ tagFilter: 'all' }),
+    })
+  }
+  if (filters.personFilter !== 'all') {
+    const person = filterOptions.attendees.find((p) => p.id === filters.personFilter)
+    activeFilterChips.push({
+      key: 'person',
+      label: person ? `With: ${person.name}` : 'With: (removed)',
+      onRemove: () => patchFilters({ personFilter: 'all' }),
+    })
+  }
+  if (filters.groupFilter !== 'all') {
+    const group = filterOptions.groups.find((g) => g.id === filters.groupFilter)
+    activeFilterChips.push({
+      key: 'group',
+      label: group ? `Group: ${groupLabel(group.id, group.name)}` : 'Group: (removed)',
+      onRemove: () => patchFilters({ groupFilter: 'all' }),
+    })
+  }
+  if (filters.locationFilter !== 'all') {
+    activeFilterChips.push({
+      key: 'location',
+      label: filters.locationFilter === 'none' ? 'No location' : `Location: ${filters.locationFilter}`,
+      onRemove: () => patchFilters({ locationFilter: 'all' }),
+    })
+  }
+  if (filters.dateFilter.preset !== 'all') {
+    activeFilterChips.push({
+      key: 'date',
+      label: dateFilterLabel[filters.dateFilter.preset],
+      onRemove: () => patchFilters({ dateFilter: DEFAULT_DATE_FILTER }),
     })
   }
 
@@ -327,12 +483,39 @@ export function EventsView({
 
       {moments.length > 0 && (
         <div style={styles.searchRow}>
-          <SearchBox value={search} onChange={onSearchChange} placeholder="Search events…" />
-          {distinctTags.length > 0 && (
+          <SearchBox value={filters.search} onChange={(value) => patchFilters({ search: value })} placeholder="Search events…" />
+          <button type="button" onClick={() => setFilterPanelOpen(true)} style={styles.filtersButton}>
+            Filters{activeCount > 0 ? ` · ${activeCount}` : ''}
+          </button>
+        </div>
+      )}
+
+      {activeFilterChips.length > 0 && (
+        <div style={styles.activeFilterRow}>
+          {activeFilterChips.map((chip) => (
+            <button key={chip.key} type="button" onClick={chip.onRemove} style={styles.filterChip}>
+              {chip.label} <span style={styles.filterChipRemove}>×</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <FilterPanel
+        open={filterPanelOpen}
+        onClose={() => setFilterPanelOpen(false)}
+        title="Filter events"
+        activeCount={activeCount}
+        onClearAll={() =>
+          patchFilters({ tagFilter: 'all', personFilter: 'all', groupFilter: 'all', locationFilter: 'all', dateFilter: DEFAULT_DATE_FILTER })
+        }
+      >
+        {distinctTags.length > 0 && (
+          <div>
+            <label style={styles.filterLabel}>Tag</label>
             <select
-              value={tagFilter}
-              onChange={(e) => onTagFilterChange(e.target.value)}
-              style={styles.tagFilterSelect}
+              value={filters.tagFilter}
+              onChange={(e) => patchFilters({ tagFilter: e.target.value })}
+              style={styles.filterSelect}
               aria-label="Filter by tag"
             >
               <option value="all">All tags</option>
@@ -343,13 +526,111 @@ export function EventsView({
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        <div>
+          <label style={styles.filterLabel}>Date</label>
+          <div style={styles.dateChipRow}>
+            {(['all', 'thisYear', 'lastYear', 'last30', 'custom'] as DateFilterPreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => patchFilters({ dateFilter: { ...filters.dateFilter, preset } })}
+                style={filters.dateFilter.preset === preset ? styles.dateChipActive : styles.dateChip}
+              >
+                {dateFilterLabel[preset]}
+              </button>
+            ))}
+          </div>
+          {filters.dateFilter.preset === 'custom' && (
+            <div style={styles.customDateRow}>
+              <input
+                type="date"
+                value={filters.dateFilter.customStart ?? ''}
+                onChange={(e) => patchFilters({ dateFilter: { ...filters.dateFilter, customStart: e.target.value || null } })}
+                style={styles.filterSelect}
+                aria-label="Start date"
+              />
+              <span style={styles.filterLabel}>to</span>
+              <input
+                type="date"
+                value={filters.dateFilter.customEnd ?? ''}
+                onChange={(e) => patchFilters({ dateFilter: { ...filters.dateFilter, customEnd: e.target.value || null } })}
+                style={styles.filterSelect}
+                aria-label="End date"
+              />
+            </div>
           )}
         </div>
-      )}
+
+        {filterOptions.attendees.length > 0 && (
+          <div>
+            <label style={styles.filterLabel}>Attendee</label>
+            <select
+              value={filters.personFilter}
+              onChange={(e) => patchFilters({ personFilter: e.target.value })}
+              style={styles.filterSelect}
+              aria-label="Filter by attendee"
+            >
+              <option value="all">Everyone</option>
+              {filterOptions.attendees.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.last_name ? ` ${p.last_name}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {filterOptions.groups.length > 0 && (
+          <div>
+            <label style={styles.filterLabel}>Group</label>
+            <select
+              value={filters.groupFilter}
+              onChange={(e) => patchFilters({ groupFilter: e.target.value })}
+              style={styles.filterSelect}
+              aria-label="Filter by group"
+            >
+              <option value="all">All groups</option>
+              {filterOptions.groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {groupLabel(g.id, g.name)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {filterOptions.locations.length > 0 && (
+          <div>
+            <label style={styles.filterLabel}>Location</label>
+            <select
+              value={filters.locationFilter}
+              onChange={(e) => patchFilters({ locationFilter: e.target.value })}
+              style={styles.filterSelect}
+              aria-label="Filter by location"
+            >
+              <option value="all">All locations</option>
+              <option value="none">No location set</option>
+              {filterOptions.locations.map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </FilterPanel>
 
       {moments.length > 0 && filteredMoments.length === 0 && (
         <p style={styles.empty}>
-          {query ? `No events match "${search}".` : 'No events have this tag yet.'}
+          {query
+            ? `No events match "${filters.search}".`
+            : activeCount > 0
+              ? 'No events match these filters.'
+              : 'No events yet.'}
         </p>
       )}
 
@@ -462,9 +743,22 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: space.xl,
     fontFamily,
   },
-  searchRow: { display: 'flex', gap: space.lg, alignItems: 'flex-start', marginBottom: space.xxxl },
-  tagFilterSelect: {
+  searchRow: { display: 'flex', gap: space.lg, alignItems: 'flex-start', marginBottom: space.xl },
+  filtersButton: {
     flexShrink: 0,
+    fontSize: fontSize.base,
+    padding: '0.65rem 0.9rem',
+    borderRadius: radius.md,
+    border: border.default,
+    fontFamily,
+    backgroundColor: colors.surface,
+    color: colors.inkPlain,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  filterSelect: {
+    width: '100%',
+    boxSizing: 'border-box',
     fontSize: fontSize.base,
     padding: '0.65rem 0.75rem',
     borderRadius: radius.md,
@@ -473,6 +767,49 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: colors.surface,
     color: colors.inkPlain,
   },
+  filterLabel: {
+    display: 'block',
+    fontSize: fontSize.label,
+    color: colors.textMuted,
+    marginBottom: space.xs,
+  },
+  activeFilterRow: { display: 'flex', gap: space.md, flexWrap: 'wrap', marginBottom: space.xxxl },
+  filterChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xs,
+    fontSize: fontSize.label,
+    padding: '0.35rem 0.7rem',
+    borderRadius: radius.pill,
+    border: border.ink,
+    backgroundColor: colors.inkWash,
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  filterChipRemove: { fontWeight: 'bold' },
+  dateChipRow: { display: 'flex', gap: space.sm, flexWrap: 'wrap' },
+  dateChip: {
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.75rem',
+    borderRadius: radius.pill,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.inkPlain,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  dateChipActive: {
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.75rem',
+    borderRadius: radius.pill,
+    border: border.ink,
+    backgroundColor: colors.ink,
+    color: colors.onFill,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  customDateRow: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.md },
   empty: { color: colors.textSubtle },
   list: { display: 'flex', flexDirection: 'column', gap: space.xl },
   yearHeading: {
