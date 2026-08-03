@@ -1,11 +1,10 @@
-// Generic bottom-sheet overlay for a "Filters" button to open. Modeled on PhotoGallery.tsx's
+// Generic centered popup/modal for a "Filters"-style button to open. Modeled on PhotoGallery.tsx's
 // PhotoLightbox (the app's one existing full-screen overlay: scrim, click-outside-to-close,
-// Escape-key handling) and the safe-area reasoning already used for the fixed bottom bars on
-// Home.tsx/PersonDetail.tsx — no viewport-fit=cover assumptions, so no manual safe-area padding
-// is needed here either (see index.html's comment on why that's the deliberate choice).
+// Escape-key handling).
 //
-// Deliberately generic (children-based) so it isn't Events-specific — reusable for a future
-// People/Groups filter panel without rework.
+// Deliberately generic (children-based) so it isn't Events-specific — this is the first instance
+// of a pattern the founder wants used more broadly across the app (2026-08-03): a button opening
+// a focused popup of options/details, instead of controls embedded inline on the page.
 
 import { useEffect } from 'react'
 import { colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
@@ -74,19 +73,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     inset: 0,
     backgroundColor: 'rgba(0,0,0,0.4)',
     display: 'flex',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     justifyContent: 'center',
+    padding: space.xl,
+    boxSizing: 'border-box',
     zIndex: 1000,
   },
   sheet: {
     width: '100%',
     maxWidth: maxWidth.dialog,
-    maxHeight: '80vh',
+    maxHeight: '85vh',
     display: 'flex',
     flexDirection: 'column',
     backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
+    borderRadius: radius.xl,
     boxShadow: shadow.modal,
     padding: space.xl,
     boxSizing: 'border-box',

@@ -51,6 +51,7 @@ export type EventFilters = {
   tagFilter: string
   personFilter: string
   groupFilter: string
+  subgroupFilter: string
   locationFilter: string
   dateFilter: DateFilter
 }
@@ -60,6 +61,7 @@ export const DEFAULT_EVENT_FILTERS: EventFilters = {
   tagFilter: 'all',
   personFilter: 'all',
   groupFilter: 'all',
+  subgroupFilter: 'all',
   locationFilter: 'all',
   dateFilter: DEFAULT_DATE_FILTER,
 }
@@ -71,6 +73,7 @@ export function countActiveFilters(filters: EventFilters): number {
   if (filters.tagFilter !== 'all') count++
   if (filters.personFilter !== 'all') count++
   if (filters.groupFilter !== 'all') count++
+  if (filters.subgroupFilter !== 'all') count++
   if (filters.locationFilter !== 'all') count++
   if (filters.dateFilter.preset !== 'all') count++
   return count
@@ -128,7 +131,7 @@ export function filterMoments(
   // finds events tagged to its subgroups. Defaults to the bare name (landing-page demo).
   groupLabel: GroupLabelFn = (_id, fallbackName) => fallbackName
 ): DecoratedMoment[] {
-  const { search, tagFilter, personFilter, groupFilter, locationFilter, dateFilter } = filters
+  const { search, tagFilter, personFilter, groupFilter, subgroupFilter, locationFilter, dateFilter } = filters
   const query = search.trim().toLowerCase()
   const { start, end } = resolveDateRange(dateFilter)
   return decorated.filter(({ moment, attendees, summary, groups, tags }) => {
@@ -138,6 +141,8 @@ export function filterMoments(
     if (personFilter !== 'all' && !attendees.has(personFilter)) return false
 
     if (groupFilter !== 'all' && !groups.some((g) => g.id === groupFilter)) return false
+
+    if (subgroupFilter !== 'all' && !groups.some((g) => g.id === subgroupFilter)) return false
 
     if (locationFilter === 'none' && moment.location) return false
     if (locationFilter !== 'all' && locationFilter !== 'none' && moment.location !== locationFilter) return false
@@ -314,25 +319,42 @@ export default function Events({
       onSelectEvent={onSelectEvent}
       childrenByParentId={childrenByParentId}
       groupLabel={groupRoster.label}
+      groupParentById={groupRoster.parentById}
     />
   )
 }
+
+// Empty, module-level so it's a stable reference across renders — used as the default for
+// groupParentById below. A fresh `new Map()` in the destructuring default would be a new object
+// every render, defeating useFilterOptions' memoization every time EventsView re-renders (e.g. on
+// every keystroke in search).
+const EMPTY_GROUP_PARENT_MAP = new Map<string, string | null>()
 
 // Distinct-in-use option lists for the attendee/group/location filters — same "growing picklist,
 // not a hardcoded enum" reasoning as distinctTags above. Computed here (off the `moments` prop
 // EventsView already receives) rather than in each container, so the landing-page demo gets
 // working filters for free instead of needing its own copy of this derivation.
-function useFilterOptions(moments: Moment[]) {
+//
+// Groups actually in use are split into top-level groups vs subgroups via groupParentById (from
+// useGroupRoster's full roster, not derivable from moment_groups alone since that join only has
+// {id, name}). Defaults to "everything is top-level" when no roster is available (landing-page
+// demo, which has no subgroups) — the Subgroup dropdown then naturally stays hidden since its
+// option list is empty, same as any other empty-options filter here.
+function useFilterOptions(moments: Moment[], groupParentById: Map<string, string | null> = EMPTY_GROUP_PARENT_MAP) {
   return useMemo(() => {
     const attendeeMap = new Map<string, PersonRef>()
     const groupMap = new Map<string, { id: string; name: string }>()
+    const subgroupMap = new Map<string, { id: string; name: string }>()
     const locationSet = new Set<string>()
     for (const m of moments) {
       for (const n of m.notes ?? []) {
         if (n.people) attendeeMap.set(n.people.id, n.people)
       }
       for (const mg of m.moment_groups ?? []) {
-        if (mg.groups) groupMap.set(mg.groups.id, mg.groups)
+        if (mg.groups) {
+          if (groupParentById.get(mg.groups.id)) subgroupMap.set(mg.groups.id, mg.groups)
+          else groupMap.set(mg.groups.id, mg.groups)
+        }
       }
       if (m.location && m.location.trim()) locationSet.add(m.location.trim())
     }
@@ -340,9 +362,10 @@ function useFilterOptions(moments: Moment[]) {
     return {
       attendees: [...attendeeMap.values()].sort(sortByName),
       groups: [...groupMap.values()].sort(sortByName),
+      subgroups: [...subgroupMap.values()].sort(sortByName),
       locations: [...locationSet].sort(),
     }
-  }, [moments])
+  }, [moments, groupParentById])
 }
 
 // Pure render — split out (2026-07-22) so the landing-page demo can render the exact same list UI
@@ -362,6 +385,7 @@ export function EventsView({
   onSelectEvent,
   childrenByParentId = new Map(),
   groupLabel = (_id, fallbackName) => fallbackName,
+  groupParentById = EMPTY_GROUP_PARENT_MAP,
   readOnly = false,
 }: {
   moments: Moment[]
@@ -378,11 +402,14 @@ export function EventsView({
   childrenByParentId?: Map<string, ChildEventRef[]>
   // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
   groupLabel?: GroupLabelFn
+  // group id -> parent_group_id (null for a top-level group). Defaults to empty (landing-page
+  // demo has no subgroups), which naturally hides the Subgroup filter — see useFilterOptions.
+  groupParentById?: Map<string, string | null>
   readOnly?: boolean
 }) {
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
   const [filterPanelOpen, setFilterPanelOpen] = useState(false)
-  const filterOptions = useFilterOptions(moments)
+  const filterOptions = useFilterOptions(moments, groupParentById)
 
   // Sub-events are visually bundled under their parent (see the card rendering below) rather
   // than shown as their own independent chronological entries, so they're excluded here before
@@ -441,6 +468,14 @@ export function EventsView({
       key: 'group',
       label: group ? `Group: ${groupLabel(group.id, group.name)}` : 'Group: (removed)',
       onRemove: () => patchFilters({ groupFilter: 'all' }),
+    })
+  }
+  if (filters.subgroupFilter !== 'all') {
+    const subgroup = filterOptions.subgroups.find((g) => g.id === filters.subgroupFilter)
+    activeFilterChips.push({
+      key: 'subgroup',
+      label: subgroup ? `Subgroup: ${groupLabel(subgroup.id, subgroup.name)}` : 'Subgroup: (removed)',
+      onRemove: () => patchFilters({ subgroupFilter: 'all' }),
     })
   }
   if (filters.locationFilter !== 'all') {
@@ -506,7 +541,14 @@ export function EventsView({
         title="Filter events"
         activeCount={activeCount}
         onClearAll={() =>
-          patchFilters({ tagFilter: 'all', personFilter: 'all', groupFilter: 'all', locationFilter: 'all', dateFilter: DEFAULT_DATE_FILTER })
+          patchFilters({
+            tagFilter: 'all',
+            personFilter: 'all',
+            groupFilter: 'all',
+            subgroupFilter: 'all',
+            locationFilter: 'all',
+            dateFilter: DEFAULT_DATE_FILTER,
+          })
         }
       >
         {distinctTags.length > 0 && (
@@ -595,6 +637,25 @@ export function EventsView({
             >
               <option value="all">All groups</option>
               {filterOptions.groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {groupLabel(g.id, g.name)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {filterOptions.subgroups.length > 0 && (
+          <div>
+            <label style={styles.filterLabel}>Subgroup</label>
+            <select
+              value={filters.subgroupFilter}
+              onChange={(e) => patchFilters({ subgroupFilter: e.target.value })}
+              style={styles.filterSelect}
+              aria-label="Filter by subgroup"
+            >
+              <option value="all">All subgroups</option>
+              {filterOptions.subgroups.map((g) => (
                 <option key={g.id} value={g.id}>
                   {groupLabel(g.id, g.name)}
                 </option>

@@ -11,7 +11,11 @@ type RosterRow = { id: string; name: string; parent_group_id: string | null }
 
 export type GroupLabelFn = (id: string, fallbackName: string) => string
 
-export function useGroupRoster(): { nameById: Map<string, string>; label: GroupLabelFn } {
+export function useGroupRoster(): {
+  nameById: Map<string, string>
+  label: GroupLabelFn
+  parentById: Map<string, string | null>
+} {
   const [rows, setRows] = useState<RosterRow[]>([])
 
   useEffect(() => {
@@ -38,6 +42,7 @@ export function useGroupRoster(): { nameById: Map<string, string>; label: GroupL
       const row = rowById.get(id)
       return row ? groupDisplayName(row, nameById) : fallbackName
     }
-    return { nameById, label }
+    const parentById = new Map(rows.map((r) => [r.id, r.parent_group_id]))
+    return { nameById, label, parentById }
   }, [rows])
 }
