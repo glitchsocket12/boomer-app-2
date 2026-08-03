@@ -446,7 +446,8 @@ src/
 │   │                            event tags, associated groups, and notes/
 │   │                            source_group_id attribution over, self-links dropped)
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
-│   │                            created_at), "Month Year" format, grouped under
+│   │                            created_at), full date incl. day (e.g. "August 3,
+│   │                            2026") via formatEventWhen (2026-08-03), grouped under
 │   │                            sticky year headers (2026, 2025, ...; float at
 │   │                            top of viewport until next year's section
 │   │                            arrives, 2026-07-21); manual "add event"
