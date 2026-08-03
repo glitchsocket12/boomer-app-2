@@ -168,35 +168,29 @@ function node(g: Graph, id: string, kind: TreePersonKind, parentId: string | und
   return { id, name: g.nameById.get(id) ?? 'Unknown', kind, parentId, side, deceased: g.deceasedIds.has(id), gender: g.genderById?.get(id) }
 }
 
-// Which of the root's two parent-side couples (by couple position in parentCouples, not position
-// within a spouse-paired branch — a branch can hold just one parent when divorced/separated
-// parents were never linked to each other via a spouse relationship on file, and idx-within-branch
-// would then wrongly put every parent's lineage on the same side) a given parentId's lineage sits
-// on. Alternates by couple-index parity so a 3rd+ parent/couple on file (e.g. adoptive + biological)
-// lands on one of the two existing colors instead of crashing or inventing a 3rd.
-function sideOfParent(parentCouples: string[][], parentId: string): TreeSide {
-  return parentCouples.findIndex((couple) => couple.includes(parentId)) % 2 === 0 ? 'a' : 'b'
-}
-
-// Groups a flat list of ids into couples (an id and its spouse, if the spouse is also in the
-// list, collapse into one couple) preserving first-appearance order — used to assign tree "side"
-// by couple rather than by raw list position, so inserting an inferred spouse-parent right after
-// their partner doesn't flip the parity and land them on the wrong side.
-function groupIntoCouples(g: Graph, ids: string[]): string[][] {
-  const seen = new Set<string>()
-  const couples: string[][] = []
-  for (const id of ids) {
-    if (seen.has(id)) continue
-    seen.add(id)
-    const spouseId = (g.spousesOf.get(id) ?? []).find((sid) => ids.includes(sid) && !seen.has(sid))
-    if (spouseId) {
-      seen.add(spouseId)
-      couples.push([id, spouseId])
-    } else {
-      couples.push([id])
-    }
+// Which side (of the root's two distinct blood parents) a given treeParent id's lineage sits on.
+// Keyed off rootParents directly — NOT off treeParents grouped into couples, which is what this
+// replaced. That couple-grouping collapsed root's two parents into a SINGLE couple whenever they
+// were married to each other (the ordinary case), since groupIntoCouples pairs up any two ids in
+// the list who are each other's spouse — so both parents' own aunts/uncles/cousins/grandparents all
+// landed on the same side, cramming the entire extended family into leftExtended/leftCousinBranches
+// with nothing on the right. That asymmetry is what dragged the root's own box off-center in the
+// rendered tree (FamilyTree.tsx centers the canvas on the whole tree's bounding box, so a lopsided
+// tier pulls the root away from the middle). The two sides are the two distinct PEOPLE (root's own
+// parents), regardless of whether they're a couple. Each deceased spouse expandParentsWithSpouses
+// added to treeParents inherits whichever rootParent it was expanded from — it's standing in for
+// that same blood line, not a third side. Alternates by rootParent index parity so a 3rd+ parent on
+// file (e.g. adoptive + biological) lands on one of the two existing colors instead of crashing or
+// inventing a 3rd.
+function buildParentSides(g: Graph, rootParents: string[], treeParents: string[]): Map<string, TreeSide> {
+  const sideById = new Map<string, TreeSide>()
+  rootParents.forEach((id, i) => sideById.set(id, i % 2 === 0 ? 'a' : 'b'))
+  for (const id of treeParents) {
+    if (sideById.has(id)) continue
+    const sourceParent = rootParents.find((rp) => (g.spousesOf.get(rp) ?? []).includes(id))
+    if (sourceParent) sideById.set(id, sideById.get(sourceParent)!)
   }
-  return couples
+  return sideById
 }
 
 // A parent-fact recorded against only one half of a couple (e.g. a kid's "parent" row points at
@@ -528,7 +522,7 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   // blood side's grandparents/aunts/uncles/cousins entirely. Only used for tree-walking below;
   // rootParentNodes (the "remove this relationship" list) stays on the unexpanded rootParents.
   const treeParents = expandParentsWithSpouses(g, rootParents)
-  const parentCouples = groupIntoCouples(g, treeParents)
+  const parentSides = buildParentSides(g, rootParents, treeParents)
   const rootSpouses = g.spousesOf.get(rootId) ?? []
   const rootSiblings = (g.siblingsOf.get(rootId) ?? []).filter((id) => id !== rootId)
   const rootChildren = childrenOfEither(g, rootId)
@@ -583,10 +577,11 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   for (const branch of parentBranches) {
     const branchIds = [branch.union.a.id, ...branch.union.spouses.map((s) => s.id)]
     branchIds.forEach((parentId) => {
-      // Side is keyed off which couple this parent belongs to (sideOfParent), not position within
-      // this branch — see sideOfParent's comment for why idx-within-branch was wrong for divorced/
-      // separated parents never linked to each other on file.
-      const side = sideOfParent(parentCouples, parentId)
+      // Side is keyed off which of root's two distinct parents this parentId's lineage traces
+      // back to (buildParentSides), not position within this branch — see its comment for why
+      // couple-grouping (the previous approach) put both of root's own parents on the same side
+      // whenever they were married to each other.
+      const side = parentSides.get(parentId) ?? 'a'
       const extendedSide = side === 'a' ? branch.leftExtended : branch.rightExtended
       const cousinSide = side === 'a' ? leftCousinBranches : rightCousinBranches
       const parentAnchor = primaryParentId(g, parentId)
@@ -623,7 +618,7 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   const sideAGpIds: string[] = []
   const sideBGpIds: string[] = []
   for (const parentId of treeParents) {
-    const side = sideOfParent(parentCouples, parentId)
+    const side = parentSides.get(parentId) ?? 'a'
     const bucket = side === 'a' ? sideAGpIds : sideBGpIds
     for (const gpId of g.parentsOf.get(parentId) ?? []) {
       if (!bucket.includes(gpId)) bucket.push(gpId)
