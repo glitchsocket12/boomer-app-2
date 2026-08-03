@@ -439,29 +439,38 @@ export function buildDescendantTreeFromGraph(memberIds: string[], g: Graph): Tre
     for (const d of coveredSet(best)) remaining.delete(d)
   }
 
-  // Two or more of the founders picked above commonly turn out to be siblings (Mark Berzins, Lisa
-  // Ruskaup) who share a parent that was never itself tagged into the group (Villis/Marilee
-  // Berzins, in the founder's own example) — climb one hop up whenever that's the case and use the
-  // shared parent instead, so the tree unifies under them rather than showing siblings as separate,
-  // disconnected branches. Repeats in case that parent also turns out to share a parent with another
-  // branch (great-grandparents, etc.).
-  let climbing = true
-  while (climbing) {
-    climbing = false
-    const foundersByParent = new Map<string, string[]>()
+  // The greedy set-cover above only finds whoever's descendant set explains the group's OTHER
+  // members — it has no reason to stop at a generation that's actually the true top. Two founders
+  // who turn out to be siblings (Mark Berzins, Lisa Ruskaup) sharing a parent that was never itself
+  // tagged into the group (Villis/Marilee Berzins) is one way that shows up, but a single founder
+  // with their own solo parent (or grandparent, etc.) on file — never tagged into this group either —
+  // is exactly as "above the highest people" and belongs in the tree too (founder request: always
+  // populate the highest level available). So every founder with a recorded parent gets replaced by
+  // that parent (siblings naturally coalesce onto a shared one), repeated generation by generation
+  // until nobody has a parent left to climb to. MAX_GENERATIONS bounds it against cyclic/bad data.
+  for (let i = 0; i < MAX_GENERATIONS; i++) {
+    const next: string[] = []
+    const seenNext = new Set<string>()
+    let climbed = false
     for (const id of founderIds) {
-      for (const parentId of g.parentsOf.get(id) ?? []) {
-        const arr = foundersByParent.get(parentId) ?? []
-        arr.push(id)
-        foundersByParent.set(parentId, arr)
+      const parents = g.parentsOf.get(id) ?? []
+      if (parents.length === 0) {
+        if (!seenNext.has(id)) {
+          seenNext.add(id)
+          next.push(id)
+        }
+        continue
+      }
+      climbed = true
+      for (const parentId of parents) {
+        if (!seenNext.has(parentId)) {
+          seenNext.add(parentId)
+          next.push(parentId)
+        }
       }
     }
-    for (const [parentId, kids] of foundersByParent) {
-      if (kids.length < 2) continue
-      founderIds = [parentId, ...founderIds.filter((id) => !kids.includes(id))]
-      climbing = true
-      break
-    }
+    if (!climbed) break
+    founderIds = next
   }
 
   // Walk generation by generation. `seen` prevents a person appearing twice (e.g. a cousin
