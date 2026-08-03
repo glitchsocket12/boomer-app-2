@@ -311,6 +311,10 @@ When "moment_fields" is set, it has this shape: {"occasion": "...", "location": 
 
 IMPORTANT — capture EVERY concrete detail the user gives about an event, not just who attended. A "notes" entry doesn't have to be about a specific person: anything the user says about the event itself — what was done, eaten, said, how it went, the weather, an activity, a gift, a reaction — belongs in its own "notes" entry with "person" set to null, UNLESS it's naturally about one specific attendee (in which case attach it to that person's own note instead). Never let a real detail the user typed disappear just because it wasn't about a named person — the event's own page shows these general notes alongside the per-person ones. Don't pad a note with filler if the user gave no detail (that's what "Was there." is for — see below); but when they DID give detail, capture it, even if it means several separate notes entries for one event.
 
+CRITICAL — never invent, assume, or add a concrete detail the user did not actually say, in "notes" OR in "reply". If the user doesn't state HOW something happened, WHERE exactly, what a result/reading/verdict was, or how someone felt, do not supply a plausible-sounding guess for it — leave it out entirely. This applies even when a detail feels like an obvious or typical part of the situation (e.g. if the user says "we found out the baby's going to be a girl," do NOT assume or add that this happened at an ultrasound, a doctor's appointment, or that "other health markers looked good" — they didn't say that, so it isn't true as far as this app knows). A shorter note that only contains what was actually said is always correct; an embellished one is a fabricated record of something that didn't happen.
+
+IMPORTANT — a "notes" entry only belongs to a specific attendee when THEY are the one who did, said, or experienced the thing described — not merely because the sentence names them or is ABOUT them. E.g. if the user says "we found out the baby is going to be a girl," that's a general event-level detail ("person": null), never a note on the baby's own profile — the baby didn't discover or announce anything, they're just the topic of a fact the user is reporting. Likewise "my mom found out Steve got the job" is Mom's note (she's the one who found out), not Steve's, even though Steve is named. Ask yourself "did this person themselves do/say/experience this?" before attaching a note to them; if the answer is no, it's a general note instead.
+
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
 
 IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", "relevant_people", "notes", etc.), copy their spelling EXACTLY as it appears in the roster provided in this prompt, character for character — same capitalization, same spelling. Never respell, "correct," or reformat a name from the roster, even if it looks unusual. This is what makes their name in your reply clickable — a respelled name breaks that link.
@@ -668,6 +672,11 @@ ${context || "(none recorded yet)"}`
     // Every moment touched this turn (created or updated) — a single message can now describe
     // several distinct events at once, so this is a list rather than one moment ID.
     const touchedMomentIds = new Set<string>()
+    // Every moment whose cached AI summary (moments.summary) is now stale and needs regenerating in
+    // the background — a brand-new moment, or an EXISTING one that just gained a note (from its own
+    // "notes" entry or a mentioned-name note below). Deduped so a moment touched twice in one turn
+    // only regenerates once. See the single kickoff loop after the moments loop below.
+    const momentIdsNeedingResummary = new Set<string>()
     const rawDescription = messages.filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n")
 
     // A name the founder merely MENTIONED in a story never becomes a profile on its own — see the
@@ -710,6 +719,7 @@ ${context || "(none recorded yet)"}`
             await supabaseClient
               .from("notes")
               .insert({ person_id: existingId, moment_id: momentId, content: note, source: "home" })
+            momentIdsNeedingResummary.add(momentId)
           }
           continue
         }
@@ -727,6 +737,7 @@ ${context || "(none recorded yet)"}`
             .single()
           if (error) console.error("Mentioned-name note insert failed", name, error.message)
           noteId = newNote?.id ?? null
+          if (!error) momentIdsNeedingResummary.add(momentId)
         }
         mentionedPeopleSuggestions.push({ name, note, noteId, momentId, momentLabel })
       }
@@ -751,23 +762,11 @@ ${context || "(none recorded yet)"}`
           .single()
         if (newMoment) {
           momentId = newMoment.id
-          // Kick off the summary now, in the background, instead of waiting for the user to open
-          // the event page — by the time they navigate there it's usually already done, instead of
-          // adding a fresh multi-second wait on load. Doesn't block this response and its result
-          // isn't read here (the frontend already re-fetches the moment when the page opens).
-          if (rawDescription.trim()) {
-            const summarizePromise = fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/summarize-moment`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: req.headers.get("Authorization")!,
-                apikey: Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-              },
-              body: JSON.stringify({ momentId: newMoment.id }),
-            }).catch((e) => console.error("Background summarize-moment kickoff failed", String(e)))
-            // @ts-ignore -- EdgeRuntime is a Supabase Edge Runtime global, not in the Deno std lib types
-            if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(summarizePromise)
-          }
+          // Summary regeneration is kicked off once, after the loop below, for every moment in
+          // momentIdsNeedingResummary — covers both a brand-new moment (added here) and an existing
+          // one that just gained a note (added further down), so a background call is never fired
+          // twice for the same moment in one turn.
+          if (rawDescription.trim()) momentIdsNeedingResummary.add(momentId)
         }
       }
 
@@ -801,6 +800,13 @@ ${context || "(none recorded yet)"}`
           })
         })
       )
+      // This moment's cached summary depends on its notes (see summarize-moment), so any new one —
+      // whether this moment is brand-new or already existed — makes the cache stale. Previously only
+      // a brand-new moment ever regenerated (see momentIdsNeedingResummary above): adding detail to
+      // an ALREADY-recorded event via Home chat left the summary stale until someone opened the event
+      // page and hit the manual refresh button (CLAUDE.md rule 3 — a DB-cached output must be
+      // invalidated when the underlying data actually changes).
+      if ((momentEntry.notes ?? []).length > 0) momentIdsNeedingResummary.add(momentId)
 
       // After this moment's own notes, so a name the model put in BOTH places (against
       // instructions) has already been handled once and gets deduped rather than double-written.
@@ -835,6 +841,24 @@ ${context || "(none recorded yet)"}`
     // moment to hang a note on, so nothing is written unless the founder accepts the banner — the
     // frontend writes it as a plain profile note at that point.
     await collectMentionedNames(parsed.mentioned_names, null, null)
+
+    // Fire every moment's summary regeneration now, once each, in the background — after all notes
+    // for all moments this turn have landed above. Doesn't block this response (the frontend already
+    // re-fetches the moment when its event page opens); see momentIdsNeedingResummary's declaration
+    // above for why this covers both new and already-existing moments.
+    for (const momentId of momentIdsNeedingResummary) {
+      const summarizePromise = fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/summarize-moment`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: req.headers.get("Authorization")!,
+          apikey: Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+        },
+        body: JSON.stringify({ momentId }),
+      }).catch((e) => console.error("Background summarize-moment kickoff failed", String(e)))
+      // @ts-ignore -- EdgeRuntime is a Supabase Edge Runtime global, not in the Deno std lib types
+      if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(summarizePromise)
+    }
 
     for (const tag of parsed.person_group_tags ?? []) {
       const personId = idByName[tag.person?.trim().toLowerCase()]

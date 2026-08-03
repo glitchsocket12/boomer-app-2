@@ -133,6 +133,8 @@ IMPORTANT — disambiguating people who share a first name or nickname: if the u
 
 The user may want to: rename the group, add or remove members (this can be a whole list of names at once, e.g. several relatives), tag/untag events, or mention a plain fact about a member that isn't a membership/event change (e.g. "oh, and Bob mentioned he's retiring this fall") — capture that as a note on that person's own profile via "notes" below, using their exact name from the roster provided in this prompt. Each call covers exactly one thing the user just said — there's no back-and-forth to keep open, so don't ask a follow-up like "anything else?". Only set "needs_clarification": true for a genuine ambiguity you can't resolve without asking; otherwise leave it false and give a brief, natural acknowledgement in "reply".
 
+CRITICAL — never invent, assume, or add a concrete detail the user did not actually say. If they don't state how something happened or how someone felt, don't supply a plausible-sounding guess for it — leave it out entirely. And a "notes" entry only belongs to the member it names when THAT PERSON is the one who did, said, or experienced the thing described — not merely because the sentence is about them (e.g. "we found out Bob's daughter is having a girl" is Bob's note, since he's the one who told the user — it is not a note on the daughter even though she's named).
+
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:

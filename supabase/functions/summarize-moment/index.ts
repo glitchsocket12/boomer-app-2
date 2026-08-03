@@ -20,14 +20,23 @@ serve(async (req) => {
       { global: { headers: { Authorization: req.headers.get("Authorization")! } } }
     )
 
-    const { data: moment } = await supabaseClient
-      .from("moments")
-      .select(
-        "id, occasion, location, when_text, raw_description, details, notes(content, people(name, last_name))"
-      )
-      .eq("id", momentId)
-      .order("created_at", { foreignTable: "notes" })
-      .single()
+    // Fired together — independent of each other, no reason to pay for them one round-trip at a
+    // time (same reasoning as converse/index.ts's roster reads).
+    const [{ data: moment }, { data: selfPerson }] = await Promise.all([
+      supabaseClient
+        .from("moments")
+        .select(
+          "id, occasion, location, when_text, raw_description, details, notes(content, people(name, last_name))"
+        )
+        .eq("id", momentId)
+        .order("created_at", { foreignTable: "notes" })
+        .single(),
+      // Who "I" must always be in the summary below — without this, the model has no way to tell
+      // the account owner apart from anyone else named in the notes, and can end up narrating in a
+      // DIFFERENT recorded person's voice whenever their note happens to be the most detailed one
+      // (e.g. writing an event as if the user's spouse were the one saying "I").
+      supabaseClient.from("people").select("name, last_name").eq("is_self", true).maybeSingle(),
+    ])
 
     if (!moment) {
       return new Response(JSON.stringify({ error: "Moment not found" }), {
@@ -38,6 +47,8 @@ serve(async (req) => {
 
     const fullName = (p: { name: string; last_name: string | null }) =>
       p.last_name ? `${p.name} ${p.last_name}` : p.name
+
+    const selfName = selfPerson ? fullName(selfPerson) : null
 
     const notesText = (moment.notes ?? [])
       .map((n: any, i: number) => `${i + 1}. ${n.people ? `${fullName(n.people)}: ` : ""}${n.content}`)
@@ -54,6 +65,7 @@ serve(async (req) => {
 When: ${moment.when_text || "(not specified)"}
 Where: ${moment.location || "(not specified)"}
 Other details on file: ${detailsText}
+The account owner — always the "I" in the summary, never anyone else named below, even if someone else's note is more detailed: ${selfName ?? "(not set up yet — use your best judgment from context, and never write as if you ARE a different specific named person)"}
 What the user originally said about it: ${moment.raw_description}
 Notes recorded about who was there / what they said: ${notesText || "(none)"}`
 
@@ -70,7 +82,7 @@ Notes recorded about who was there / what they said: ${notesText || "(none)"}`
         // explicitly prioritizes completeness, so a detailed event isn't truncated mid-summary.
         max_tokens: 600,
         system:
-          "You write a warm, easy-to-read summary of a personal memory for a memory-keeping app called Boomer. You're given what the user originally typed or said about the event (which may be disjointed or repetitive, since it was captured across a back-and-forth conversation) plus any structured details and notes about who was there. The notes are listed in whatever order people happened to recall or record them — not necessarily the order things actually happened, since someone often adds a note about something earlier only after already describing something later. Read everything first, use any wording clues (e.g. \"before\", \"after\", \"first\", \"then\", \"later\", \"that morning/evening\", cause-and-effect) to work out your best guess at the true chronological order of events, and write the summary in that order rather than the order the notes are listed in. If there's no clue at all for how two things relate in time, use your best natural judgment rather than forcing a false sequence. Rewrite it all in the user's own first-person voice (\"I...\"), past tense, that reads naturally on its own — not a copy-paste of the raw input, not a bullet list, no meta-commentary about the memory app itself, no preamble, no quotation marks. PRIORITIZE COMPLETENESS OVER BREVITY: include every concrete detail given — activities, food, weather, gifts, quotes, reactions, specific people and what each of them did — not just a high-level gloss of the occasion. Do not compress away a specific detail for the sake of a shorter summary; a longer summary that keeps the specifics is strictly better than a shorter one that loses them. There's no fixed sentence count — write as many sentences as it takes to cover everything actually said, and no filler beyond that. Skip fields that are marked not specified/none. Respond with ONLY the summary.",
+          "You write a warm, easy-to-read summary of a personal memory for a memory-keeping app called Boomer. You're given what the user originally typed or said about the event (which may be disjointed or repetitive, since it was captured across a back-and-forth conversation) plus any structured details and notes about who was there. The notes are listed in whatever order people happened to recall or record them — not necessarily the order things actually happened, since someone often adds a note about something earlier only after already describing something later. Read everything first, use any wording clues (e.g. \"before\", \"after\", \"first\", \"then\", \"later\", \"that morning/evening\", cause-and-effect) to work out your best guess at the true chronological order of events, and write the summary in that order rather than the order the notes are listed in. If there's no clue at all for how two things relate in time, use your best natural judgment rather than forcing a false sequence. Rewrite it all in the user's own first-person voice (\"I...\"), past tense, that reads naturally on its own — not a copy-paste of the raw input, not a bullet list, no meta-commentary about the memory app itself, no preamble, no quotation marks. The context tells you exactly which recorded person is the account owner — \"I\" is ALWAYS that person and no one else, even when a different named person's note is the longest or most detailed one in the whole moment. Narrate everyone else in the normal third person (\"Caroline told me...\", \"Mom said she...\") — never adopt another named person's own note as if you were them. CRITICAL — never invent, assume, or add a concrete detail (how something happened, where exactly, a result, a feeling, a cause) that isn't actually present in the input below — if the notes don't say it, it doesn't go in the summary, no matter how typical or plausible it would be for the situation. PRIORITIZE COMPLETENESS OVER BREVITY (for whatever WAS actually said): include every concrete detail given — activities, food, weather, gifts, quotes, reactions, specific people and what each of them did — not just a high-level gloss of the occasion. Do not compress away a specific detail for the sake of a shorter summary; a longer summary that keeps the specifics is strictly better than a shorter one that loses them. There's no fixed sentence count — write as many sentences as it takes to cover everything actually said, and no filler beyond that. Skip fields that are marked not specified/none. Respond with ONLY the summary.",
         messages: [{ role: "user", content: context }],
       }),
     })
