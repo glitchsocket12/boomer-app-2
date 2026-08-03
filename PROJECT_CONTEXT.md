@@ -775,7 +775,16 @@ Full story: PROJECT_HISTORY.md.
 │   │                            on first sign-in by `lib/ensureUserTimeZone.ts` (App.tsx's
 │   │                            `onAuthStateChange`, same sticky-metadata-flag pattern as
 │   │                            `ensureStarterTags.ts` — `timezone_detected` flag, never
-│   │                            re-overwrites a later manual choice).
+│   │                            re-overwrites a later manual choice). **2026-08-02 bug fix:**
+│   │                            the flag used to get set to `true` even when the `user_settings`
+│   │                            upsert failed/never ran (e.g. mid-migration-rollout), permanently
+│   │                            stranding that account on the `'UTC'` default with no retry —
+│   │                            reproduced live on `jakevolin@gmail.com` (flag was `true`, `time_
+│   │                            zone` was `null`), which mis-dated an evening chat entry ("Emi's
+│   │                            birth", typed ~11pm Mountain) to the next day. Fixed: the flag is
+│   │                            now only set after a successful write. This account's `time_zone`
+│   │                            and the one bad `event_date` were corrected directly; other
+│   │                            accounts caught in the same window aren't yet identified.
 │   ├── About.tsx               — (2026-07-23) placeholder page reached from Settings — real
 │   │                            copy (item 23's "I don't want it to be bullshit" honesty ask)
 │   │                            still to be drafted with the founder

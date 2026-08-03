@@ -14,7 +14,14 @@ export async function ensureUserTimeZone(userId: string, metadata: { timezone_de
   const { error } = await supabase
     .from('user_settings')
     .upsert({ user_id: userId, time_zone: detected }, { onConflict: 'user_id' })
-  if (error) console.error('ensureUserTimeZone: failed to save detected time zone', error)
+  if (error) {
+    // Leave the flag unset on failure (e.g. the migration adding this column hasn't run yet) so
+    // the next session load retries instead of getting stuck on UTC forever — converse silently
+    // resolving "today" against the wrong time zone produced a real off-by-one event date once
+    // already (see PROJECT_HISTORY.md).
+    console.error('ensureUserTimeZone: failed to save detected time zone', error)
+    return
+  }
 
   const { error: flagError } = await supabase.auth.updateUser({ data: { timezone_detected: true } })
   if (flagError) console.error('ensureUserTimeZone: failed to persist timezone_detected flag', flagError)
