@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import AutoGrowTextarea from './AutoGrowTextarea'
 import VoiceInputButton from './VoiceInputButton'
+import { colors, fontFamily, fontSize, space } from '../lib/theme'
 
 // The "what do you actually know about this person" box on the four import review queues
 // (contacts, birthdays, calendar events, photos).
@@ -59,14 +60,14 @@ export default function ReviewNoteField({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  wrapper: { display: 'flex', flexDirection: 'column', gap: '0.25rem', marginBottom: '0.9rem' },
-  label: { fontSize: '0.8rem', color: '#666' },
-  row: { display: 'flex', alignItems: 'flex-end', gap: '0.5rem' },
+  wrapper: { display: 'flex', flexDirection: 'column', gap: space.xs, marginBottom: '0.9rem' },
+  label: { fontSize: fontSize.small, color: colors.textMuted },
+  row: { display: 'flex', alignItems: 'flex-end', gap: space.md },
   textarea: {
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.5rem 0.6rem',
-    fontFamily: 'Georgia, serif',
-    color: '#2E2E2E',
+    fontFamily,
+    color: colors.inkPlain,
   },
-  hint: { fontSize: '0.8rem', color: '#666', margin: '0.1rem 0 0' },
+  hint: { fontSize: fontSize.small, color: colors.textMuted, margin: '0.1rem 0 0' },
 }

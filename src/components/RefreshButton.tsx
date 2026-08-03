@@ -1,3 +1,5 @@
+import { border, colors, radius } from '../lib/theme'
+
 export default function RefreshButton({
   onClick,
   label,
@@ -35,10 +37,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     width: '30px',
     height: '30px',
     flexShrink: 0,
-    borderRadius: '8px',
-    border: '1px solid #E0E0E0',
-    backgroundColor: '#FFF',
-    color: '#2E4034',
+    borderRadius: radius.md,
+    border: border.light,
+    backgroundColor: colors.surface,
+    color: colors.ink,
     cursor: 'pointer',
     padding: 0,
     boxShadow: '0 1px 3px rgba(0,0,0,0.06)',

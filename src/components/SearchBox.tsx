@@ -2,6 +2,8 @@
 // already-loaded list client-side as you type, no server round-trip needed
 // since these lists are small (one person's own data).
 
+import { border, fontFamily, fontSize, radius, space } from '../lib/theme'
+
 export default function SearchBox({
   value,
   onChange,
@@ -33,11 +35,11 @@ const styles: { [key: string]: React.CSSProperties } = {
     display: 'block',
     width: '100%',
     boxSizing: 'border-box',
-    fontSize: '1.1rem',
+    fontSize: fontSize.lead,
     padding: '0.65rem 0.9rem',
-    borderRadius: '8px',
-    border: '1px solid #CCC',
-    marginBottom: '1.5rem',
-    fontFamily: 'Georgia, serif',
+    borderRadius: radius.md,
+    border: border.default,
+    marginBottom: space.xxxl,
+    fontFamily,
   },
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { border, radius } from '../lib/theme'
 
 const MAX_HEIGHT_PX = 160
 
@@ -55,7 +56,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     maxHeight: `${MAX_HEIGHT_PX}px`,
     fontFamily: 'inherit',
     lineHeight: 1.4,
-    border: '1px solid #CCC',
-    borderRadius: '8px',
+    border: border.default,
+    borderRadius: radius.md,
   },
 }

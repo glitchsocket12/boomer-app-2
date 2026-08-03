@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import SearchBox from './SearchBox'
+import { border, colors, fontFamily, fontSize, radius, space } from '../lib/theme'
 
 type Item = { id: string; label: string }
 
@@ -91,33 +92,33 @@ const styles: { [key: string]: React.CSSProperties } = {
   resultsList: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.35rem',
+    gap: space.sm,
     maxHeight: '220px',
     overflowY: 'auto',
     marginTop: '-0.75rem',
-    marginBottom: '1rem',
+    marginBottom: space.xl,
   },
   resultButton: {
     textAlign: 'left',
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.5rem 0.7rem',
-    borderRadius: '6px',
-    border: '1px solid #CCC',
-    backgroundColor: '#FFF',
-    color: '#2E2E2E',
+    borderRadius: radius.sm,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.inkPlain,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
-  empty: { color: '#999', fontSize: '0.85rem', fontStyle: 'italic', margin: 0 },
+  empty: { color: colors.textFaintest, fontSize: fontSize.label, fontStyle: 'italic', margin: 0 },
   createButton: {
     textAlign: 'left',
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.5rem 0.7rem',
-    borderRadius: '6px',
-    border: '1px dashed #B08B2E',
+    borderRadius: radius.sm,
+    border: `1px dashed ${colors.suggestFill}`,
     backgroundColor: 'transparent',
-    color: '#8A6A1F',
+    color: colors.suggest,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
 }

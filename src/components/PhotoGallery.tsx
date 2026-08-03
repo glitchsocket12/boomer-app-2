@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { colors, fontSize, radius } from '../lib/theme'
 
 const PLACEHOLDER_COLORS = ['#DCE8DE', '#F6E8C8', '#E8D9D0', '#D9E2EC', '#EBDCEB', '#E4E9D6']
 
@@ -163,13 +164,13 @@ export default function PhotoGallery({ momentId, count = 4 }: { momentId?: strin
 
 const styles: { [key: string]: React.CSSProperties } = {
   wrap: { margin: '1.5rem 0' },
-  heading: { fontSize: '1.2rem', color: '#2E4034', margin: '0 0 0.25rem 0' },
-  caption: { margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: '#999', fontStyle: 'italic' },
+  heading: { fontSize: '1.2rem', color: colors.ink, margin: '0 0 0.25rem 0' },
+  caption: { margin: '0 0 0.75rem 0', fontSize: fontSize.label, color: colors.textFaintest, fontStyle: 'italic' },
   row: { display: 'flex', gap: '0.6rem', flexWrap: 'wrap' },
   tile: {
     width: '84px',
     height: '84px',
-    borderRadius: '10px',
+    borderRadius: radius.lg,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -178,7 +179,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   photoTile: {
     width: '84px',
     height: '84px',
-    borderRadius: '10px',
+    borderRadius: radius.lg,
     objectFit: 'cover',
     border: '1px solid rgba(0,0,0,0.06)',
   },
@@ -195,7 +196,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     maxWidth: '92vw',
     maxHeight: '90vh',
     objectFit: 'contain',
-    borderRadius: '6px',
+    borderRadius: radius.sm,
   },
   closeButton: {
     position: 'absolute',
@@ -203,7 +204,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     right: '1.25rem',
     background: 'none',
     border: 'none',
-    color: '#FFF',
+    color: colors.onFill,
     fontSize: '2.25rem',
     lineHeight: 1,
     cursor: 'pointer',
@@ -215,11 +216,11 @@ const styles: { [key: string]: React.CSSProperties } = {
     transform: 'translateY(-50%)',
     background: 'rgba(255,255,255,0.12)',
     border: 'none',
-    color: '#FFF',
+    color: colors.onFill,
     fontSize: '2.5rem',
     lineHeight: 1,
     cursor: 'pointer',
     padding: '0.25rem 0.9rem',
-    borderRadius: '8px',
+    borderRadius: radius.md,
   },
 }

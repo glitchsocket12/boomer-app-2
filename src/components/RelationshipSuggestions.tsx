@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase'
 import { upsertRelationship, type RelationshipKind } from '../lib/relationshipsTable'
 import { syncFamilyClique, syncSpouseParenthood, invalidateKeyFacts } from '../lib/writeRelationship'
+import { border, colors, fontSize, radius, space } from '../lib/theme'
 
 // Shared by every entry point that can surface a relationship suggestion (the profile fact bar,
 // Home chat, an event's chat, a group's chat) — the confirm/decline logic writes exactly what a
@@ -322,36 +323,39 @@ export default function RelationshipSuggestionBanners({
   )
 }
 
-const styles: { [key: string]: React.CSSProperties } = {
+// Exported so every other chat-surface banner (see MentionedPeopleSuggestions.tsx) looks identical
+// without copy-pasting the CSS — they sit stacked in the same place and any drift between them
+// reads as a rendering bug.
+export const styles: { [key: string]: React.CSSProperties } = {
   suggestBanner: {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.6rem',
-    fontSize: '0.9rem',
-    color: '#5A4A20',
-    backgroundColor: '#FBF3E0',
-    border: '1px solid #E6D6AC',
-    borderRadius: '10px',
+    fontSize: fontSize.body,
+    color: colors.suggestDeep,
+    backgroundColor: colors.suggestBg,
+    border: border.suggest,
+    borderRadius: radius.lg,
     padding: '0.85rem 1rem',
-    marginBottom: '1.5rem',
+    marginBottom: space.xxxl,
   },
-  suggestButtonRow: { display: 'flex', gap: '0.5rem' },
+  suggestButtonRow: { display: 'flex', gap: space.md },
   suggestYesButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',
-    borderRadius: '6px',
+    borderRadius: radius.sm,
     border: 'none',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
+    backgroundColor: colors.ink,
+    color: colors.onFill,
     cursor: 'pointer',
   },
   suggestNoButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',
-    borderRadius: '6px',
-    border: '1px solid #B08B2E',
+    borderRadius: radius.sm,
+    border: border.suggestFill,
     backgroundColor: 'transparent',
-    color: '#8A6A1F',
+    color: colors.suggest,
     cursor: 'pointer',
   },
 }

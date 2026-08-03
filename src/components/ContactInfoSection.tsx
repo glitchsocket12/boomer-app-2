@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { upsertReminder } from '../lib/reminders'
+import { border, colors, fontFamily, fontSize, radius, space } from '../lib/theme'
 import AddressSuggestInput from './AddressSuggestInput'
 import EditButton from './EditButton'
 
@@ -66,16 +67,8 @@ export default function ContactInfoSection({ personId, readOnly = false }: { per
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    // readOnly (the public landing-page demo) must make zero Supabase calls — see the contract
-    // documented above PersonDetailView in pages/PersonDetail.tsx. A fake demo personId has no row
-    // to fetch anyway, so skip straight to the empty state instead of hitting the network (found
-    // via a demo QA pass, 2026-08-03).
-    if (readOnly) {
-      setLoading(false)
-      return
-    }
     load()
-  }, [personId, readOnly])
+  }, [personId])
 
   async function load() {
     setLoading(true)
@@ -325,9 +318,9 @@ function AddressEditor({ items, onChange }: { items: Address[]; onChange: (items
 
 const styles: { [key: string]: React.CSSProperties } = {
   section: {
-    backgroundColor: '#FFF',
-    border: '1px solid #CFE0D6',
-    borderRadius: '10px',
+    backgroundColor: colors.surface,
+    border: border.inkPale,
+    borderRadius: radius.lg,
     padding: '0.85rem 1rem',
     margin: '0 0 1rem',
   },
@@ -335,69 +328,69 @@ const styles: { [key: string]: React.CSSProperties } = {
   toggleButton: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
-    fontSize: '1rem',
+    color: colors.ink,
+    fontSize: fontSize.base,
     fontWeight: 'bold',
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     padding: 0,
   },
   displayList: { marginTop: '0.6rem' },
-  displayLine: { fontSize: '0.9rem', color: '#2E2E2E', margin: '0 0 0.3rem' },
-  emptyText: { fontSize: '0.85rem', color: '#999', margin: 0 },
-  editForm: { marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' },
-  fieldLabel: { fontSize: '0.8rem', color: '#666', marginTop: '0.5rem' },
+  displayLine: { fontSize: fontSize.body, color: colors.inkPlain, margin: '0 0 0.3rem' },
+  emptyText: { fontSize: fontSize.label, color: colors.textFaintest, margin: 0 },
+  editForm: { marginTop: space.lg, display: 'flex', flexDirection: 'column', gap: '0.4rem' },
+  fieldLabel: { fontSize: fontSize.small, color: colors.textMuted, marginTop: space.md },
   input: {
-    fontSize: '0.95rem',
+    fontSize: fontSize.bodyLg,
     padding: '0.5rem 0.65rem',
-    borderRadius: '8px',
-    border: '1px solid #CCC',
-    fontFamily: 'Georgia, serif',
+    borderRadius: radius.md,
+    border: border.default,
+    fontFamily,
   },
   dateFieldRow: { display: 'flex', flexDirection: 'column' },
   dateInputsRow: { display: 'flex', gap: '0.4rem' },
-  dateSelect: { fontSize: '0.9rem', padding: '0.45rem', borderRadius: '8px', border: '1px solid #CCC', fontFamily: 'Georgia, serif', flex: 2 },
-  dateNumberInput: { fontSize: '0.9rem', padding: '0.45rem', borderRadius: '8px', border: '1px solid #CCC', fontFamily: 'Georgia, serif', flex: 1, width: '4rem' },
-  dateYearInput: { fontSize: '0.9rem', padding: '0.45rem', borderRadius: '8px', border: '1px solid #CCC', fontFamily: 'Georgia, serif', flex: 1, width: '7rem' },
+  dateSelect: { fontSize: fontSize.body, padding: '0.45rem', borderRadius: radius.md, border: border.default, fontFamily, flex: 2 },
+  dateNumberInput: { fontSize: fontSize.body, padding: '0.45rem', borderRadius: radius.md, border: border.default, fontFamily, flex: 1, width: '4rem' },
+  dateYearInput: { fontSize: fontSize.body, padding: '0.45rem', borderRadius: radius.md, border: border.default, fontFamily, flex: 1, width: '7rem' },
   listEditor: { display: 'flex', flexDirection: 'column', marginTop: '0.4rem' },
-  listRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.25rem 0' },
-  listRowText: { fontSize: '0.88rem', color: '#2E2E2E' },
-  removeButton: { background: 'none', border: 'none', color: '#B04A3B', fontSize: '1rem', cursor: 'pointer', padding: '0 0.3rem' },
+  listRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.md, padding: '0.25rem 0' },
+  listRowText: { fontSize: '0.88rem', color: colors.inkPlain },
+  removeButton: { background: 'none', border: 'none', color: colors.danger, fontSize: fontSize.base, cursor: 'pointer', padding: '0 0.3rem' },
   addRow: { display: 'flex', gap: '0.4rem', marginTop: '0.3rem', alignItems: 'flex-start' },
-  addLabelInput: { fontSize: '0.85rem', padding: '0.4rem 0.5rem', borderRadius: '8px', border: '1px solid #CCC', fontFamily: 'Georgia, serif', width: '6.5rem', flexShrink: 0 },
-  addValueInput: { fontSize: '0.85rem', padding: '0.4rem 0.5rem', borderRadius: '8px', border: '1px solid #CCC', fontFamily: 'Georgia, serif', flex: 1, minWidth: 0 },
+  addLabelInput: { fontSize: fontSize.label, padding: '0.4rem 0.5rem', borderRadius: radius.md, border: border.default, fontFamily, width: '6.5rem', flexShrink: 0 },
+  addValueInput: { fontSize: fontSize.label, padding: '0.4rem 0.5rem', borderRadius: radius.md, border: border.default, fontFamily, flex: 1, minWidth: 0 },
   addAddressInputWrap: { flex: 1, minWidth: 0 },
   addButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.4rem 0.7rem',
-    borderRadius: '8px',
-    border: '1px solid #2E4034',
-    backgroundColor: '#FFF',
-    color: '#2E4034',
+    borderRadius: radius.md,
+    border: border.ink,
+    backgroundColor: colors.surface,
+    color: colors.ink,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
     whiteSpace: 'nowrap',
     flexShrink: 0,
   },
-  buttonRow: { display: 'flex', gap: '0.6rem', marginTop: '0.75rem' },
+  buttonRow: { display: 'flex', gap: '0.6rem', marginTop: space.lg },
   saveButton: {
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.5rem 1rem',
-    borderRadius: '8px',
+    borderRadius: radius.md,
     border: 'none',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
+    backgroundColor: colors.ink,
+    color: colors.onFill,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   cancelButton: {
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.5rem 1rem',
-    borderRadius: '8px',
-    border: '1px solid #CCC',
-    backgroundColor: '#FFF',
-    color: '#666',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textMuted,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
 }

@@ -1,3 +1,5 @@
+import { colors, fontFamily, fontSize, maxWidth, neutral } from '../lib/theme'
+
 type BreadcrumbItem = { label: string; onClick?: () => void }
 
 export default function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
@@ -19,22 +21,22 @@ export default function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
 
 const styles: { [key: string]: React.CSSProperties } = {
   nav: {
-    maxWidth: '840px',
+    maxWidth: maxWidth.page,
     margin: '0 auto',
     padding: '0.75rem 1.5rem 0',
-    fontFamily: 'Georgia, serif',
-    fontSize: '0.9rem',
+    fontFamily,
+    fontSize: fontSize.body,
   },
   link: {
     background: 'none',
     border: 'none',
-    color: '#2E4034',
+    color: colors.ink,
     textDecoration: 'underline',
-    fontSize: '0.9rem',
-    fontFamily: 'Georgia, serif',
+    fontSize: fontSize.body,
+    fontFamily,
     cursor: 'pointer',
     padding: 0,
   },
-  current: { color: '#888' },
-  separator: { color: '#AAA', margin: '0 0.5rem' },
+  current: { color: colors.textFaint },
+  separator: { color: neutral.grey400, margin: '0 0.5rem' },
 }

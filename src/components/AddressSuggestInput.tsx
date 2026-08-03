@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchAddressSuggestions } from '../lib/geoapify'
+import { border, colors, fontFamily, fontSize, radius, shadow, space } from '../lib/theme'
 
 // A plain text input whose own value IS the field (unlike SearchAddPicker, which clears its query
 // box after picking — that's fine for adding items to a list, but location is free text you keep
@@ -121,11 +122,11 @@ const styles: { [key: string]: React.CSSProperties } = {
   input: {
     width: '100%',
     boxSizing: 'border-box',
-    fontSize: '0.95rem',
+    fontSize: fontSize.bodyLg,
     padding: '0.6rem 0.75rem',
-    borderRadius: '8px',
-    border: '1px solid #CCC',
-    fontFamily: 'Georgia, serif',
+    borderRadius: radius.md,
+    border: border.default,
+    fontFamily,
   },
   resultsList: {
     position: 'absolute',
@@ -139,33 +140,33 @@ const styles: { [key: string]: React.CSSProperties } = {
     overflowY: 'auto',
     marginTop: '0.3rem',
     padding: '0.4rem',
-    borderRadius: '8px',
-    border: '1px solid #E0E0E0',
-    backgroundColor: '#FFF',
-    boxShadow: '0 4px 14px rgba(0,0,0,0.12)',
+    borderRadius: radius.md,
+    border: border.light,
+    backgroundColor: colors.surface,
+    boxShadow: shadow.modal,
   },
   resultButton: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '0.5rem',
+    gap: space.md,
     textAlign: 'left',
-    fontSize: '0.9rem',
+    fontSize: fontSize.body,
     padding: '0.5rem 0.6rem',
-    borderRadius: '6px',
+    borderRadius: radius.sm,
     border: '1px solid transparent',
-    backgroundColor: '#FFF',
-    color: '#2E2E2E',
+    backgroundColor: colors.surface,
+    color: colors.inkPlain,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   resultButtonHighlighted: {
-    backgroundColor: '#F4F8F5',
-    border: '1px solid #2E4034',
+    backgroundColor: colors.inkWash,
+    border: border.ink,
   },
   liveBadge: {
-    fontSize: '0.7rem',
-    color: '#8A6A1F',
+    fontSize: fontSize.micro,
+    color: colors.suggest,
     fontStyle: 'italic',
     whiteSpace: 'nowrap',
   },

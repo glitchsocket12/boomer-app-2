@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { ONBOARDING_RESET_TEST_EMAIL, resetOnboardingData } from '../lib/resetOnboarding'
+import { border, colors, fontFamily, fontSize, neutral, radius, space } from '../lib/theme'
 
 // Renders nothing at all unless the signed-in account's email is the exact disposable test
 // account — so this never even appears, let alone runs, on the founder's real account. See
@@ -67,53 +68,53 @@ export default function DevOnboardingReset() {
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  wrap: { marginTop: '1.5rem', textAlign: 'center' },
+  wrap: { marginTop: space.xxxl, textAlign: 'center' },
   toggle: {
     fontSize: '0.78rem',
-    color: '#BBB',
+    color: neutral.grey300,
     background: 'none',
     border: 'none',
     cursor: 'pointer',
     textDecoration: 'underline',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   panel: {
     border: '1px solid #E0B8B8',
     backgroundColor: '#FFF6F6',
-    borderRadius: '10px',
+    borderRadius: radius.lg,
     padding: '0.85rem 1rem',
     textAlign: 'left',
   },
-  warning: { fontSize: '0.82rem', color: '#8A3A3A', lineHeight: 1.4, margin: '0 0 0.75rem' },
-  row: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
+  warning: { fontSize: '0.82rem', color: neutral.redMuted, lineHeight: 1.4, margin: '0 0 0.75rem' },
+  row: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
   input: {
     flex: 1,
     minWidth: '140px',
-    fontSize: '0.9rem',
-    padding: '0.5rem',
-    borderRadius: '6px',
-    border: '1px solid #CCC',
-    fontFamily: 'Georgia, serif',
+    fontSize: fontSize.body,
+    padding: space.md,
+    borderRadius: radius.sm,
+    border: border.default,
+    fontFamily,
   },
   resetButton: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.5rem 0.9rem',
-    borderRadius: '6px',
+    borderRadius: radius.sm,
     border: 'none',
-    backgroundColor: '#8A3A3A',
-    color: '#FFF',
+    backgroundColor: neutral.redMuted,
+    color: colors.onFill,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
   resetButtonDisabled: { backgroundColor: '#CBA3A3', cursor: 'not-allowed' },
   cancel: {
-    fontSize: '0.85rem',
+    fontSize: fontSize.label,
     padding: '0.5rem 0.9rem',
-    borderRadius: '6px',
-    border: '1px solid #CCC',
-    backgroundColor: '#FFF',
-    color: '#555',
+    borderRadius: radius.sm,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
+    fontFamily,
   },
 }

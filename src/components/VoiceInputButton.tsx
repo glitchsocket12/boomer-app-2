@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { border, colors, fontSize, neutral, radius } from '../lib/theme'
 
 type Status = 'idle' | 'recording' | 'transcribing' | 'error'
 
@@ -182,22 +183,22 @@ const styles: { [key: string]: React.CSSProperties } = {
     width: '42px',
     height: '42px',
     flexShrink: 0,
-    borderRadius: '8px',
-    border: '1px solid #CCC',
-    backgroundColor: '#FFF',
-    color: '#2E4034',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.ink,
     cursor: 'pointer',
     padding: 0,
   },
   recording: {
-    backgroundColor: '#B23B3B',
-    borderColor: '#B23B3B',
-    color: '#FFF',
+    backgroundColor: colors.dangerLoud,
+    borderColor: colors.dangerLoud,
+    color: colors.onFill,
   },
   error: {
-    backgroundColor: '#F1F1EE',
-    borderColor: '#B23B3B',
-    color: '#B23B3B',
+    backgroundColor: neutral.warm150,
+    borderColor: colors.dangerLoud,
+    color: colors.dangerLoud,
   },
   dots: {
     fontSize: '1.2rem',
@@ -209,12 +210,12 @@ const styles: { [key: string]: React.CSSProperties } = {
     right: 0,
     width: 'max-content',
     maxWidth: '240px',
-    backgroundColor: '#2E4034',
-    color: '#FFF',
-    fontSize: '0.85rem',
+    backgroundColor: colors.ink,
+    color: colors.onFill,
+    fontSize: fontSize.label,
     lineHeight: 1.4,
     padding: '0.55rem 0.75rem',
-    borderRadius: '10px',
+    borderRadius: radius.lg,
     boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
     display: 'flex',
     alignItems: 'center',
@@ -222,12 +223,12 @@ const styles: { [key: string]: React.CSSProperties } = {
     zIndex: 10,
   },
   bubbleError: {
-    backgroundColor: '#B23B3B',
+    backgroundColor: colors.dangerLoud,
   },
   pulseDot: {
     width: '8px',
     height: '8px',
-    borderRadius: '50%',
+    borderRadius: radius.circle,
     backgroundColor: '#FF6B6B',
     flexShrink: 0,
     animation: 'voice-pulse 1s infinite',
