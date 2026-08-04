@@ -28,7 +28,7 @@ import {
   type LinkOptions,
 } from '../lib/writeRelationship'
 import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
-import RelationshipAddPicker from '../components/RelationshipAddPicker'
+import AddFamilyMember, { type RelationshipChoice } from '../components/AddFamilyMember'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -593,7 +593,7 @@ export function FamilyTreeView({
     existing?: { id: string; label: string },
     newName?: string,
     opts?: LinkOptions
-  ) => void
+  ) => void | Promise<void>
   removeConfirm?: RemoveTarget | null
   removing?: boolean
   onRequestRemove?: (target: RemoveTarget) => void
@@ -677,49 +677,45 @@ export function FamilyTreeView({
   const parentsList = parentsTier
     ? parentsTier.branches.flatMap((b) => [b.union.a, ...b.union.spouses]).filter((p) => !p.stepOnly)
     : []
-  // Both step slots are phrased and scoped THROUGH a specific person rather than offered as a bare
-  // "Step-parent"/"Step-sibling" against the root, which is what answers the founder's "ask which
-  // parent is the biological one": picking "Step-sibling (Michael's child)" states outright that
-  // Michael is the one they descend from, so nothing gets attached to the root's own mother/father.
-  const addSlots: {
-    key: string
-    label: string
-    category: CircleCategory
-    subjectId: string
-    subjectName: string
-    opts?: LinkOptions
-  }[] =
+  // One list of relationships behind a single "Add family member" button, rather than one labelled
+  // "+" per relationship type — that reached seven wrapping buttons once step relations landed, and
+  // the founder couldn't find the one they wanted (2026-08-03). Every relationship that only exists
+  // THROUGH someone else carries its own follow-up question instead of being pre-expanded into a
+  // slot per candidate; that follow-up is also what answers "which parent is the biological one"
+  // for a step-sibling, so nothing gets attached to the root's own mother/father by guesswork.
+  const relationshipChoices: RelationshipChoice[] =
     !readOnly && mode === 'ego'
       ? [
-          ...parentsList.map((p) => ({
-            key: `grandparent-${p.id}`,
-            label: `Grandparent (${p.name}'s side)`,
-            category: 'parents' as CircleCategory,
-            subjectId: p.id,
-            subjectName: p.name,
-          })),
-          { key: 'parent', label: 'Parent', category: 'parents' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
-          // Offered per recorded parent, since a step-parent is literally "this parent's other
-          // spouse" — no death required, unlike the only shape the tree used to surface.
-          ...data.rootDirect.parents.map((p) => ({
-            key: `stepparent-${p.id}`,
-            label: `Step-parent (${p.name}'s spouse)`,
-            category: 'spouse' as CircleCategory,
-            subjectId: p.id,
-            subjectName: p.name,
-            opts: { skipSpouseParenthood: true, skipCliqueSync: true } as LinkOptions,
-          })),
-          { key: 'spouse', label: 'Spouse', category: 'spouse' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
-          { key: 'sibling', label: 'Sibling', category: 'siblings' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
-          ...data.rootDirect.stepParents.map((s) => ({
-            key: `stepsibling-${s.person.id}`,
-            label: `Step-sibling (${s.person.name}'s child)`,
-            category: 'kids' as CircleCategory,
-            subjectId: s.person.id,
-            subjectName: s.person.name,
-            opts: { skipCliqueSync: true } as LinkOptions,
-          })),
-          { key: 'child', label: 'Child', category: 'kids' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
+          {
+            key: 'grandparent',
+            label: 'Grandparent',
+            category: 'parents',
+            throughPrompt: 'Whose parent are they?',
+            through: parentsList.map((p) => ({ id: p.id, name: p.name })),
+            unavailableNote: 'add a parent first',
+          },
+          { key: 'parent', label: 'Parent', category: 'parents' },
+          {
+            key: 'stepparent',
+            label: 'Step-parent',
+            category: 'spouse',
+            opts: { skipSpouseParenthood: true, skipCliqueSync: true },
+            throughPrompt: 'Which parent are they married to?',
+            through: data.rootDirect.parents.map((p) => ({ id: p.id, name: p.name })),
+            unavailableNote: 'add a parent first',
+          },
+          { key: 'spouse', label: 'Spouse or partner', category: 'spouse' },
+          { key: 'sibling', label: 'Sibling', category: 'siblings' },
+          {
+            key: 'stepsibling',
+            label: 'Step-sibling',
+            category: 'kids',
+            opts: { skipCliqueSync: true },
+            throughPrompt: 'Which step-parent is their own parent?',
+            through: data.rootDirect.stepParents.map((s) => ({ id: s.person.id, name: s.person.name })),
+            unavailableNote: 'add a step-parent first',
+          },
+          { key: 'child', label: 'Child', category: 'kids' },
         ]
       : []
 
@@ -1018,19 +1014,16 @@ export function FamilyTreeView({
       </svg>
       </div>
 
-      {!readOnly && (
+      {relationshipChoices.length > 0 && (
         <div style={styles.addRow}>
-          {addSlots.map((slot) => (
-            <div key={slot.key} style={styles.addItem}>
-              <span style={styles.addLabel}>{slot.label}:</span>
-              <RelationshipAddPicker
-                people={allPeople}
-                excludeIds={allShownIds}
-                onSelectExisting={(p) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, p, undefined, slot.opts)}
-                onCreateNew={(name) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, undefined, name, slot.opts)}
-              />
-            </div>
-          ))}
+          <AddFamilyMember
+            rootId={data.rootId}
+            rootName={data.rootName}
+            people={allPeople}
+            excludeIds={allShownIds}
+            choices={relationshipChoices}
+            onAdd={(req) => onAddRelationship(req.category, req.subjectId, req.subjectName, req.existing, req.newName, req.opts)}
+          />
         </div>
       )}
 
@@ -1215,7 +1208,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   svgScroll: { overflowX: 'auto', margin: '0 -1.5rem', padding: '0 1.5rem' },
   svg: { display: 'block', margin: '0 auto' },
   addRow: { display: 'flex', flexWrap: 'wrap', gap: space.lg, marginTop: space.xxl, alignItems: 'flex-start' },
-  addItem: { display: 'flex', alignItems: 'center', gap: '0.4rem' },
   addLabel: { fontSize: fontSize.small, color: colors.textFaintest },
   removeSection: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: space.xxl },
   badgeWrapper: { position: 'relative', display: 'inline-block' },

@@ -852,8 +852,17 @@ step-parent is a `spouse` row on the parent, a step-sibling a `parent` row on th
 `skipCliqueSync`) on `linkRelationship` turns off the two blood-inferences for these writes —
 without them `syncSpouseParenthood` would record a step-parent as a parent of the root, and
 `syncFamilyClique` would copy the root's own mother/father onto a step-sibling. The "which parent is
-biological?" question is answered by scoping each picker through a named person ("Step-sibling
-(Michael Galchinsky's child)") rather than asking separately. Also: a parent's deceased spouse is
+biological?" question is answered by a follow-up question in the add flow, never by inference.
+**Single "Add family member" control (2026-08-03, same day, `components/AddFamilyMember.tsx`):** the
+per-relationship "+" row reached seven labelled, wrapping buttons once step relations landed and the
+founder couldn't find the step-parent one at all. Replaced with one button -> pick the person
+(search existing or type a new name) -> pick the relationship from a dropdown -> answer a follow-up
+only when the relationship runs THROUGH someone ("Whose parent are they?", "Which parent are they
+married to?", "Which step-parent is their own parent?"; rendered as static text, not a dead
+dropdown, when there's only one candidate). Relationships whose `through` list is empty stay visible
+but disabled with the reason inline ("Step-sibling — add a step-parent first") rather than vanishing,
+which is the same discoverability problem in miniature. `RelationshipAddPicker` is untouched and
+still backs My Page's circle boxes. Also: a parent's deceased spouse is
 now only inferred as a possible second blood parent when fewer than 2 parents are on file, so a
 step-parent who later dies isn't silently reclassified as a blood parent. Remaining gap: two bio
 parents who BOTH remarried can only place one step-parent adjacent to their own spouse.
