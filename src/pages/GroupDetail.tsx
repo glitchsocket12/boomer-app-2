@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { GROUP_TYPES } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
+import { isSelfOrDescendant } from '../lib/groupDisplayName'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import EditButton from '../components/EditButton'
@@ -108,6 +121,11 @@ export default function GroupDetail({
   const [mergeSearch, setMergeSearch] = useState('')
   const [otherGroups, setOtherGroups] = useState<GroupRef[]>([])
   const [mergeCandidate, setMergeCandidate] = useState<GroupRef | null>(null)
+  // Which action the shared group-picker panel will take on the group that gets picked. Both
+  // outcomes answer the same question ("this group belongs with that one") and were previously
+  // only reachable by merging away a placeholder subgroup, so they share one search UI and can be
+  // switched between after a candidate is picked, rather than being two separate flows.
+  const [mergeMode, setMergeMode] = useState<'merge' | 'nest'>('merge')
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
   const [selfId, setSelfId] = useState<string | null>(null)
@@ -120,8 +138,10 @@ export default function GroupDetail({
   const roster = useGroupRoster()
 
   // Built from local state, not the roster, so it's already correct the instant a rename saves
-  // instead of waiting on a refetch.
-  const displayTitle = parentGroup ? `${parentGroup.name} / ${name}` : name
+  // instead of waiting on a refetch. Only this group's OWN name comes from local state though —
+  // the ancestors above it go through roster.label, which walks the full chain (subgroups nest
+  // arbitrarily deep, so `parentGroup.name` alone would drop every grandparent from the heading).
+  const displayTitle = parentGroup ? `${roster.label(parentGroup.id, parentGroup.name)} / ${name}` : name
   useEffect(() => {
     onDisplayLabel?.(displayTitle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -283,11 +303,12 @@ export default function GroupDetail({
     setParentGroup((parent as GroupRef) ?? null)
   }
 
-  // Item 19 (2026-07-26): child groups nested one level under this one — e.g. a specific mission
-  // under a squadron, or a class year under a larger org. Only ever rendered when this group is
-  // itself a root group (no parentGroup) — a subgroup doesn't get its own child subgroups in the
-  // UI, even though the schema would technically allow it. Same fail-open-on-missing-column
-  // reasoning as loadParent.
+  // Item 19 (2026-07-26): child groups nested under this one — e.g. a specific mission under a
+  // squadron, or a class year under a larger org. As of 2026-08-03 this renders at EVERY depth,
+  // not just on root groups: the self-referencing FK always allowed arbitrary nesting and the
+  // one-level cap was purely a UI restriction, which stopped matching how the founder actually
+  // organizes things (a squadron's flight's crews). Same fail-open-on-missing-column reasoning as
+  // loadParent.
   async function loadSubgroups() {
     const { data, error } = await supabase
       .from('groups')
@@ -494,6 +515,30 @@ export default function GroupDetail({
     invalidateSummary()
   }
 
+  // Drag-and-drop bulk add (parent's member chips -> a subgroup tile). Writes ONLY into the
+  // target SUBGROUP's own person_groups rows -- this page's own (parent) person_groups is never
+  // touched, matching the deliberate no-sync-trigger design (a sync trigger was added by mistake
+  // 2026-07-26 and removed the same day). Same upsert shape as handleApproveAllSuggestions above,
+  // but that function is hardcoded to THIS page's own groupId -- this one takes the drop target
+  // explicitly, since the drop target is always a subgroup, never the group currently being
+  // viewed. Deliberately does NOT reuse loadMembers()/invalidateSummary(): both close over this
+  // page's own groupId (the parent) and would refresh/overwrite the wrong group.
+  async function handleDropAddToSubgroup(targetGroupId: string, people: PersonRef[]) {
+    if (people.length === 0) return
+    await supabase
+      .from('person_groups')
+      .upsert(
+        people.map((p) => ({ person_id: p.id, group_id: targetGroupId })),
+        { onConflict: 'person_id,group_id', ignoreDuplicates: true }
+      )
+    loadSubgroups() // refreshes subgroup tile member counts -- NOT loadMembers(), which only
+                     // refetches this page's own (parent) roster and would be a no-op here
+    // Invalidate (not regenerate) the target subgroup's cached summary -- per CLAUDE.md's cost
+    // rule, never spend an API call regenerating content that hasn't been viewed yet. It lazily
+    // regenerates next time someone actually opens that subgroup, same as any other stale summary.
+    await supabase.from('groups').update({ summary: null }).eq('id', targetGroupId)
+  }
+
   async function handleRemoveMember(person: PersonRef) {
     await supabase.from('person_groups').delete().eq('person_id', person.id).eq('group_id', groupId)
     loadMembers()
@@ -586,14 +631,52 @@ export default function GroupDetail({
     invalidateSummary()
   }
 
-  async function openMerge() {
+  async function openMerge(mode: 'merge' | 'nest') {
     setMergeOpen(true)
+    setMergeMode(mode)
     setMergeCandidate(null)
     setMergeSearch('')
     if (otherGroups.length === 0) {
       const { data } = await supabase.from('groups').select('id, name').neq('id', groupId)
       setOtherGroups((data as GroupRef[]) ?? [])
     }
+  }
+
+  // Reparents THIS group under `mergeCandidate` instead of destroying it — the alternative the
+  // merge flow was being abused for (create a blank subgroup in the target, then merge the real
+  // group away into it), which lost the original group's identity and needed two round trips.
+  // Nothing moves: membership, notes, event tags and associations all stay on this group, which
+  // simply gains a parent. That also makes it trivially reversible via "Move to top level" below,
+  // unlike a merge.
+  async function handleNestUnderGroup() {
+    if (!mergeCandidate) return
+    setActionBusy(true)
+    setActionError(null)
+    const { error } = await supabase.from('groups').update({ parent_group_id: mergeCandidate.id }).eq('id', groupId)
+    setActionBusy(false)
+    if (error) {
+      setActionError("Something went wrong moving this group — please try again.")
+      return
+    }
+    setMergeOpen(false)
+    setMergeCandidate(null)
+    // loadSubgroups calls loadParent on its tail, which re-reads parent_group_id and re-renders
+    // the heading/breadcrumb with the new chain. No summary invalidation on either side: a
+    // group's cached summary describes its own members and notes, and nesting moves neither
+    // (CLAUDE.md rule 3 — don't spend an API call on content that didn't actually change).
+    loadSubgroups()
+  }
+
+  async function handleMoveToTopLevel() {
+    setActionBusy(true)
+    setActionError(null)
+    const { error } = await supabase.from('groups').update({ parent_group_id: null }).eq('id', groupId)
+    setActionBusy(false)
+    if (error) {
+      setActionError("Something went wrong moving this group — please try again.")
+      return
+    }
+    loadSubgroups()
   }
 
   // Folds THIS group into `mergeCandidate` (the one picked from search) — same UX shape as
@@ -840,6 +923,7 @@ export default function GroupDetail({
       suggestionsEnabled={suggestionsEnabled}
       onToggleSuggestions={handleToggleSuggestions}
       onApproveAllSuggestions={handleApproveAllSuggestions}
+      onDropAddToSubgroup={handleDropAddToSubgroup}
       onDenySuggestion={handleDenySuggestion}
       onDenyAllSuggestions={handleDenyAllSuggestions}
       showGroupPicker={showGroupPicker}
@@ -862,14 +946,23 @@ export default function GroupDetail({
       onConfirmDelete={handleDeleteGroup}
       mergeOpen={mergeOpen}
       onOpenMerge={openMerge}
+      mergeMode={mergeMode}
+      onChangeMergeMode={setMergeMode}
       mergeSearch={mergeSearch}
       onMergeSearchChange={setMergeSearch}
       otherGroups={otherGroups}
+      // Excludes this group's own descendants: nesting a group under something already beneath it
+      // would cut that whole branch loose from every root, leaving both unreachable from the
+      // Groups page. Cheap to compute here (roster.parentById is already loaded) and it means the
+      // invalid targets are never offered rather than being rejected after the fact.
+      nestableGroups={otherGroups.filter((g) => !isSelfOrDescendant(g.id, groupId, roster.parentById))}
       mergeCandidate={mergeCandidate}
       onSelectMergeCandidate={setMergeCandidate}
       onCancelMerge={() => setMergeOpen(false)}
       onBackFromMergeCandidate={() => setMergeCandidate(null)}
       onConfirmMerge={handleMergeGroup}
+      onConfirmNest={handleNestUnderGroup}
+      onMoveToTopLevel={handleMoveToTopLevel}
       actionBusy={actionBusy}
       actionError={actionError}
       noteBox={
@@ -903,6 +996,7 @@ export default function GroupDetail({
 // and behaves identically either way. `noteBox` is a slot the real container fills with
 // `NoteWithDetection` — the demo simply doesn't pass it.
 export function GroupDetailView({
+  groupId,
   name,
   groupLabel = (_id, fallbackName) => fallbackName,
   groupType,
@@ -943,6 +1037,7 @@ export function GroupDetailView({
   onToggleMembersExpanded = () => {},
   onAddMember = () => {},
   onRemoveMember = () => {},
+  onDropAddToSubgroup = () => {},
   suggestionsEnabled = false,
   onToggleSuggestions = () => {},
   onApproveAllSuggestions = () => {},
@@ -968,9 +1063,14 @@ export function GroupDetailView({
   onConfirmDelete = () => {},
   mergeOpen = false,
   onOpenMerge = () => {},
+  mergeMode = 'merge',
+  onChangeMergeMode = () => {},
   mergeSearch = '',
   onMergeSearchChange = () => {},
   otherGroups = [],
+  nestableGroups = [],
+  onConfirmNest = () => {},
+  onMoveToTopLevel = () => {},
   mergeCandidate = null,
   onSelectMergeCandidate = () => {},
   onCancelMerge = () => {},
@@ -1025,6 +1125,7 @@ export function GroupDetailView({
   onToggleMembersExpanded?: () => void
   onAddMember?: (person: PersonRef) => void
   onRemoveMember?: (person: PersonRef) => void
+  onDropAddToSubgroup?: (subgroupId: string, people: PersonRef[]) => void
   onApproveAllSuggestions?: (people: PersonRef[]) => void
   onDenySuggestion?: (person: PersonRef) => void
   onDenyAllSuggestions?: (people: PersonRef[]) => void
@@ -1047,21 +1148,77 @@ export function GroupDetailView({
   onCancelDelete?: () => void
   onConfirmDelete?: () => void
   mergeOpen?: boolean
-  onOpenMerge?: () => void
+  onOpenMerge?: (mode: 'merge' | 'nest') => void
+  mergeMode?: 'merge' | 'nest'
+  onChangeMergeMode?: (mode: 'merge' | 'nest') => void
   mergeSearch?: string
   onMergeSearchChange?: (v: string) => void
   otherGroups?: GroupRef[]
+  // otherGroups minus this group's own descendants — the valid targets for nesting (see the
+  // comment where this is computed). Merge has no such restriction, so it keeps using otherGroups.
+  nestableGroups?: GroupRef[]
   mergeCandidate?: GroupRef | null
   onSelectMergeCandidate?: (g: GroupRef) => void
   onCancelMerge?: () => void
   onBackFromMergeCandidate?: () => void
   onConfirmMerge?: () => void
+  onConfirmNest?: () => void
+  onMoveToTopLevel?: () => void
   actionBusy?: boolean
   actionError?: string | null
   noteBox?: ReactNode
 }) {
   const [memberSearch, setMemberSearch] = useState('')
   const memberQuery = memberSearch.trim().toLowerCase()
+
+  // Drag-and-drop mass-add: select several parent-group members, then drag the whole selection
+  // onto a subgroup tile in one motion. `selectMode` gates the chip UI (checkbox-style instead of
+  // navigate-on-click); `activeId` is the chip a drag gesture physically started on (dnd-kit's own
+  // id), used only to render that one chip's "being dragged" state -- the actual people added on
+  // drop always come from `selectedIds`, never from `activeId` alone, since a drag always means
+  // "drag the whole current selection."
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [activeId, setActiveId] = useState<string | null>(null)
+
+  // Leaving selection mode on while navigating to a different group (still possible mid-selection
+  // via an Associated Group chip or an event card on this same page) would silently turn every
+  // member-chip click on the NEXT page into a select-toggle instead of navigation.
+  useEffect(() => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }, [groupId])
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    // A longer delay + movement tolerance than the mouse sensor, so an ordinary finger swipe to
+    // scroll the page isn't captured as a drag -- only a genuine press-and-hold-then-move is.
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
+  )
+
+  function handleToggleSelect(personId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(personId)) next.delete(personId)
+      else next.add(personId)
+      return next
+    })
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    setActiveId(null)
+    const targetId = event.over?.id
+    if (targetId) {
+      const people = explicitMembers.filter((p) => selectedIds.has(p.id))
+      onDropAddToSubgroup(String(targetId), people)
+      setSelectedIds(new Set()) // clear checkmarks so the same batch can't be re-dropped by
+                                 // accident -- selectMode stays on for another batch this visit
+    }
+    // event.over === null (released outside any tile): a deliberate no-op -- no write, and
+    // selection + selectMode both survive exactly as they were so the user can just try again.
+  }
+
+  const selectedPeopleCount = selectedIds.size
   const sortedExplicitMembers = sortByLastName(explicitMembers).filter(
     (p) => !memberQuery || `${p.name} ${p.last_name ?? ''}`.toLowerCase().includes(memberQuery)
   )
@@ -1081,6 +1238,13 @@ export function GroupDetailView({
   )
 
   return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={(event) => setActiveId(String(event.active.id))}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveId(null)}
+    >
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
@@ -1150,7 +1314,47 @@ export function GroupDetailView({
 
       <PhotoGallery />
 
-      <h2 style={styles.membersHeading}>Who's in this group ({explicitMembers.length})</h2>
+      <div style={styles.suggestionHeaderRow}>
+        <h2 style={styles.membersHeading}>Who's in this group ({explicitMembers.length})</h2>
+        {/* No longer gated on `!parentGroup` — a subgroup with its own subgroups can bulk-add its
+            members down into them exactly like a root group can. */}
+        {!readOnly && subgroups.length > 0 && explicitMembers.length > 0 && (
+          selectMode ? (
+            <div style={styles.suggestionActionRow}>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set(explicitMembers.map((p) => p.id)))}
+                style={styles.addAllButton}
+              >
+                Select all {explicitMembers.length}
+              </button>
+              <button type="button" onClick={() => setSelectedIds(new Set())} style={styles.removeAllButton}>
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectMode(false)
+                  setSelectedIds(new Set())
+                }}
+                style={styles.removeAllButton}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setSelectMode(true)} style={styles.addGroupButton}>
+              Select multiple
+            </button>
+          )
+        )}
+      </div>
+      {selectMode && (
+        <p style={styles.eventOnlyLabel}>
+          Selecting members — tap to add or remove, then drag onto a subgroup below
+          {selectedPeopleCount > 0 ? ` (${selectedPeopleCount} selected)` : ''}
+        </p>
+      )}
       {explicitMembers.length === 0 ? (
         <p style={styles.empty}>No members yet — add someone using the chat box below.</p>
       ) : (
@@ -1169,6 +1373,9 @@ export function GroupDetailView({
                   isSelf={p.id === selfId}
                   onSelect={() => onSelectPerson(p)}
                   onRemove={readOnly ? undefined : () => onRemoveMember(p)}
+                  selectable={selectMode}
+                  selected={selectedIds.has(p.id)}
+                  onToggleSelect={() => handleToggleSelect(p.id)}
                 />
               ))}
             </div>
@@ -1279,36 +1486,25 @@ export function GroupDetailView({
         </>
       )}
 
-      {!parentGroup && (
-        <>
-          <div style={styles.suggestionHeaderRow}>
-            <h2 style={styles.membersHeading}>Subgroups</h2>
-            {!readOnly && (
-              <button type="button" onClick={onAddSubgroup} style={styles.addGroupButton} disabled={addingSubgroup}>
-                {addingSubgroup ? '…' : '+ New Subgroup'}
-              </button>
-            )}
-          </div>
-          {subgroupError && <p style={styles.actionErrorBanner}>{subgroupError}</p>}
-          {subgroups.length === 0 ? (
-            <p style={styles.empty}>No subgroups yet.</p>
-          ) : (
-            <div style={styles.subgroupGrid}>
-              {subgroups.map((sg) => {
-                const memberCount = (sg.person_groups ?? []).filter((pg) => pg.people).length
-                return (
-                  <button key={sg.id} type="button" onClick={() => onSelectGroup(sg)} style={styles.subgroupTile}>
-                    <span style={styles.subgroupTileName}>{sg.name}</span>
-                    <span style={styles.subgroupTileMeta}>
-                      {memberCount} member{memberCount === 1 ? '' : 's'}
-                      {sg.group_type ? ` · ${sg.group_type}` : ''}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </>
+      {/* Rendered at every depth (2026-08-03) — a subgroup gets its own subgroups, and so on down.
+          Previously gated on `!parentGroup`, which capped the tree at one level. */}
+      <div style={styles.suggestionHeaderRow}>
+        <h2 style={styles.membersHeading}>Subgroups</h2>
+        {!readOnly && (
+          <button type="button" onClick={onAddSubgroup} style={styles.addGroupButton} disabled={addingSubgroup}>
+            {addingSubgroup ? '…' : '+ New Subgroup'}
+          </button>
+        )}
+      </div>
+      {subgroupError && <p style={styles.actionErrorBanner}>{subgroupError}</p>}
+      {subgroups.length === 0 ? (
+        <p style={styles.empty}>No subgroups yet.</p>
+      ) : (
+        <div style={styles.subgroupGrid}>
+          {subgroups.map((sg) => (
+            <SubgroupTile key={sg.id} subgroup={sg} isDragActive={activeId !== null} onSelectGroup={onSelectGroup} />
+          ))}
+        </div>
       )}
 
       <div style={styles.suggestionHeaderRow}>
@@ -1471,9 +1667,19 @@ export function GroupDetailView({
 
           {!mergeOpen && !deleteConfirming && (
             <div style={styles.dangerButtonRow}>
-              <button type="button" onClick={onOpenMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+              <button type="button" onClick={() => onOpenMerge('nest')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                Move this under another group…
+              </button>
+              <button type="button" onClick={() => onOpenMerge('merge')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
                 This is a duplicate — merge it away…
               </button>
+              {/* Only offered when there's actually a parent to leave. Kept next to "move under"
+                  so the two directions of the same action sit together. */}
+              {parentGroup && (
+                <button type="button" onClick={onMoveToTopLevel} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                  Move to top level
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onStartDelete}
@@ -1513,10 +1719,14 @@ export function GroupDetailView({
             <div style={styles.suggestBanner}>
               {!mergeCandidate ? (
                 <>
-                  <span>Search for the group you want to keep. Everything here will move there, and this group will be deleted:</span>
+                  <span>
+                    {mergeMode === 'nest'
+                      ? 'Search for the group this one should sit under. This group keeps everything it has — its members, notes and events all stay put — it just becomes a subgroup of the one you pick:'
+                      : 'Search for the group you want to keep. Everything here will move there, and this group will be deleted:'}
+                  </span>
                   <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search groups…" />
                   <div style={styles.mergeResultsList}>
-                    {otherGroups
+                    {(mergeMode === 'nest' ? nestableGroups : otherGroups)
                       .filter((g) =>
                         mergeSearch.trim() ? groupLabel(g.id, g.name).toLowerCase().includes(mergeSearch.trim().toLowerCase()) : false
                       )
@@ -1538,6 +1748,22 @@ export function GroupDetailView({
                     </button>
                   </div>
                 </>
+              ) : mergeMode === 'nest' ? (
+                <>
+                  <span>
+                    Make this group a subgroup of "{groupLabel(mergeCandidate.id, mergeCandidate.name)}"? Nothing is
+                    deleted or moved — this group keeps its own members, notes and events, and you can move it back out
+                    at any time.
+                  </span>
+                  <div style={styles.suggestButtonRow}>
+                    <button type="button" onClick={onConfirmNest} style={styles.suggestYesButton} disabled={actionBusy}>
+                      {actionBusy ? 'Moving…' : 'Yes, move it'}
+                    </button>
+                    <button type="button" onClick={onBackFromMergeCandidate} style={styles.suggestNoButton} disabled={actionBusy}>
+                      Back
+                    </button>
+                  </div>
+                </>
               ) : (
                 <>
                   <span>
@@ -1548,6 +1774,19 @@ export function GroupDetailView({
                     <button type="button" onClick={onConfirmMerge} style={styles.suggestYesButton} disabled={actionBusy}>
                       {actionBusy ? 'Merging…' : 'Yes, merge'}
                     </button>
+                    {/* The escape hatch for the exact workflow this feature replaces: the founder
+                        reaches for "merge" wanting "put this under that", and can switch without
+                        starting over. Only offered when the picked group is a legal nest target. */}
+                    {nestableGroups.some((g) => g.id === mergeCandidate.id) && (
+                      <button
+                        type="button"
+                        onClick={() => onChangeMergeMode('nest')}
+                        style={styles.suggestNoButton}
+                        disabled={actionBusy}
+                      >
+                        Make it a subgroup instead
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={onBackFromMergeCandidate}
@@ -1564,6 +1803,14 @@ export function GroupDetailView({
         </div>
       )}
     </div>
+    <DragOverlay>
+      {activeId && selectedPeopleCount > 0 ? (
+        <div style={styles.dragOverlayPill}>
+          {selectedPeopleCount} member{selectedPeopleCount === 1 ? '' : 's'}
+        </div>
+      ) : null}
+    </DragOverlay>
+    </DndContext>
   )
 }
 
@@ -1655,25 +1902,55 @@ function MemberChip({
   isSelf = false,
   onSelect,
   onRemove,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
 }: {
   person: PersonRef
   isSelf?: boolean
   onSelect: () => void
   onRemove?: () => void
+  selectable?: boolean
+  selected?: boolean
+  onToggleSelect?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
   const label = isSelf ? 'You' : `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
 
+  // Only a selected chip is a real drag source -- dragging always means "drag the whole current
+  // selection," never just this one chip alone. An unselected chip in select mode just toggles on
+  // tap, with no drag listeners attached.
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: person.id,
+    disabled: !selected,
+  })
+
   return (
     <div
-      style={styles.suggestionWrapper}
+      ref={setNodeRef}
+      {...(selected ? attributes : {})}
+      {...(selected ? listeners : {})}
+      style={{
+        ...styles.suggestionWrapper,
+        // Set before a touch gesture starts (not just while isDragging) -- touch-action is a
+        // browser-compositor property read at touch-start, so it has to already be in place by
+        // the time a finger lands, scoped to just the chips the user has deliberately selected.
+        ...(selected ? { touchAction: 'none' } : {}),
+        ...(isDragging ? styles.chipBeingDragged : {}),
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <button onClick={onSelect} style={styles.person}>
+      <button
+        type="button"
+        onClick={selectable ? onToggleSelect : onSelect}
+        style={{ ...styles.person, ...(selected ? styles.personSelected : {}) }}
+        role={selectable ? 'checkbox' : undefined}
+        aria-checked={selectable ? selected : undefined}
+      >
         {label}
       </button>
-      {(hovered || IS_TOUCH) && onRemove && (
+      {!selectable && (hovered || IS_TOUCH) && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -1692,6 +1969,48 @@ function MemberChip({
         </button>
       )}
     </div>
+  )
+}
+
+// One subgroup tile on the parent group's page. Pulled out of the subgroups.map() into its own
+// component because each tile needs its own useDroppable() call -- calling a hook directly inside
+// a bare .map() callback breaks React's rules the moment subgroups.length changes between
+// renders, since the number of hook calls has to stay stable across a render.
+function SubgroupTile({
+  subgroup,
+  isDragActive,
+  onSelectGroup,
+}: {
+  subgroup: SubgroupRef
+  isDragActive: boolean
+  onSelectGroup: (group: GroupRef) => void
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: subgroup.id })
+  const memberCount = (subgroup.person_groups ?? []).filter((pg) => pg.people).length
+  return (
+    <button
+      ref={setNodeRef}
+      key={subgroup.id}
+      type="button"
+      // dnd-kit fires onDragEnd on DndContext, entirely separate from this button's own onClick,
+      // and the mousedown/touchstart that starts a drag happens on a member chip, not this tile
+      // -- so a drop can't itself synthesize a click here. This guard is just cheap insurance
+      // against inconsistent touch-click-synthesis quirks across mobile browsers.
+      onClick={() => {
+        if (!isDragActive) onSelectGroup(subgroup)
+      }}
+      style={{
+        ...styles.subgroupTile,
+        ...(isDragActive ? styles.subgroupTileDroppable : {}),
+        ...(isOver ? styles.subgroupTileDropActive : {}),
+      }}
+    >
+      <span style={styles.subgroupTileName}>{subgroup.name}</span>
+      <span style={styles.subgroupTileMeta}>
+        {memberCount} member{memberCount === 1 ? '' : 's'}
+        {subgroup.group_type ? ` · ${subgroup.group_type}` : ''}
+      </span>
+    </button>
   )
 }
 
@@ -1836,6 +2155,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
+  personSelected: { backgroundColor: colors.ink, color: colors.onFill },
+  chipBeingDragged: { opacity: 0.4 },
   suggestionWrapper: { position: 'relative', display: 'inline-block' },
   denyBadge: {
     position: 'absolute',
@@ -1900,6 +2221,20 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   subgroupTileName: { fontSize: fontSize.base, color: colors.ink },
   subgroupTileMeta: { fontSize: fontSize.small, color: colors.textFaint },
+  // Deliberately the green "ink" family rather than the gold "suggestion" family used elsewhere
+  // on this page, so a user never confuses "the AI suggested this" with "I dragged this myself."
+  subgroupTileDroppable: { border: `1px dashed ${colors.ink}`, backgroundColor: colors.inkWash },
+  subgroupTileDropActive: { border: `2px solid ${colors.ink}`, backgroundColor: colors.inkPale },
+  dragOverlayPill: {
+    fontSize: fontSize.body,
+    padding: '0.5rem 1rem',
+    borderRadius: radius.pill,
+    backgroundColor: colors.ink,
+    color: colors.onFill,
+    boxShadow: shadow.raised,
+    fontFamily,
+    cursor: 'grabbing',
+  },
   renameForm: { display: 'flex', gap: space.md, alignItems: 'center', marginBottom: '0.4rem', flexWrap: 'wrap' },
   typeSelect: {
     fontSize: fontSize.label,

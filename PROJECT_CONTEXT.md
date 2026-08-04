@@ -407,7 +407,15 @@ src/
 │   │                            in Onboarding.tsx's Stage 4 group creation), and search
 │   │                            excludes the founder's own name from member-name
 │   │                            matching so searching your own surname only surfaces
-│   │                            groups with someone ELSE by that name, or named for it
+│   │                            groups with someone ELSE by that name, or named for it.
+│   │                            Drag-and-drop nesting (2026-08-03): each card has a ⠿ grip
+│   │                            handle (@dnd-kit); drag it onto another card to make that
+│   │                            group its parent. Only the handle is a drag source — a
+│   │                            whole-card drag would swallow the member/event chip clicks.
+│   │                            Drop opens a named confirm banner rather than writing
+│   │                            immediately (an accidental drag must not silently
+│   │                            reorganize the tree); cycle-guarded via isSelfOrDescendant.
+│   │                            readOnly (landing demo) returns the list with no DndContext.
 │   ├── GroupDetail.tsx        — "Generate this family's tree →" button on Family-typed
 │   │                            groups (item 41), passes explicit member ids straight through
 │   │                            to FamilyTree.tsx (`memberIds` prop) which calls
@@ -445,7 +453,21 @@ src/
 │   │                            search-and-pick survivor, confirm, the group you're
 │   │                            standing on folds away — moves membership,
 │   │                            event tags, associated groups, and notes/
-│   │                            source_group_id attribution over, self-links dropped)
+│   │                            source_group_id attribution over, self-links dropped).
+│   │                            Subgroups section renders at EVERY depth as of 2026-08-03
+│   │                            (was gated on !parentGroup, capping the tree at one level).
+│   │                            Same 2026-08-03 pass added reparenting to the danger zone:
+│   │                            "Move this under another group…" and "Move to top level"
+│   │                            beside the merge button, plus a "Make it a subgroup
+│   │                            instead" branch on the merge confirm step — all three
+│   │                            replace the old workaround (create a blank subgroup in the
+│   │                            target, then merge the real group away into it), which
+│   │                            destroyed a group to express a one-column change. Nesting
+│   │                            moves NOTHING: members/notes/events/associations stay put,
+│   │                            the group just gains a parent, and it's reversible. One
+│   │                            shared search picker drives both outcomes (`mergeMode`);
+│   │                            nest targets exclude this group's own descendants
+│   │                            (isSelfOrDescendant) so a drop can't orphan a branch
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
 │   │                            created_at), full date incl. day (e.g. "August 3,
 │   │                            2026") via formatEventWhen (2026-08-03), grouped under
@@ -1243,15 +1265,20 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               founder SQL run, see §10), parent_group_id uuid? (item 19, 2026-07-26 —
               self-referencing FK, ON DELETE SET NULL, CHECK parent_group_id != id;
               nested subgroups, e.g. a mission under a squadron or a class year under a
-              school group — one level deep only in the UI, arbitrary depth in schema;
+              school group — ARBITRARY DEPTH in both schema and UI as of 2026-08-03 (was
+              one level deep in the UI only, a gate on !parentGroup in GroupDetail.tsx;
               migrated live 2026-07-26). Subgroup membership is deliberately independent of
               the parent's — no sync trigger. One was added by mistake 2026-07-26 and removed
               same day before ever being run (contradicted this design decision). Subgroup
-              names render as "Parent / Subgroup" APP-WIDE (2026-08-01, was pickers-only
-              2026-07-30) so same-named subgroups under different parents (e.g. two units each
+              names render as the FULL ancestor chain "A / B / C" APP-WIDE (full chain
+              2026-08-03, immediate parent only 2026-08-01, pickers-only 2026-07-30) so
+              same-named subgroups under different parents (e.g. two units each
               with a "Pilots") stay distinguishable — lib/groupDisplayName.ts owns the format,
               lib/groupRoster.ts's useGroupRoster() hook serves label(id, fallbackName) to any
-              site holding only {id, name}. Two deliberate BARE exceptions: a group's own h1 on
+              site holding only {id, name}. groupDisplayName's 3rd arg (parentById) is what
+              turns on full-chain walking — callers passing only a name map still get the old
+              one-level label. Same file exports isSelfOrDescendant(), the cycle guard every
+              reparenting path uses. Two deliberate BARE exceptions: a group's own h1 on
               GroupDetail (has "↑ Part of X" one line below, and the rename field edits the bare
               name) and the subgroup tiles on the parent's own page. Search filters match on the
               qualified string, so typing a parent's name finds its subgroups.
@@ -1387,7 +1414,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 16. Auto-notes from chat for every person mentioned (events do this; extend everywhere).
 17. Long story/voice-note handling (1–2 min recording parsed into all its facts) — chat currently chokes on long stories.
 18. Real-time voice transcription (words appear as you speak; Whisper is batch-only — partial option: Web Speech captions on non-iPhone only).
-19. ~~Group hierarchy~~ — **subgroups DONE 2026-07-26, migrated and verified live.** Founder's real ask, clarified 2026-07-26: nested subgroups under an existing group (e.g. a specific mission under "22 AS", or class year/staff/role under "Wings of Blue"), each with independent membership, so events can be tagged to the specific subgroup. Shipped as a self-referencing `groups.parent_group_id` (one level deep in the UI) — see §3 GroupDetail.tsx/Groups.tsx entries and §6. Because a subgroup is just a normal `groups` row, every existing group-picker (EventDetail's "Associate a Group", ImportReview, PersonDetail's "Associated Groups") already worked on it with zero extra code, confirmed live. Still open, deliberately deferred (founder feedback 2026-07-26, given the 2026-07-26 auto-add-to-groups revert): a "rules engine" auto-deriving group C from group A + group B membership — if revisited, should suggest-and-confirm rather than silently auto-write, same as item 15's connection scanning.
+19. ~~Group hierarchy~~ — **subgroups DONE 2026-07-26, migrated and verified live.** Founder's real ask, clarified 2026-07-26: nested subgroups under an existing group (e.g. a specific mission under "22 AS", or class year/staff/role under "Wings of Blue"), each with independent membership, so events can be tagged to the specific subgroup. Shipped as a self-referencing `groups.parent_group_id` — see §3 GroupDetail.tsx/Groups.tsx entries and §6. **Extended 2026-08-03 (founder ask):** the UI's one-level cap is gone (arbitrary depth, subgroups of subgroups), and an EXISTING group can now be reparented two ways — drag its card onto another group's card on Groups.tsx, or "Move this under another group…" / "Make it a subgroup instead" in GroupDetail's danger zone. Both replace the founder's workaround of creating a blank subgroup in the target and merging the real group away into it. NOT browser-verified before pushing (founder said push; build + 79 tests green, click-through never ran — no logged-in session available that session). Because a subgroup is just a normal `groups` row, every existing group-picker (EventDetail's "Associate a Group", ImportReview, PersonDetail's "Associated Groups") already worked on it with zero extra code, confirmed live. Still open, deliberately deferred (founder feedback 2026-07-26, given the 2026-07-26 auto-add-to-groups revert): a "rules engine" auto-deriving group C from group A + group B membership — if revisited, should suggest-and-confirm rather than silently auto-write, same as item 15's connection scanning.
 20. Data viz: family tree, connection map.
 21. Internet lookup for added context.
 22. ~~Settings page~~ — **DONE 2026-07-23** (v1, see item 49 for what shipped). Of the six candidates speculated here, only chat tone/About shipped in v1; tile colors, suggestion sensitivity, and terminology library remain open (each needs new infrastructure built first — a theme layer, a suggestion-frequency concept, a centralized vocabulary module, respectively). "User's own profile/library" was considered and cut from Settings entirely — that's app navigation (already reachable via the main nav), not a setting.

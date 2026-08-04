@@ -36,13 +36,14 @@ export function useGroupRoster(): {
   return useMemo(() => {
     const nameById = new Map(rows.map((r) => [r.id, r.name]))
     const rowById = new Map(rows.map((r) => [r.id, r]))
+    const parentById = new Map(rows.map((r) => [r.id, r.parent_group_id]))
     // An id we've never seen falls back too — covers a group `converse` created server-side
-    // partway through a chat turn, after this roster was fetched.
+    // partway through a chat turn, after this roster was fetched. `parentById` is passed so the
+    // label walks the whole ancestor chain, not just one level (subgroups nest arbitrarily deep).
     const label: GroupLabelFn = (id, fallbackName) => {
       const row = rowById.get(id)
-      return row ? groupDisplayName(row, nameById) : fallbackName
+      return row ? groupDisplayName(row, nameById, parentById) : fallbackName
     }
-    const parentById = new Map(rows.map((r) => [r.id, r.parent_group_id]))
     return { nameById, label, parentById }
   }, [rows])
 }

@@ -1,10 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 import { GROUP_TYPES } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
+import { isSelfOrDescendant } from '../lib/groupDisplayName'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
 type PersonRef = { id: string; name: string; last_name: string | null; is_self?: boolean }
@@ -178,6 +191,25 @@ export default function Groups({
     onSelectGroup({ id: data.id, name: data.name })
   }
 
+  // Reparents an EXISTING group under another by dragging its card onto theirs. Replaces the
+  // workaround the founder had been using (create a blank subgroup in the target, open the real
+  // group, merge it away into the blank) — that destroyed and recreated a group to express what
+  // is really a one-column change. Nothing moves here: the dragged group keeps its own members,
+  // notes, events and associations, it just gains a parent.
+  //
+  // No summary invalidation on either side — a group's cached summary describes its own members
+  // and notes, neither of which this touches (CLAUDE.md rule 3).
+  async function handleNestGroup(childId: string, parentId: string) {
+    const { error } = await supabase.from('groups').update({ parent_group_id: parentId }).eq('id', childId)
+    if (error) {
+      setAddError("Couldn't move that group — please try again.")
+      return
+    }
+    // Full reload rather than a local splice: the child drops out of the resting list entirely
+    // (filterGroups hides non-root groups), and the roster labels above it change too.
+    loadGroups()
+  }
+
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
   return (
@@ -194,6 +226,8 @@ export default function Groups({
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
       groupLabel={groupRoster.label}
+      parentById={groupRoster.parentById}
+      onNestGroup={handleNestGroup}
     />
   )
 }
@@ -213,6 +247,8 @@ export function GroupsView({
   onSelectGroup,
   onSelectEvent,
   groupLabel = (_id, fallbackName) => fallbackName,
+  parentById = new Map(),
+  onNestGroup = () => {},
   readOnly = false,
 }: {
   groups: Group[]
@@ -228,11 +264,46 @@ export function GroupsView({
   onSelectEvent: (event: { id: string; summary: string }) => void
   // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
   groupLabel?: GroupLabelFn
+  // Group id -> its parent's id. Only used to reject a drop that would make a cycle; defaults to
+  // empty for the landing-page demo, which has no subgroups and never drags.
+  parentById?: Map<string, string | null>
+  onNestGroup?: (childId: string, parentId: string) => void
   readOnly?: boolean
 }) {
   const filteredGroups = filterGroups(groups, search, typeFilter, groupLabel)
 
-  return (
+  // Drag a group card onto another group's card to make it a subgroup of that one. `activeId` is
+  // the card currently being dragged; `pendingNest` is a picked-up-and-dropped pair awaiting
+  // confirmation. The drop deliberately does NOT write immediately — reorganizing the group tree
+  // is exactly the kind of structural change an accidental drag shouldn't be able to make
+  // silently, and the confirm line names both groups so a mis-drop is obvious before it lands.
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [pendingNest, setPendingNest] = useState<{ child: Group; parent: Group } | null>(null)
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    // Longer delay + movement tolerance than the mouse sensor so an ordinary finger swipe to
+    // scroll this list isn't captured as a drag — only a real press-and-hold-then-move is. Same
+    // values as the member-chip drag on GroupDetail, for one consistent gesture across the app.
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
+  )
+
+  function handleDragEnd(event: DragEndEvent) {
+    setActiveId(null)
+    const childId = String(event.active.id).replace(/^drag:/, '')
+    const overId = event.over ? String(event.over.id).replace(/^drop:/, '') : null
+    // Released outside any card, or back onto itself: a deliberate no-op, no write, no prompt.
+    if (!overId || overId === childId) return
+    // Can't nest a group under something already beneath it — that would cut the whole branch
+    // loose from every root and make both unreachable from this page. Unreachable while the list
+    // is at rest (only root groups show), but a search surfaces subgroups too, so it's reachable.
+    if (isSelfOrDescendant(overId, childId, parentById)) return
+    const child = groups.find((g) => g.id === childId)
+    const parent = groups.find((g) => g.id === overId)
+    if (child && parent) setPendingNest({ child, parent })
+  }
+
+  const list = (
     <div style={styles.page}>
       <div style={styles.headingRow}>
         <h1 style={styles.heading}>Groups</h1>
@@ -243,6 +314,31 @@ export function GroupsView({
         )}
       </div>
       {addError && <p style={styles.addErrorText}>{addError}</p>}
+
+      {pendingNest && (
+        <div style={styles.nestConfirmBanner}>
+          <span>
+            Make "{groupLabel(pendingNest.child.id, pendingNest.child.name)}" a subgroup of "
+            {groupLabel(pendingNest.parent.id, pendingNest.parent.name)}"? It keeps its own members, notes and events —
+            it just moves under there, and you can move it back out from its own page.
+          </span>
+          <div style={styles.nestConfirmButtonRow}>
+            <button
+              type="button"
+              onClick={() => {
+                onNestGroup(pendingNest.child.id, pendingNest.parent.id)
+                setPendingNest(null)
+              }}
+              style={styles.nestConfirmYesButton}
+            >
+              Yes, move it
+            </button>
+            <button type="button" onClick={() => setPendingNest(null)} style={styles.nestConfirmNoButton}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {groups.length === 0 && (
         <p style={styles.empty}>
@@ -277,48 +373,145 @@ export function GroupsView({
       )}
 
       <div style={styles.list}>
-        {filteredGroups.map(({ group, explicitMembers, events }) => {
-          const shownMembers = explicitMembers.slice(0, MEMBER_LIMIT)
-          const shownEvents = events.slice(0, AFFILIATION_LIMIT)
-
-          return (
-            <div key={group.id} style={styles.card}>
-              <div style={styles.titleRow}>
-                <button onClick={() => onSelectGroup(group)} style={styles.titleButton}>
-                  {groupLabel(group.id, group.name)}
-                </button>
-                {group.group_type && <span style={styles.typeBadge}>{group.group_type}</span>}
-              </div>
-
-              <p style={styles.summary}>{group.summary || 'Figuring out what this group is about…'}</p>
-
-              {explicitMembers.length === 0 ? (
-                <p style={styles.empty}>No members yet.</p>
-              ) : (
-                <div style={styles.chipRow}>
-                  {shownMembers.map((p) => (
-                    <PersonChip key={p.id} label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`} onClick={() => onSelectPerson(p)} />
-                  ))}
-                  {explicitMembers.length > MEMBER_LIMIT && (
-                    <span style={styles.moreText}>+{explicitMembers.length - MEMBER_LIMIT} more</span>
-                  )}
-                </div>
-              )}
-
-              {shownEvents.length > 0 && (
-                <div style={{ ...styles.chipRow, marginTop: '0.5rem' }}>
-                  {shownEvents.map((e) => (
-                    <EventChip key={e.id} label={e.summary} onClick={() => onSelectEvent(e)} />
-                  ))}
-                  {events.length > AFFILIATION_LIMIT && (
-                    <span style={styles.moreText}>+{events.length - AFFILIATION_LIMIT} more</span>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
+        {filteredGroups.map(({ group, explicitMembers, events }) => (
+          <GroupCard
+            key={group.id}
+            group={group}
+            explicitMembers={explicitMembers}
+            events={events}
+            label={groupLabel(group.id, group.name)}
+            draggable={!readOnly}
+            isDragActive={activeId !== null}
+            isBeingDragged={activeId === group.id}
+            onSelectPerson={onSelectPerson}
+            onSelectGroup={onSelectGroup}
+            onSelectEvent={onSelectEvent}
+          />
+        ))}
       </div>
+    </div>
+  )
+
+  // The landing-page demo renders this same list with readOnly — no drag sensors, no DndContext,
+  // so the demo stays a pure static render with nothing that could fire a write.
+  if (readOnly) return list
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={(event) => setActiveId(String(event.active.id).replace(/^drag:/, ''))}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveId(null)}
+    >
+      {list}
+      <DragOverlay>
+        {activeId ? (
+          <div style={styles.dragOverlayPill}>
+            {groupLabel(activeId, groups.find((g) => g.id === activeId)?.name ?? 'Group')}
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
+  )
+}
+
+// One group card. Split into its own component because each card needs its own useDraggable and
+// useDroppable call — hooks can't be called inside a bare .map() callback, since the number of
+// hook calls per render has to stay stable and filteredGroups changes length as you search.
+//
+// The card is a drop target as a whole, but only the grip handle is a drag source: making the
+// whole card draggable would swallow clicks on the member/event chips inside it, which are the
+// card's primary interaction.
+function GroupCard({
+  group,
+  explicitMembers,
+  events,
+  label,
+  draggable,
+  isDragActive,
+  isBeingDragged,
+  onSelectPerson,
+  onSelectGroup,
+  onSelectEvent,
+}: {
+  group: Group
+  explicitMembers: PersonRef[]
+  events: { id: string; summary: string }[]
+  label: string
+  draggable: boolean
+  isDragActive: boolean
+  isBeingDragged: boolean
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectGroup: (group: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
+}) {
+  const shownMembers = explicitMembers.slice(0, MEMBER_LIMIT)
+  const shownEvents = events.slice(0, AFFILIATION_LIMIT)
+
+  // Prefixed ids: a card is BOTH a draggable and a droppable, and dnd-kit keeps those in separate
+  // registries but reports them through the same `active`/`over` ids — sharing a raw group id
+  // between the two makes the drag-end handler ambiguous about which role it's reading.
+  const { attributes, listeners, setNodeRef: setDragRef } = useDraggable({ id: `drag:${group.id}`, disabled: !draggable })
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: `drop:${group.id}`, disabled: !draggable })
+
+  return (
+    <div
+      ref={setDropRef}
+      style={{
+        ...styles.card,
+        // Only OTHER cards light up as targets — a card can't be dropped on itself.
+        ...(isDragActive && !isBeingDragged ? styles.cardDroppable : {}),
+        ...(isOver && !isBeingDragged ? styles.cardDropActive : {}),
+        ...(isBeingDragged ? styles.cardBeingDragged : {}),
+      }}
+    >
+      <div style={styles.titleRow}>
+        {draggable && (
+          <span
+            ref={setDragRef}
+            {...listeners}
+            {...attributes}
+            style={styles.dragHandle}
+            // touch-action has to be in place before a finger lands (the browser compositor reads
+            // it at touch-start, not mid-gesture), so it's set here rather than while dragging.
+            title="Drag onto another group to make this a subgroup of it"
+            aria-label={`Drag ${label} onto another group to make it a subgroup`}
+          >
+            ⠿
+          </span>
+        )}
+        <button onClick={() => onSelectGroup(group)} style={styles.titleButton}>
+          {label}
+        </button>
+        {group.group_type && <span style={styles.typeBadge}>{group.group_type}</span>}
+      </div>
+
+      <p style={styles.summary}>{group.summary || 'Figuring out what this group is about…'}</p>
+
+      {explicitMembers.length === 0 ? (
+        <p style={styles.empty}>No members yet.</p>
+      ) : (
+        <div style={styles.chipRow}>
+          {shownMembers.map((p) => (
+            <PersonChip key={p.id} label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`} onClick={() => onSelectPerson(p)} />
+          ))}
+          {explicitMembers.length > MEMBER_LIMIT && (
+            <span style={styles.moreText}>+{explicitMembers.length - MEMBER_LIMIT} more</span>
+          )}
+        </div>
+      )}
+
+      {shownEvents.length > 0 && (
+        <div style={{ ...styles.chipRow, marginTop: '0.5rem' }}>
+          {shownEvents.map((e) => (
+            <EventChip key={e.id} label={e.summary} onClick={() => onSelectEvent(e)} />
+          ))}
+          {events.length > AFFILIATION_LIMIT && (
+            <span style={styles.moreText}>+{events.length - AFFILIATION_LIMIT} more</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -357,6 +550,63 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: radius.lg,
     padding: '1.25rem',
     boxShadow: shadow.card,
+  },
+  // Deliberately the green "ink" family rather than the gold "suggestion" family used for AI
+  // suggestions elsewhere, so "I dragged this myself" never reads as "the AI proposed this".
+  cardDroppable: { outline: `1px dashed ${colors.ink}`, outlineOffset: '2px' },
+  cardDropActive: { outline: `2px solid ${colors.ink}`, outlineOffset: '2px', backgroundColor: colors.inkWash },
+  cardBeingDragged: { opacity: 0.4 },
+  dragHandle: {
+    cursor: 'grab',
+    color: colors.textFaintest,
+    fontSize: fontSize.base,
+    lineHeight: 1,
+    padding: '0.15rem 0.1rem',
+    touchAction: 'none',
+    userSelect: 'none',
+  },
+  dragOverlayPill: {
+    fontSize: fontSize.base,
+    padding: '0.5rem 1rem',
+    borderRadius: radius.pill,
+    backgroundColor: colors.ink,
+    color: colors.onFill,
+    boxShadow: shadow.card,
+    fontFamily,
+    cursor: 'grabbing',
+  },
+  nestConfirmBanner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: space.md,
+    backgroundColor: colors.inkWash,
+    border: `1px solid ${colors.ink}`,
+    borderRadius: radius.md,
+    padding: '0.9rem 1rem',
+    marginBottom: space.xl,
+    fontSize: fontSize.body,
+    color: colors.inkPlain,
+  },
+  nestConfirmButtonRow: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
+  nestConfirmYesButton: {
+    fontSize: fontSize.base,
+    padding: '0.5rem 1rem',
+    borderRadius: radius.md,
+    border: 'none',
+    backgroundColor: colors.ink,
+    color: colors.onFill,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  nestConfirmNoButton: {
+    fontSize: fontSize.base,
+    padding: '0.5rem 1rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.inkPlain,
+    cursor: 'pointer',
+    fontFamily,
   },
   titleRow: { display: 'flex', alignItems: 'center', gap: space.md, marginBottom: '0.25rem', flexWrap: 'wrap' },
   titleButton: {

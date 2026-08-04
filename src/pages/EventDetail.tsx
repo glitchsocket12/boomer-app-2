@@ -830,6 +830,8 @@ export function EventDetailView({
   // Built from the full roster (not just tagged groups) so a subgroup's parent name resolves
   // even when the parent itself isn't tagged to this event.
   const groupNameById = new Map(allGroupsList.map((g) => [g.id, g.name]))
+  // Lets groupDisplayName walk the whole ancestor chain rather than stopping at one level.
+  const groupParentById = new Map(allGroupsList.map((g) => [g.id, g.parent_group_id ?? null]))
 
   const attendees = new Map<string, PersonRef>()
   for (const n of moment.notes ?? []) {
@@ -1046,7 +1048,7 @@ export function EventDetailView({
               <AssociatedGroupChip
                 key={g.id}
                 group={g}
-                displayName={groupDisplayName(g, groupNameById)}
+                displayName={groupDisplayName(g, groupNameById, groupParentById)}
                 onSelect={() => onSelectGroup(g)}
                 onRemove={readOnly ? undefined : () => onUntagGroup(g.id)}
               />
@@ -1061,7 +1063,7 @@ export function EventDetailView({
           <SearchAddPicker
             items={allGroupsList
               .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-              .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
+              .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById, groupParentById) }))}
             placeholder="Tag this event to a group…"
             onSelect={(item) => onTagGroup(item.id)}
             emptyText="No groups match."

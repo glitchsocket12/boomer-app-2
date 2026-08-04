@@ -358,6 +358,11 @@ function CandidateCard({
   // Built from the full roster so a subgroup's parent name resolves even when the parent isn't
   // itself one of this person's existing/selected groups.
   const groupNameById = useMemo(() => new Map(allGroups.map((g) => [g.id, g.name])), [allGroups])
+  // Lets groupDisplayName walk the whole ancestor chain rather than stopping at one level.
+  const groupParentById = useMemo(
+    () => new Map(allGroups.map((g) => [g.id, g.parent_group_id ?? null])),
+    [allGroups]
+  )
   const birthdayLabel = formatDate(candidate.birthday_month, candidate.birthday_day, candidate.birthday_year)
   const anniversaryLabel = formatDate(candidate.anniversary_month, candidate.anniversary_day, candidate.anniversary_year)
 
@@ -684,7 +689,7 @@ function CandidateCard({
                 <p style={styles.matchGroupsLabel}>Already in:</p>
                 <div style={styles.chipRow}>
                   {existingPersonGroups.map((g) => (
-                    <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById)} />
+                    <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById, groupParentById)} />
                   ))}
                 </div>
               </div>
@@ -700,7 +705,7 @@ function CandidateCard({
                 <p style={styles.matchGroupsLabel}>{personLabel(linkedPerson)} is already in:</p>
                 <div style={styles.chipRow}>
                   {existingPersonGroups.map((g) => (
-                    <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById)} />
+                    <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById, groupParentById)} />
                   ))}
                 </div>
               </div>
@@ -794,8 +799,8 @@ function CandidateCard({
           <div style={styles.chipRow}>
             {selectedGroups.map((g) => (
               <span key={g.id} style={styles.chip}>
-                {groupDisplayName(g, groupNameById)}
-                <button type="button" onClick={() => removeGroup(g.id)} style={styles.chipRemove} aria-label={`Remove ${groupDisplayName(g, groupNameById)}`}>
+                {groupDisplayName(g, groupNameById, groupParentById)}
+                <button type="button" onClick={() => removeGroup(g.id)} style={styles.chipRemove} aria-label={`Remove ${groupDisplayName(g, groupNameById, groupParentById)}`}>
                   ×
                 </button>
               </span>
@@ -805,7 +810,7 @@ function CandidateCard({
         <SearchAddPicker
           items={allGroups
             .filter((g) => !selectedGroupIds.includes(g.id) && !existingPersonGroups.some((eg) => eg.id === g.id))
-            .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
+            .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById, groupParentById) }))}
           placeholder="Tag a group…"
           onSelect={(item) => addGroup(item.id)}
           onCreateNew={handleCreateGroup}

@@ -209,7 +209,11 @@ export default function PersonDetail({
   function labelForGroupId(id: string | null | undefined, fallbackName: string): string {
     const group = allGroupsList.find((g) => g.id === id)
     if (!group) return fallbackName
-    return groupDisplayName(group, new Map(allGroupsList.map((g) => [g.id, g.name])))
+    return groupDisplayName(
+      group,
+      new Map(allGroupsList.map((g) => [g.id, g.name])),
+      new Map(allGroupsList.map((g) => [g.id, g.parent_group_id ?? null]))
+    )
   }
 
   useEffect(() => {
@@ -923,6 +927,8 @@ export function PersonDetailView({
   // Built from the full roster so a subgroup's parent name resolves even when the parent isn't
   // itself tagged to this person.
   const groupNameById = new Map(allGroupsList.map((g) => [g.id, g.name]))
+  // Lets groupDisplayName walk the whole ancestor chain rather than stopping at one level.
+  const groupParentById = new Map(allGroupsList.map((g) => [g.id, g.parent_group_id ?? null]))
 
   const fullName = person ? computeFullName(person) : personName
   const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => f.category === c.category))
@@ -1086,7 +1092,7 @@ export function PersonDetailView({
                   <AffiliatedGroupChip
                     key={g.id}
                     group={g}
-                    displayName={groupDisplayName(g, groupNameById)}
+                    displayName={groupDisplayName(g, groupNameById, groupParentById)}
                     onSelect={() => onSelectGroup(g)}
                     onRemove={readOnly ? undefined : () => onUntagGroup(g.id)}
                   />
@@ -1098,7 +1104,7 @@ export function PersonDetailView({
             <SearchAddPicker
               items={allGroupsList
                 .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-                .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
+                .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById, groupParentById) }))}
               placeholder="Tag this person to a group…"
               onSelect={(item) => onTagGroup(item.id)}
               emptyText="No groups match."
@@ -1241,7 +1247,7 @@ export function PersonDetailView({
                 <NoteCard
                   key={note.id}
                   note={note}
-                  sourceGroupLabel={note.groups ? groupDisplayName(note.groups, groupNameById) : null}
+                  sourceGroupLabel={note.groups ? groupDisplayName(note.groups, groupNameById, groupParentById) : null}
                   onSelectEvent={onSelectEvent}
                   onSelectGroup={onSelectGroup}
                   onEdit={readOnly ? undefined : onEditNote}

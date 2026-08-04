@@ -335,6 +335,11 @@ function CandidateCard({
   // Built from the full roster so a subgroup's parent name resolves even if the parent isn't
   // itself suggested/tagged on this candidate.
   const groupNameById = useMemo(() => new Map(allGroupsList.map((g) => [g.id, g.name])), [allGroupsList])
+  // Lets groupDisplayName walk the whole ancestor chain rather than stopping at one level.
+  const groupParentById = useMemo(
+    () => new Map(allGroupsList.map((g) => [g.id, g.parent_group_id ?? null])),
+    [allGroupsList]
+  )
 
   const includedGroupIds = useMemo(() => {
     const ids = new Set<string>()
@@ -846,7 +851,7 @@ function CandidateCard({
                   onChange={() => setIncludedGroups((prev) => toggleIndex(prev, i))}
                   disabled={saving}
                 />
-                {groupDisplayName(group, groupNameById)}
+                {groupDisplayName(group, groupNameById, groupParentById)}
               </label>
             )
           })}
@@ -886,7 +891,7 @@ function CandidateCard({
             const group = allGroupsList.find((g) => g.id === id)
             return group ? (
               <span key={id} style={styles.personChipOn}>
-                {groupDisplayName(group, groupNameById)}
+                {groupDisplayName(group, groupNameById, groupParentById)}
                 <button
                   type="button"
                   onClick={() => setManualGroupIds((prev) => { const n = new Set(prev); n.delete(id); return n })}
@@ -927,7 +932,7 @@ function CandidateCard({
           items={[...allGroupsList]
             .filter((g) => !manualGroupIds.has(g.id))
             .sort((a, b) => a.name.localeCompare(b.name))
-            .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById) }))}
+            .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById, groupParentById) }))}
           placeholder="Tag this event to a group…"
           onSelect={(item) => setManualGroupIds((prev) => new Set(prev).add(item.id))}
           emptyText="No groups match."
