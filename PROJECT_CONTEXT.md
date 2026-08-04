@@ -468,6 +468,19 @@ src/
 │   │                            shared search picker drives both outcomes (`mergeMode`);
 │   │                            nest targets exclude this group's own descendants
 │   │                            (isSelfOrDescendant) so a drop can't orphan a branch
+│   │                            (both 2026-08-03). Separate drag-and-drop, same day: on a
+│   │                            root group's own page, "Select multiple" turns member chips
+│   │                            into checkboxes (tap to toggle); drag the selection onto a
+│   │                            subgroup tile below to mass-add them to THAT subgroup only —
+│   │                            parent membership untouched (same independent-membership
+│   │                            design as above). MouseSensor + TouchSensor (not the unified
+│   │                            PointerSensor) so touch gets its own delay/tolerance and an
+│   │                            ordinary scroll swipe isn't captured as a drag. Write path is
+│   │                            a fresh handler (`handleDropAddToSubgroup`), not a reuse of
+│   │                            handleApproveAllSuggestions — that one's refresh/invalidate
+│   │                            calls are hardcoded to the page's OWN groupId, wrong target
+│   │                            here since the drop target is always a subgroup, never the
+│   │                            group being viewed.
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
 │   │                            created_at), full date incl. day (e.g. "August 3,
 │   │                            2026") via formatEventWhen (2026-08-03), grouped under
