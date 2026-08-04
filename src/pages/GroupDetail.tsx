@@ -27,6 +27,8 @@ import NoteWithDetection from '../components/NoteWithDetection'
 import PhotoGallery from '../components/PhotoGallery'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import SearchBox from '../components/SearchBox'
+import SearchAddPicker from '../components/SearchAddPicker'
+import UndoBanner from '../components/UndoBanner'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -47,6 +49,13 @@ export type Moment = {
   notes: { people: PersonRef | null }[]
   moment_groups: { groups: GroupRef | null }[]
 }
+
+// What the member picker just added, kept so it can be taken back. `createdPerson` distinguishes
+// "you picked someone already on file" (undo only unlinks them) from "you typed a new name"
+// (undo also deletes the profile that got created).
+type PendingAdd = { personId: string; label: string; createdPerson: boolean }
+
+const personLabel = (p: PersonRef) => `${p.name}${p.last_name ? ` ${p.last_name}` : ''}`
 
 // Explicit member chips collapse behind a "Show all" toggle past this count — roughly 3 lines
 // at this page's width, same reasoning as Groups.tsx's MEMBER_LIMIT but expandable in place
@@ -134,6 +143,8 @@ export default function GroupDetail({
   const [subgroups, setSubgroups] = useState<SubgroupRef[]>([])
   const [addingSubgroup, setAddingSubgroup] = useState(false)
   const [subgroupError, setSubgroupError] = useState<string | null>(null)
+  const [lastAdd, setLastAdd] = useState<PendingAdd | null>(null)
+  const [undoBusy, setUndoBusy] = useState(false)
 
   const roster = useGroupRoster()
 
@@ -172,6 +183,9 @@ export default function GroupDetail({
     setDeleteConfirming(false)
     setMergeOpen(false)
     setMergeCandidate(null)
+    // Undo is scoped to the group it happened in — handleUndoAdd deletes against the current
+    // groupId, so a banner left over from the previous group would unlink the wrong membership.
+    setLastAdd(null)
   }, [groupId])
 
   // Account-wide, not scoped to groupId — fetched once since it doesn't change as you navigate
@@ -497,6 +511,54 @@ export default function GroupDetail({
     await supabase
       .from('person_groups')
       .upsert({ person_id: person.id, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+    setLastAdd({ personId: person.id, label: personLabel(person), createdPerson: false })
+    loadMembers()
+    invalidateSummary()
+  }
+
+  // The "type a name nobody's on file under" half of the member picker. Splits the typed name the
+  // same way every other create-a-person path in the app does (first word is `name`, the rest is
+  // `last_name`), so someone added here is indistinguishable from one added via import or the
+  // chat box.
+  async function handleCreateAndAddMember(rawName: string) {
+    const typed = rawName.trim()
+    if (!typed) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const [first, ...rest] = typed.split(' ')
+    const { data: newPerson, error } = await supabase
+      .from('people')
+      .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
+      .select('id, name, last_name')
+      .single()
+    if (error || !newPerson) {
+      setActionError("Couldn't add that person — please try again.")
+      return
+    }
+    await supabase.from('person_groups').insert({ person_id: newPerson.id, group_id: groupId })
+    // createdPerson: true is what lets undo clean up the profile as well as the membership —
+    // without it a mistyped name would leave a stray person behind on the People page.
+    setLastAdd({ personId: newPerson.id, label: typed, createdPerson: true })
+    setAllPeople((prev) => [...prev, newPerson as PersonRef])
+    loadMembers()
+    invalidateSummary()
+  }
+
+  // Undo for the two functions above. Always drops the membership row; additionally deletes the
+  // person when this add was the thing that created them. Deliberately not time-limited — a
+  // wrong name is just as wrong a minute later, and the banner is the only signal that a
+  // brand-new profile was created at all.
+  async function handleUndoAdd() {
+    if (!lastAdd) return
+    setUndoBusy(true)
+    await supabase.from('person_groups').delete().eq('person_id', lastAdd.personId).eq('group_id', groupId)
+    if (lastAdd.createdPerson) {
+      await supabase.from('people').delete().eq('id', lastAdd.personId)
+      setAllPeople((prev) => prev.filter((p) => p.id !== lastAdd.personId))
+    }
+    setUndoBusy(false)
+    setLastAdd(null)
     loadMembers()
     invalidateSummary()
   }
@@ -920,6 +982,11 @@ export default function GroupDetail({
       onToggleMembersExpanded={() => setMembersExpanded((e) => !e)}
       onAddMember={handleAddMember}
       onRemoveMember={handleRemoveMember}
+      allPeople={allPeople}
+      onCreateAndAddMember={handleCreateAndAddMember}
+      lastAdd={lastAdd}
+      onUndoAdd={handleUndoAdd}
+      undoBusy={undoBusy}
       suggestionsEnabled={suggestionsEnabled}
       onToggleSuggestions={handleToggleSuggestions}
       onApproveAllSuggestions={handleApproveAllSuggestions}
@@ -1037,6 +1104,11 @@ export function GroupDetailView({
   onToggleMembersExpanded = () => {},
   onAddMember = () => {},
   onRemoveMember = () => {},
+  allPeople = [],
+  onCreateAndAddMember = () => {},
+  lastAdd = null,
+  onUndoAdd = () => {},
+  undoBusy = false,
   onDropAddToSubgroup = () => {},
   suggestionsEnabled = false,
   onToggleSuggestions = () => {},
@@ -1125,6 +1197,11 @@ export function GroupDetailView({
   onToggleMembersExpanded?: () => void
   onAddMember?: (person: PersonRef) => void
   onRemoveMember?: (person: PersonRef) => void
+  allPeople?: PersonRef[]
+  onCreateAndAddMember?: (name: string) => void
+  lastAdd?: PendingAdd | null
+  onUndoAdd?: () => void
+  undoBusy?: boolean
   onDropAddToSubgroup?: (subgroupId: string, people: PersonRef[]) => void
   onApproveAllSuggestions?: (people: PersonRef[]) => void
   onDenySuggestion?: (person: PersonRef) => void
@@ -1356,7 +1433,7 @@ export function GroupDetailView({
         </p>
       )}
       {explicitMembers.length === 0 ? (
-        <p style={styles.empty}>No members yet — add someone using the chat box below.</p>
+        <p style={styles.empty}>No members yet — type a name below to add someone.</p>
       ) : (
         <>
           {explicitMembers.length > MEMBER_LIST_LIMIT && (
@@ -1384,6 +1461,39 @@ export function GroupDetailView({
             <button onClick={onToggleMembersExpanded} style={styles.showMoreButton}>
               {membersExpanded ? '▾ Show fewer members' : `▸ Show all ${sortedExplicitMembers.length} members`}
             </button>
+          )}
+        </>
+      )}
+
+      {/* Manual member entry, matching the event page's "who was there" picker: type a name to
+          pick someone already on file, or add a brand-new person without leaving the group.
+          Renders whether or not the group has members yet — an empty group is exactly when
+          you most need it. Sits outside the length check above for that reason. */}
+      {!readOnly && (
+        <>
+          <SearchAddPicker
+            items={allPeople
+              .filter((p) => !explicitMembers.some((m) => m.id === p.id))
+              .map((p) => ({ id: p.id, label: personLabel(p) }))}
+            placeholder="Type a name to add someone…"
+            onSelect={(item) => {
+              const person = allPeople.find((p) => p.id === item.id)
+              if (person) onAddMember(person)
+            }}
+            onCreateNew={onCreateAndAddMember}
+            createLabel={(q) => `+ Add "${q}" as a new person`}
+            emptyText="No one matches — keep typing to add them as someone new."
+          />
+          {lastAdd && (
+            <UndoBanner
+              message={
+                lastAdd.createdPerson
+                  ? `Added ${lastAdd.label} as a new person.`
+                  : `Added ${lastAdd.label} to this group.`
+              }
+              onUndo={onUndoAdd}
+              busy={undoBusy}
+            />
           )}
         </>
       )}
