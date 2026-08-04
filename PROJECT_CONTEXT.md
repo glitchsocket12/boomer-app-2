@@ -428,6 +428,18 @@ src/
 │   │                            created group's summary can otherwise stay generated
 │   │                            against the "New group" placeholder forever), members
 │   │                            (explicit only, sorted, collapsible >12, hover-remove),
+│   │                            manual member add (2026-08-03): SearchAddPicker, same
+│   │                            component/shape as EventDetail.tsx's "who was there" —
+│   │                            type to filter people already on file, or create a new
+│   │                            person inline (`handleCreateAndAddMember`, first word
+│   │                            → name / rest → last_name, matching every other
+│   │                            create-a-person path); renders regardless of whether
+│   │                            the group has members yet. Followed by an UndoBanner
+│   │                            (`handleUndoAdd`) — always deletes the person_groups
+│   │                            row, ALSO deletes the person when the add created them
+│   │                            (`createdPerson` flag), else a mistyped name strands a
+│   │                            stray profile on the People page; cleared on groupId
+│   │                            change since it deletes against the current group,
 │   │                            suggestions (from events + associated groups, capped
 │   │                            20, add/deny all), per-group "Suggest new members for
 │   │                            this group" checkbox (item 57, 2026-07-25) — always
@@ -1106,6 +1118,25 @@ Full story: PROJECT_HISTORY.md.
 │   │                            passing `items` pre-sorted (EventDetail's tags
 │   │                            picker sorts alphabetically). Blur close is
 │   │                            delayed 150ms so a click on a result registers first.
+│   │                            Keyboard select (2026-08-03, all callers): typing
+│   │                            auto-highlights the top match so Enter commits it
+│   │                            before the name is fully typed; ↑/↓ move the
+│   │                            highlight (CLAMPED, not wrapped — overshooting at the
+│   │                            end shouldn't land on the wrong name), Enter with no
+│   │                            match creates when `onCreateNew` is set, Esc clears,
+│   │                            hover syncs the highlight so mouse and keyboard agree.
+│   │                            `browseAll` with an empty box highlights NOTHING
+│   │                            (index -1) — that list is unranked, so a stray Enter
+│   │                            must not commit whatever sorts first. Rows are
+│   │                            role=option under aria-activedescendant; the active
+│   │                            border is restated as a full `border` shorthand
+│   │                            (not `borderColor`) or React warns about mixing.
+│   ├── UndoBanner.tsx         — "Added X. Undo" line for actions that commit with no
+│   │                            confirm step (GroupDetail's member add, 2026-08-03).
+│   │                            Persists until replaced/dismissed rather than fading
+│   │                            on a timer — read speed shouldn't decide whether a
+│   │                            mistake stays fixable. Same visual idiom as
+│   │                            ContactImportReview/PersonDetail's inline Undo links.
 │   ├── Chips.tsx              — PersonChip (green) / GroupChip (gold) / EventChip
 │   │                            (blue) — shared visual language everywhere
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)
