@@ -169,6 +169,18 @@ export async function syncSpouseParenthood(userId: string | undefined | null, aI
   for (const childId of touchedChildren) await syncFamilyClique(userId, childId)
 }
 
+// Turns off the two inferences that are right for a blood relationship and wrong for a step one.
+// The family tree's "Step-parent"/"Step-sibling" pickers are the only callers that set these — a
+// step relation is recorded as nothing more than the plain spouse/parent row it literally is (see
+// RootDirect's comment in familyTree.ts), so the inferences that would normally fan out from that
+// row have to be held back, or the app silently converts the step relation into a blood one:
+//   skipSpouseParenthood — otherwise a parent's new spouse is auto-recorded as a parent of that
+//     parent's existing kids. That's the whole point of a step-parent: they are NOT.
+//   skipCliqueSync — otherwise every parent known for anyone in the sibling closure is copied onto
+//     everyone else in it, which is how one added step-sibling would end up claiming the root's own
+//     mother/father (the mismatch the founder flagged).
+export type LinkOptions = { skipSpouseParenthood?: boolean; skipCliqueSync?: boolean }
+
 // Links subjectId and targetId as `category` (from the subject's point of view, e.g.
 // category='parents' means targetId is one of subjectId's parents).
 export async function linkRelationship(
@@ -177,26 +189,27 @@ export async function linkRelationship(
   subjectId: string,
   subjectName: string,
   targetId: string,
-  targetName: string
+  targetName: string,
+  opts?: LinkOptions
 ): Promise<void> {
   await writeNoteIfMissing(targetId, NOTE_FOR_TARGET[category](subjectName))
   await writeNoteIfMissing(subjectId, NOTE_FOR_SUBJECT[category](targetName))
   if (category === 'spouse') {
     await upsertRelationship(userId, subjectId, targetId, 'spouse')
     await invalidateKeyFacts([subjectId, targetId])
-    await syncSpouseParenthood(userId, subjectId, targetId)
+    if (!opts?.skipSpouseParenthood) await syncSpouseParenthood(userId, subjectId, targetId)
   } else if (category === 'siblings') {
     await upsertRelationship(userId, subjectId, targetId, 'sibling')
     await invalidateKeyFacts([subjectId, targetId])
-    await syncFamilyClique(userId, subjectId)
+    if (!opts?.skipCliqueSync) await syncFamilyClique(userId, subjectId)
   } else if (category === 'parents') {
     await upsertRelationship(userId, targetId, subjectId, 'parent')
     await invalidateKeyFacts([subjectId, targetId])
-    await syncFamilyClique(userId, subjectId)
+    if (!opts?.skipCliqueSync) await syncFamilyClique(userId, subjectId)
   } else if (category === 'kids') {
     await upsertRelationship(userId, subjectId, targetId, 'parent')
     await invalidateKeyFacts([subjectId, targetId])
-    await syncFamilyClique(userId, targetId)
+    if (!opts?.skipCliqueSync) await syncFamilyClique(userId, targetId)
   }
 }
 
@@ -240,7 +253,8 @@ export async function createAndLinkRelationship(
   category: CircleCategory,
   subjectId: string,
   subjectName: string,
-  rawName: string
+  rawName: string,
+  opts?: LinkOptions
 ): Promise<{ id: string; name: string } | null> {
   const [first, ...rest] = rawName.trim().split(/\s+/)
   const lastName = rest.length > 0 ? rest.join(' ') : null
@@ -251,6 +265,6 @@ export async function createAndLinkRelationship(
     .single()
   if (!newPerson) return null
   const fullName = lastName ? `${first} ${lastName}` : first
-  await linkRelationship(userId, category, subjectId, subjectName, newPerson.id, fullName)
+  await linkRelationship(userId, category, subjectId, subjectName, newPerson.id, fullName, opts)
   return { id: newPerson.id, name: fullName }
 }

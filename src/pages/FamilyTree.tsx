@@ -18,7 +18,15 @@ import {
   type Union,
   type TreeSide,
 } from '../lib/familyTree'
-import { linkRelationship, createAndLinkRelationship, unlinkRelationship, syncFamilyClique, invalidateKeyFacts, type CircleCategory } from '../lib/writeRelationship'
+import {
+  linkRelationship,
+  createAndLinkRelationship,
+  unlinkRelationship,
+  syncFamilyClique,
+  invalidateKeyFacts,
+  type CircleCategory,
+  type LinkOptions,
+} from '../lib/writeRelationship'
 import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
 import { IS_TOUCH } from '../lib/touch'
@@ -133,11 +141,19 @@ function allUnions(tier: TreeTier): Union[] {
 // The x a parent-child connector line should drop from: the midpoint of the marriage line if
 // personId belongs to a union with a spouse (so a couple's kids connect to the wire that joins
 // the couple, not to just one of them), otherwise that person's own box center.
+// A stepOnly member (a step-parent — see familyTree.ts) is skipped on both counts: their own kids
+// (the root's step-siblings) drop from THEIR box rather than from a marriage line they had nothing
+// to do with, and their box never widens the span the couple's own kids connect to.
 function anchorX(tier: TreeTier, layout: { placed: Placed[] }, personId: string): number | undefined {
   for (const union of allUnions(tier)) {
-    const memberIds = [union.a.id, ...union.spouses.map((s) => s.id)]
-    if (!memberIds.includes(personId)) continue
-    const xs = memberIds.map((id) => centerX(layout.placed, id)).filter((v): v is number => v !== undefined)
+    const members = [union.a, ...union.spouses]
+    const self = members.find((m) => m.id === personId)
+    if (!self) continue
+    if (self.stepOnly) return centerX(layout.placed, personId)
+    const xs = members
+      .filter((m) => !m.stepOnly)
+      .map((m) => centerX(layout.placed, m.id))
+      .filter((v): v is number => v !== undefined)
     if (xs.length === 0) return undefined
     return (Math.min(...xs) + Math.max(...xs)) / 2
   }
@@ -161,8 +177,10 @@ function unionNaturalWidth(union: Union): number {
   return union.spouses.reduce((w, s) => w + MARRIAGE_GAP + boxWidth(s.name), boxWidth(union.a.name))
 }
 
+// stepOnly members excluded for the same reason as in anchorX: a couple's position should follow
+// their own children, not a step-parent's kids from another family.
 function unionMemberIds(union: Union): string[] {
-  return [union.a.id, ...union.spouses.map((s) => s.id)]
+  return [union.a, ...union.spouses].filter((p) => !p.stepOnly).map((p) => p.id)
 }
 
 // The x a union should be centered on: the midpoint of the span of its own children's centers in
@@ -383,24 +401,30 @@ export default function FamilyTree({
     subjectId: string,
     subjectName: string,
     existing?: { id: string; label: string },
-    newName?: string
+    newName?: string,
+    opts?: LinkOptions
   ) {
     if (!data) return
     let targetId: string | undefined
     let targetName: string | undefined
     if (existing) {
-      await linkRelationship(userId, category, subjectId, subjectName, existing.id, existing.label)
+      await linkRelationship(userId, category, subjectId, subjectName, existing.id, existing.label, opts)
       targetId = existing.id
       targetName = existing.label
     } else if (newName?.trim()) {
-      const created = await createAndLinkRelationship(userId, category, subjectId, subjectName, newName.trim())
+      const created = await createAndLinkRelationship(userId, category, subjectId, subjectName, newName.trim(), opts)
       if (!created) return
       targetId = created.id
       targetName = created.name
     } else {
       return
     }
-    if (category === 'parents' && targetId && targetName) {
+    // Both suggestion banners exist to guess at blood parenthood the founder hasn't stated. A step
+    // add already states the opposite outright, so offering them here would ask them to re-answer a
+    // question they just answered — and answering "yes" would undo the step relation.
+    if (opts) {
+      await invalidateKeyFacts([data.rootId])
+    } else if (category === 'parents' && targetId && targetName) {
       await suggestSpouseLinks(subjectId, targetId, targetName)
     } else if (category === 'spouse' && targetId && targetName) {
       await suggestCoParentLinks(subjectId, subjectName, targetId, targetName)
@@ -567,7 +591,8 @@ export function FamilyTreeView({
     subjectId: string,
     subjectName: string,
     existing?: { id: string; label: string },
-    newName?: string
+    newName?: string,
+    opts?: LinkOptions
   ) => void
   removeConfirm?: RemoveTarget | null
   removing?: boolean
@@ -647,8 +672,23 @@ export function FamilyTreeView({
   // Add/remove relationship controls only make sense for a single centered person (ego mode) —
   // a descendants-mode tree has no one "root" to attach a new relationship to.
   const parentsTier = tiers.find((t) => t.label === 'Parents')
-  const parentsList = parentsTier ? parentsTier.branches.flatMap((b) => [b.union.a, ...b.union.spouses]) : []
-  const addSlots: { key: string; label: string; category: CircleCategory; subjectId: string; subjectName: string }[] =
+  // stepOnly excluded: adding a "grandparent" through a step-parent would record that person's own
+  // parent, who is no relation of the root's at all.
+  const parentsList = parentsTier
+    ? parentsTier.branches.flatMap((b) => [b.union.a, ...b.union.spouses]).filter((p) => !p.stepOnly)
+    : []
+  // Both step slots are phrased and scoped THROUGH a specific person rather than offered as a bare
+  // "Step-parent"/"Step-sibling" against the root, which is what answers the founder's "ask which
+  // parent is the biological one": picking "Step-sibling (Michael's child)" states outright that
+  // Michael is the one they descend from, so nothing gets attached to the root's own mother/father.
+  const addSlots: {
+    key: string
+    label: string
+    category: CircleCategory
+    subjectId: string
+    subjectName: string
+    opts?: LinkOptions
+  }[] =
     !readOnly && mode === 'ego'
       ? [
           ...parentsList.map((p) => ({
@@ -659,8 +699,26 @@ export function FamilyTreeView({
             subjectName: p.name,
           })),
           { key: 'parent', label: 'Parent', category: 'parents' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
+          // Offered per recorded parent, since a step-parent is literally "this parent's other
+          // spouse" — no death required, unlike the only shape the tree used to surface.
+          ...data.rootDirect.parents.map((p) => ({
+            key: `stepparent-${p.id}`,
+            label: `Step-parent (${p.name}'s spouse)`,
+            category: 'spouse' as CircleCategory,
+            subjectId: p.id,
+            subjectName: p.name,
+            opts: { skipSpouseParenthood: true, skipCliqueSync: true } as LinkOptions,
+          })),
           { key: 'spouse', label: 'Spouse', category: 'spouse' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
           { key: 'sibling', label: 'Sibling', category: 'siblings' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
+          ...data.rootDirect.stepParents.map((s) => ({
+            key: `stepsibling-${s.person.id}`,
+            label: `Step-sibling (${s.person.name}'s child)`,
+            category: 'kids' as CircleCategory,
+            subjectId: s.person.id,
+            subjectName: s.person.name,
+            opts: { skipCliqueSync: true } as LinkOptions,
+          })),
           { key: 'child', label: 'Child', category: 'kids' as CircleCategory, subjectId: data.rootId, subjectName: data.rootName },
         ]
       : []
@@ -712,6 +770,30 @@ export function FamilyTreeView({
           targetName: p.name,
           label: `Remove ${p.name} as ${data.rootName}'s child?`,
         })),
+        // The two step kinds are the exception to "root's own direct relations only" above: they're
+        // relationships OF a parent / OF a step-parent, but they're also the only ones this screen
+        // lets you add, so it has to let you take them back off. Subject is the connecting person,
+        // matching exactly what the add wrote (so unlinkRelationship's note cleanup matches too).
+        ...data.rootDirect.stepParents.map((s) => ({
+          key: `rm-stepparent-${s.person.id}`,
+          relLabel: 'step-parent',
+          category: 'spouse' as CircleCategory,
+          subjectId: s.throughId,
+          subjectName: s.throughName,
+          targetId: s.person.id,
+          targetName: s.person.name,
+          label: `Remove ${s.person.name} as ${s.throughName}'s ${s.person.spouseKind === 'partner' ? 'partner' : 'spouse'}?`,
+        })),
+        ...data.rootDirect.stepSiblings.map((s) => ({
+          key: `rm-stepsibling-${s.person.id}`,
+          relLabel: 'step-sibling',
+          category: 'kids' as CircleCategory,
+          subjectId: s.throughId,
+          subjectName: s.throughName,
+          targetId: s.person.id,
+          targetName: s.person.name,
+          label: `Remove ${s.person.name} as ${s.throughName}'s child?`,
+        })),
       ]
 
   // Divorce is offered separately from Remove — it keeps the relationship row and both people in
@@ -760,9 +842,13 @@ export function FamilyTreeView({
         : sideAParent
         ? `${sideAParent.name}'s side of the family is shown in blue. `
         : ''
+    const stepLegend =
+      data.rootDirect.stepParents.length > 0 || data.rootDirect.stepSiblings.length > 0
+        ? 'A small "step-parent" or "step-sibling" tag under a name means they\'re family by marriage rather than by blood. '
+        : ''
     legendText =
       `Purple = the person this tree is centered on. Green = their parents, spouse, siblings, and kids — a direct relationship on file. ${sideLegend}` +
-      `Gray = family further out that isn't tied to one side (like great-grandchildren). Tap any name to re-center the tree on them.`
+      `Gray = family further out that isn't tied to one side (like great-grandchildren). ${stepLegend}Tap any name to re-center the tree on them.`
   }
 
   return (
@@ -940,8 +1026,8 @@ export function FamilyTreeView({
               <RelationshipAddPicker
                 people={allPeople}
                 excludeIds={allShownIds}
-                onSelectExisting={(p) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, p)}
-                onCreateNew={(name) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, undefined, name)}
+                onSelectExisting={(p) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, p, undefined, slot.opts)}
+                onCreateNew={(name) => onAddRelationship(slot.category, slot.subjectId, slot.subjectName, undefined, name, slot.opts)}
               />
             </div>
           ))}

@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { describeRelationship } from './relationshipLabels'
+import { describeRelationship, relationOf } from './relationshipLabels'
 
 // Builds a family tree for ANY person_id by walking the relationships table (2026-07-20 source
 // of truth) — the tree is a person's own relationship graph, not bounded by which group you
@@ -48,7 +48,17 @@ export type TreePerson = {
   // Only set on rootDirect.spouses, the only place those controls read from.
   spouseKind?: 'spouse' | 'partner'
   relationLabel?: string
+  // Attached to this tree by MARRIAGE only, never by blood — set on a step-parent (a parent's
+  // spouse who isn't a parent of the root). It's what keeps a step-parent from being mistaken for
+  // part of the root's own bloodline everywhere downstream: their family isn't pulled in as
+  // grandparents/aunts/uncles, the root's own connector line doesn't drop from them, and their own
+  // kids (the root's step-siblings) hang off them alone rather than off the couple.
+  stepOnly?: boolean
 }
+// A step relation, plus WHO it runs through — a step-parent is always someone's spouse and a
+// step-sibling is always someone's child, so the UI needs the connecting person to phrase the
+// label ("Michael's child"), to write the underlying relationship row, and to remove it again.
+export type StepLink = { person: TreePerson; throughId: string; throughName: string }
 export type Union = { a: TreePerson; spouses: TreePerson[] }
 // leftExtended/rightExtended hold a person's own siblings (aunts/uncles), each as their own
 // mini-union (the sibling + their spouse, if any) — kept on the same side as the parent they
@@ -63,7 +73,19 @@ export type TreeTier = { label: string; branches: TreeBranch[]; defaultParentId?
 // The root's own direct relations, flat — lets the UI offer "remove this relationship" without
 // having to reverse-engineer which tree nodes are actually direct edges of the root vs. one hop
 // further out (an aunt/uncle's own parentId, e.g., points at a grandparent, not at the root).
-export type RootDirect = { parents: TreePerson[]; spouses: TreePerson[]; siblings: TreePerson[]; children: TreePerson[] }
+// stepParents/stepSiblings are derived, not stored: the relationships table has no 'step' kind, and
+// deliberately doesn't need one. A step-parent IS "married to my parent, but not my parent"; a
+// step-sibling IS "my step-parent's child, by someone other than my parent" — relationshipLabels.ts
+// already resolves both from ordinary spouse/parent rows, so the tree reads them back out of the
+// same graph rather than recording a second, divergent version of the same fact.
+export type RootDirect = {
+  parents: TreePerson[]
+  spouses: TreePerson[]
+  siblings: TreePerson[]
+  children: TreePerson[]
+  stepParents: StepLink[]
+  stepSiblings: StepLink[]
+}
 // 'ego' (buildFamilyTree): any person's own relationship graph — fixed Grandparents/Parents/
 // root-gen/Kids window relative to whoever the root is. 'descendants' (buildDescendantTree): a
 // group's tree scoped to one lineage — starts at the eldest known generation and fans downward
@@ -224,6 +246,68 @@ function primaryParentId(g: Graph, personId: string): string | undefined {
   return (g.parentsOf.get(personId) ?? [])[0]
 }
 
+// The Parents tier, built directly rather than through groupIntoBranches, because it's the one tier
+// that also has to show STEP-parents: a parent's spouse/partner who isn't a parent of the root at
+// all. Remarriage after a divorce (or after a split with no marriage on file) is at least as common
+// as remarriage after a death, and before this the living-remarriage case simply didn't appear in
+// the tree — expandParentsWithSpouses only ever pulls in a DECEASED spouse (as a candidate blood
+// parent), so a still-living step-parent was invisible unless you happened to view the tree from a
+// grandparent, where spouseChain's 2nd-hop label caught it.
+// A step-parent rides the marriage line like any other spouse but is flagged stepOnly, so nothing
+// downstream treats them as bloodline (see TreePerson.stepOnly).
+// Chain order keeps each step-parent adjacent to the person they're actually married to, since the
+// renderer draws one marriage line per adjacent pair: whichever bio parent remarried is placed last,
+// with their new spouse trailing them. Two bio parents who BOTH remarried is the one shape this
+// can't lay out perfectly (only one of them can be last) — the second one's line lands a box over,
+// which is rare enough not to justify a second Parents row.
+function buildParentBranches(
+  g: Graph,
+  treeParents: string[]
+): { branches: TreeBranch[]; stepParents: StepLink[] } {
+  const seen = new Set<string>()
+  const branches: TreeBranch[] = []
+  const stepParents: StepLink[] = []
+  for (const id of treeParents) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const bio = [id, ...(g.spousesOf.get(id) ?? []).filter((sid) => treeParents.includes(sid) && !seen.has(sid))]
+    bio.slice(1).forEach((sid) => seen.add(sid))
+
+    // Anyone married to a tree parent who ISN'T themselves a tree parent is a step-parent by
+    // construction — treeParents is exactly the set this tree treats as the root's parent line.
+    const stepsOf = new Map<string, string[]>()
+    for (const memberId of bio) {
+      const steps = (g.spousesOf.get(memberId) ?? []).filter((sid) => !treeParents.includes(sid))
+      if (steps.length > 0) stepsOf.set(memberId, steps)
+    }
+    const ordered = [...bio].sort((x, y) => (stepsOf.get(x)?.length ?? 0) - (stepsOf.get(y)?.length ?? 0))
+
+    const chain: TreePerson[] = ordered.map((memberId, i) => {
+      const person = node(g, memberId, 'direct', primaryParentId(g, memberId))
+      if (i > 0) person.endedWithAnchor = isUnionEnded(g, ordered[i - 1], memberId)
+      return person
+    })
+    // Reversed so the LAST bio parent's step-spouses land immediately after them — the ordinary
+    // one-remarriage case then always draws its marriage line to the right person.
+    for (const memberId of [...ordered].reverse()) {
+      for (const stepId of stepsOf.get(memberId) ?? []) {
+        if (chain.some((p) => p.id === stepId)) continue
+        const person: TreePerson = {
+          ...node(g, stepId, 'direct', undefined),
+          stepOnly: true,
+          relationLabel: 'step-parent',
+          endedWithAnchor: isUnionEnded(g, memberId, stepId),
+          spouseKind: spouseKindBetween(g, memberId, stepId),
+        }
+        chain.push(person)
+        stepParents.push({ person, throughId: memberId, throughName: g.nameById.get(memberId) ?? 'Unknown' })
+      }
+    }
+    branches.push({ union: { a: chain[0], spouses: chain.slice(1) }, leftExtended: [], rightExtended: [], siblings: [] })
+  }
+  return { branches, stepParents }
+}
+
 // Like primaryParentId, but constrained to a specific set of ids — used when extending a tier one
 // more hop out: a child can be recorded under either parent, but only the parent actually present
 // in the tier being extended from is a valid connector-line anchor for the new tier.
@@ -370,7 +454,7 @@ export async function buildDescendantTree(memberIds: string[]): Promise<TreeData
 // Supabase I/O. buildDescendantTree above is now just this function plus the loadGraph() fetch —
 // behavior-identical to before the split.
 export function buildDescendantTreeFromGraph(memberIds: string[], g: Graph): TreeData {
-  const emptyRootDirect: RootDirect = { parents: [], spouses: [], siblings: [], children: [] }
+  const emptyRootDirect: RootDirect = { parents: [], spouses: [], siblings: [], children: [], stepParents: [], stepSiblings: [] }
   if (memberIds.length === 0) {
     return { mode: 'descendants', rootId: '', rootName: '', tiers: [], rootDirect: emptyRootDirect }
   }
@@ -530,7 +614,11 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   // parent-fact recorded against only the in-law half of a couple would otherwise cut off the
   // blood side's grandparents/aunts/uncles/cousins entirely. Only used for tree-walking below;
   // rootParentNodes (the "remove this relationship" list) stays on the unexpanded rootParents.
-  const treeParents = expandParentsWithSpouses(g, rootParents)
+  // Only worth inferring when a blood parent is actually MISSING — with both parents already on
+  // file there's no gap for a deceased spouse to be filling, and promoting one anyway would quietly
+  // reclassify a step-parent who has since died as a blood parent (dragging their own parents in as
+  // the root's grandparents). buildParentBranches shows that person as a step-parent instead.
+  const treeParents = rootParents.length >= 2 ? rootParents : expandParentsWithSpouses(g, rootParents)
   const parentSides = buildParentSides(g, rootParents, treeParents)
   const rootSpouses = g.spousesOf.get(rootId) ?? []
   const rootSiblings = (g.siblingsOf.get(rootId) ?? []).filter((id) => id !== rootId)
@@ -566,25 +654,53 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
   const rootParentNodes: TreePerson[] = rootParents.map((id) => node(g, id, 'direct', primaryParentId(g, id)))
   const rootChildNodes: TreePerson[] = rootChildren.map((id) => node(g, id, 'direct', rootId))
 
-  const jakeBranch: TreeBranch = {
-    union: { a: rootNode, spouses: spouseNodes },
-    leftExtended: [],
-    rightExtended: [],
-    siblings: siblingUnions,
-  }
-
   // --- Parents tier: root's own parents, grouped into couples. Each parent's own siblings
   // (aunts/uncles) — with their spouses, if any — go on THAT parent's side (union.a's siblings
   // to the left, the trailing spouse's siblings to the right), so the tree fans outward like a
   // normal family-tree diagram instead of pooling everyone on one side. Those siblings' kids
   // (cousins) — with their own spouses and kids, if any — are slotted into the root's own
   // generation tier and the Kids tier respectively, on the matching side.
-  const parentBranches = groupIntoBranches(g, treeParents, 'direct', (id) => primaryParentId(g, id))
+  const { branches: parentBranches, stepParents: stepParentLinks } = buildParentBranches(g, treeParents)
+
+  // Step-siblings: a step-parent's own kids by someone else. The ONLY fact recorded for one is
+  // "child of the step-parent" — never a sibling row with the root, and never a parent row to the
+  // root's own parent. That's the mismatch the founder flagged: writing either of those would fuse
+  // two unrelated families into one bloodline (and syncFamilyClique would then copy every parent
+  // across the whole merged set). relationOf gates it so anyone who actually shares a parent with
+  // the root stays a sibling/half-sibling instead.
+  const stepSiblingLinks: StepLink[] = []
+  for (const link of stepParentLinks) {
+    for (const childId of g.childrenOf.get(link.person.id) ?? []) {
+      if (childId === rootId) continue
+      if (stepSiblingLinks.some((s) => s.person.id === childId)) continue
+      if (relationOf(g, rootId, childId) !== 'step-sibling') continue
+      stepSiblingLinks.push({
+        person: { ...node(g, childId, 'direct', link.person.id), relationLabel: 'step-sibling' },
+        throughId: link.person.id,
+        throughName: link.person.name,
+      })
+    }
+  }
+  const stepSiblingUnions: Union[] = stepSiblingLinks.map((s) => ({
+    a: s.person,
+    spouses: spouseChain(g, s.person.id, 'direct'),
+  }))
+
+  const jakeBranch: TreeBranch = {
+    union: { a: rootNode, spouses: spouseNodes },
+    leftExtended: [],
+    rightExtended: [],
+    siblings: [...siblingUnions, ...stepSiblingUnions],
+  }
+
   const leftCousinBranches: TreeBranch[] = []
   const rightCousinBranches: TreeBranch[] = []
   const extraKidsBranches: TreeBranch[] = []
   for (const branch of parentBranches) {
-    const branchIds = [branch.union.a.id, ...branch.union.spouses.map((s) => s.id)]
+    // stepOnly members are excluded: a step-parent's own siblings are not the root's aunts/uncles,
+    // and their nieces/nephews are not the root's cousins — pulling that branch in is exactly the
+    // "unrelated family grafted onto this one" problem step relations are supposed to avoid.
+    const branchIds = [branch.union.a, ...branch.union.spouses].filter((p) => !p.stepOnly).map((p) => p.id)
     branchIds.forEach((parentId) => {
       // Side is keyed off which of root's two distinct parents this parentId's lineage traces
       // back to (buildParentSides), not position within this branch — see its comment for why
@@ -755,7 +871,14 @@ export function buildFamilyTreeFromGraph(rootId: string, g: Graph): TreeData {
     sideOfDescendant = nextSide
   }
 
-  const rootDirect: RootDirect = { parents: rootParentNodes, spouses: spouseNodes, siblings: siblingNodes, children: rootChildNodes }
+  const rootDirect: RootDirect = {
+    parents: rootParentNodes,
+    spouses: spouseNodes,
+    siblings: siblingNodes,
+    children: rootChildNodes,
+    stepParents: stepParentLinks,
+    stepSiblings: stepSiblingLinks,
+  }
 
   return { mode: 'ego', rootId, rootName, tiers, rootDirect }
 }
