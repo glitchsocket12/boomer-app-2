@@ -10,12 +10,18 @@ export default function SearchBox({
   placeholder,
   onFocus,
   onBlur,
+  onKeyDown,
+  ariaProps,
 }: {
   value: string
   onChange: (value: string) => void
   placeholder: string
   onFocus?: () => void
   onBlur?: () => void
+  // Optional so callers that need arrow-key/Enter handling (SearchAddPicker's result list) can
+  // own it without every plain filter box growing keyboard logic it has no list to drive.
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
+  ariaProps?: React.AriaAttributes & { role?: string }
 }) {
   return (
     <input
@@ -24,8 +30,10 @@ export default function SearchBox({
       onChange={(e) => onChange(e.target.value)}
       onFocus={onFocus}
       onBlur={onBlur}
+      onKeyDown={onKeyDown}
       placeholder={placeholder}
       style={styles.input}
+      {...ariaProps}
     />
   )
 }
