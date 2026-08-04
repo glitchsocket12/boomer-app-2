@@ -1008,6 +1008,16 @@ Full story: PROJECT_HISTORY.md.
                                 page rather than a per-card query. Self seeded into that candidate the
                                 same way as EventDetail.tsx (item 63, 2026-07-26) — self's spouse is
                                 suggested even before self is added to the candidate.
+                                Third disposition alongside merge/save-as-note (2026-08-03): "+ Add as
+                                a sub-event" files the candidate as its OWN new event nested under an
+                                existing one (`parent_moment_id`, item 35) — offered on the likely-match
+                                banner, as a swap from a chosen merge target, and via its own
+                                search-an-event picker. Accept button reads "Add as sub-event"; the
+                                confirmation reads `Added as a sub-event of "{parent}" — {event}`.
+                                Parent picker excludes events that are already sub-events (one level
+                                deep, same rule as EventDetail.tsx), from an isolated fail-open
+                                `parent_moment_id` query so an unrun migration degrades instead of
+                                breaking the page.
                                 `suggested_people`/`suggested_group_ids` now also draw
                                 on people/relationship data already on file, not just the calendar
                                 entry's own ICS attendee list or its title's explicit group name

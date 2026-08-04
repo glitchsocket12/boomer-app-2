@@ -162,6 +162,7 @@ export default function ImportReview({
   const [allPeopleList, setAllPeopleList] = useState<PersonRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
   const [selfId, setSelfId] = useState<string | null>(null)
+  const [childMomentIds, setChildMomentIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -170,7 +171,7 @@ export default function ImportReview({
 
   async function load() {
     setLoading(true)
-    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes] = await Promise.all([
+    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes, childIdsRes] = await Promise.all([
       supabase
         .from('moment_import_candidates')
         .select(
@@ -194,6 +195,12 @@ export default function ImportReview({
       // Self's spouse is always worth suggesting below, even on a candidate with nobody added yet
       // (founder feedback 2026-07-26, mirrors EventDetail.tsx's own selfId seeding).
       supabase.from('people').select('id').eq('is_self', true).maybeSingle(),
+      // Which moments are already sub-events of something else — used only to keep them out of
+      // the "add as a sub-event of…" parent picker, since the app nests one level deep (same rule
+      // as EventDetail.tsx). Isolated from the moments query above on purpose, same fail-open
+      // reasoning as Events.tsx's loadChildEvents: if parent_moment_id isn't migrated yet this
+      // degrades to "nothing is a sub-event" instead of breaking the whole review page.
+      supabase.from('moments').select('id').not('parent_moment_id', 'is', null),
     ])
     setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
@@ -203,6 +210,7 @@ export default function ImportReview({
     setAllPeopleList((peopleRes.data as PersonRef[]) ?? [])
     setRelationshipsById(relationshipsMap)
     setSelfId(selfRes.data?.id ?? null)
+    setChildMomentIds(childIdsRes.error ? new Set() : new Set(((childIdsRes.data as { id: string }[] | null) ?? []).map((r) => r.id)))
     setLoading(false)
   }
 
@@ -263,6 +271,7 @@ export default function ImportReview({
             allPeopleList={allPeopleList}
             relationshipsById={relationshipsById}
             selfId={selfId}
+            childMomentIds={childMomentIds}
             calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
             onTagCreated={handleTagCreated}
             onMomentCreated={handleMomentCreated}
@@ -284,6 +293,7 @@ function CandidateCard({
   allPeopleList,
   relationshipsById,
   selfId,
+  childMomentIds,
   calendarSourceLabel,
   onTagCreated,
   onMomentCreated,
@@ -298,6 +308,7 @@ function CandidateCard({
   allPeopleList: PersonRef[]
   relationshipsById: Map<string, PersonRelationships>
   selfId: string | null
+  childMomentIds: Set<string>
   calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
   onMomentCreated: (moment: ExistingMoment) => void
@@ -326,9 +337,15 @@ function CandidateCard({
   const [transcribing, setTranscribing] = useState(false)
   const [dismissedMatch, setDismissedMatch] = useState(false)
   const [mergeTarget, setMergeTarget] = useState<ExistingMoment | null>(null)
-  const [manualMergeOpen, setManualMergeOpen] = useState(false)
+  // Set when the reviewer chooses to file this candidate *under* an existing event rather than
+  // merging into it or creating a standalone one. Mutually exclusive with mergeTarget.
+  const [subEventParent, setSubEventParent] = useState<ExistingMoment | null>(null)
+  const [pickerMode, setPickerMode] = useState<'merge' | 'sub' | null>(null)
   const [mergeSearch, setMergeSearch] = useState('')
-  const [savedResult, setSavedResult] = useState<{ kind: 'created' | 'merged' | 'noted'; momentId: string; label: string } | null>(null)
+  const [acceptError, setAcceptError] = useState<string | null>(null)
+  const [savedResult, setSavedResult] = useState<
+    { kind: 'created' | 'merged' | 'noted' | 'subevent'; momentId: string; label: string; parentLabel?: string } | null
+  >(null)
 
   const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
 
@@ -471,6 +488,7 @@ function CandidateCard({
 
   async function handleAccept() {
     setSaving(true)
+    setAcceptError(null)
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -487,12 +505,18 @@ function CandidateCard({
         when_text: eventDate ? formatDateRange(eventDate, eventEndDate || null) : null,
         event_date: eventDate || null,
         event_end_date: eventEndDate || null,
+        // Item 35 sub-events: still a brand-new moment with its own attendees/tags/notes — the only
+        // difference from a plain Accept is that it hangs under an existing event instead of
+        // sitting at the top level. Only sent when a parent was actually picked, so an unmigrated
+        // parent_moment_id column can't break the ordinary Accept path.
+        ...(subEventParent ? { parent_moment_id: subEventParent.id } : {}),
       })
       .select()
       .single()
 
     if (error || !newMoment) {
       setSaving(false)
+      if (subEventParent) setAcceptError("Couldn't add this as a sub-event — please try again.")
       return
     }
 
@@ -519,7 +543,12 @@ function CandidateCard({
     })
 
     setSaving(false)
-    setSavedResult({ kind: 'created', momentId: newMoment.id, label: summarize(occasion, candidate.raw_description ?? '') })
+    setSavedResult({
+      kind: subEventParent ? 'subevent' : 'created',
+      momentId: newMoment.id,
+      label: summarize(occasion, candidate.raw_description ?? ''),
+      parentLabel: subEventParent ? summarize(subEventParent.occasion, subEventParent.raw_description) : undefined,
+    })
   }
 
   // Folds this candidate into an already-existing moment instead of creating a duplicate — fills
@@ -621,9 +650,11 @@ function CandidateCard({
         <p style={styles.confirmText}>
           {savedResult.kind === 'created'
             ? `Added — ${savedResult.label}`
-            : savedResult.kind === 'noted'
-              ? `Saved as a note on "${savedResult.label}"`
-              : `Merged into "${savedResult.label}"`}
+            : savedResult.kind === 'subevent'
+              ? `Added as a sub-event of "${savedResult.parentLabel}" — ${savedResult.label}`
+              : savedResult.kind === 'noted'
+                ? `Saved as a note on "${savedResult.label}"`
+                : `Merged into "${savedResult.label}"`}
         </p>
         <div style={styles.suggestButtonRow}>
           <button
@@ -940,12 +971,17 @@ function CandidateCard({
         />
       )}
 
-      {!dismissedMatch && likelyMatch && !mergeTarget && (
+      {!dismissedMatch && likelyMatch && !mergeTarget && !subEventParent && (
         <div style={styles.suggestBanner}>
           <span>This might already be on file as "{summarize(likelyMatch.occasion, likelyMatch.raw_description)}".</span>
           <div style={styles.suggestButtonRow}>
             <button type="button" onClick={() => setMergeTarget(likelyMatch)} style={styles.suggestYesButton} disabled={saving}>
               Merge into it
+            </button>
+            {/* Third option between "same event" and "just a note": this really happened *during*
+                the bigger event and deserves its own record underneath it. */}
+            <button type="button" onClick={() => setSubEventParent(likelyMatch)} style={styles.suggestNoButton} disabled={saving}>
+              + Add as a sub-event
             </button>
             <button type="button" onClick={() => handleSaveAsNote(likelyMatch)} style={styles.suggestNoButton} disabled={saving}>
               Save as a note instead
@@ -961,6 +997,17 @@ function CandidateCard({
         <div style={styles.suggestBanner}>
           <span>Will merge into "{summarize(mergeTarget.occasion, mergeTarget.raw_description)}" instead of creating a new event.</span>
           <div style={styles.suggestButtonRow}>
+            <button
+              type="button"
+              onClick={() => {
+                setSubEventParent(mergeTarget)
+                setMergeTarget(null)
+              }}
+              style={styles.suggestNoButton}
+              disabled={saving}
+            >
+              + Add as a sub-event instead
+            </button>
             <button type="button" onClick={() => handleSaveAsNote(mergeTarget)} style={styles.suggestNoButton} disabled={saving}>
               Save as a note instead
             </button>
@@ -969,16 +1016,51 @@ function CandidateCard({
             </button>
           </div>
         </div>
+      ) : subEventParent ? (
+        <div style={styles.suggestBanner}>
+          <span>
+            Will be added as a sub-event of "{summarize(subEventParent.occasion, subEventParent.raw_description)}" — its own event, nested under
+            that one.
+          </span>
+          <div style={styles.suggestButtonRow}>
+            <button
+              type="button"
+              onClick={() => {
+                setMergeTarget(subEventParent)
+                setSubEventParent(null)
+              }}
+              style={styles.suggestNoButton}
+              disabled={saving}
+            >
+              Merge into it instead
+            </button>
+            <button type="button" onClick={() => setSubEventParent(null)} style={styles.suggestNoButton} disabled={saving}>
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : (
         <div style={{ marginBottom: '0.75rem' }}>
-          <button type="button" onClick={() => setManualMergeOpen((v) => !v)} style={styles.linkButton} disabled={saving}>
-            {manualMergeOpen ? 'Cancel merge search' : 'Merge with an existing event instead…'}
-          </button>
-          {manualMergeOpen && (
+          <div style={styles.pickerToggleRow}>
+            <button type="button" onClick={() => setPickerMode((m) => (m === 'merge' ? null : 'merge'))} style={styles.linkButton} disabled={saving}>
+              {pickerMode === 'merge' ? 'Cancel merge search' : 'Merge with an existing event instead…'}
+            </button>
+            <button type="button" onClick={() => setPickerMode((m) => (m === 'sub' ? null : 'sub'))} style={styles.linkButton} disabled={saving}>
+              {pickerMode === 'sub' ? 'Cancel sub-event search' : '+ Add as a sub-event of an existing event…'}
+            </button>
+          </div>
+          {pickerMode && (
             <div style={styles.pickerPanel}>
-              <SearchBox value={mergeSearch} onChange={setMergeSearch} placeholder="Search your events… (or browse below)" />
+              <SearchBox
+                value={mergeSearch}
+                onChange={setMergeSearch}
+                placeholder={pickerMode === 'sub' ? 'Search for the event this belongs under…' : 'Search your events… (or browse below)'}
+              />
               <div style={styles.mergeResultsList}>
                 {existingMoments
+                  // Sub-events nest one level only (same rule as EventDetail.tsx), so an event
+                  // that's already someone's sub-event can't itself be a parent.
+                  .filter((m) => (pickerMode === 'sub' ? !childMomentIds.has(m.id) : true))
                   .filter((m) => summarize(m.occasion, m.raw_description).toLowerCase().includes(mergeSearch.trim().toLowerCase()))
                   .slice(0, 8)
                   .map((m) => (
@@ -986,8 +1068,9 @@ function CandidateCard({
                       key={m.id}
                       type="button"
                       onClick={() => {
-                        setMergeTarget(m)
-                        setManualMergeOpen(false)
+                        if (pickerMode === 'sub') setSubEventParent(m)
+                        else setMergeTarget(m)
+                        setPickerMode(null)
                       }}
                       style={styles.mergeResultButton}
                     >
@@ -1000,9 +1083,11 @@ function CandidateCard({
         </div>
       )}
 
+      {acceptError && <p style={styles.errorBanner}>{acceptError}</p>}
+
       <div style={styles.suggestButtonRow}>
         <button type="button" onClick={mergeTarget ? handleAcceptAsMerge : handleAccept} style={styles.suggestYesButton} disabled={saving || transcribing}>
-          {saving ? '…' : mergeTarget ? 'Merge' : 'Accept'}
+          {saving ? '…' : mergeTarget ? 'Merge' : subEventParent ? 'Add as sub-event' : 'Accept'}
         </button>
         <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
           Reject
@@ -1105,7 +1190,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 0,
     marginLeft: '0.15rem',
   },
-  pickerToggleRow: { display: 'flex', gap: space.md, marginBottom: space.md },
+  pickerToggleRow: { display: 'flex', gap: space.md, marginBottom: space.md, flexWrap: 'wrap' },
+  errorBanner: { fontSize: fontSize.body, color: neutral.redDeep, margin: '0 0 0.75rem' },
   addButton: {
     fontSize: fontSize.label,
     padding: '0.3rem 0.7rem',
@@ -1158,7 +1244,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.85rem 1rem',
     marginBottom: '0.9rem',
   },
-  suggestButtonRow: { display: 'flex', gap: space.md },
+  suggestButtonRow: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
   suggestYesButton: {
     fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',
