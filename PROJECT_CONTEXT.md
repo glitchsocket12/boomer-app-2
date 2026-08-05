@@ -34,9 +34,12 @@ src/
 │   │                            used (90 distinct hexes, 976 occurrences across 46 files) — every
 │   │                            value is a no-op substitution, not a redesign. The app has no CSS
 │   │                            framework; everything is inline `style={{}}`, so this is the only
-│   │                            single source of truth for the palette. **The 45-file sweep that
-│   │                            makes item 72 step 1 actually pay off is NOT done** — only
-│   │                            `Chips.tsx` is converted, as the reference example.
+│   │                            single source of truth for the palette. The 45-file sweep is
+│   │                            effectively done (2026-08-03) — `Landing.tsx`/`Onboarding.tsx`
+│   │                            are the only files still holding the brand hex directly.
+│   │                            Also exports `subgroupPalette` (2026-08-04): 8 EXISTING tokens
+│   │                            reordered by hue distance for telling subgroups apart on
+│   │                            GroupDetail — a reordering for a new job, not a new shade.
 │   ├── geoapify.ts             — (2026-07-26) fetchAddressSuggestions(): thin client for
 │   │                            Geoapify's Address Autocomplete API (key restricted by referrer,
 │   │                            safe client-side, no proxy). Reads `VITE_GEOAPIFY_API_KEY`; returns
@@ -67,6 +70,15 @@ src/
 │   ├── groupDisplayName.ts    — groupDisplayName(group, nameById) → "Parent / Child" for a
 │   │                            subgroup, bare name otherwise. Always qualifies (no
 │   │                            collision check). Single source of the format.
+│   ├── subgroupColors.ts      — (2026-08-04, tested) subgroupColorMap() assigns a
+│   │                            `subgroupPalette` colour per subgroup BY POSITION (cycles past
+│   │                            8; position not a hash of the id, because a hash collides and
+│   │                            two subgroups sharing a colour is the one failure that makes
+│   │                            the feature misleading). subgroupsByPerson() → personId →
+│   │                            subgroups they're in, built from rosters GroupDetail already
+│   │                            has; isUnassigned() drives the "Not in a subgroup" filter.
+│   │                            Structural input type (SubgroupLike), not an import from
+│   │                            pages/. Direct children only. Nothing persisted.
 │   ├── groupRoster.ts         — (2026-08-01) useGroupRoster() → { nameById, label(id,
 │   │                            fallbackName) }. One small `groups` select on mount, no
 │   │                            cache (converse can create a group server-side mid-chat, so
@@ -514,7 +526,25 @@ src/
 │   │                            handleApproveAllSuggestions — that one's refresh/invalidate
 │   │                            calls are hardcoded to the page's OWN groupId, wrong target
 │   │                            here since the drop target is always a subgroup, never the
-│   │                            group being viewed.
+│   │                            group being viewed. Subgroup colour coding (2026-08-04):
+│   │                            each subgroup tile gets a colour (3px left rule + dot) and
+│   │                            every parent-level member chip repeats it as a dot, so the
+│   │                            tile grid is the legend for the member list — no dot means
+│   │                            nobody's sorted that person yet. Colours are AUTO-assigned
+│   │                            by position from `theme.ts`'s `subgroupPalette` via
+│   │                            `lib/subgroupColors.ts`; nothing is persisted, no DB column
+│   │                            (a tap-to-recolour picker is item 82). Derived from the
+│   │                            subgroup rosters the page ALREADY loads for the tile member
+│   │                            counts — no extra query, no AI call. Paired "Not in a
+│   │                            subgroup (N)" filter pill above the member list (house
+│   │                            filter-chip style, Events.tsx's date chips); local state,
+│   │                            ANDs with the member search, hidden when there are no
+│   │                            subgroups or nobody's unassigned (but stays visible while
+│   │                            ON). Only DIRECT children count, matching what the tiles
+│   │                            show; a person can carry several dots (capped at 3, then
+│   │                            "+N") since subgroup memberships are independent. Chip
+│   │                            title/aria-label names the subgroups so colour isn't the
+│   │                            only carrier.
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
 │   │                            created_at), full date incl. day (e.g. "August 3,
 │   │                            2026") via formatEventWhen (2026-08-03), grouped under
@@ -1418,7 +1448,11 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               one level deep in the UI only, a gate on !parentGroup in GroupDetail.tsx;
               migrated live 2026-07-26). Subgroup membership is deliberately independent of
               the parent's — no sync trigger. One was added by mistake 2026-07-26 and removed
-              same day before ever being run (contradicted this design decision). Subgroup
+              same day before ever being run (contradicted this design decision) — so a person
+              can sit in several sibling subgroups at once, which is why GroupDetail's member
+              chips carry a LIST of colour dots, not one. There is NO colour column: subgroup
+              colours are assigned in the client by position (2026-08-04, see lib/
+              subgroupColors.ts) and persist nowhere. Subgroup
               names render as the FULL ancestor chain "A / B / C" APP-WIDE (full chain
               2026-08-03, immediate parent only 2026-08-01, pickers-only 2026-07-30) so
               same-named subgroups under different parents (e.g. two units each
@@ -1431,11 +1465,10 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               GroupDetail (has "↑ Part of X" one line below, and the rename field edits the bare
               name) and the subgroup tiles on the parent's own page. Search filters match on the
               qualified string, so typing a parent's name finds its subgroups.
-              Groups.tsx (2026-08-01) loads subgroups but shows them ONLY while a search query is
-              active — the resting list stays root-only per item 19, since a search is a targeted
-              lookup, not browsing. Its summary auto-generation stays root-only too (a subgroup's
-              summary is generated on demand by GroupDetail's loadSummary when opened; doing it
-              here would be one summarize-group call per unopened subgroup — CLAUDE.md rule 3).
+              Groups.tsx nests subgroups under their parent AT REST as of 2026-08-03 (superseding
+              the 2026-08-01 search-only behaviour), so its summary auto-generation now covers
+              subgroups too — still one summarize-group call per group EVER, cached in
+              groups.summary (CLAUDE.md rule 3). See §3 Groups.tsx.
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
               only; event attendees are never members, only suggestions)
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
@@ -1640,6 +1673,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 79. **Landing page should call out the contacts-import feature** — reported via feedback widget 2026-07-27, from Home's "161 contacts selected, ready to review" banner. Same ask as item 78: front-page copy should mention Boomer can pull in iPhone contacts to help build out the database — an easy-win selling point not currently surfaced pre-signup.
 80. ~~"Connections to make" Yes button not saving~~ + ~~auto-suggest Family tag on Home~~ — **DONE 2026-08-03.** Founder report: clicking "Yes" on Home's "Connections to make" card (e.g. adding Abram Woody to Air Force) repeatedly didn't stick. Root cause: `acceptConnectionSuggestion`/`dismissConnectionSuggestion` (`lib/suggestConnections.ts`) never checked `{ error }` on their Supabase calls, and `Home.tsx`'s click handler removed the suggestion from local state before the write even resolved — a failed write was invisible, and since suggestions recompute fresh from the DB every visit, the same suggestion just kept reappearing. Both now return `{ error }`, the handlers await and only clear local state on confirmed success, and a shared error banner surfaces a failure instead of silently dropping it. Verified live against `jakevolin@gmail.com`: clicked Yes on Abram Woody → Air Force, confirmed the `person_groups` row actually exists via direct query, reloaded and confirmed he no longer resurfaces as a suggestion. Second half: new `lib/suggestFamilyTag.ts` scans untagged groups (`group_type is null`) for a family-shaped name (`\bfamily\b`, or "The Xs"/"The X's"/"The Xs'") and surfaces a Yes/No "Tag as Family?" card on Home, same pattern as Connections to make. New `groups.group_type_suggestion_dismissed` column (migration `2026-08-03-group-type-suggestion-dismissed.sql`, **not yet run — founder action needed, see §10**) tracks a "No"; until the migration runs the feature fails open to showing nothing (its own query, not folded into any shared groups select, per the isolation pattern in the infra notes). Regex validated against the real account's ~60 groups: matched every untagged family-shaped name, zero false positives on non-family groups (years, "Pilots", "NCOs", "Civilians", etc).
 81. ~~Two separate ways to add a note on Event/Group pages~~ — **DONE 2026-08-03.** Founder confusion (this conversation): a plain "Add a note" box sat beside a separate AI chat ("Remember something else?"/"Edit this group") on both pages — overlapping jobs, unclear which to use, and Home's chat made a third pattern. `UpdateMomentChat.tsx`/`UpdateGroupChat.tsx` replaced with one `NoteWithDetection.tsx` (see §3), matching the single-input pattern `PersonDetail`'s fact bar already used. Founder decision: attendee/relationship detection runs **automatically** on every note (not on-demand) — small added AI cost/latency accepted. `update-moment`/`update-group` prompts updated to stop re-inserting a paraphrased copy of the general note (frontend already saves it verbatim) and to stop angling for an open "anything else?" follow-up, since each call is now one discrete note rather than a multi-turn thread; `needsClarification` replaces `done` for the rare genuine disambiguation case. Home's `converse` chat is untouched — deliberately different, whole-account scope. Both edge functions deployed (persisted `SUPABASE_ACCESS_TOKEN`, see §2) and verified live: direct-invoke test confirmed `needsClarification` in the response and zero note rows written for a general-detail test message. Click-tested end-to-end on a real event and a real group (verbatim save, summary regeneration, no duplicate notes); test notes cleaned up afterward.
+82. ~~See at a glance who in a group is in a subgroup~~ — **auto-colour half DONE 2026-08-04.** Founder ask: with a 20-person group and several subgroups, working out who's already sorted meant opening each subgroup in turn. Shipped both halves of the ask together — subgroup tiles carry a colour that repeats as a dot on the parent-level member chips (so the tile grid is the legend), plus a "Not in a subgroup (N)" filter pill. See §3 GroupDetail.tsx / `lib/subgroupColors.ts`. **NOT browser-verified before pushing** (founder said push; build + 102 tests green, click-through never ran — same call as item 19). Unverified specifically: the dot/rule rendering, the pill's filter behaviour, and phone width. **Still open: tap-to-recolour swatches.** Founder chose auto-assigned colours specifically to avoid a `groups.color` column and a hand-run migration; the manual-override half is only worth building if the automatic colours actually annoy in use. Note the tradeoff that would go away: with position-assigned colours, adding a subgroup can shift the colours of the ones sorting after it.
 
 **Flagged from feedback widget — needs founder scope decision (not filed as bounded items, left open in the widget):**
 - *(Jake's birthday dinner, 2026-08-03)* Founder: the chat didn't add the right people to the event or spell all the names correctly, and wants it to actively extract people/event details from a narrative, infer who they are from existing contacts/context, suggest adding them — and if it's fully confident, add them automatically. This overlaps with item 15's person-to-person inference thread and item 76's chat-unification effort; worth deciding whether it's its own item or folds into one of those before scoping.

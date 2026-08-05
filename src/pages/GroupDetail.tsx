@@ -18,6 +18,7 @@ import { sortByLastName } from '../lib/people'
 import { DEFAULT_GROUP_TYPES, loadGroupTypeNames } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { isSelfOrDescendant } from '../lib/groupDisplayName'
+import { isUnassigned, subgroupColorMap, subgroupsByPerson } from '../lib/subgroupColors'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import EditButton from '../components/EditButton'
@@ -1258,6 +1259,10 @@ export function GroupDetailView({
 }) {
   const [memberSearch, setMemberSearch] = useState('')
   const memberQuery = memberSearch.trim().toLowerCase()
+  // "Who here hasn't been sorted into a subgroup yet?" — the other half of the color coding
+  // below. Local state, not lifted to App.tsx the way the Groups page's filter was (item 62):
+  // that one had to survive the back arrow, this is a momentary look at one page.
+  const [unassignedOnly, setUnassignedOnly] = useState(false)
 
   // Drag-and-drop mass-add: select several parent-group members, then drag the whole selection
   // onto a subgroup tile in one motion. `selectMode` gates the chip UI (checkbox-style instead of
@@ -1307,9 +1312,25 @@ export function GroupDetailView({
   }
 
   const selectedPeopleCount = selectedIds.size
-  const sortedExplicitMembers = sortByLastName(explicitMembers).filter(
-    (p) => !memberQuery || `${p.name} ${p.last_name ?? ''}`.toLowerCase().includes(memberQuery)
+
+  // Color coding, derived entirely from the subgroup rosters already loaded for the tile member
+  // counts -- no extra query. The tiles carry the color as a left rule and the parent-level member
+  // chips repeat it as a dot, so "which subgroup is she in?" is answerable without opening any of
+  // them, and "no dot at all" answers "nobody's sorted her yet."
+  const subgroupColors = useMemo(() => subgroupColorMap(subgroups), [subgroups])
+  const memberSubgroups = useMemo(() => subgroupsByPerson(subgroups), [subgroups])
+  const unassignedCount = useMemo(
+    () => explicitMembers.filter((p) => isUnassigned(p.id, memberSubgroups)).length,
+    [explicitMembers, memberSubgroups]
   )
+  // The toggle hides itself when it would do nothing (no subgroups) or filter to nothing
+  // (everyone's sorted) -- but it stays visible while it's ON, or turning it on would make the
+  // only control that can turn it off disappear.
+  const showUnassignedToggle = subgroups.length > 0 && (unassignedCount > 0 || unassignedOnly)
+
+  const sortedExplicitMembers = sortByLastName(explicitMembers)
+    .filter((p) => !memberQuery || `${p.name} ${p.last_name ?? ''}`.toLowerCase().includes(memberQuery))
+    .filter((p) => !unassignedOnly || isUnassigned(p.id, memberSubgroups))
   const visibleExplicitMembers =
     membersExpanded || memberQuery ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
   const visibleSuggestedMembers = suggestedMembers.slice(0, MEMBER_SUGGESTION_LIMIT)
@@ -1451,11 +1472,27 @@ export function GroupDetailView({
         <p style={styles.empty}>No members yet — type a name below to add someone.</p>
       ) : (
         <>
+          {showUnassignedToggle && (
+            <div style={styles.unassignedRow}>
+              <button
+                type="button"
+                onClick={() => setUnassignedOnly((v) => !v)}
+                aria-pressed={unassignedOnly}
+                style={unassignedOnly ? styles.unassignedChipActive : styles.unassignedChip}
+              >
+                Not in a subgroup ({unassignedCount})
+              </button>
+            </div>
+          )}
           {explicitMembers.length > MEMBER_LIST_LIMIT && (
             <SearchBox value={memberSearch} onChange={setMemberSearch} placeholder="Search members…" />
           )}
           {sortedExplicitMembers.length === 0 ? (
-            <p style={styles.empty}>No one matches "{memberSearch}".</p>
+            <p style={styles.empty}>
+              {memberQuery
+                ? `No one matches "${memberSearch}"${unassignedOnly ? ' who isn’t in a subgroup' : ''}.`
+                : 'Everyone here is in a subgroup.'}
+            </p>
           ) : (
             <div style={styles.chipRow}>
               {visibleExplicitMembers.map((p) => (
@@ -1468,6 +1505,8 @@ export function GroupDetailView({
                   selectable={selectMode}
                   selected={selectedIds.has(p.id)}
                   onToggleSelect={() => handleToggleSelect(p.id)}
+                  subgroups={memberSubgroups.get(p.id)}
+                  subgroupColors={subgroupColors}
                 />
               ))}
             </div>
@@ -1627,7 +1666,13 @@ export function GroupDetailView({
       ) : (
         <div style={styles.subgroupGrid}>
           {subgroups.map((sg) => (
-            <SubgroupTile key={sg.id} subgroup={sg} isDragActive={activeId !== null} onSelectGroup={onSelectGroup} />
+            <SubgroupTile
+              key={sg.id}
+              subgroup={sg}
+              color={subgroupColors[sg.id]}
+              isDragActive={activeId !== null}
+              onSelectGroup={onSelectGroup}
+            />
           ))}
         </div>
       )}
@@ -2030,6 +2075,8 @@ function MemberChip({
   selectable = false,
   selected = false,
   onToggleSelect,
+  subgroups,
+  subgroupColors,
 }: {
   person: PersonRef
   isSelf?: boolean
@@ -2038,9 +2085,22 @@ function MemberChip({
   selectable?: boolean
   selected?: boolean
   onToggleSelect?: () => void
+  // Which of this group's direct subgroups they're in, matched to the tile colors below. Absent
+  // (the demo page, and anyone nobody has sorted yet) simply draws no dots — and the ABSENCE is
+  // the signal the whole feature turns on, so it has to stay a plain unadorned chip.
+  subgroups?: { id: string; name: string }[]
+  subgroupColors?: Record<string, string>
 }) {
   const [hovered, setHovered] = useState(false)
   const label = isSelf ? 'You' : `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+  const inSubgroups = subgroups ?? []
+  // Three dots is about where a pill stops reading as a name with a marker on it and starts
+  // reading as a color bar, so the rest collapse into a count.
+  const shownDots = inSubgroups.slice(0, 3)
+  const extraDots = inSubgroups.length - shownDots.length
+  // Color alone can't carry meaning, so the names ride along on the chip's title/aria-label —
+  // and the "Not in a subgroup" toggle above gives the same answer with no color at all.
+  const subgroupLabel = inSubgroups.length ? `${label} — in ${inSubgroups.map((s) => s.name).join(', ')}` : undefined
 
   // Only a selected chip is a real drag source -- dragging always means "drag the whole current
   // selection," never just this one chip alone. An unselected chip in select mode just toggles on
@@ -2069,10 +2129,24 @@ function MemberChip({
       <button
         type="button"
         onClick={selectable ? onToggleSelect : onSelect}
-        style={{ ...styles.person, ...(selected ? styles.personSelected : {}) }}
+        style={{
+          ...styles.person,
+          // Applied only when there ARE dots, so a chip without any keeps its exact previous box.
+          ...(inSubgroups.length ? styles.personWithDots : {}),
+          ...(selected ? styles.personSelected : {}),
+        }}
         role={selectable ? 'checkbox' : undefined}
         aria-checked={selectable ? selected : undefined}
+        title={subgroupLabel}
+        aria-label={subgroupLabel}
       >
+        {shownDots.map((s) => (
+          <span
+            key={s.id}
+            style={{ ...styles.memberSubgroupDot, backgroundColor: subgroupColors?.[s.id] ?? colors.textFaintest }}
+          />
+        ))}
+        {extraDots > 0 && <span style={styles.memberSubgroupMore}>+{extraDots}</span>}
         {label}
       </button>
       {!selectable && (hovered || IS_TOUCH) && onRemove && (
@@ -2103,10 +2177,14 @@ function MemberChip({
 // renders, since the number of hook calls has to stay stable across a render.
 function SubgroupTile({
   subgroup,
+  color,
   isDragActive,
   onSelectGroup,
 }: {
   subgroup: SubgroupRef
+  // This subgroup's assigned color, repeated as a dot on every parent-level member chip that
+  // belongs to it — which makes this tile grid the legend for the member list above.
+  color?: string
   isDragActive: boolean
   onSelectGroup: (group: GroupRef) => void
 }) {
@@ -2126,11 +2204,18 @@ function SubgroupTile({
       }}
       style={{
         ...styles.subgroupTile,
+        // A left rule rather than a tinted fill, specifically so it can't be mistaken for the two
+        // drop-target states below -- those own the tile's border and background, and a colored
+        // wash underneath them would muddy "you're about to drop people here."
+        ...(color ? { borderLeft: `3px solid ${color}` } : {}),
         ...(isDragActive ? styles.subgroupTileDroppable : {}),
         ...(isOver ? styles.subgroupTileDropActive : {}),
       }}
     >
-      <span style={styles.subgroupTileName}>{subgroup.name}</span>
+      <span style={styles.subgroupTileName}>
+        {color && <span style={{ ...styles.memberSubgroupDot, backgroundColor: color }} />}
+        {subgroup.name}
+      </span>
       <span style={styles.subgroupTileMeta}>
         {memberCount} member{memberCount === 1 ? '' : 's'}
         {subgroup.group_type ? ` · ${subgroup.group_type}` : ''}
@@ -2281,6 +2366,40 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   personSelected: { backgroundColor: colors.ink, color: colors.onFill },
+  personWithDots: { display: 'inline-flex', alignItems: 'center', gap: space.sm },
+  // Same 7px shape as the gold dot on every GroupChip, so a colored dot already reads as "this
+  // belongs to a group" before you've worked out which one.
+  memberSubgroupDot: {
+    display: 'inline-block',
+    width: '7px',
+    height: '7px',
+    borderRadius: radius.circle,
+    flexShrink: 0,
+  },
+  memberSubgroupMore: { fontSize: fontSize.micro, color: colors.textFaint },
+  unassignedRow: { display: 'flex', flexWrap: 'wrap', gap: space.md, marginBottom: space.lg },
+  // The app's standard filter pill (Events.tsx's date chips, ContactImportReview's segmented row):
+  // outlined at rest, filled ink when on.
+  unassignedChip: {
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.75rem',
+    borderRadius: radius.pill,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.inkPlain,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  unassignedChipActive: {
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.75rem',
+    borderRadius: radius.pill,
+    border: border.ink,
+    backgroundColor: colors.ink,
+    color: colors.onFill,
+    cursor: 'pointer',
+    fontFamily,
+  },
   chipBeingDragged: { opacity: 0.4 },
   suggestionWrapper: { position: 'relative', display: 'inline-block' },
   denyBadge: {
@@ -2344,7 +2463,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
-  subgroupTileName: { fontSize: fontSize.base, color: colors.ink },
+  subgroupTileName: { fontSize: fontSize.base, color: colors.ink, display: 'flex', alignItems: 'center', gap: space.sm },
   subgroupTileMeta: { fontSize: fontSize.small, color: colors.textFaint },
   // Deliberately the green "ink" family rather than the gold "suggestion" family used elsewhere
   // on this page, so a user never confuses "the AI suggested this" with "I dragged this myself."

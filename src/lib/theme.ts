@@ -129,6 +129,28 @@ export const neutral = {
   rust: '#B3541E',
 } as const
 
+/**
+ * Categorical palette for telling one subgroup from another at a glance (GroupDetail.tsx).
+ *
+ * Every entry is an existing token, not a new shade — this is a REORDERING of the palette for a
+ * new job (distinguishability), not an addition to it, so item 72's "extracted, not invented"
+ * rule holds. Ordered so the first few are maximally far apart in hue, because most groups have
+ * two or three subgroups and those are the colors they'll actually see.
+ *
+ * Colors here are assigned automatically by position (see lib/subgroupColors.ts) — there is no
+ * user-facing picker yet, so nothing is persisted and reordering this array is safe.
+ */
+export const subgroupPalette = [
+  colors.tree, // purple
+  colors.suggestFill, // gold
+  colors.info, // teal
+  colors.danger, // terracotta
+  colors.event, // blue
+  colors.success, // green
+  neutral.rust, // burnt orange
+  neutral.sage, // muted green-grey
+] as const
+
 /** Border-radius scale. `pill` for chips/tags, `circle` for avatars. */
 export const radius = {
   sm: '6px',
