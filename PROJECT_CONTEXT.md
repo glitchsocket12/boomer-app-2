@@ -694,7 +694,17 @@ src/
 │                                 a fresh query (a family tree is a person's own
 │                                 relationship graph, not bounded by which group you
 │                                 opened it from), verified live with disposable test
-│                                 people (deleted after). Grandparents tier also pulls in
+│                                 people (deleted after). Tapping a tile opens a
+│                                 `ChoiceSheet` (2026-08-04) offering "Open <name>'s
+│                                 profile" or "Center the tree on <name>" rather than
+│                                 re-centering immediately — the tree previously had no
+│                                 route to a profile. The ego-mode root is tappable too
+│                                 (profile only; re-centering on itself is a no-op) and
+│                                 keeps its chevron-less look. A ~10px pointer-movement
+│                                 guard on each tile keeps a horizontal swipe across the
+│                                 scrolling canvas from firing the tap. `onSelectPerson`
+│                                 is optional — Onboarding has no profile view, so the
+│                                 sheet omits that action there. Grandparents tier also pulls in
 │                                 parents' siblings (aunts/uncles, riding in the same
 │                                 branch) and their kids (cousins, shown as extended in
 │                                 the root's own tier). Kids tier and cousins' kids both pair in-law
@@ -1158,6 +1168,14 @@ Full story: PROJECT_HISTORY.md.
 │   │                            on a timer — read speed shouldn't decide whether a
 │   │                            mistake stays fixable. Same visual idiom as
 │   │                            ContactImportReview/PersonDetail's inline Undo links.
+│   ├── ChoiceSheet.tsx        — generic "what do you want to do with this?" popup:
+│   │                            title, optional subtitle, a stack of full-width choice
+│   │                            buttons (one `primary`, filled ink). Second instance of
+│   │                            FilterPanel's popup pattern; separate component because
+│   │                            FilterPanel's "Clear all / Done" footer is required and
+│   │                            wrong for a chooser. Carries role=dialog and focuses the
+│   │                            first action on open (FilterPanel does neither). Used by
+│   │                            FamilyTree's tile tap (2026-08-04).
 │   ├── Chips.tsx              — PersonChip (green) / GroupChip (gold) / EventChip
 │   │                            (blue) — shared visual language everywhere
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)

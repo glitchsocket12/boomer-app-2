@@ -2,11 +2,11 @@
 // still computed at render time from a relationship data model (kept identical to the validated
 // mock), but the model itself now comes from buildFamilyTree() walking the real relationships
 // table, and "+" writes real relationship facts instead of only updating local component state.
-// Works for ANY person_id, not just "you" — clicking a person re-centers the whole tree on them
-// via a fresh query, since a family tree is a person's own relationship graph, not bounded by
-// which group you opened it from.
+// Works for ANY person_id, not just "you" — tapping a person opens a ChoiceSheet offering either
+// their profile or re-centering the whole tree on them via a fresh query, since a family tree is
+// a person's own relationship graph, not bounded by which group you opened it from.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   buildFamilyTree,
@@ -29,6 +29,7 @@ import {
 } from '../lib/writeRelationship'
 import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
 import AddFamilyMember, { type RelationshipChoice } from '../components/AddFamilyMember'
+import ChoiceSheet from '../components/ChoiceSheet'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -556,7 +557,10 @@ export function FamilyTreeView({
   onBack,
   backLabel,
   onSelectTree,
-  onSelectPerson = () => {},
+  // Left undefined by callers with nowhere to send you — Onboarding renders the tree before any
+  // profile view exists. The tap sheet omits its "Open profile" action entirely in that case
+  // rather than offering a button that does nothing.
+  onSelectPerson,
   readOnly = false,
   allPeople = [],
   onAddRelationship = () => {},
@@ -614,6 +618,15 @@ export function FamilyTreeView({
   onDeclineCoParentSuggestion?: (s: CoParentSuggestion) => void
 }) {
   const { tiers, mode } = data
+
+  // Tapping a tile opens a chooser rather than acting immediately — re-centering used to be the
+  // only thing a tile could do, which left the tree with no route to a person's profile.
+  const [tapped, setTapped] = useState<{ id: string; name: string; relationLabel?: string; isRoot: boolean } | null>(
+    null
+  )
+  // The canvas is wider than a phone screen and lives in a horizontally scrolling div, so a swipe
+  // that starts on a tile would otherwise fire its click. Bail if the pointer travelled.
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null)
 
   // Every tier carries a depth relative to depth 0 (root-gen in ego mode; the family's eldest known
   // generation in descendants mode — see buildFamilyTree/buildDescendantTree). Depth 0 lays out
@@ -829,7 +842,7 @@ export function FamilyTreeView({
   // purple nor sides at all).
   let legendText: string
   if (mode === 'descendants') {
-    legendText = 'Everyone shown is a blood relative or spouse in this family line. Tap any name to build a full family tree centered on them.'
+    legendText = 'Everyone shown is a blood relative or spouse in this family line. Tap any name to open their profile or build a full family tree centered on them.'
   } else {
     const [sideAParent, sideBParent] = data.rootDirect.parents
     const sideLegend =
@@ -844,7 +857,7 @@ export function FamilyTreeView({
         : ''
     legendText =
       `Purple = the person this tree is centered on. Green = their parents, spouse, siblings, and kids — a direct relationship on file. ${sideLegend}` +
-      `Gray = family further out that isn't tied to one side (like great-grandchildren). ${stepLegend}Tap any name to re-center the tree on them.`
+      `Gray = family further out that isn't tied to one side (like great-grandchildren). ${stepLegend}Tap any name to open their profile or re-center the tree on them.`
   }
 
   return (
@@ -973,6 +986,8 @@ export function FamilyTreeView({
               ))}
               {layout.placed.map((p) => {
                 const c = colorsFor(p.person)
+                // The ego-mode root has nothing to re-center on, so it keeps its plain (chevron-less)
+                // look — but it's still tappable now, since its profile is worth reaching.
                 const clickable = mode === 'descendants' ? true : p.person.id !== data.rootId
                 const x = startX + p.x
                 // Deceased: muted grey instead of the usual kind/side color, plus a small dagger —
@@ -983,8 +998,24 @@ export function FamilyTreeView({
                 return (
                   <g
                     key={p.person.id}
-                    onClick={clickable ? () => onSelectTree(p.person.id, `${p.person.name}'s family tree`) : undefined}
-                    style={{ cursor: clickable ? 'pointer' : 'default' }}
+                    onPointerDown={(e) => {
+                      pressOrigin.current = { x: e.clientX, y: e.clientY }
+                    }}
+                    onClick={(e) => {
+                      const origin = pressOrigin.current
+                      pressOrigin.current = null
+                      if (origin && Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > 10) return
+                      // Nothing to offer: the ego-mode root can't be re-centered on, and this
+                      // caller has no profile view to open. Leave the tile inert.
+                      if (!clickable && !onSelectPerson) return
+                      setTapped({
+                        id: p.person.id,
+                        name: p.person.name,
+                        relationLabel: p.person.relationLabel,
+                        isRoot: !clickable,
+                      })
+                    }}
+                    style={{ cursor: clickable || onSelectPerson ? 'pointer' : 'default' }}
                   >
                     <rect x={x} y={y} width={p.w} height={BOX_H} rx={6} fill={fill} stroke={border} strokeWidth={1} />
                     <text
@@ -1014,6 +1045,43 @@ export function FamilyTreeView({
       </svg>
       </div>
 
+      <ChoiceSheet
+        open={tapped !== null}
+        onClose={() => setTapped(null)}
+        title={tapped?.name ?? ''}
+        subtitle={tapped?.relationLabel}
+        actions={
+          tapped
+            ? [
+                ...(onSelectPerson
+                  ? [
+                      {
+                        label: `Open ${tapped.name}'s profile`,
+                        primary: true,
+                        onClick: () => {
+                          onSelectPerson(tapped.id, tapped.name)
+                          setTapped(null)
+                        },
+                      },
+                    ]
+                  : []),
+                ...(tapped.isRoot
+                  ? []
+                  : [
+                      {
+                        label: `Center the tree on ${tapped.name}`,
+                        primary: !onSelectPerson,
+                        onClick: () => {
+                          onSelectTree(tapped.id, `${tapped.name}'s family tree`)
+                          setTapped(null)
+                        },
+                      },
+                    ]),
+              ]
+            : []
+        }
+      />
+
       {relationshipChoices.length > 0 && (
         <div style={styles.addRow}>
           <AddFamilyMember
@@ -1036,7 +1104,7 @@ export function FamilyTreeView({
                 key={slot.key}
                 name={slot.targetName}
                 relLabel={slot.relLabel}
-                onSelect={() => onSelectPerson(slot.targetId, slot.targetName)}
+                onSelect={() => onSelectPerson?.(slot.targetId, slot.targetName)}
                 onRemove={() => onRequestRemove(slot)}
               />
             ))}
