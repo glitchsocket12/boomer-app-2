@@ -10,12 +10,13 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
 } from '@dnd-kit/core'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
-import { GROUP_TYPES } from '../lib/groupTypes'
+import { DEFAULT_GROUP_TYPES, loadGroupTypeNames } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { isSelfOrDescendant } from '../lib/groupDisplayName'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
@@ -38,6 +39,51 @@ const AFFILIATION_LIMIT = 4
 // "+N more" — a group with a large explicit roster (e.g. an extended family) shouldn't be able
 // to dominate the whole page. Full roster is still visible by clicking into the group.
 const MEMBER_LIMIT = 5
+// Past this depth rows stop indenting further — on a 375px phone an uncapped indent would starve
+// a deeply nested card of width. Nesting past it still reads from the rows above.
+const INDENT_MAX_DEPTH = 4
+
+export type GroupRow = {
+  group: Group
+  explicitMembers: PersonRef[]
+  events: { id: string; summary: string }[]
+}
+export type FlatGroupRow = GroupRow & { depth: number; hasChildren: boolean }
+
+// Nests the filtered rows into a parent/child forest and flattens it back out with a `depth` on
+// each row. A flat list (rather than nested JSX) is what the rest of the page wants: every row
+// needs its own drag/drop hooks, and hooks can't be called from a recursive render without the
+// call count shifting as branches collapse.
+export function flattenGroupTree(rows: GroupRow[], collapsedIds: Set<string> = new Set()): FlatGroupRow[] {
+  const byId = new Map(rows.map((r) => [r.group.id, r]))
+  const childrenByParent = new Map<string | null, GroupRow[]>()
+  for (const row of rows) {
+    // A row whose parent isn't in `rows` — filtered out by a type filter, or not loaded yet — is
+    // treated as a root. Otherwise it would be unreachable from any root and vanish off the page
+    // entirely, which is how a group silently "disappears" from the only list that shows it.
+    const rawParent = row.group.parent_group_id ?? null
+    const parentId = rawParent && byId.has(rawParent) ? rawParent : null
+    const siblings = childrenByParent.get(parentId)
+    if (siblings) siblings.push(row)
+    else childrenByParent.set(parentId, [row])
+  }
+
+  const out: FlatGroupRow[] = []
+  // Guards a cycle in the data (the DB CHECK only rejects a group being its OWN direct parent, so
+  // A -> B -> A is still representable) — without it this recursion would never bottom out.
+  const visited = new Set<string>()
+  function walk(parentId: string | null, depth: number) {
+    for (const row of childrenByParent.get(parentId) ?? []) {
+      if (visited.has(row.group.id)) continue
+      visited.add(row.group.id)
+      const children = childrenByParent.get(row.group.id) ?? []
+      out.push({ ...row, depth, hasChildren: children.length > 0 })
+      if (!collapsedIds.has(row.group.id)) walk(row.group.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+  return out
+}
 
 export function filterGroups(
   groups: Group[],
@@ -46,7 +92,7 @@ export function filterGroups(
   // Matches on the qualified "Parent / Child" label, so searching a parent's name turns up its
   // subgroups. Defaults to the bare name (landing-page demo, which has no subgroups).
   groupLabel: GroupLabelFn = (_id, fallbackName) => fallbackName
-): { group: Group; explicitMembers: PersonRef[]; events: { id: string; summary: string }[] }[] {
+): GroupRow[] {
   const decorated = groups.map((group) => {
     const explicitMembers = (group.person_groups ?? [])
       .map((pg) => pg.people)
@@ -67,12 +113,11 @@ export function filterGroups(
   return decorated.filter(({ group, explicitMembers }) => {
     if (typeFilter === 'untyped' && group.group_type) return false
     if (typeFilter !== 'all' && typeFilter !== 'untyped' && group.group_type !== typeFilter) return false
-    // Subgroups stay OUT of the resting list — that's the deliberate item-19 decision (they live
-    // under their parent's own page, same list-pollution lesson as the self-membership revert).
-    // But a search is the founder looking for something specific, and hiding a real group behind
-    // a filter they can't see just reads as "it's not in here" (2026-08-01). So they surface as
-    // soon as there's a query, labelled "Parent / Child" so it's obvious which one it is.
-    if (!query) return !group.parent_group_id
+    // Subgroups are IN the resting list as of 2026-08-03 (founder ask), nested and indented under
+    // their parent by flattenGroupTree rather than listed flat — the indentation is what makes a
+    // drag-to-reparent legible, and it reverses the original item-19 "keep them out of the list"
+    // call, which predated there being any way to see the hierarchy here at all.
+    if (!query) return true
     // Excludes the founder's own name from the match — searching your own name should surface
     // groups that mention someone ELSE by that name, or that are literally named for it, not
     // every group you happen to personally belong to.
@@ -107,6 +152,7 @@ export default function Groups({
   restoreScrollRef?: { current: number | null }
 }) {
   const [groups, setGroups] = useState<Group[]>([])
+  const [groupTypes, setGroupTypes] = useState<string[]>([...DEFAULT_GROUP_TYPES])
   const [loading, setLoading] = useState(true)
   const [addingGroup, setAddingGroup] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
@@ -115,6 +161,7 @@ export default function Groups({
 
   useEffect(() => {
     loadGroups()
+    loadGroupTypeNames().then(setGroupTypes)
   }, [])
 
   // Restore only after the list has actually loaded and rendered at full height — doing this
@@ -128,14 +175,15 @@ export default function Groups({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
 
-  async function loadGroups() {
-    setLoading(true)
+  // `silent` skips the loading flip: after a drag-drop the list is already showing the group in
+  // its new spot, and flashing "Loading…" over the whole page would read as the drop bouncing.
+  async function loadGroups(silent = false) {
+    if (!silent) setLoading(true)
     const baseSelect =
       'id, name, summary, group_type, person_groups(people(id, name, last_name, is_self)), moment_groups(moments(id, occasion, raw_description))'
-    // Loads subgroups too, but filterGroups keeps them out of the resting list — they only appear
-    // once there's a search query (see the comment there). Falls open to the narrower select if
-    // parent_group_id doesn't exist yet (migration not run, see PROJECT_CONTEXT.md §10) rather
-    // than erroring out to an empty page; without the column nothing has a parent anyway.
+    // Falls open to the narrower select if parent_group_id doesn't exist yet (migration not run,
+    // see PROJECT_CONTEXT.md §10) rather than erroring out to an empty page; without the column
+    // nothing has a parent, so the tree below degrades to the flat list this page used to be.
     let { data, error } = await supabase.from('groups').select(`${baseSelect}, parent_group_id`).order('name')
     if (error) {
       const fallback = await supabase.from('groups').select(baseSelect).order('name')
@@ -146,12 +194,13 @@ export default function Groups({
     setGroups(loaded)
     setLoading(false)
 
-    // Only for groups this list actually shows at rest. Subgroups get their summary generated on
-    // demand by GroupDetail's own loadSummary when opened — auto-generating one here for every
-    // subgroup would be a real `summarize-group` call each, for cards nobody asked to see
-    // (CLAUDE.md rule 3).
+    // Covers subgroups too as of 2026-08-03, because they're now shown at rest. The old skip was
+    // "don't pay for cards nobody asked to see" (CLAUDE.md rule 3) — that reasoning lapsed the
+    // moment subgroups became visible here, and without this every subgroup row would sit on
+    // "Figuring out what this group is about…" forever. Still one call per group EVER, not per
+    // view: the result is cached in groups.summary, and it's the same call GroupDetail would have
+    // made lazily on first open anyway — so this pulls that spend forward rather than adding to it.
     for (const g of loaded) {
-      if (g.parent_group_id) continue
       if (!g.summary && !requestedSummaries.current.has(g.id)) {
         requestedSummaries.current.add(g.id)
         generateSummary(g.id)
@@ -191,23 +240,27 @@ export default function Groups({
     onSelectGroup({ id: data.id, name: data.name })
   }
 
-  // Reparents an EXISTING group under another by dragging its card onto theirs. Replaces the
-  // workaround the founder had been using (create a blank subgroup in the target, open the real
-  // group, merge it away into the blank) — that destroyed and recreated a group to express what
-  // is really a one-column change. Nothing moves here: the dragged group keeps its own members,
-  // notes, events and associations, it just gains a parent.
+  // Reparents an EXISTING group by dragging its card onto another's (parentId = null drops it
+  // back to top level). Replaces the workaround the founder had been using — create a blank
+  // subgroup in the target, open the real group, merge it away into the blank — which destroyed
+  // and recreated a group to express what is really a one-column change. Nothing moves here: the
+  // dragged group keeps its own members, notes, events and associations, it just gains a parent.
   //
   // No summary invalidation on either side — a group's cached summary describes its own members
   // and notes, neither of which this touches (CLAUDE.md rule 3).
-  async function handleNestGroup(childId: string, parentId: string) {
+  async function handleNestGroup(childId: string, parentId: string | null) {
+    // Optimistic. The drag preview already drew the group in its new spot, so snapping it back to
+    // the old position for the length of the round trip would read as the drop having failed.
+    setGroups((prev) => prev.map((g) => (g.id === childId ? { ...g, parent_group_id: parentId } : g)))
     const { error } = await supabase.from('groups').update({ parent_group_id: parentId }).eq('id', childId)
     if (error) {
       setAddError("Couldn't move that group — please try again.")
+      loadGroups(true) // puts it back wherever it actually still is
       return
     }
-    // Full reload rather than a local splice: the child drops out of the resting list entirely
-    // (filterGroups hides non-root groups), and the roster labels above it change too.
-    loadGroups()
+    setAddError(null)
+    // Silent so the list doesn't flash "Loading…" under a drop that already visually landed.
+    loadGroups(true)
   }
 
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
@@ -226,8 +279,8 @@ export default function Groups({
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
       groupLabel={groupRoster.label}
-      parentById={groupRoster.parentById}
       onNestGroup={handleNestGroup}
+      typeOptions={groupTypes}
     />
   )
 }
@@ -247,9 +300,9 @@ export function GroupsView({
   onSelectGroup,
   onSelectEvent,
   groupLabel = (_id, fallbackName) => fallbackName,
-  parentById = new Map(),
   onNestGroup = () => {},
   readOnly = false,
+  typeOptions = [...DEFAULT_GROUP_TYPES],
 }: {
   groups: Group[]
   search: string
@@ -262,23 +315,22 @@ export function GroupsView({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
-  // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
+  // Qualifies a subgroup as "Parent / Child". Used only in the flat search/filter view — in the
+  // resting tree the indentation already says who the parent is, so rows there show a bare name.
   groupLabel?: GroupLabelFn
-  // Group id -> its parent's id. Only used to reject a drop that would make a cycle; defaults to
-  // empty for the landing-page demo, which has no subgroups and never drags.
-  parentById?: Map<string, string | null>
-  onNestGroup?: (childId: string, parentId: string) => void
+  onNestGroup?: (childId: string, parentId: string | null) => void
   readOnly?: boolean
+  // The user's own editable list (Settings → Manage group types). Defaults to the built-ins for
+  // the landing-page demo, which has no account to load them from.
+  typeOptions?: string[]
 }) {
-  const filteredGroups = filterGroups(groups, search, typeFilter, groupLabel)
-
-  // Drag a group card onto another group's card to make it a subgroup of that one. `activeId` is
-  // the card currently being dragged; `pendingNest` is a picked-up-and-dropped pair awaiting
-  // confirmation. The drop deliberately does NOT write immediately — reorganizing the group tree
-  // is exactly the kind of structural change an accidental drag shouldn't be able to make
-  // silently, and the confirm line names both groups so a mis-drop is obvious before it lands.
+  // Drag a group's card onto another's to make it a subgroup of that one, or onto the "top level"
+  // strip to pull it back out. `activeId` is the card being dragged; `hoverParentId` is where it
+  // would land right now — `undefined` means "not over any target", distinct from `null`, which
+  // means "over the top-level strip".
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [pendingNest, setPendingNest] = useState<{ child: Group; parent: Group } | null>(null)
+  const [hoverParentId, setHoverParentId] = useState<string | null | undefined>(undefined)
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
@@ -288,19 +340,80 @@ export function GroupsView({
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
   )
 
+  // Where each group's parent really is, straight off the current data rather than the roster
+  // hook — the roster is fetched once on mount, so after a drop it still describes the old tree.
+  const parentById = new Map(groups.map((g) => [g.id, g.parent_group_id ?? null]))
+
+  // The tree the page is actually rendering. While a drag is in flight over a valid target this
+  // is the PREVIEW tree, with the dragged group already reparented — so it visibly indents under
+  // the group you're hovering, and releasing simply keeps what you're already looking at. That's
+  // what replaced the old drop-then-confirm banner (founder feedback: the confirm step made you
+  // approve something you couldn't see yet).
+  const previewGroups =
+    activeId && hoverParentId !== undefined
+      ? groups.map((g) => (g.id === activeId ? { ...g, parent_group_id: hoverParentId } : g))
+      : groups
+
+  const filteredGroups = filterGroups(previewGroups, search, typeFilter, groupLabel)
+
+  // Any type a group is actually carrying gets an entry too, even if it's not on the editable list
+  // any more (deleted in another tab, or an old value from before the list was editable) — without
+  // that, those groups would be filterable only by "All types" and the filter would look broken.
+  const filterTypeOptions = Array.from(
+    new Set([...typeOptions, ...groups.map((g) => g.group_type).filter((t): t is string => !!t)])
+  ).sort((a, b) => a.localeCompare(b))
+
+  // A search or type filter falls back to the FLAT list this page has always shown for those:
+  // filtering can drop a parent while keeping its child, and an indented tree with holes in it
+  // is harder to read than a plain list of matches. The tree is for browsing; this is for lookup.
+  const isFiltered = search.trim() !== '' || typeFilter !== 'all'
+  // Hovering a collapsed group opens it for the duration of the drag — otherwise the row would
+  // indent into a branch that isn't on screen and the drop would look like it did nothing.
+  const effectiveCollapsed = new Set(collapsedIds)
+  if (hoverParentId) effectiveCollapsed.delete(hoverParentId)
+  const treeRows = flattenGroupTree(filteredGroups, effectiveCollapsed)
+  const flatRows: FlatGroupRow[] = filteredGroups.map((r) => ({ ...r, depth: 0, hasChildren: false }))
+  const rows = isFiltered ? flatRows : treeRows
+
   function handleDragEnd(event: DragEndEvent) {
-    setActiveId(null)
     const childId = String(event.active.id).replace(/^drag:/, '')
-    const overId = event.over ? String(event.over.id).replace(/^drop:/, '') : null
-    // Released outside any card, or back onto itself: a deliberate no-op, no write, no prompt.
-    if (!overId || overId === childId) return
-    // Can't nest a group under something already beneath it — that would cut the whole branch
-    // loose from every root and make both unreachable from this page. Unreachable while the list
-    // is at rest (only root groups show), but a search surfaces subgroups too, so it's reachable.
-    if (isSelfOrDescendant(overId, childId, parentById)) return
-    const child = groups.find((g) => g.id === childId)
-    const parent = groups.find((g) => g.id === overId)
-    if (child && parent) setPendingNest({ child, parent })
+    const landedOn = hoverParentId
+    setActiveId(null)
+    setHoverParentId(undefined)
+    // Released outside any target, or dropped back where it already was: no write at all.
+    if (landedOn === undefined) return
+    if ((parentById.get(childId) ?? null) === landedOn) return
+    onNestGroup(childId, landedOn)
+  }
+
+  function handleDragOver(event: DragOverEvent) {
+    const childId = String(event.active.id).replace(/^drag:/, '')
+    if (!event.over) {
+      setHoverParentId(undefined)
+      return
+    }
+    const rawOver = String(event.over.id)
+    if (rawOver === ROOT_DROP_ID) {
+      setHoverParentId(null)
+      return
+    }
+    const overId = rawOver.replace(/^drop:/, '')
+    // Can't nest a group under itself or under something already beneath it — that would cut the
+    // whole branch loose from every root, leaving it unreachable from the only page that lists it.
+    if (isSelfOrDescendant(overId, childId, parentById)) {
+      setHoverParentId(undefined)
+      return
+    }
+    setHoverParentId(overId)
+  }
+
+  function toggleCollapsed(id: string) {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   const list = (
@@ -314,31 +427,6 @@ export function GroupsView({
         )}
       </div>
       {addError && <p style={styles.addErrorText}>{addError}</p>}
-
-      {pendingNest && (
-        <div style={styles.nestConfirmBanner}>
-          <span>
-            Make "{groupLabel(pendingNest.child.id, pendingNest.child.name)}" a subgroup of "
-            {groupLabel(pendingNest.parent.id, pendingNest.parent.name)}"? It keeps its own members, notes and events —
-            it just moves under there, and you can move it back out from its own page.
-          </span>
-          <div style={styles.nestConfirmButtonRow}>
-            <button
-              type="button"
-              onClick={() => {
-                onNestGroup(pendingNest.child.id, pendingNest.parent.id)
-                setPendingNest(null)
-              }}
-              style={styles.nestConfirmYesButton}
-            >
-              Yes, move it
-            </button>
-            <button type="button" onClick={() => setPendingNest(null)} style={styles.nestConfirmNoButton}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
 
       {groups.length === 0 && (
         <p style={styles.empty}>
@@ -357,7 +445,7 @@ export function GroupsView({
           >
             <option value="all">All types</option>
             <option value="untyped">No type set</option>
-            {GROUP_TYPES.map((t) => (
+            {filterTypeOptions.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
@@ -372,17 +460,31 @@ export function GroupsView({
         </p>
       )}
 
+      {/* Only while a drag is in flight, and only for a group that currently HAS a parent —
+          "drag it back out from the list" needs somewhere to drop, and a strip that's always
+          there would be permanent furniture for an action most groups can't take. */}
+      {activeId && (parentById.get(activeId) ?? null) !== null && (
+        <TopLevelDropStrip isActive={hoverParentId === null} />
+      )}
+
       <div style={styles.list}>
-        {filteredGroups.map(({ group, explicitMembers, events }) => (
+        {rows.map(({ group, explicitMembers, events, depth, hasChildren }) => (
           <GroupCard
             key={group.id}
             group={group}
             explicitMembers={explicitMembers}
             events={events}
-            label={groupLabel(group.id, group.name)}
+            // Bare name in the tree — the indentation already shows the parent, so a qualified
+            // "A / B / C" on an indented row is both redundant and much wider on a phone.
+            label={isFiltered ? groupLabel(group.id, group.name) : group.name}
+            depth={depth}
+            hasChildren={hasChildren}
+            collapsed={collapsedIds.has(group.id)}
+            onToggleCollapsed={() => toggleCollapsed(group.id)}
             draggable={!readOnly}
             isDragActive={activeId !== null}
             isBeingDragged={activeId === group.id}
+            isDropTarget={hoverParentId === group.id}
             onSelectPerson={onSelectPerson}
             onSelectGroup={onSelectGroup}
             onSelectEvent={onSelectEvent}
@@ -400,19 +502,37 @@ export function GroupsView({
     <DndContext
       sensors={sensors}
       collisionDetection={pointerWithin}
-      onDragStart={(event) => setActiveId(String(event.active.id).replace(/^drag:/, ''))}
+      onDragStart={(event) => {
+        setActiveId(String(event.active.id).replace(/^drag:/, ''))
+        setHoverParentId(undefined)
+      }}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveId(null)}
+      onDragCancel={() => {
+        setActiveId(null)
+        setHoverParentId(undefined)
+      }}
     >
       {list}
       <DragOverlay>
         {activeId ? (
-          <div style={styles.dragOverlayPill}>
-            {groupLabel(activeId, groups.find((g) => g.id === activeId)?.name ?? 'Group')}
-          </div>
+          <div style={styles.dragOverlayPill}>{groups.find((g) => g.id === activeId)?.name ?? 'Group'}</div>
         ) : null}
       </DragOverlay>
     </DndContext>
+  )
+}
+
+// The id is a fixed sentinel rather than a group id so handleDragOver can tell "drop me at the
+// top level" apart from "drop me onto a group" without a second lookup.
+const ROOT_DROP_ID = 'drop:__root__'
+
+function TopLevelDropStrip({ isActive }: { isActive: boolean }) {
+  const { setNodeRef } = useDroppable({ id: ROOT_DROP_ID })
+  return (
+    <div ref={setNodeRef} style={{ ...styles.rootDropStrip, ...(isActive ? styles.rootDropStripActive : {}) }}>
+      Drop here to make it a top-level group
+    </div>
   )
 }
 
@@ -428,9 +548,14 @@ function GroupCard({
   explicitMembers,
   events,
   label,
+  depth,
+  hasChildren,
+  collapsed,
+  onToggleCollapsed,
   draggable,
   isDragActive,
   isBeingDragged,
+  isDropTarget,
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
@@ -439,9 +564,14 @@ function GroupCard({
   explicitMembers: PersonRef[]
   events: { id: string; summary: string }[]
   label: string
+  depth: number
+  hasChildren: boolean
+  collapsed: boolean
+  onToggleCollapsed: () => void
   draggable: boolean
   isDragActive: boolean
   isBeingDragged: boolean
+  isDropTarget: boolean
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
@@ -451,18 +581,23 @@ function GroupCard({
 
   // Prefixed ids: a card is BOTH a draggable and a droppable, and dnd-kit keeps those in separate
   // registries but reports them through the same `active`/`over` ids — sharing a raw group id
-  // between the two makes the drag-end handler ambiguous about which role it's reading.
+  // between the two makes the drag-over handler ambiguous about which role it's reading.
   const { attributes, listeners, setNodeRef: setDragRef } = useDraggable({ id: `drag:${group.id}`, disabled: !draggable })
-  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: `drop:${group.id}`, disabled: !draggable })
+  const { setNodeRef: setDropRef } = useDroppable({ id: `drop:${group.id}`, disabled: !draggable })
 
   return (
     <div
       ref={setDropRef}
       style={{
+        // Indent caps out at INDENT_MAX_DEPTH so a deep branch can't squeeze the card down to a
+        // sliver on a phone — past that, depth still reads from the nesting of the rows above.
+        marginLeft: `${Math.min(depth, INDENT_MAX_DEPTH) * 1.25}rem`,
+        // A left rule on anything nested, so a child still reads as "inside" its parent once the
+        // indent stops growing.
+        borderLeft: depth > 0 ? `2px solid ${colors.inkPale}` : undefined,
         ...styles.card,
-        // Only OTHER cards light up as targets — a card can't be dropped on itself.
         ...(isDragActive && !isBeingDragged ? styles.cardDroppable : {}),
-        ...(isOver && !isBeingDragged ? styles.cardDropActive : {}),
+        ...(isDropTarget ? styles.cardDropActive : {}),
         ...(isBeingDragged ? styles.cardBeingDragged : {}),
       }}
     >
@@ -480,6 +615,17 @@ function GroupCard({
           >
             ⠿
           </span>
+        )}
+        {hasChildren && (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            style={styles.collapseButton}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? `Show subgroups of ${label}` : `Hide subgroups of ${label}`}
+          >
+            {collapsed ? '▸' : '▾'}
+          </button>
         )}
         <button onClick={() => onSelectGroup(group)} style={styles.titleButton}>
           {label}
@@ -575,36 +721,24 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
     cursor: 'grabbing',
   },
-  nestConfirmBanner: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: space.md,
-    backgroundColor: colors.inkWash,
-    border: `1px solid ${colors.ink}`,
+  rootDropStrip: {
+    border: `1px dashed ${colors.ink}`,
     borderRadius: radius.md,
-    padding: '0.9rem 1rem',
-    marginBottom: space.xl,
+    padding: '0.75rem 1rem',
+    marginBottom: space.lg,
     fontSize: fontSize.body,
-    color: colors.inkPlain,
+    color: colors.textMuted,
+    textAlign: 'center',
+    backgroundColor: colors.inkWash,
   },
-  nestConfirmButtonRow: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
-  nestConfirmYesButton: {
-    fontSize: fontSize.base,
-    padding: '0.5rem 1rem',
-    borderRadius: radius.md,
+  rootDropStripActive: { border: `2px solid ${colors.ink}`, backgroundColor: colors.inkPale, color: colors.inkPlain },
+  collapseButton: {
+    background: 'none',
     border: 'none',
-    backgroundColor: colors.ink,
-    color: colors.onFill,
-    cursor: 'pointer',
-    fontFamily,
-  },
-  nestConfirmNoButton: {
+    padding: '0 0.15rem',
     fontSize: fontSize.base,
-    padding: '0.5rem 1rem',
-    borderRadius: radius.md,
-    border: border.default,
-    backgroundColor: colors.surface,
-    color: colors.inkPlain,
+    lineHeight: 1,
+    color: colors.textSubtle,
     cursor: 'pointer',
     fontFamily,
   },

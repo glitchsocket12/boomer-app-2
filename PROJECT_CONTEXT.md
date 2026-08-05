@@ -408,13 +408,34 @@ src/
 │   │                            excludes the founder's own name from member-name
 │   │                            matching so searching your own surname only surfaces
 │   │                            groups with someone ELSE by that name, or named for it.
+│   │                            Nested tree at rest (2026-08-04): subgroups render indented
+│   │                            under their parent (was: hidden until searched), via
+│   │                            `flattenGroupTree()` — nests rows into a forest and flattens
+│   │                            back to a flat list with a `depth`, so each row keeps its own
+│   │                            drag hooks. Indent caps at INDENT_MAX_DEPTH=4 (phone width),
+│   │                            left rule on anything nested. ▸/▾ collapse per parent.
+│   │                            A row whose parent is filtered out promotes to root rather
+│   │                            than vanishing; cycles terminate (DB CHECK only blocks
+│   │                            self-as-own-parent, so A→B→A is representable).
+│   │                            Search/type-filter falls back to the FLAT list with
+│   │                            "Parent / Child" labels — filtering leaves holes in a tree.
 │   │                            Drag-and-drop nesting (2026-08-03): each card has a ⠿ grip
 │   │                            handle (@dnd-kit); drag it onto another card to make that
 │   │                            group its parent. Only the handle is a drag source — a
 │   │                            whole-card drag would swallow the member/event chip clicks.
-│   │                            Drop opens a named confirm banner rather than writing
-│   │                            immediately (an accidental drag must not silently
-│   │                            reorganize the tree); cycle-guarded via isSelfOrDescendant.
+│   │                            Live preview replaced the drop-then-confirm banner
+│   │                            (2026-08-04, founder: the confirm made you approve something
+│   │                            you couldn't see yet) — the row indents under the hovered
+│   │                            target mid-drag and releasing keeps it; write is optimistic
+│   │                            with a silent reload, reverting on error. Mid-drag-only
+│   │                            "Drop here to make it a top-level group" strip un-nests, shown
+│   │                            only for a group that has a parent. Hovering a collapsed group
+│   │                            opens it for the drag. Cycle-guarded via isSelfOrDescendant
+│   │                            (hover over own descendant = no preview, no write, no error).
+│   │                            Summaries now auto-generate for subgroups too, since they're
+│   │                            visible at rest — still one `summarize-group` call per group
+│   │                            EVER (cached in groups.summary), pulling forward the call
+│   │                            GroupDetail would have made lazily rather than adding spend.
 │   │                            readOnly (landing demo) returns the list with no DndContext.
 │   ├── GroupDetail.tsx        — "Generate this family's tree →" button on Family-typed
 │   │                            groups (item 41), passes explicit member ids straight through
@@ -422,7 +443,8 @@ src/
 │   │                            `buildDescendantTree()` (familyTree.ts) — scoped to that
 │   │                            group's own lineage, not any one member's ego graph.
 │   │                            `pickFamilyTreeRoot()` removed 2026-07-21 (superseded by this).
-│   │                            group type picker (fixed 5-option dropdown, nullable,
+│   │                            group type picker (nullable, options come from the
+│   │                            user's editable list — see ManageGroupTypes.tsx,
 │   │                            writes on change, 2026-07-20), summary + refresh (rename now invalidates the cached
 │   │                            summary too, not just membership changes — a manually-
 │   │                            created group's summary can otherwise stay generated
@@ -638,7 +660,8 @@ src/
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
 │   ├── ManageTags.tsx         — (item 28 follow-up, 2026-07-22) reached via "Manage
-│   │                            tags →" link on Events.tsx (App.tsx `manageTags`
+│   │                            tags →" link on Events.tsx AND Settings → Your
+│   │                            lists (2026-08-04) (App.tsx `manageTags`
 │   │                            crumb, same simple link-launched-detail-page
 │   │                            pattern as DunbarDetail/DueForUpdate above). Full
 │   │                            alphabetical list of every tag with a live usage
@@ -649,6 +672,27 @@ src/
 │   │                            confirm banner that states how many events it'll
 │   │                            be removed from (cascades via the `moment_tags`
 │   │                            FK, no extra cleanup code needed)
+│   ├── ManageGroupTypes.tsx   — (2026-08-04) same page shape as ManageTags, for group
+│   │                            types; reached via Settings → Your lists (App.tsx
+│   │                            `manageGroupTypes` crumb). Group types became a
+│   │                            user-editable list that day (was a fixed 5-option
+│   │                            enum); `lib/groupTypes.ts` now exports
+│   │                            `DEFAULT_GROUP_TYPES` (the starting template, and the
+│   │                            fallback for the demo + any account whose migration
+│   │                            hasn't run) plus `loadGroupTypeNames()`, used by
+│   │                            Groups.tsx's filter and GroupDetail.tsx's picker.
+│   │                            `groups.group_type` stays plain text holding the NAME,
+│   │                            not an FK — so a rename here rewrites every matching
+│   │                            group in the same step (groups first, then the type
+│   │                            row), and a delete leaves those groups untyped. Both
+│   │                            pickers union in any type a group still carries but
+│   │                            that's off the list, so nothing goes unfilterable.
+│   │                            Seeds the 5 defaults lazily on first visit if the
+│   │                            account has none. Migration:
+│   │                            `migrations_manual/2026-08-04-editable-group-types.sql`
+│   │                            (drops the old CHECK constraint, adds the `group_types`
+│   │                            table + RLS, seeds every existing account) — applied
+│   │                            2026-08-04, verified live.
 │   ├── Circle.tsx              — "My page" (item 32, REAL as of 2026-07-20, replaced
 │   │                             CircleMock.tsx): self header (name, birthday/
 │   │                             anniversary, "Edit your profile →" into PersonDetail),
@@ -887,7 +931,9 @@ Full story: PROJECT_HISTORY.md.
 │   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
 │   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
 │   │                            only, not app-navigation shortcuts (a "My page" link was cut
-│   │                            for that reason). Email/password change via
+│   │                            for that reason) — plus a "Your lists" section (2026-08-04,
+│   │                            founder ask) linking to ManageTags + ManageGroupTypes, which
+│   │                            are account-wide vocabularies rather than navigation. Email/password change via
 │   │                            `supabase.auth.updateUser()`; chat-tone picker (4 presets,
 │   │                            `user_settings` table) upserts on click, same shape as
 │   │                            `home_suggestions`; links to About/Privacy. Time zone picker

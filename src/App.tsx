@@ -19,6 +19,7 @@ import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
 import ManageTags from './pages/ManageTags'
+import ManageGroupTypes from './pages/ManageGroupTypes'
 import Circle from './pages/Circle'
 import SettingsPage from './pages/SettingsPage'
 import CalendarSettings from './pages/CalendarSettings'
@@ -49,6 +50,7 @@ type Crumb =
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
   | { type: 'manageTags'; id: string; label: string }
+  | { type: 'manageGroupTypes'; id: string; label: string }
   | { type: 'circle'; id: string; label: string }
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
   | { type: 'settings'; id: string; label: string }
@@ -72,6 +74,7 @@ const CRUMB_TYPES = [
   'dunbar',
   'nudges',
   'manageTags',
+  'manageGroupTypes',
   'circle',
   'familyTree',
   'settings',
@@ -89,7 +92,7 @@ const CRUMB_TYPES = [
 // Crumb types that are single fixed pages rather than records with a real id (their `id` is
 // just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
 // segment for these, not a `/type/id` pair.
-const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
+const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'manageGroupTypes', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
 
 const AUTH_VIEWS = new Set<AuthView>(['landing', 'login', 'signup', 'demo'])
 
@@ -513,6 +516,8 @@ export default function App() {
     )
   } else if (current?.type === 'manageTags') {
     content = <ManageTags onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'manageGroupTypes') {
+    content = <ManageGroupTypes onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'circle') {
     content = (
       <Circle
@@ -544,6 +549,10 @@ export default function App() {
         onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
         onOpenContactsImport={() => pushCrumb({ type: 'contactsImport', id: 'contactsImport', label: 'Import contacts' })}
         onOpenPhotoImport={() => pushCrumb({ type: 'photoImport', id: 'photoImport', label: 'Import photos' })}
+        onOpenManageTags={() => pushCrumb({ type: 'manageTags', id: 'manageTags', label: 'Manage Tags' })}
+        onOpenManageGroupTypes={() =>
+          pushCrumb({ type: 'manageGroupTypes', id: 'manageGroupTypes', label: 'Manage Group Types' })
+        }
       />
     )
   } else if (current?.type === 'calendarSettings') {

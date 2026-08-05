@@ -15,7 +15,9 @@ const TONE_OPTIONS: { value: ChatTone; label: string; description: string }[] = 
 // Account settings + AI-related settings only — not a place for app-interface shortcuts (a link
 // to "My page" was considered and cut; that's already reachable from the main nav). About/Privacy
 // live here as links to their own pages since that's the standard place users expect to find them,
-// even though they aren't account data themselves.
+// even though they aren't account data themselves. The two vocabulary managers (tags, group types)
+// are here by founder ask (2026-08-04): they're account-wide lists rather than navigation, and
+// "where do I edit my tags" was being answered by "find the link buried on the Events page".
 export default function SettingsPage({
   onBack,
   backLabel,
@@ -24,6 +26,8 @@ export default function SettingsPage({
   onOpenCalendarSettings,
   onOpenContactsImport,
   onOpenPhotoImport,
+  onOpenManageTags,
+  onOpenManageGroupTypes,
 }: {
   onBack: () => void
   backLabel: string
@@ -32,6 +36,8 @@ export default function SettingsPage({
   onOpenCalendarSettings: () => void
   onOpenContactsImport: () => void
   onOpenPhotoImport: () => void
+  onOpenManageTags: () => void
+  onOpenManageGroupTypes: () => void
 }) {
   const [currentEmail, setCurrentEmail] = useState<string | null>(null)
 
@@ -362,6 +368,16 @@ export default function SettingsPage({
           ))}
         </select>
         {timeZoneSaved && <p style={styles.successText}>Saved</p>}
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.sectionHeading}>Your lists</h2>
+        <button onClick={onOpenManageTags} style={styles.linkRow}>
+          Manage tags →
+        </button>
+        <button onClick={onOpenManageGroupTypes} style={styles.linkRow}>
+          Manage group types →
+        </button>
       </section>
 
       <section style={styles.section}>

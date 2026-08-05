@@ -15,7 +15,7 @@ import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
-import { GROUP_TYPES } from '../lib/groupTypes'
+import { DEFAULT_GROUP_TYPES, loadGroupTypeNames } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { isSelfOrDescendant } from '../lib/groupDisplayName'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
@@ -109,6 +109,7 @@ export default function GroupDetail({
   const [name, setName] = useState(groupName)
   const [editingName, setEditingName] = useState(false)
   const [groupType, setGroupType] = useState<string | null>(null)
+  const [groupTypeOptions, setGroupTypeOptions] = useState<string[]>([...DEFAULT_GROUP_TYPES])
   const [savingType, setSavingType] = useState(false)
   const [nameInput, setNameInput] = useState(groupName)
   const [savingName, setSavingName] = useState(false)
@@ -167,6 +168,11 @@ export default function GroupDetail({
       .eq('is_self', true)
       .maybeSingle()
       .then(({ data }) => setSelfId(data?.id ?? null))
+  }, [])
+
+  // The user's editable type list (Settings → Manage group types), fetched once for the picker.
+  useEffect(() => {
+    loadGroupTypeNames().then(setGroupTypeOptions)
   }, [])
 
   useEffect(() => {
@@ -943,6 +949,7 @@ export default function GroupDetail({
       name={name}
       groupLabel={roster.label}
       groupType={groupType}
+      groupTypeOptions={groupTypeOptions}
       summary={summary}
       moments={moments}
       explicitMembers={explicitMembers}
@@ -1067,6 +1074,7 @@ export function GroupDetailView({
   name,
   groupLabel = (_id, fallbackName) => fallbackName,
   groupType,
+  groupTypeOptions = [...DEFAULT_GROUP_TYPES],
   summary,
   moments,
   explicitMembers,
@@ -1158,6 +1166,9 @@ export function GroupDetailView({
   // bare name so the landing-page demo (whose static data has no subgroups) needs no change.
   groupLabel?: GroupLabelFn
   groupType: string | null
+  // The user's own editable list (Settings → Manage group types). Defaults to the built-ins for
+  // the landing-page demo, which has no account to load them from.
+  groupTypeOptions?: string[]
   summary: string | null
   moments: Moment[]
   explicitMembers: PersonRef[]
@@ -1365,11 +1376,15 @@ export function GroupDetailView({
           aria-label="Group type"
         >
           <option value="">No type set</option>
-          {GROUP_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
+          {/* A type the group still carries but that's been deleted from the list stays selectable
+              here, so opening the group doesn't silently look like its type was cleared. */}
+          {Array.from(new Set(groupType ? [...groupTypeOptions, groupType] : groupTypeOptions))
+            .sort((a, b) => a.localeCompare(b))
+            .map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
         </select>
       )}
 
