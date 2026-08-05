@@ -855,11 +855,13 @@ without them `syncSpouseParenthood` would record a step-parent as a parent of th
 biological?" question is answered by a follow-up question in the add flow, never by inference.
 **Single "Add family member" control (2026-08-03, same day, `components/AddFamilyMember.tsx`):** the
 per-relationship "+" row reached seven labelled, wrapping buttons once step relations landed and the
-founder couldn't find the step-parent one at all. Replaced with one button -> pick the person
-(search existing or type a new name) -> pick the relationship from a dropdown -> answer a follow-up
-only when the relationship runs THROUGH someone ("Whose parent are they?", "Which parent are they
-married to?", "Which step-parent is their own parent?"; rendered as static text, not a dead
-dropdown, when there's only one candidate). Relationships whose `through` list is empty stay visible
+founder couldn't find the step-parent one at all. Replaced with one button -> pick the relationship
+from a dropdown -> answer a follow-up only when the relationship runs THROUGH someone ("Whose parent
+are they?", "Which parent are they married to?", "Which step-parent is their own parent?"; rendered
+as static text, not a dead dropdown, when there's only one candidate) -> then the name box appears
+("Who is <root>'s grandparent?", search existing or type a new name) -> Add. Relationship-first is
+the founder's order (2026-08-04); changing the relationship clears any name already picked under it.
+Relationships whose `through` list is empty stay visible
 but disabled with the reason inline ("Step-sibling — add a step-parent first") rather than vanishing,
 which is the same discoverability problem in miniature. `RelationshipAddPicker` is untouched and
 still backs My Page's circle boxes. Also: a parent's deceased spouse is

@@ -8,8 +8,12 @@ type PersonOption = { id: string; label: string }
 // One "Add family member" control for the whole family tree, replacing the row of one-"+"-per-
 // relationship-type pickers it grew into (founder, 2026-08-03: "I still don't see how to add a step
 // parent" — with seven labelled "+" buttons wrapping across the page, the one you wanted was
-// genuinely hard to find). Now: pick the person first, then say how they're related, which is the
-// order the founder described and the order you'd say it out loud.
+// genuinely hard to find).
+//
+// Order: pick the relationship first, then type the name (founder, 2026-08-04). That way the panel
+// opens on the question the old "+" buttons used to answer, so the relationship you're adding is
+// always visible — and picking it first is what decides whether there's a follow-up "through whom"
+// question to answer before the name is even relevant.
 export type RelationshipChoice = {
   key: string
   label: string
@@ -119,25 +123,78 @@ export default function AddFamilyMember({
 
   return (
     <div style={styles.panel}>
-      {!picked ? (
-        <form onSubmit={handleNameSubmit} style={styles.step}>
-          <span style={styles.prompt}>Who would you like to add?</span>
-          <SearchBox value={query} onChange={setQuery} placeholder="Search or type a name…" />
-          {q && (
-            <div style={styles.options}>
-              {results.map((p) => (
-                <button key={p.id} type="button" style={styles.option} onClick={() => setPicked({ existing: p })}>
-                  {p.label}
-                </button>
+      <label style={styles.field}>
+        <span style={styles.fieldLabel}>What would you like to add to {rootName}'s family?</span>
+        <select
+          value={choiceKey}
+          onChange={(e) => {
+            setChoiceKey(e.target.value)
+            setThroughId('')
+            // The name only means anything in the context of the relationship it was typed under, so
+            // changing the relationship starts the name over rather than carrying a stale pick along.
+            setPicked(null)
+            setQuery('')
+          }}
+          style={styles.select}
+          disabled={saving}
+        >
+          <option value="">Choose a relationship…</option>
+          {choices.map((c) => {
+            const unavailable = Boolean(c.through && c.through.length === 0)
+            return (
+              <option key={c.key} value={c.key} disabled={unavailable}>
+                {unavailable && c.unavailableNote ? `${c.label} — ${c.unavailableNote}` : c.label}
+              </option>
+            )
+          })}
+        </select>
+      </label>
+
+      {choice && throughOptions && throughOptions.length > 0 && (
+        <label style={styles.field}>
+          <span style={styles.fieldLabel}>{choice.throughPrompt}</span>
+          {throughOptions.length === 1 ? (
+            <span style={styles.staticAnswer}>{throughOptions[0].name}</span>
+          ) : (
+            <select
+              value={resolvedThroughId}
+              onChange={(e) => {
+                setThroughId(e.target.value)
+              }}
+              style={styles.select}
+              disabled={saving}
+            >
+              {throughOptions.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
               ))}
-              <button type="button" style={styles.createOption} onClick={() => setPicked({ newName: query.trim() })}>
-                + Add "{query.trim()}" as a new person
-              </button>
-            </div>
+            </select>
           )}
-        </form>
-      ) : (
-        <div style={styles.step}>
+        </label>
+      )}
+
+      {/* The name box only appears once there's a relationship to attach it to — asking for a name
+          with nothing selected is the ordering the founder asked to reverse. */}
+      {choice &&
+        (!picked ? (
+          <form onSubmit={handleNameSubmit} style={styles.step}>
+            <span style={styles.prompt}>Who is {rootName}'s {choice.label.toLowerCase()}?</span>
+            <SearchBox value={query} onChange={setQuery} placeholder="Search or type a name…" />
+            {q && (
+              <div style={styles.options}>
+                {results.map((p) => (
+                  <button key={p.id} type="button" style={styles.option} onClick={() => setPicked({ existing: p })}>
+                    {p.label}
+                  </button>
+                ))}
+                <button type="button" style={styles.createOption} onClick={() => setPicked({ newName: query.trim() })}>
+                  + Add "{query.trim()}" as a new person
+                </button>
+              </div>
+            )}
+          </form>
+        ) : (
           <span style={styles.prompt}>
             {pickedName}
             {picked.newName ? ' (new person)' : ''}
@@ -145,59 +202,18 @@ export default function AddFamilyMember({
               change
             </button>
           </span>
+        ))}
 
-          <label style={styles.field}>
-            <span style={styles.fieldLabel}>How are they related to {rootName}?</span>
-            <select
-              value={choiceKey}
-              onChange={(e) => {
-                setChoiceKey(e.target.value)
-                setThroughId('')
-              }}
-              style={styles.select}
-              disabled={saving}
-            >
-              <option value="">Choose a relationship…</option>
-              {choices.map((c) => {
-                const unavailable = Boolean(c.through && c.through.length === 0)
-                return (
-                  <option key={c.key} value={c.key} disabled={unavailable}>
-                    {unavailable && c.unavailableNote ? `${c.label} — ${c.unavailableNote}` : c.label}
-                  </option>
-                )
-              })}
-            </select>
-          </label>
-
-          {choice && throughOptions && throughOptions.length > 0 && (
-            <label style={styles.field}>
-              <span style={styles.fieldLabel}>{choice.throughPrompt}</span>
-              {throughOptions.length === 1 ? (
-                <span style={styles.staticAnswer}>{throughOptions[0].name}</span>
-              ) : (
-                <select value={resolvedThroughId} onChange={(e) => setThroughId(e.target.value)} style={styles.select} disabled={saving}>
-                  {throughOptions.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </label>
-          )}
-
-          <div style={styles.buttonRow}>
-            <button type="button" onClick={handleAdd} disabled={!ready || saving} style={ready && !saving ? styles.addButton : styles.addButtonDisabled}>
-              {saving ? 'Adding…' : 'Add'}
-            </button>
-            <button type="button" onClick={close} style={styles.cancel} disabled={saving}>
-              Cancel
-            </button>
-          </div>
+      {picked ? (
+        <div style={styles.buttonRow}>
+          <button type="button" onClick={handleAdd} disabled={!ready || saving} style={ready && !saving ? styles.addButton : styles.addButtonDisabled}>
+            {saving ? 'Adding…' : 'Add'}
+          </button>
+          <button type="button" onClick={close} style={styles.cancel} disabled={saving}>
+            Cancel
+          </button>
         </div>
-      )}
-
-      {!picked && (
+      ) : (
         <button type="button" onClick={close} style={styles.cancel}>
           Cancel
         </button>
