@@ -18,24 +18,30 @@ type Relation =
   | 'spouse'
   | 'unknown'
 
+// Only the three maps this file actually reads. A structural subtype of Graph, so every existing
+// caller keeps passing a full Graph unchanged — it exists so relationshipCalculator.ts's KinGraph
+// (which is deliberately not a Graph, to stay free of familyTree.ts's supabase import) can reuse the
+// step logic below instead of growing a second copy of it. Type-only widening; no behavior change.
+type LabelGraph = Pick<Graph, 'parentsOf' | 'spousesOf' | 'childrenOf'>
+
 // Biological (or adoptive-on-file) parents only — spousesOf is deliberately never consulted here,
 // since a step-parent must NOT count as a parent for sibling/half-sibling math below.
-function parentsOf(g: Graph, id: string): string[] {
+function parentsOf(g: LabelGraph, id: string): string[] {
   return g.parentsOf.get(id) ?? []
 }
 
-function spousesOf(g: Graph, id: string): string[] {
+function spousesOf(g: LabelGraph, id: string): string[] {
   return g.spousesOf.get(id) ?? []
 }
 
-function childrenOf(g: Graph, id: string): string[] {
+function childrenOf(g: LabelGraph, id: string): string[] {
   return g.childrenOf.get(id) ?? []
 }
 
 // The relationship kind of toId TO fromId (i.e. "toId is fromId's ___"). Order matters: parent vs
 // child aren't symmetric, so callers asking "what's my dad to me" vs "what am I to my dad" get the
 // right word each time.
-export function relationOf(g: Graph, fromId: string, toId: string): Relation {
+export function relationOf(g: LabelGraph, fromId: string, toId: string): Relation {
   if (fromId === toId) return 'self'
 
   const fromParents = new Set(parentsOf(g, fromId))
@@ -78,6 +84,6 @@ const LABEL: Record<Relation, string> = {
   unknown: 'unknown',
 }
 
-export function describeRelationship(g: Graph, fromId: string, toId: string): string {
+export function describeRelationship(g: LabelGraph, fromId: string, toId: string): string {
   return LABEL[relationOf(g, fromId, toId)]
 }
