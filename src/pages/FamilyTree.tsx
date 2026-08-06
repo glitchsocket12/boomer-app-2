@@ -25,6 +25,7 @@ import {
   createAndLinkRelationship,
   unlinkRelationship,
   syncFamilyClique,
+  syncParentSpouse,
   invalidateKeyFacts,
   type CircleCategory,
   type LinkOptions,
@@ -483,6 +484,17 @@ export default function FamilyTree({
       await invalidateKeyFacts([data.rootId])
     } else if (category === 'parents' && targetId && targetName) {
       await suggestSpouseLinks(subjectId, targetId, targetName)
+      // The new parent's own spouse is very likely this person's other parent. syncParentSpouse
+      // writes that itself when the shape is unambiguous (nothing to show — the refresh below just
+      // renders it); when something argues against it, it comes back unwritten and becomes the same
+      // "Is X also Y's parent?" question the spouse-add direction already asks.
+      const coParent = await syncParentSpouse(userId, targetId, subjectId)
+      if (coParent && !coParent.autoLinked) {
+        setCoParentSuggestions((prev) => [
+          ...prev,
+          { parentId: coParent.spouseId, parentName: coParent.spouseName, childId: coParent.childId, childName: coParent.childName },
+        ])
+      }
     } else if (category === 'spouse' && targetId && targetName) {
       await suggestCoParentLinks(subjectId, subjectName, targetId, targetName)
     }

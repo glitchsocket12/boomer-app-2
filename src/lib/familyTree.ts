@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { describeRelationship, relationOf } from './relationshipLabels'
+import { guessGenderFromName } from './nameGender'
 
 // Builds a family tree for ANY person_id by walking the relationships table (2026-07-20 source
 // of truth) — the tree is a person's own relationship graph, not bounded by which group you
@@ -103,9 +104,17 @@ export type Graph = {
   // Keyed by unionKey(a, b) — a spouse/partner pair whose relationship row has ended_reason set
   // (divorce). Death isn't stored here; isUnionEnded also checks deceasedIds directly.
   endedPairs: Set<string>
+  // What the app should USE to word a relationship: the recorded `people.gender` where there is one,
+  // otherwise a confident guess from the first name (see nameGender.ts). Merged rather than kept
+  // apart because every consumer wants the same thing — the best answer available — and a caller
+  // that had to remember to check two maps would eventually forget.
   // Optional — real loadGraph() always populates it, but the demo dataset and test fixtures build
   // a Graph by hand without it, and there's nothing gender-specific for them to get wrong by omitting it.
   genderById?: Map<string, string>
+  // Whose entry in genderById came from their NAME rather than from the database. The clarify prompt
+  // uses genderById (so it never asks about a Mark), but anything that describes the data itself —
+  // the profile's Gender field — has to be able to tell a guess from a stated fact.
+  guessedGenderIds?: Set<string>
   // False when the `gender` column isn't in the database yet (its migration is a manual step — see
   // loadFamilyGraph). Everything gender-related already degrades quietly in that state; this is what
   // lets a surface that would ASK for a gender stay hidden rather than offer a button that can't save.
@@ -160,12 +169,22 @@ export async function loadFamilyGraph(): Promise<Graph> {
   }
 
   const nameById = new Map<string, string>()
+  const guessedGenderIds = new Set<string>()
   let selfId: string | null = null
   const deceasedIds = new Set<string>()
   for (const p of people ?? []) {
     nameById.set(p.id, p.last_name ? `${p.name} ${p.last_name}` : p.name)
     if (p.is_self) selfId = p.id
     if (p.deceased_date) deceasedIds.add(p.id)
+    // Only ever fills a GAP — a recorded gender always wins, including a recorded 'non-binary' or
+    // 'other', which must never be overridden by whatever a first name suggests.
+    if (!genderById.has(p.id)) {
+      const guess = guessGenderFromName(p.name)
+      if (guess) {
+        genderById.set(p.id, guess)
+        guessedGenderIds.add(p.id)
+      }
+    }
   }
 
   const parentsOf = new Map<string, string[]>()
@@ -191,7 +210,7 @@ export async function loadFamilyGraph(): Promise<Graph> {
       push(siblingsOf, r.person_b_id, r.person_a_id)
     }
   }
-  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs, genderById, genderSupported: !genderError, spouseKindByPair }
+  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs, genderById, guessedGenderIds, genderSupported: !genderError, spouseKindByPair }
 }
 
 function node(g: Graph, id: string, kind: TreePersonKind, parentId: string | undefined, side?: TreeSide): TreePerson {

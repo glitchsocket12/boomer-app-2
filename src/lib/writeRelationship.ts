@@ -169,6 +169,134 @@ export async function syncSpouseParenthood(userId: string | undefined | null, aI
   for (const childId of touchedChildren) await syncFamilyClique(userId, childId)
 }
 
+export type CoParentCandidate = {
+  spouseId: string
+  spouseName: string
+  childId: string
+  childName: string
+  /** True when it was written outright; false means it's only worth offering as a question. */
+  autoLinked: boolean
+}
+
+// Whether a marriage has been explicitly marked ended (divorce). Read straight off the row rather
+// than via getRelationshipsForPerson, which deliberately doesn't carry ended_reason — that shape is
+// mirrored in an edge function and shouldn't grow a column for one caller.
+async function isMarriageEnded(aId: string, bId: string): Promise<boolean> {
+  const [personA, personB] = aId < bId ? [aId, bId] : [bId, aId]
+  const { data } = await supabase
+    .from('relationships')
+    .select('ended_reason')
+    .eq('person_a_id', personA)
+    .eq('person_b_id', personB)
+    .eq('kind', 'spouse')
+    .maybeSingle()
+  return Boolean(data?.ended_reason)
+}
+
+/**
+ * Which of a newly-added parent's spouses is a candidate to be the child's OTHER parent, or null if
+ * none is. Pure and exported so the rule is testable without a database — the IO around it is
+ * trivial, but getting this wrong writes a false parent into someone's family tree.
+ *
+ * Requires exactly one spouse: zero means there's nothing to infer, and two or more (a remarriage on
+ * file) means picking one would be a coin flip. 'partner' is excluded entirely for the same reason
+ * syncSpouseParenthood excludes it — dating doesn't imply co-parenthood the way marriage does.
+ */
+export function eligibleCoParentSpouse(input: {
+  parentId: string
+  childId: string
+  childParentIds: string[]
+  spouseIds: string[]
+}): string | null {
+  // Another parent is already recorded — nothing missing, and a third would be worse than no guess.
+  if (input.childParentIds.some((id) => id !== input.parentId)) return null
+  if (input.spouseIds.length !== 1) return null
+  const spouseId = input.spouseIds[0]
+  if (spouseId === input.childId || input.childParentIds.includes(spouseId)) return null
+  return spouseId
+}
+
+/**
+ * Whether this co-parent link should be ASKED about rather than just written — the founder's
+ * "assuming contextually it still makes sense", made concrete. True means offer it as a question.
+ *
+ * Note what the surname rule is NOT: "the surnames differ". A married daughter doesn't share her own
+ * father's surname either, so that test would suppress the inference across half a normal tree. The
+ * telling shape is the child carrying THIS parent's surname while not carrying the candidate's,
+ * which is what a child from an earlier relationship looks like.
+ *
+ * Death is deliberately absent: a widow's late husband is still her children's father, the same
+ * stance relationshipCalculator.ts takes when it refuses to let a death change a label.
+ */
+export function coParentNeedsConfirmation(input: {
+  hasOtherPartner: boolean
+  marriageEnded: boolean
+  childLastName?: string | null
+  parentLastName?: string | null
+  spouseLastName?: string | null
+}): boolean {
+  if (input.hasOtherPartner || input.marriageEnded) return true
+  const surname = (v: string | null | undefined) => (v ?? '').trim().toLowerCase()
+  const child = surname(input.childLastName)
+  const spouse = surname(input.spouseLastName)
+  return Boolean(child && spouse && child === surname(input.parentLastName) && child !== spouse)
+}
+
+/**
+ * "Linda is Alex's mother" nearly always also means "Linda's husband is Alex's father" (founder,
+ * 2026-08-05). syncSpouseParenthood already makes exactly this inference in the other direction —
+ * add a SPOUSE and their partner's existing kids gain a parent — but nothing made it when the PARENT
+ * was the thing added, which is the direction the family tree's "+" actually goes.
+ *
+ * Writes the link outright when the shape is unambiguous, and returns it unwritten (autoLinked
+ * false) when something argues against it, so the caller can ask instead. The two rules that decide
+ * which — eligibleCoParentSpouse and coParentNeedsConfirmation — are pure and live above; this
+ * function is just the database around them.
+ */
+export async function syncParentSpouse(
+  userId: string | undefined | null,
+  parentId: string,
+  childId: string
+): Promise<CoParentCandidate | null> {
+  if (!userId || !parentId || !childId || parentId === childId) return null
+
+  const [parentRel, childRel] = await Promise.all([
+    getRelationshipsForPerson(parentId),
+    getRelationshipsForPerson(childId),
+  ])
+
+  const spouseId = eligibleCoParentSpouse({
+    parentId,
+    childId,
+    childParentIds: childRel.parentIds,
+    spouseIds: parentRel.spouseIds,
+  })
+  if (!spouseId) return null
+
+  const { data: rows } = await supabase.from('people').select('id, name, last_name').in('id', [parentId, spouseId, childId])
+  const byId = new Map((rows ?? []).map((p) => [p.id, p]))
+  const parent = byId.get(parentId)
+  const spouse = byId.get(spouseId)
+  const child = byId.get(childId)
+  if (!spouse || !child) return null
+
+  const fullName = (p: { name: string; last_name: string | null }) => (p.last_name ? `${p.name} ${p.last_name}` : p.name)
+  const autoLinked = !coParentNeedsConfirmation({
+    hasOtherPartner: parentRel.partnerIds.length > 0,
+    marriageEnded: await isMarriageEnded(parentId, spouseId),
+    childLastName: child.last_name,
+    parentLastName: parent?.last_name,
+    spouseLastName: spouse.last_name,
+  })
+
+  if (autoLinked) {
+    await upsertRelationship(userId, spouseId, childId, 'parent')
+    await invalidateKeyFacts([spouseId, childId])
+    await syncFamilyClique(userId, childId)
+  }
+  return { spouseId, spouseName: fullName(spouse), childId, childName: fullName(child), autoLinked }
+}
+
 // Turns off the two inferences that are right for a blood relationship and wrong for a step one.
 // The family tree's "Step-parent"/"Step-sibling" pickers are the only callers that set these — a
 // step relation is recorded as nothing more than the plain spouse/parent row it literally is (see

@@ -7,6 +7,7 @@
 
 import type { Graph, TreeData } from './familyTree'
 import { buildFamilyTreeFromGraph, buildDescendantTreeFromGraph } from './familyTree'
+import { guessGenderFromName } from './nameGender'
 
 export type DemoPerson = {
   id: string
@@ -176,7 +177,20 @@ const DEMO_RELATIONSHIPS: Rel[] = [
 
 export function buildDemoGraph(): Graph {
   const nameById = new Map<string, string>()
-  for (const p of DEMO_PEOPLE) nameById.set(p.id, demoPersonName(p.id))
+  // Same first-name inference the real loadFamilyGraph applies, rather than a hand-written gender
+  // per demo person — so the demo tree says "aunt" and "1st cousin's husband" like a real one, and
+  // the landing page can't quietly drift from what the app actually does. Nobody here has a gender
+  // "recorded", so every one of these is a guess, exactly as it would be for a new user.
+  const genderById = new Map<string, string>()
+  const guessedGenderIds = new Set<string>()
+  for (const p of DEMO_PEOPLE) {
+    nameById.set(p.id, demoPersonName(p.id))
+    const guess = guessGenderFromName(demoPersonName(p.id))
+    if (guess) {
+      genderById.set(p.id, guess)
+      guessedGenderIds.add(p.id)
+    }
+  }
 
   const parentsOf = new Map<string, string[]>()
   const childrenOf = new Map<string, string[]>()
@@ -201,7 +215,7 @@ export function buildDemoGraph(): Graph {
   }
   // Static demo dataset has no deceased/divorced people on file — empty sets, same as "none
   // recorded" for a real user.
-  return { nameById, selfId: 'gary', parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds: new Set(), endedPairs: new Set() }
+  return { nameById, selfId: 'gary', parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds: new Set(), endedPairs: new Set(), genderById, guessedGenderIds }
 }
 
 export function buildDemoFamilyTree(rootId: string): TreeData {

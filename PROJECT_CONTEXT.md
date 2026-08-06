@@ -137,7 +137,25 @@ src/
 │   │                            before this shipped: `migrations_manual/2026-07-25-shared-parent-
 │   │                            sibling-backfill.sql` + `2026-07-25-spouse-coparent-backfill.sql`
 │   │                            (same remarriage guard as the runtime fix) — see §10 for
-│   │                            deploy/run status.
+│   │                            deploy/run status. `syncParentSpouse` (2026-08-05, founder) is the
+│   │                            MIRROR-IMAGE inference: adding a PARENT auto-links that parent's
+│   │                            spouse as the child's other parent ("Linda is Alex's mother" ⇒
+│   │                            Linda's husband is Alex's father). Decision split into two pure,
+│   │                            unit-tested rules — `eligibleCoParentSpouse` (exactly one spouse,
+│   │                            no second parent already on file, 'partner' never counts) and
+│   │                            `coParentNeedsConfirmation` (another partner on file, or a divorce,
+│   │                            or the child carrying the PARENT's surname but not the candidate's
+│   │                            ⇒ ask instead of write). Death is deliberately not a blocker. A
+│   │                            "needs confirmation" verdict falls through to the same
+│   │                            "Is X also Y's parent?" banner as above.
+│   ├── nameGender.ts          — (2026-08-05) `guessGenderFromName`: confident male/female name
+│   │                            lists plus an AMBIGUOUS blocklist (Jordan, Casey, Sam…) checked
+│   │                            first, so the clarify prompt stops asking about the obvious ones.
+│   │                            The founder's "only ask under 75% sure" is expressed as list
+│   │                            membership, NOT invented per-name probabilities. Hyphenated names
+│   │                            need both halves to agree (else Jean-Pierre reads female). Guesses
+│   │                            NEVER reach the database — they fill gaps in `Graph.genderById`
+│   │                            only, and a recorded gender (including non-binary/other) always wins
 │   ├── familyTree.ts          — buildFamilyTree(personId): walks the relationships table
 │   │                            (one full-table fetch, then in-memory graph walk) into the
 │   │                            tiers/branches FamilyTree.tsx renders. `loadFamilyGraph()`
@@ -1291,7 +1309,9 @@ Full story: PROJECT_HISTORY.md.
 │   │                            not "what gender is this person?". Shown on FamilyTree (one at a
 │   │                            time, in-law/aunt-uncle/niece-nephew first since those fallbacks
 │   │                            have no natural English word) and inline under a
-│   │                            RelationshipCompare answer. Hidden entirely when
+│   │                            RelationshipCompare answer. Only ever asks about names
+│   │                            `nameGender.ts` can't decide — no prompt for a Mark or a Susan
+│   │                            (founder, 2026-08-05); Jordan and Casey still get asked. Hidden entirely when
 │   │                            `graph.genderSupported` is false — never offers a button that
 │   │                            can't save. Skip is session-only and deliberately not persisted:
 │   │                            a non-binary relative has no right answer among the two offered,

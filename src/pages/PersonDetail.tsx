@@ -20,6 +20,7 @@ import RelationshipSuggestionBanners, {
 import { groupDisplayName } from '../lib/groupDisplayName'
 import { loadFamilyGraph } from '../lib/familyTree'
 import { calculateRelationship, describeKinPath } from '../lib/relationshipCalculator'
+import { guessGenderFromName } from '../lib/nameGender'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -1061,6 +1062,7 @@ export function PersonDetailView({
               <option value="other">Other</option>
             </select>
           </div>
+          {!gender && <GenderGuessHint firstName={firstNameInput} />}
           <div style={styles.nameButtonRow}>
             <button type="submit" disabled={savingName || !firstNameInput.trim()} style={styles.saveButton}>
               {savingName ? '…' : 'Save'}
@@ -1596,6 +1598,21 @@ function NoteCard({
   )
 }
 
+// Nothing is recorded for this person, but the app is still wording their relationships as if it
+// knows — say so, rather than letting "Not set" sit next to a tree that confidently calls them
+// someone's son. The guess itself never reaches the database (see nameGender.ts); this dropdown is
+// how it gets replaced with a fact.
+function GenderGuessHint({ firstName }: { firstName: string }) {
+  const guess = guessGenderFromName(firstName)
+  if (!guess) return null
+  return (
+    <span style={styles.genderGuessHint}>
+      Not set — Boomer is assuming {guess} from the first name, so it can say "son" instead of
+      "child". Pick one above if that's wrong.
+    </span>
+  )
+}
+
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '2rem 1.5rem 6rem', fontFamily },
   backButton: {
@@ -1672,6 +1689,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   nameButtonRow: { display: 'flex', gap: space.md },
   deceasedRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: space.lg, flexWrap: 'wrap' },
   deceasedLabel: { fontSize: fontSize.label, color: colors.textFaint },
+  genderGuessHint: { display: 'block', fontSize: fontSize.small, color: colors.textFaintest, lineHeight: 1.5 },
   deceasedDateInput: {
     fontSize: fontSize.body,
     fontFamily,
