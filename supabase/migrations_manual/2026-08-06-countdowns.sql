@@ -42,6 +42,10 @@ create table if not exists countdowns (
 
 alter table countdowns enable row level security;
 
+-- Dropped first so this whole file is safe to paste in twice: `create policy` has no
+-- IF NOT EXISTS, so a re-run would otherwise die with 42710 ("policy already exists") after every
+-- other statement here no-opped harmlessly. Same pattern as 2026-07-20-relationships-table.sql.
+drop policy if exists "Users manage their own countdowns" on countdowns;
 create policy "Users manage their own countdowns"
   on countdowns
   for all
