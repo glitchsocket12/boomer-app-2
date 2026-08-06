@@ -6,7 +6,7 @@
 // their profile or re-centering the whole tree on them via a fresh query, since a family tree is
 // a person's own relationship graph, not bounded by which group you opened it from.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   loadFamilyGraph,
@@ -33,6 +33,7 @@ import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationsh
 import AddFamilyMember, { type RelationshipChoice } from '../components/AddFamilyMember'
 import ChoiceSheet from '../components/ChoiceSheet'
 import RelationshipCompare from '../components/RelationshipCompare'
+import { kinLabelMap, shortKinLabel } from '../lib/relationshipCalculator'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -86,46 +87,59 @@ const BRANCH_GAP = 80
 const TIER_Y_STEP = 120
 const TIER_Y_START = 40
 
-function boxWidth(name: string) {
-  return Math.max(80, Math.min(160, name.length * 8 + 28))
+// One switch for "how is this person related to the center" under every name. Kept as a constant
+// rather than inlined so it can be turned off in a single line if it ever reads as clutter on a
+// wide tree — it's the only thing here that changes tile widths, and therefore the whole layout.
+const SHOW_KIN_LABELS = true
+
+// id -> the small second line under a name: a structural tag from familyTree.ts ('step-parent'), or
+// how this person is related to whoever the tree is centered on. Threaded through the whole layout
+// because the name alone no longer decides how wide a tile has to be.
+type SecondLines = Map<string, string>
+
+function boxWidth(name: string, secondLine = '') {
+  const nameW = name.length * 8 + 28
+  // The second line renders at fontSize 9 — roughly 5px a character.
+  const labelW = secondLine ? secondLine.length * 5 + 16 : 0
+  return Math.max(80, Math.min(180, Math.max(nameW, labelW)))
 }
 
 type Placed = { person: TreePerson; x: number; w: number }
 
 // Lays out one union (a person + their spouses) as a contiguous a -> spouse1 -> spouse2 chain,
 // returning the x position just past the end of it.
-function placeUnion(union: Union, x: number, placed: Placed[]): number {
-  const aw = boxWidth(union.a.name)
+function placeUnion(union: Union, x: number, placed: Placed[], lines: SecondLines): number {
+  const aw = boxWidth(union.a.name, lines.get(union.a.id))
   placed.push({ person: union.a, x, w: aw })
   x += aw
   union.spouses.forEach((spouse) => {
     x += MARRIAGE_GAP
-    const sw = boxWidth(spouse.name)
+    const sw = boxWidth(spouse.name, lines.get(spouse.id))
     placed.push({ person: spouse, x, w: sw })
     x += sw
   })
   return x
 }
 
-function layoutTier(branches: TreeBranch[]): { placed: Placed[]; totalWidth: number } {
+function layoutTier(branches: TreeBranch[], lines: SecondLines): { placed: Placed[]; totalWidth: number } {
   const placed: Placed[] = []
   let x = 0
   branches.forEach((branch, bi) => {
     if (bi > 0) x += BRANCH_GAP
     branch.leftExtended.forEach((union, ui) => {
       if (ui > 0) x += SLOT_GAP
-      x = placeUnion(union, x, placed)
+      x = placeUnion(union, x, placed, lines)
     })
     if (branch.leftExtended.length > 0) x += SLOT_GAP
-    x = placeUnion(branch.union, x, placed)
+    x = placeUnion(branch.union, x, placed, lines)
     if (branch.rightExtended.length > 0) x += SLOT_GAP
     branch.rightExtended.forEach((union, ui) => {
       if (ui > 0) x += SLOT_GAP
-      x = placeUnion(union, x, placed)
+      x = placeUnion(union, x, placed, lines)
     })
     branch.siblings.forEach((sibUnion) => {
       x += SLOT_GAP
-      x = placeUnion(sibUnion, x, placed)
+      x = placeUnion(sibUnion, x, placed, lines)
     })
   })
   return { placed, totalWidth: x }
@@ -177,8 +191,11 @@ function tierUnits(branches: TreeBranch[]): { union: Union; branchIndex: number 
   return units
 }
 
-function unionNaturalWidth(union: Union): number {
-  return union.spouses.reduce((w, s) => w + MARRIAGE_GAP + boxWidth(s.name), boxWidth(union.a.name))
+function unionNaturalWidth(union: Union, lines: SecondLines): number {
+  return union.spouses.reduce(
+    (w, s) => w + MARRIAGE_GAP + boxWidth(s.name, lines.get(s.id)),
+    boxWidth(union.a.name, lines.get(union.a.id))
+  )
 }
 
 // stepOnly members excluded for the same reason as in anchorX: a couple's position should follow
@@ -210,12 +227,13 @@ function childrenSpanCenter(union: Union, childPlaced: Placed[]): number | undef
 // equal, opposite amount, the tier's overall center of mass never drifts away from its anchor.
 function resolveTierPositions(
   branches: TreeBranch[],
-  centerFor: (union: Union) => number | undefined
+  centerFor: (union: Union) => number | undefined,
+  lines: SecondLines
 ): { placed: Placed[]; totalWidth: number } {
   const units = tierUnits(branches)
   if (units.length === 0) return { placed: [], totalWidth: 0 }
 
-  const widths = units.map((u) => unionNaturalWidth(u.union))
+  const widths = units.map((u) => unionNaturalWidth(u.union, lines))
   const centers: (number | undefined)[] = units.map((u) => centerFor(u.union))
 
   for (let i = 0; i < units.length; i++) {
@@ -260,7 +278,7 @@ function resolveTierPositions(
   }
 
   const placed: Placed[] = []
-  units.forEach((u, i) => placeUnion(u.union, resolved[i] - widths[i] / 2, placed))
+  units.forEach((u, i) => placeUnion(u.union, resolved[i] - widths[i] / 2, placed, lines))
   const minX = Math.min(...placed.map((p) => p.x))
   const maxX = Math.max(...placed.map((p) => p.x + p.w))
   return { placed, totalWidth: maxX - minX }
@@ -268,8 +286,8 @@ function resolveTierPositions(
 
 // Ancestor tiers (Parents, Grandparents): each union centers on the midpoint of its own children's
 // span one tier below.
-function layoutRelativeToChildren(branches: TreeBranch[], childPlaced: Placed[]): { placed: Placed[]; totalWidth: number } {
-  return resolveTierPositions(branches, (union) => childrenSpanCenter(union, childPlaced))
+function layoutRelativeToChildren(branches: TreeBranch[], childPlaced: Placed[], lines: SecondLines): { placed: Placed[]; totalWidth: number } {
+  return resolveTierPositions(branches, (union) => childrenSpanCenter(union, childPlaced), lines)
 }
 
 // The Kids tier has nothing below it to anchor to, but it does have an obvious anchor above it: its
@@ -280,12 +298,17 @@ function layoutRelativeToChildren(branches: TreeBranch[], childPlaced: Placed[])
 function layoutRelativeToParent(
   branches: TreeBranch[],
   parentTier: TreeTier,
-  parentPlaced: Placed[]
+  parentPlaced: Placed[],
+  lines: SecondLines
 ): { placed: Placed[]; totalWidth: number } {
-  return resolveTierPositions(branches, (union) => {
-    if (union.a.parentId === undefined) return undefined
-    return anchorX(parentTier, { placed: parentPlaced }, union.a.parentId)
-  })
+  return resolveTierPositions(
+    branches,
+    (union) => {
+      if (union.a.parentId === undefined) return undefined
+      return anchorX(parentTier, { placed: parentPlaced }, union.a.parentId)
+    },
+    lines
+  )
 }
 
 type RemoveTarget = { category: CircleCategory; label: string; subjectId: string; subjectName: string; targetId: string; targetName: string }
@@ -647,6 +670,49 @@ export function FamilyTreeView({
   // that starts on a tile would otherwise fire its click. Bail if the pointer travelled.
   const pressOrigin = useRef<{ x: number; y: number } | null>(null)
 
+  const allShownIds = tiers.flatMap((t) =>
+    t.branches.flatMap((b) => [
+      b.union.a.id,
+      ...b.union.spouses.map((s) => s.id),
+      ...b.leftExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
+      ...b.rightExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
+      ...b.siblings.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
+    ])
+  )
+
+  // Who the kinship labels are measured FROM. In ego mode that's the person the tree is centered
+  // on. In descendants mode the "root" is whichever founder buildDescendantTreeFromGraph happened
+  // to pick, so labelling against them would be actively misleading — measure from the account
+  // holder instead, and show nothing at all if there isn't one.
+  const kinAnchorId = mode === 'ego' ? data.rootId : graph?.selfId ?? null
+  // Memoized on purpose: this component re-renders on every one of the container's state changes,
+  // and without it that's one graph walk per tile per keystroke in an unrelated input.
+  const kinLabels = useMemo(() => {
+    if (!SHOW_KIN_LABELS || !graph || !kinAnchorId) return new Map<string, string>()
+    const resolved = kinLabelMap(graph, kinAnchorId, allShownIds)
+    return new Map([...resolved].map(([id, k]) => [id, shortKinLabel(k)]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, kinAnchorId, allShownIds.join(',')])
+
+  // relationLabel wins where both exist: it's the more specific, structurally-derived fact (a
+  // step-parent tag familyTree.ts worked out from the tree's own shape). Inverting this precedence
+  // would silently replace "step-parent" on a tile with a generic kinship label, and no test would
+  // catch it — familyTree.test.ts asserts the DATA, not what the tile renders.
+  const secondLines: SecondLines = new Map()
+  for (const id of allShownIds) {
+    const label = kinLabels.get(id)
+    if (label) secondLines.set(id, label)
+  }
+  for (const tier of tiers) {
+    for (const branch of tier.branches) {
+      for (const u of [branch.union, ...branch.leftExtended, ...branch.rightExtended, ...branch.siblings]) {
+        for (const p of [u.a, ...u.spouses]) {
+          if (p.relationLabel) secondLines.set(p.id, p.relationLabel)
+        }
+      }
+    }
+  }
+
   // Every tier carries a depth relative to depth 0 (root-gen in ego mode; the family's eldest known
   // generation in descendants mode — see buildFamilyTree/buildDescendantTree). Depth 0 lays out
   // naturally and independently; every other tier derives its position from the adjacent,
@@ -658,7 +724,7 @@ export function FamilyTreeView({
   const byDepth = new Map(tiers.map((t, i) => [t.depth, i]))
   const zeroIdx = byDepth.get(0)!
   const layoutByDepth = new Map<number, { placed: Placed[]; totalWidth: number }>()
-  layoutByDepth.set(0, layoutTier(tiers[zeroIdx].branches))
+  layoutByDepth.set(0, layoutTier(tiers[zeroIdx].branches, secondLines))
 
   const depths = tiers.map((t) => t.depth)
   const minDepth = Math.min(...depths)
@@ -667,14 +733,14 @@ export function FamilyTreeView({
     const idx = byDepth.get(d)
     const childLayout = layoutByDepth.get(d + 1)
     if (idx === undefined || !childLayout) continue
-    layoutByDepth.set(d, layoutRelativeToChildren(tiers[idx].branches, childLayout.placed))
+    layoutByDepth.set(d, layoutRelativeToChildren(tiers[idx].branches, childLayout.placed, secondLines))
   }
   for (let d = 1; d <= maxDepth; d++) {
     const idx = byDepth.get(d)
     const parentIdx = byDepth.get(d - 1)
     const parentLayout = layoutByDepth.get(d - 1)
     if (idx === undefined || parentIdx === undefined || !parentLayout) continue
-    layoutByDepth.set(d, layoutRelativeToParent(tiers[idx].branches, tiers[parentIdx], parentLayout.placed))
+    layoutByDepth.set(d, layoutRelativeToParent(tiers[idx].branches, tiers[parentIdx], parentLayout.placed, secondLines))
   }
 
   const layouts = tiers.map((t) => layoutByDepth.get(t.depth)!)
@@ -691,15 +757,6 @@ export function FamilyTreeView({
   const shift = fitsDefaultCanvas ? (CANVAS_W - contentWidth) / 2 - minX : 40 - minX
   const height = TIER_Y_START + TIER_Y_STEP * (tiers.length - 1) + BOX_H + 40
   const startXs = tiers.map(() => shift)
-  const allShownIds = tiers.flatMap((t) =>
-    t.branches.flatMap((b) => [
-      b.union.a.id,
-      ...b.union.spouses.map((s) => s.id),
-      ...b.leftExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
-      ...b.rightExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
-      ...b.siblings.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
-    ])
-  )
 
   // Add/remove relationship controls only make sense for a single centered person (ego mode) —
   // a descendants-mode tree has no one "root" to attach a new relationship to.
@@ -1039,7 +1096,7 @@ export function FamilyTreeView({
                     <rect x={x} y={y} width={p.w} height={BOX_H} rx={6} fill={fill} stroke={border} strokeWidth={1} />
                     <text
                       x={x + p.w / 2}
-                      y={p.person.relationLabel ? y + 21 : y + 27}
+                      y={secondLines.get(p.person.id) ? y + 21 : y + 27}
                       textAnchor="middle"
                       fontSize="14"
                       fontFamily={fontFamily}
@@ -1050,9 +1107,9 @@ export function FamilyTreeView({
                       {p.person.deceased ? ' †' : ''}
                       {clickable ? ' ›' : ''}
                     </text>
-                    {p.person.relationLabel && (
+                    {secondLines.get(p.person.id) && (
                       <text x={x + p.w / 2} y={y + 35} textAnchor="middle" fontSize="9" fontFamily={fontFamily} fill={colors.textFaintest}>
-                        {p.person.relationLabel}
+                        {secondLines.get(p.person.id)}
                       </text>
                     )}
                   </g>
