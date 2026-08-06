@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Graph } from './familyTree'
-import { calculateRelationship, describeKinPath, describeKinship, kinLabelMap, shortKinLabel, UNRELATED_LABEL } from './relationshipCalculator'
+import { calculateRelationship, describeKinPath, describeKinship, genderAlternatives, kinLabelMap, shortKinLabel, UNRELATED_LABEL } from './relationshipCalculator'
 
 // Same hand-built-Graph style as familyTree.test.ts. Fixture 1 populates genderById so the gendered
 // nouns are covered; fixture 2 deliberately omits it, which is what proves the neutral fallback
@@ -577,5 +577,53 @@ describe('kinLabelMap and shortKinLabel', () => {
     const long = calculateRelationship(g, 'me', 'ggggm')
     expect(long.label).toBe('3x great-grandmother')
     expect(shortKinLabel(long).length).toBeLessThanOrEqual(22)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// "Is this a son-in-law or a daughter-in-law?"
+// ---------------------------------------------------------------------------
+
+describe('genderAlternatives', () => {
+  const inLaws = buildInLawGraph()
+  const neutral = buildHalfSiblingGraph()
+
+  // The exact case the founder reported: a tile reading "child-in-law" because the gender behind it
+  // was never recorded.
+  it('offers both wordings behind a clumsy in-law fallback', () => {
+    expect(describeKinship(inLaws, 'me', 'wsib')).toBe('sibling-in-law')
+    expect(genderAlternatives(inLaws, 'me', 'wsib')).toEqual({
+      male: 'brother-in-law',
+      female: 'sister-in-law',
+    })
+  })
+
+  it('covers the aunt/uncle and niece/nephew slashes too', () => {
+    expect(genderAlternatives(neutral, 'full1', 'unc3')).toEqual({ male: 'uncle', female: 'aunt' })
+    expect(genderAlternatives(neutral, 'unc3', 'full1')).toEqual({ male: 'nephew', female: 'niece' })
+  })
+
+  it('has nothing to ask when the gender is already on file', () => {
+    expect(genderAlternatives(inLaws, 'me', 'bil')).toBeNull()
+  })
+
+  // Asking would be pure noise: the answer changes nothing about what's on screen.
+  it('has nothing to ask when the wording does not depend on gender', () => {
+    expect(describeKinship(neutral, 'full1', 'c3')).toBe('first cousin')
+    expect(genderAlternatives(neutral, 'full1', 'c3')).toBeNull()
+  })
+
+  it('has nothing to ask about the same person, or someone unrelated', () => {
+    expect(genderAlternatives(neutral, 'full1', 'full1')).toBeNull()
+    expect(genderAlternatives(neutral, 'full1', 'nobody')).toBeNull()
+  })
+
+  // The whole point of recomputing rather than re-deriving the noun: whichever wording is picked has
+  // to be exactly what the app then shows once that gender is saved.
+  it('matches what the app says once the answer is recorded', () => {
+    const alt = genderAlternatives(neutral, 'full1', 'mom')!
+    const answered = buildHalfSiblingGraph()
+    answered.genderById = new Map([['mom', 'female']])
+    expect(describeKinship(answered, 'full1', 'mom')).toBe(alt.female)
   })
 })

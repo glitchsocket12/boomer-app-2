@@ -34,7 +34,8 @@ import AddFamilyMember, { type RelationshipChoice } from '../components/AddFamil
 import ChoiceSheet from '../components/ChoiceSheet'
 import PanZoomSvg from '../components/PanZoomSvg'
 import RelationshipCompare from '../components/RelationshipCompare'
-import { kinLabelMap, shortKinLabel } from '../lib/relationshipCalculator'
+import { genderAlternatives, kinLabelMap, shortKinLabel, type KinKind, type Kinship } from '../lib/relationshipCalculator'
+import ClarifyGenderPrompt, { type GenderQuestion } from '../components/ClarifyGenderPrompt'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -92,6 +93,15 @@ const TIER_Y_START = 40
 // rather than inlined so it can be turned off in a single line if it ever reads as clutter on a
 // wide tree — it's the only thing here that changes tile widths, and therefore the whole layout.
 const SHOW_KIN_LABELS = true
+
+// The positions with no natural genderless word in English, so their fallbacks ("child-in-law",
+// "aunt/uncle") are the ones that actually read wrong on a tile — asked about before the rest, whose
+// fallbacks ("parent", "cousin") are perfectly ordinary words in their own right.
+const CLUMSY_KINDS: KinKind[] = ['in-law', 'pibling', 'nibling']
+// Bounded because genderAlternatives re-derives a relationship on a cloned graph, which misses the
+// ancestor cache (see its comment) — a tree where nobody has a gender on file shouldn't turn one
+// render into hundreds of uncached walks just to find the first question worth asking.
+const MAX_GENDER_PROBES = 20
 
 // id -> the small second line under a name: a structural tag from familyTree.ts ('step-parent'), or
 // how this person is related to whoever the tree is centered on. Threaded through the whole layout
@@ -357,6 +367,7 @@ export default function FamilyTree({
   const [divorceConfirm, setDivorceConfirm] = useState<DivorceTarget | null>(null)
   const [divorcing, setDivorcing] = useState(false)
   const [undoingDivorceId, setUndoingDivorceId] = useState<string | null>(null)
+  const [savingGenderId, setSavingGenderId] = useState<string | null>(null)
 
   useEffect(() => {
     load()
@@ -531,6 +542,17 @@ export default function FamilyTree({
     setDivorceConfirm(null)
   }
 
+  // Answering "son-in-law or daughter-in-law?" writes the ordinary gender field — the same one
+  // PersonDetail's dropdown sets — and then reloads the graph, which re-words every label that was
+  // sitting on a genderless fallback because of it (and turns on that person's ♂/♀ tile glyph).
+  async function setPersonGender(id: string, gender: 'male' | 'female') {
+    if (!data) return
+    setSavingGenderId(id)
+    await supabase.from('people').update({ gender }).eq('id', id)
+    await refreshTree(data.rootId)
+    setSavingGenderId(null)
+  }
+
   // No confirm banner here, unlike confirmDivorce — this is a correction, not a destructive step,
   // same treatment PersonDetail.tsx gives "Undo" on the deceased-date field.
   async function undoDivorce(targetId: string, kind: 'spouse' | 'partner') {
@@ -578,6 +600,8 @@ export default function FamilyTree({
       onCancelDivorce={() => setDivorceConfirm(null)}
       onUndoDivorce={undoDivorce}
       undoingDivorceId={undoingDivorceId}
+      onSetGender={setPersonGender}
+      savingGenderId={savingGenderId}
     />
   )
 }
@@ -621,6 +645,8 @@ export function FamilyTreeView({
   onCancelDivorce = () => {},
   onUndoDivorce = () => {},
   undoingDivorceId = null,
+  onSetGender = () => {},
+  savingGenderId = null,
 }: {
   data: TreeData
   onBack: () => void
@@ -656,6 +682,8 @@ export function FamilyTreeView({
   coParentSuggestions?: CoParentSuggestion[]
   onAcceptCoParentSuggestion?: (s: CoParentSuggestion) => void
   onDeclineCoParentSuggestion?: (s: CoParentSuggestion) => void
+  onSetGender?: (personId: string, gender: 'male' | 'female') => void
+  savingGenderId?: string | null
 }) {
   const { tiers, mode } = data
 
@@ -688,12 +716,47 @@ export function FamilyTreeView({
   const kinAnchorId = mode === 'ego' ? data.rootId : graph?.selfId ?? null
   // Memoized on purpose: this component re-renders on every one of the container's state changes,
   // and without it that's one graph walk per tile per keystroke in an unrelated input.
-  const kinLabels = useMemo(() => {
-    if (!SHOW_KIN_LABELS || !graph || !kinAnchorId) return new Map<string, string>()
-    const resolved = kinLabelMap(graph, kinAnchorId, allShownIds)
-    return new Map([...resolved].map(([id, k]) => [id, shortKinLabel(k)]))
+  const kinships = useMemo(() => {
+    if (!graph || !kinAnchorId) return new Map<string, Kinship>()
+    return kinLabelMap(graph, kinAnchorId, allShownIds)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, kinAnchorId, allShownIds.join(',')])
+  const kinLabels = useMemo(() => {
+    if (!SHOW_KIN_LABELS) return new Map<string, string>()
+    return new Map([...kinships].map(([id, k]) => [id, shortKinLabel(k)]))
+  }, [kinships])
+
+  // Answered-or-skipped for this visit only. Skipping isn't a fact about anyone (a non-binary
+  // relative has no right answer among the two offered), so it's deliberately not persisted —
+  // their profile's own Gender dropdown is the full control.
+  const [dismissedGenderIds, setDismissedGenderIds] = useState<Set<string>>(new Set())
+
+  // One question at a time. A banner per unknown-gender relative would be a wall of them on a real
+  // tree, and this is a nicety on top of a tree that already works — answering or skipping one
+  // brings up the next, so it's opt-in progress rather than a chore list.
+  const genderQuestion: GenderQuestion | null = useMemo(() => {
+    if (readOnly || !graph?.genderSupported || !kinAnchorId) return null
+    const candidates = [...kinships.values()].filter(
+      (k) => k.toId !== kinAnchorId && !dismissedGenderIds.has(k.toId) && !graph.genderById?.get(k.toId)
+    )
+    candidates.sort((a, b) => Number(CLUMSY_KINDS.includes(b.kind)) - Number(CLUMSY_KINDS.includes(a.kind)))
+    for (const k of candidates.slice(0, MAX_GENDER_PROBES)) {
+      const alt = genderAlternatives(graph, k.fromId, k.toId)
+      if (!alt) continue
+      return {
+        personId: k.toId,
+        personName: graph.nameById.get(k.toId) ?? 'this person',
+        possessive: kinAnchorId === graph.selfId ? 'your' : `${graph.nameById.get(kinAnchorId) ?? 'their'}'s`,
+        male: alt.male,
+        female: alt.female,
+      }
+    }
+    return null
+  }, [readOnly, graph, kinAnchorId, kinships, dismissedGenderIds])
+
+  function dismissGenderQuestion(id: string) {
+    setDismissedGenderIds((prev) => new Set(prev).add(id))
+  }
 
   // relationLabel wins where both exist: it's the more specific, structurally-derived fact (a
   // step-parent tag familyTree.ts worked out from the tree's own shape). Inverting this precedence
@@ -1120,6 +1183,15 @@ export function FamilyTreeView({
         })}
       </PanZoomSvg>
 
+      {genderQuestion && (
+        <ClarifyGenderPrompt
+          question={genderQuestion}
+          onAnswer={onSetGender}
+          onSkip={dismissGenderQuestion}
+          saving={savingGenderId === genderQuestion.personId}
+        />
+      )}
+
       <ChoiceSheet
         open={tapped !== null}
         onClose={() => setTapped(null)}
@@ -1174,6 +1246,8 @@ export function FamilyTreeView({
           from={compareFrom}
           people={allPeople}
           selfId={graph.selfId}
+          onSetGender={!readOnly && graph.genderSupported ? onSetGender : undefined}
+          savingGenderId={savingGenderId}
           onClose={() => setCompareFrom(null)}
           onSelectPerson={
             onSelectPerson

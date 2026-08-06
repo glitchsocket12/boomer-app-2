@@ -157,6 +157,12 @@ src/
 │   │                            step commented with the wrong answer it prevents. Gendered wording
 │   │                            via genderById with a neutral fallback; `describeKinPath` renders
 │   │                            the chain ("his mother Jane → her brother Bill → his son Steve").
+│   │                            `genderAlternatives(g, from, to)` (2026-08-05) returns the male and
+│   │                            female wordings behind a fallback that's only vague because gender
+│   │                            isn't on file ("son-in-law"/"daughter-in-law" under "child-in-law"),
+│   │                            null when there's nothing to ask — recomputed on a gender-forced
+│   │                            clone of the graph, never re-derived, so the question can't drift
+│   │                            from the answer. Powers ClarifyGenderPrompt.tsx.
 │   │                            Step logic is DELEGATED to relationshipLabels.ts, not copied.
 │   │                            Bounded by MAX_GENERATIONS 25 / MAX_ANCESTOR_NODES 2000; a
 │   │                            truncated walk reports "unrelated" rather than hanging.
@@ -799,7 +805,10 @@ src/
 │                                 The canvas lives in `components/PanZoomSvg.tsx`
 │                                 (2026-08-05): drag to pan in any direction, pinch/wheel/
 │                                 +−  to zoom, "Fit" to re-frame — replaced the old
-│                                 overflow-x scroll div. `onSelectPerson`
+│                                 overflow-x scroll div. Also hosts ClarifyGenderPrompt
+│                                 (2026-08-05) under the canvas, one question at a time,
+│                                 and passes `onSetGender` down to RelationshipCompare.
+│                                 `onSelectPerson`
 │                                 is optional — Onboarding has no profile view, so the
 │                                 sheet omits that action there. Grandparents tier also pulls in
 │                                 parents' siblings (aunts/uncles, riding in the same
@@ -1275,6 +1284,18 @@ Full story: PROJECT_HISTORY.md.
 │   │                            wrong for a chooser. Carries role=dialog and focuses the
 │   │                            first action on open (FilterPanel does neither). Used by
 │   │                            FamilyTree's tile tap (2026-08-04).
+│   ├── ClarifyGenderPrompt.tsx — (2026-08-05) "Is Mark your son-in-law or daughter-in-law?"
+│   │                            banner: one tap saves `people.gender` and re-words every label
+│   │                            that was sitting on a genderless fallback. Asked as a RELATIONSHIP
+│   │                            question (the two answers are the two words the tile could show),
+│   │                            not "what gender is this person?". Shown on FamilyTree (one at a
+│   │                            time, in-law/aunt-uncle/niece-nephew first since those fallbacks
+│   │                            have no natural English word) and inline under a
+│   │                            RelationshipCompare answer. Hidden entirely when
+│   │                            `graph.genderSupported` is false — never offers a button that
+│   │                            can't save. Skip is session-only and deliberately not persisted:
+│   │                            a non-binary relative has no right answer among the two offered,
+│   │                            and their profile's Gender dropdown is the full control
 │   ├── PanZoomSvg.tsx         — (2026-08-05) drag-to-pan / pinch-wheel-button-zoom viewport
 │   │                            for an SVG canvas. Content sits in a transformed <g> (stays
 │   │                            vector-crisp when zoomed, unlike a CSS-scaled <svg>). Tracks
@@ -1790,7 +1811,7 @@ Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: even
 - ~~**Founder security actions (2026-08-01)**~~ — **ALL DONE 2026-08-01, founder-confirmed:** public signup closed (Supabase Auth → Sign In / Providers → Email), RLS audit run twice and clean, 2FA enabled on Google/GitHub/Supabase/Vercel. **Anthropic, OpenAI and Google Cloud sign in via Google** — no separate password, so they inherit Gmail's 2FA; nothing further needed there, but it makes the Google account the single key to 5 of the 8 services, so its *recovery* path (SIM-swappable phone number? recovery codes stored inside Google?) matters more than adding another factor anywhere else. Only unconfirmed item left from `SECURITY.md`: whether Supabase backups have ever been test-restored (the 4th of the four things that actually prevent a breach). Original instructions kept below for reference / re-running:
 - **~~Founder action needed~~ (2026-08-01, security audit — see `SECURITY.md`), in this order:** (1) **close public signup** — Supabase Dashboard → Authentication → Sign In / Providers → Email → disable new sign-ups; highest-value single action while the founder is the sole real user (removes the AI-billing abuse vector and the other tenants at once). (2) **Run `migrations_manual/2026-08-01-rls-audit.sql`** in the SQL Editor (read-only, safe to re-run) — the pre-migration tables (`people`/`moments`/`notes`/`groups`/`person_groups`/`reminders`/`home_suggestions`) were made by hand in the dashboard, so §6's "RLS on everything" is an unverified claim for exactly the tables holding all the real content. Any table with `rls_enabled = false`, or a policy whose expression is literally `true`, is a live cross-account leak and outranks everything else in §8. (3) **2FA on Google/GitHub/Supabase first, then Vercel/Anthropic/OpenAI/Google Cloud/Geoapify** — `SECURITY.md` §2 has the blast-radius table. Note GitHub sits in the top tier *because* pushes to `main` auto-deploy to production with no review step. This session could not verify any of it live: no credentials in the container and the environment's proxy blocks outbound access to both the app and Supabase.
 - ~~Founder action needed: deploy `add-fact` (item 61 fix)~~ — **deployed 2026-08-01** alongside the subgroup-name fix below, so the first-person ("my X") misattribution fix is finally live. Item 61's own live re-test still hasn't been run against the deployed version — worth one pass on a real profile next session.
-- **Founder action needed: run `migrations_manual/2026-07-26-gender.sql`** (item 44) — adds the nullable `people.gender` column. Code (PersonDetail's gender dropdown, FamilyTree's ♂/♀ glyph) already deployed and verified in browser preview — it fails open (no crash, no icons/saves) until this runs, so nothing breaks in the gap, but nothing persists either.
+- **Founder action needed: run `migrations_manual/2026-07-26-gender.sql`** (item 44) — adds the nullable `people.gender` column. Code (PersonDetail's gender dropdown, FamilyTree's ♂/♀ glyph, ClarifyGenderPrompt) already deployed and verified in browser preview — it fails open (no crash, no icons/saves) until this runs, so nothing breaks in the gap, but nothing persists either. **Confirmed still not run as of 2026-08-05** — a direct PostgREST read of `people.gender` returns `42703 column people.gender does not exist`. This is why EVERY in-law reads "child-in-law"/"sibling-in-law"/"parent-in-law" and every aunt/uncle reads "aunt/uncle" (founder-reported: Mark Berzins → Jake Volin), why no tile shows ♂/♀, and why the profile Gender dropdown silently doesn't stick. `loadFamilyGraph` now reports this as `graph.genderSupported`, which is what keeps the clarify prompt hidden rather than offering a save that would fail.
 - ~~Founder action needed: run `migrations_manual/2026-07-30-moment-sub-events.sql`~~ — **run and confirmed live 2026-07-30** (founder-provided token): `moments.parent_moment_id` column/constraint/index all present. Verified end-to-end in browser preview against the real account — created a sub-event on "Conor & Shelly's wedding" (inherited parent's start date), confirmed the parent/child tiles and "↑ Part of X" link, confirmed the Events.tsx collapse/expand toggle and indented child card, deleted the disposable test sub-event after.
 - ~~Founder action needed: run `migrations_manual/2026-07-26-subgroup-member-parent-sync.sql`~~ — **never shipped.** This trigger was added by mistake (not part of the reviewed subgroups plan) and removed same day, before it was ever run — it contradicted the deliberate design that subgroup membership stays independent of the parent's. No founder action needed; adding someone to a subgroup intentionally does NOT also add them to the parent group.
 - ~~Founder action needed: run `migrations_manual/2026-07-26-group-subgroups.sql`~~ (item 19, subgroups) — **migration run and fully verified live 2026-07-26.** Full click-through against the real account with disposable test groups: create a subgroup, rename, parent link navigation, parent-roster suggestion chip (add via chip), event tagging via EventDetail's existing "Associate a Group" (zero new code, confirmed), merging a group with 2 subgroups into another root group (subgroups correctly reparent to the survivor), deleting a parent with subgroups (they correctly survive as independent root groups, confirmation copy correctly pluralized). All test groups/events cleaned up after.

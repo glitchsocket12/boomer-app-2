@@ -10,7 +10,8 @@
 // tap guard at the same time.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { calculateRelationship, describeKinPath, type KinGraph } from '../lib/relationshipCalculator'
+import { calculateRelationship, describeKinPath, genderAlternatives, type KinGraph } from '../lib/relationshipCalculator'
+import ClarifyGenderPrompt from './ClarifyGenderPrompt'
 import SearchBox from './SearchBox'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
@@ -23,6 +24,8 @@ export default function RelationshipCompare({
   selfId = null,
   onClose,
   onSelectPerson,
+  onSetGender,
+  savingGenderId = null,
 }: {
   graph: KinGraph
   from: { id: string; name: string }
@@ -31,6 +34,10 @@ export default function RelationshipCompare({
   selfId?: string | null
   onClose: () => void
   onSelectPerson?: (id: string, name: string) => void
+  // Absent in read-only surfaces (the demo) — without it the answer just keeps its vaguer wording
+  // rather than offering a button that can't save.
+  onSetGender?: (personId: string, gender: 'male' | 'female') => void
+  savingGenderId?: string | null
 }) {
   const [query, setQuery] = useState('')
   const [target, setTarget] = useState<{ id: string; label: string } | null>(null)
@@ -57,6 +64,14 @@ export default function RelationshipCompare({
   const kinship = target ? calculateRelationship(graph, from.id, target.id) : null
   const path = kinship ? describeKinPath(graph, kinship) : ''
   const subject = from.id === selfId ? 'you' : from.name
+
+  // The answer above is only as precise as the data behind it. When it landed on a genderless word
+  // purely because this person's gender isn't on file, the moment they've just READ the vaguer
+  // answer is the moment they most want to correct it — so ask right here rather than sending them
+  // off to a profile to find a dropdown.
+  const [genderAnswered, setGenderAnswered] = useState(false)
+  const genderAlt =
+    onSetGender && target && !genderAnswered ? genderAlternatives(graph, from.id, target.id) : null
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -102,6 +117,25 @@ export default function RelationshipCompare({
             {kinship.inferredFromSiblingRow && (
               <p style={styles.caveat}>Worked out from a recorded sibling link — no shared parent is on file.</p>
             )}
+            {genderAlt && target && onSetGender && (
+              <div style={styles.clarify}>
+                <ClarifyGenderPrompt
+                  question={{
+                    personId: target.id,
+                    personName: target.label,
+                    possessive: subject === 'you' ? 'your' : `${subject}'s`,
+                    male: genderAlt.male,
+                    female: genderAlt.female,
+                  }}
+                  onAnswer={(id, gender) => {
+                    setGenderAnswered(true)
+                    onSetGender(id, gender)
+                  }}
+                  onSkip={() => setGenderAnswered(true)}
+                  saving={savingGenderId === target.id}
+                />
+              </div>
+            )}
             <div style={styles.actions}>
               <button
                 type="button"
@@ -109,6 +143,7 @@ export default function RelationshipCompare({
                 onClick={() => {
                   setTarget(null)
                   setQuery('')
+                  setGenderAnswered(false)
                 }}
               >
                 Compare someone else
@@ -180,6 +215,9 @@ const styles: { [key: string]: React.CSSProperties } = {
   headline: { fontSize: fontSize.lead, color: colors.ink, margin: 0, lineHeight: 1.5 },
   path: { fontSize: fontSize.body, color: colors.textMuted, margin: `${space.md} 0 0`, lineHeight: 1.6 },
   caveat: { fontSize: fontSize.small, color: colors.textFaintest, margin: `${space.sm} 0 0` },
+  // The shared banner carries its own bottom margin (it's normally last in a stack); inside this
+  // sheet it has the actions row under it, so the spacing is added above instead.
+  clarify: { marginTop: space.xl },
   actions: { display: 'flex', flexDirection: 'column', gap: space.md, paddingTop: space.xl },
   action: {
     width: '100%',

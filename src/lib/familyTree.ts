@@ -106,6 +106,10 @@ export type Graph = {
   // Optional — real loadGraph() always populates it, but the demo dataset and test fixtures build
   // a Graph by hand without it, and there's nothing gender-specific for them to get wrong by omitting it.
   genderById?: Map<string, string>
+  // False when the `gender` column isn't in the database yet (its migration is a manual step — see
+  // loadFamilyGraph). Everything gender-related already degrades quietly in that state; this is what
+  // lets a surface that would ASK for a gender stay hidden rather than offer a button that can't save.
+  genderSupported?: boolean
   // Keyed by unionKey(a, b) — 'partner' for a dating pair, absent/'spouse' for a marriage. Also
   // optional for the same hand-built-Graph reason; spouseKindBetween defaults to 'spouse'.
   spouseKindByPair?: Map<string, 'spouse' | 'partner'>
@@ -141,7 +145,7 @@ function push(map: Map<string, string[]>, key: string, value: string) {
 export async function loadFamilyGraph(): Promise<Graph> {
   // Ordered by created_at so which parent/spouse ends up "first" (primaryParentId, the tree's
   // connector-line anchor) is stable across reloads instead of depending on unspecified row order.
-  const [{ data: people }, { data: rels }, { data: genderRows }] = await Promise.all([
+  const [{ data: people }, { data: rels }, { data: genderRows, error: genderError }] = await Promise.all([
     supabase.from('people').select('id, name, last_name, is_self, deceased_date'),
     supabase.from('relationships').select('person_a_id, person_b_id, kind, ended_reason').order('created_at'),
     // Own query, separate from the main people select above — see TreePerson.gender's comment:
@@ -187,7 +191,7 @@ export async function loadFamilyGraph(): Promise<Graph> {
       push(siblingsOf, r.person_b_id, r.person_a_id)
     }
   }
-  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs, genderById, spouseKindByPair }
+  return { nameById, selfId, parentsOf, childrenOf, spousesOf, siblingsOf, deceasedIds, endedPairs, genderById, genderSupported: !genderError, spouseKindByPair }
 }
 
 function node(g: Graph, id: string, kind: TreePersonKind, parentId: string | undefined, side?: TreeSide): TreePerson {

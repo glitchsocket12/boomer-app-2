@@ -1114,4 +1114,16 @@ Committed and pushed directly per the founder's standing verify-then-push permis
 
 ---
 
+## "Child in law" was never a wording bug (2026-08-05)
+
+The founder reported that the family tree called Mark Berzins Jake Volin's "child in law" instead of "son in law". The obvious read is a gap in `relationshipCalculator.ts`'s vocabulary — it isn't. That file has said `son-in-law`/`daughter-in-law` since it was written, and only falls back to `child-in-law` when `people.gender` is empty for that person.
+
+The tempting next step was to go set Mark's gender. Also wrong. **`people.gender` does not exist in the database at all** — the `2026-07-26-gender.sql` migration has been sitting in §8's founder-action list unrun for ten days. Confirmed without needing a login, by asking PostgREST for the column through the app's own client in the dev preview: `{"code":"42703","message":"column people.gender does not exist"}`. An unauthenticated request is enough here because a missing column is a 400 that beats RLS to the answer; an existing column would have returned an empty 200.
+
+So the symptom was never about Mark. Every in-law in the app reads "child-in-law"/"sibling-in-law"/"parent-in-law", every aunt or uncle reads "aunt/uncle", no tile has ever shown a ♂/♀ glyph, and PersonDetail's Gender dropdown has been silently discarding every save since 2026-07-26. All of it fails open exactly as designed (isolated query, no crash) — which is precisely why it went unnoticed for ten days and surfaced as one odd word on one tile.
+
+Two things came out of it. `loadFamilyGraph` now surfaces the column's absence as `graph.genderSupported` instead of swallowing it, so a surface that wants to *ask* for a gender can hide rather than offer a save that silently fails. And the founder's own suggestion — pop the question where the relationship is being shown — became `ClarifyGenderPrompt.tsx`. **The lesson worth keeping: when a fallback value shows up in the UI, check whether its input exists at all before assuming the code that chose it is wrong.** §8's founder-action list is the first place to look, not the last.
+
+---
+
 _End of document. Update this file as the project progresses — it's meant to be the single source of truth for anyone (human or AI) picking this project up._

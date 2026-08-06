@@ -573,6 +573,34 @@ export function describeKinship(g: KinGraph, fromId: string, toId: string): stri
   return calculateRelationship(g, fromId, toId).label
 }
 
+// A copy of the graph with one person's gender asserted. Everything but the gender map is shared, so
+// the clone is cheap — but it IS a new object, so it misses the ancestor cache (a WeakMap keyed on
+// graph identity). That's why callers ask about one person at a time rather than the whole tree.
+function withGender(g: KinGraph, id: string, gender: string): KinGraph {
+  const genderById = new Map(g.genderById ?? [])
+  genderById.set(id, gender)
+  return { ...g, genderById }
+}
+
+/**
+ * The two gendered wordings behind a label that's currently sitting on its genderless fallback —
+ * "son-in-law" and "daughter-in-law" behind the "child-in-law" a tile is showing today. What the UI
+ * needs to ask which one is right instead of leaving the clumsy word on screen.
+ *
+ * Null when there's nothing worth asking: gender is already on file, the pair isn't related, or the
+ * wording doesn't depend on gender at all (cousins, partners). Recomputed by re-running the whole
+ * relationship with the gender forced, rather than re-deriving the noun here — so the question can
+ * never drift from the answer the rest of the app is showing.
+ */
+export function genderAlternatives(g: KinGraph, fromId: string, toId: string): { male: string; female: string } | null {
+  if (fromId === toId) return null
+  if (g.genderById?.get(toId)) return null
+  const male = calculateRelationship(withGender(g, toId, 'male'), fromId, toId)
+  if (male.kind === 'unrelated' || male.kind === 'self') return null
+  const female = calculateRelationship(withGender(g, toId, 'female'), fromId, toId)
+  return male.label === female.label ? null : { male: male.label, female: female.label }
+}
+
 function possessive(g: KinGraph, id: string): string {
   return gendered(g, id, 'his', 'her', 'their')
 }
