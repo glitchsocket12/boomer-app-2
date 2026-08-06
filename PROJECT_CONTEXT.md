@@ -795,8 +795,11 @@ src/
 │                                 route to a profile. The ego-mode root is tappable too
 │                                 (profile only; re-centering on itself is a no-op) and
 │                                 keeps its chevron-less look. A ~10px pointer-movement
-│                                 guard on each tile keeps a horizontal swipe across the
-│                                 scrolling canvas from firing the tap. `onSelectPerson`
+│                                 guard on each tile keeps a pan drag from firing the tap.
+│                                 The canvas lives in `components/PanZoomSvg.tsx`
+│                                 (2026-08-05): drag to pan in any direction, pinch/wheel/
+│                                 +−  to zoom, "Fit" to re-frame — replaced the old
+│                                 overflow-x scroll div. `onSelectPerson`
 │                                 is optional — Onboarding has no profile view, so the
 │                                 sheet omits that action there. Grandparents tier also pulls in
 │                                 parents' siblings (aunts/uncles, riding in the same
@@ -1272,6 +1275,15 @@ Full story: PROJECT_HISTORY.md.
 │   │                            wrong for a chooser. Carries role=dialog and focuses the
 │   │                            first action on open (FilterPanel does neither). Used by
 │   │                            FamilyTree's tile tap (2026-08-04).
+│   ├── PanZoomSvg.tsx         — (2026-08-05) drag-to-pan / pinch-wheel-button-zoom viewport
+│   │                            for an SVG canvas. Content sits in a transformed <g> (stays
+│   │                            vector-crisp when zoomed, unlike a CSS-scaled <svg>). Tracks
+│   │                            live pointers itself instead of setPointerCapture, which would
+│   │                            retarget `click` to the container and break tapping a tile.
+│   │                            Pan is clamped so the content can never leave its own frame;
+│   │                            the zoom floor drops below MIN_ZOOM when a tree is too wide to
+│   │                            fit a phone otherwise. Used by FamilyTree.tsx (both modes,
+│   │                            plus the demo tree via FamilyTreeView)
 │   ├── Chips.tsx              — PersonChip (green) / GroupChip (gold) / EventChip
 │   │                            (blue) — shared visual language everywhere
 │   ├── EditButton.tsx         — pencil rename control (Event/Group headings)

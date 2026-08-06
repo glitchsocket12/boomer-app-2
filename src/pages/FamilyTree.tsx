@@ -32,6 +32,7 @@ import {
 import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
 import AddFamilyMember, { type RelationshipChoice } from '../components/AddFamilyMember'
 import ChoiceSheet from '../components/ChoiceSheet'
+import PanZoomSvg from '../components/PanZoomSvg'
 import RelationshipCompare from '../components/RelationshipCompare'
 import { kinLabelMap, shortKinLabel } from '../lib/relationshipCalculator'
 import { IS_TOUCH } from '../lib/touch'
@@ -944,8 +945,7 @@ export function FamilyTreeView({
         {mode === 'descendants' ? `Family tree — descendants of ${data.rootName}` : `Family tree — centered on ${data.rootName}`}
       </p>
 
-      <div style={styles.svgScroll}>
-      <svg width={canvasWidth} height={height} viewBox={`0 0 ${canvasWidth} ${height}`} style={styles.svg}>
+      <PanZoomSvg contentWidth={canvasWidth} contentHeight={height} resetKey={data.rootId}>
         {tiers.slice(0, -1).map((_tierAbove, i) => {
           const yAbove = TIER_Y_START + TIER_Y_STEP * i
           const yBelow = TIER_Y_START + TIER_Y_STEP * (i + 1)
@@ -1118,8 +1118,7 @@ export function FamilyTreeView({
             </g>
           )
         })}
-      </svg>
-      </div>
+      </PanZoomSvg>
 
       <ChoiceSheet
         open={tapped !== null}
@@ -1378,8 +1377,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: space.xl,
   },
   contextLine: { fontSize: fontSize.label, color: colors.textFaint, marginBottom: space.xl },
-  svgScroll: { overflowX: 'auto', margin: '0 -1.5rem', padding: '0 1.5rem' },
-  svg: { display: 'block', margin: '0 auto' },
   addRow: { display: 'flex', flexWrap: 'wrap', gap: space.lg, marginTop: space.xxl, alignItems: 'flex-start' },
   addLabel: { fontSize: fontSize.small, color: colors.textFaintest },
   removeSection: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: space.xxl },
