@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { eventSortDate, formatEventWhen, formatFullDate } from '../lib/dates'
+import { createEventShell } from '../lib/moments'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 import FilterPanel from '../components/FilterPanel'
@@ -246,47 +247,19 @@ export default function Events({
     setLoading(false)
   }
 
-  // No form up front — this just creates a blank shell (matches "add a person" being an instant
-  // save, not a multi-step wizard) and drops the user straight onto the new event's own page,
-  // where title/description/attendees/groups all get filled in with the tools already built
-  // there. raw_description starts as '' rather than null (the column has never allowed null —
-  // converse always populates it from the chat transcript) and the event page itself knows not
-  // to waste an AI call summarizing an empty description (see EventDetail's gated generateSummary).
+  // No form up front — a blank shell, then straight onto the new event's own page. The insert
+  // itself (and the self-attendee note that goes with it) lives in lib/moments.ts, shared with the
+  // Calendar page's "a countdown and a real event" option.
   async function handleAddEvent() {
     setCreating(true)
     setCreateError(null)
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    const { data, error } = await supabase
-      .from('moments')
-      .insert({
-        user_id: user?.id,
-        raw_description: '',
-        occasion: null,
-        location: null,
-        when_text: null,
-        event_date: null,
-      })
-      .select()
-      .single()
-
+    const created = await createEventShell()
     setCreating(false)
-    if (error || !data) {
+    if (!created) {
       setCreateError("Couldn't start a new event — please try again.")
       return
     }
-
-    // Most logged moments are things the founder actually experienced, so tag them as an
-    // attendee immediately instead of making them tap themselves into "Who was there" every
-    // time — same notes-row shape EventDetail.tsx's own handleAddAttendee writes.
-    const { data: self } = await supabase.from('people').select('id').eq('is_self', true).maybeSingle()
-    if (self) {
-      await supabase.from('notes').insert({ person_id: self.id, moment_id: data.id, content: 'Was there.' })
-    }
-
-    onSelectEvent({ id: data.id, summary: 'Untitled moment' })
+    onSelectEvent({ id: created.id, summary: 'Untitled moment' })
   }
 
   // Growing picklist, not a hardcoded list like GROUP_TYPES — the founder wants categories

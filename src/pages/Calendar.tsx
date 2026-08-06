@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { summarize } from '../lib/summarize'
 import { formatEventWhen, nextOccurrenceDate } from '../lib/dates'
+import CountdownsSection from '../components/CountdownsSection'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
 type TagRef = { id: string; name: string }
@@ -16,8 +17,16 @@ type MomentRow = {
   created_at: string
   moment_tags: { tags: TagRef | null }[]
 }
-type ReminderRow = { id: string; label: string; month: number; day: number }
-type PersonRow = { id: string; name: string; last_name: string | null; reminders: ReminderRow[] }
+// `year` is nullable and only set when a birthday-calendar import carried one — the Countdowns
+// section is the first thing to use it (a life date is only a milestone once you know the year).
+type ReminderRow = { id: string; label: string; month: number; day: number; year: number | null }
+type PersonRow = {
+  id: string
+  name: string
+  last_name: string | null
+  deceased_date: string | null
+  reminders: ReminderRow[]
+}
 
 type CalendarEntry = {
   key: string
@@ -82,7 +91,7 @@ export default function Calendar({
         .from('moments')
         .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at, moment_tags(tags(id, name))')
         .not('event_date', 'is', null),
-      supabase.from('people').select('id, name, last_name, reminders(id, label, month, day)'),
+      supabase.from('people').select('id, name, last_name, deceased_date, reminders(id, label, month, day, year)'),
     ])
     setMoments((momentsRes.data as unknown as MomentRow[]) ?? [])
     setPeople((peopleRes.data as unknown as PersonRow[]) ?? [])
@@ -236,6 +245,15 @@ export default function Calendar({
           <span>→</span>
         </button>
       )}
+
+      {/* Milestones (how long it's been) and the things you're waiting on — reads the same
+          moments/people already loaded above, plus its own `countdowns` table. */}
+      <CountdownsSection
+        moments={moments}
+        people={people}
+        onSelectEvent={onSelectEvent}
+        onSelectPerson={onSelectPerson}
+      />
 
       <div style={styles.card}>
         <h2 style={styles.sectionHeading}>Upcoming</h2>
