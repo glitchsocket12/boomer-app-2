@@ -7,7 +7,7 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
-import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
+import { findSelfPerson, buildSelfInstruction, buildKinInstruction } from "../_shared/selfContext.ts"
 import { buildChatToneInstruction, getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone, fullDateInTimeZone } from "../_shared/tz.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
@@ -345,8 +345,12 @@ If the user describes the moment as spanning more than one day (e.g. "we were th
     // rewrite of the whole roster just because the user paused to think (CLAUDE.md's token/
     // billing efficiency rule).
     const selfInfo = findSelfPerson(people, nameById)
-    const [selfInstruction, chatToneInstruction, userTimeZone] = await Promise.all([
+    // buildKinInstruction is wired into converse ONLY, not update-moment/update-group: those are
+    // structured-extraction paths that never need cousin/aunt vocabulary, and leaving them alone
+    // halves what this can affect. It rides the same 1h-cached roster tier below.
+    const [selfInstruction, kinInstruction, chatToneInstruction, userTimeZone] = await Promise.all([
       buildSelfInstruction(supabaseClient, selfInfo, nameById),
+      buildKinInstruction(supabaseClient, selfInfo, nameById),
       buildChatToneInstruction(supabaseClient, user.id),
       getUserTimeZone(supabaseClient, user.id),
     ])
@@ -360,7 +364,7 @@ Here is everyone already recorded, by full name where a last name is known:
 ${peopleRoster || "(none yet)"}
 
 Here are the pets already recorded, and who each one belongs to:
-${petsRoster || "(none yet)"}${selfInstruction}${chatToneInstruction}`
+${petsRoster || "(none yet)"}${selfInstruction}${kinInstruction}${chatToneInstruction}`
 
     // Moments tier — changes on every new capture, the most frequent write in the app, so it's
     // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier
