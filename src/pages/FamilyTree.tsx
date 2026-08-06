@@ -9,8 +9,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
-  buildFamilyTree,
-  buildDescendantTree,
+  loadFamilyGraph,
+  buildFamilyTreeFromGraph,
+  buildDescendantTreeFromGraph,
+  type Graph,
   type TreeData,
   type TreePerson,
   type TreeBranch,
@@ -30,6 +32,7 @@ import {
 import { getRelationshipsForPerson, setRelationshipEndedReason, upsertRelationship } from '../lib/relationshipsTable'
 import AddFamilyMember, { type RelationshipChoice } from '../components/AddFamilyMember'
 import ChoiceSheet from '../components/ChoiceSheet'
+import RelationshipCompare from '../components/RelationshipCompare'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -316,6 +319,10 @@ export default function FamilyTree({
   memberIds?: string[]
 }) {
   const [data, setData] = useState<TreeData | null>(null)
+  // The same graph the tree was built from, kept rather than discarded — relationshipCalculator.ts
+  // answers "how are these two related" straight off it, so the compare tool and the per-tile
+  // kinship labels cost no extra queries.
+  const [graph, setGraph] = useState<Graph | null>(null)
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
   const [allPeople, setAllPeople] = useState<{ id: string; label: string }[]>([])
@@ -336,15 +343,29 @@ export default function FamilyTree({
     setLoading(true)
     setSpouseSuggestions([])
     setCoParentSuggestions([])
-    const [{ data: { user } }, { data: everyone }, tree] = await Promise.all([
+    // Same query count as before — buildFamilyTree/buildDescendantTree were already calling
+    // loadFamilyGraph internally; the only change is that the graph is now kept afterwards.
+    const [{ data: { user } }, { data: everyone }, g] = await Promise.all([
       supabase.auth.getUser(),
       supabase.from('people').select('id, name, last_name'),
-      memberIds && memberIds.length > 0 ? buildDescendantTree(memberIds) : buildFamilyTree(personId),
+      loadFamilyGraph(),
     ])
+    const tree = memberIds && memberIds.length > 0 ? buildDescendantTreeFromGraph(memberIds, g) : buildFamilyTreeFromGraph(personId, g)
     setUserId(user?.id ?? null)
     setAllPeople((everyone ?? []).map((p) => ({ id: p.id, label: p.last_name ? `${p.name} ${p.last_name}` : p.name })))
+    setGraph(g)
     setData(tree)
     setLoading(false)
+  }
+
+  // Every write path re-reads the graph, not just the tree: the kinship labels are derived from the
+  // graph, so refreshing one without the other would leave the tiles describing the relationships
+  // that existed a moment ago. Stays on buildFamilyTreeFromGraph (ego mode) after a write, exactly
+  // as the six separate refreshes it replaced did.
+  async function refreshTree(rootId: string) {
+    const g = await loadFamilyGraph()
+    setGraph(g)
+    setData(buildFamilyTreeFromGraph(rootId, g))
   }
 
   // A person just recorded as a parent of subjectId might well be the spouse/partner of subjectId's
@@ -430,17 +451,13 @@ export default function FamilyTree({
     } else if (category === 'spouse' && targetId && targetName) {
       await suggestCoParentLinks(subjectId, subjectName, targetId, targetName)
     }
-    const refreshed = await buildFamilyTree(data.rootId)
-    setData(refreshed)
+    await refreshTree(data.rootId)
   }
 
   async function acceptSpouseSuggestion(s: SpouseSuggestion) {
     setSpouseSuggestions((prev) => prev.filter((x) => x !== s))
     await linkRelationship(userId, 'spouse', s.aId, s.aName, s.bId, s.bName)
-    if (data) {
-      const refreshed = await buildFamilyTree(data.rootId)
-      setData(refreshed)
-    }
+    if (data) await refreshTree(data.rootId)
   }
 
   function declineSpouseSuggestion(s: SpouseSuggestion) {
@@ -452,10 +469,7 @@ export default function FamilyTree({
     await upsertRelationship(userId, s.parentId, s.childId, 'parent')
     await invalidateKeyFacts([s.parentId, s.childId])
     await syncFamilyClique(userId, s.childId)
-    if (data) {
-      const refreshed = await buildFamilyTree(data.rootId)
-      setData(refreshed)
-    }
+    if (data) await refreshTree(data.rootId)
   }
 
   function declineCoParentSuggestion(s: CoParentSuggestion) {
@@ -477,8 +491,7 @@ export default function FamilyTree({
       removeConfirm.targetId,
       removeConfirm.targetName
     )
-    const refreshed = await buildFamilyTree(data.rootId)
-    setData(refreshed)
+    await refreshTree(data.rootId)
     setRemoving(false)
     setRemoveConfirm(null)
   }
@@ -489,8 +502,7 @@ export default function FamilyTree({
     if (!data || !divorceConfirm) return
     setDivorcing(true)
     await setRelationshipEndedReason(data.rootId, divorceConfirm.targetId, divorceConfirm.kind, 'divorce')
-    const refreshed = await buildFamilyTree(data.rootId)
-    setData(refreshed)
+    await refreshTree(data.rootId)
     setDivorcing(false)
     setDivorceConfirm(null)
   }
@@ -501,8 +513,7 @@ export default function FamilyTree({
     if (!data) return
     setUndoingDivorceId(targetId)
     await setRelationshipEndedReason(data.rootId, targetId, kind, null)
-    const refreshed = await buildFamilyTree(data.rootId)
-    setData(refreshed)
+    await refreshTree(data.rootId)
     setUndoingDivorceId(null)
   }
 
@@ -522,6 +533,7 @@ export default function FamilyTree({
       backLabel={backLabel}
       onSelectTree={onSelectTree}
       onSelectPerson={onSelectPerson}
+      graph={graph}
       allPeople={allPeople}
       onAddRelationship={addRelationship}
       removeConfirm={removeConfirm}
@@ -561,6 +573,9 @@ export function FamilyTreeView({
   // profile view exists. The tap sheet omits its "Open profile" action entirely in that case
   // rather than offering a button that does nothing.
   onSelectPerson,
+  // The relationship graph behind this tree. Optional because Onboarding renders the tree before
+  // there's much of one — without it the kinship labels and the compare tool simply don't appear.
+  graph = null,
   readOnly = false,
   allPeople = [],
   onAddRelationship = () => {},
@@ -588,6 +603,7 @@ export function FamilyTreeView({
   backLabel: string
   onSelectTree: (id: string, label: string) => void
   onSelectPerson?: (id: string, name: string) => void
+  graph?: Graph | null
   readOnly?: boolean
   allPeople?: { id: string; label: string }[]
   onAddRelationship?: (
@@ -624,6 +640,9 @@ export function FamilyTreeView({
   const [tapped, setTapped] = useState<{ id: string; name: string; relationLabel?: string; isRoot: boolean } | null>(
     null
   )
+  // Whoever the "how is this person related to…?" question is being asked ABOUT. Its own component
+  // owns the search and the answer, so the only state the tree needs is which tile started it.
+  const [compareFrom, setCompareFrom] = useState<{ id: string; name: string } | null>(null)
   // The canvas is wider than a phone screen and lives in a horizontally scrolling div, so a swipe
   // that starts on a tile would otherwise fire its click. Bail if the pointer travelled.
   const pressOrigin = useRef<{ x: number; y: number } | null>(null)
@@ -1065,6 +1084,17 @@ export function FamilyTreeView({
                       },
                     ]
                   : []),
+                ...(graph && allPeople.length > 1
+                  ? [
+                      {
+                        label: `How is ${tapped.name} related to…?`,
+                        onClick: () => {
+                          setCompareFrom({ id: tapped.id, name: tapped.name })
+                          setTapped(null)
+                        },
+                      },
+                    ]
+                  : []),
                 ...(tapped.isRoot
                   ? []
                   : [
@@ -1081,6 +1111,24 @@ export function FamilyTreeView({
             : []
         }
       />
+
+      {compareFrom && graph && (
+        <RelationshipCompare
+          graph={graph}
+          from={compareFrom}
+          people={allPeople}
+          selfId={graph.selfId}
+          onClose={() => setCompareFrom(null)}
+          onSelectPerson={
+            onSelectPerson
+              ? (id, name) => {
+                  setCompareFrom(null)
+                  onSelectPerson(id, name)
+                }
+              : undefined
+          }
+        />
+      )}
 
       {relationshipChoices.length > 0 && (
         <div style={styles.addRow}>

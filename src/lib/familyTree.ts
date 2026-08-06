@@ -134,7 +134,11 @@ function push(map: Map<string, string[]>, key: string, value: string) {
   map.set(key, arr)
 }
 
-async function loadGraph(): Promise<Graph> {
+// Exported because the graph is worth more than the tree built from it: relationshipCalculator.ts
+// answers "what is X to Y" for any two people from this same object, so a caller that already has
+// it (FamilyTree.tsx) gets kinship labels for free rather than re-fetching. buildFamilyTree and
+// buildDescendantTree below still call it internally — nothing about their behavior changed.
+export async function loadFamilyGraph(): Promise<Graph> {
   // Ordered by created_at so which parent/spouse ends up "first" (primaryParentId, the tree's
   // connector-line anchor) is stable across reloads instead of depending on unspecified row order.
   const [{ data: people }, { data: rels }, { data: genderRows }] = await Promise.all([
@@ -445,7 +449,7 @@ function childrenOfEither(g: Graph, personId: string): string[] {
 // grandchildren, ... plus each generation's married-in spouses) is what "Marilee/Villis are the
 // generation that goes furthest back, so show their kids/grandkids/etc." means structurally.
 export async function buildDescendantTree(memberIds: string[]): Promise<TreeData> {
-  const g = await loadGraph()
+  const g = await loadFamilyGraph()
   return buildDescendantTreeFromGraph(memberIds, g)
 }
 
@@ -599,7 +603,7 @@ export function buildDescendantTreeFromGraph(memberIds: string[], g: Graph): Tre
 }
 
 export async function buildFamilyTree(rootId: string): Promise<TreeData> {
-  const g = await loadGraph()
+  const g = await loadFamilyGraph()
   return buildFamilyTreeFromGraph(rootId, g)
 }
 
