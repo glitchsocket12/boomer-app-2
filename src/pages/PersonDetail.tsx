@@ -18,6 +18,8 @@ import RelationshipSuggestionBanners, {
   type NewPersonSuggestion,
 } from '../components/RelationshipSuggestions'
 import { groupDisplayName } from '../lib/groupDisplayName'
+import { loadFamilyGraph } from '../lib/familyTree'
+import { calculateRelationship, describeKinPath } from '../lib/relationshipCalculator'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -170,6 +172,7 @@ export default function PersonDetail({
   const [savingDeceased, setSavingDeceased] = useState(false)
   const [gender, setGender] = useState<string | null>(null)
   const [savingGender, setSavingGender] = useState(false)
+  const [kinToSelf, setKinToSelf] = useState<{ label: string; path: string } | null>(null)
 
   useEffect(() => {
     setLastNameSuggestion(null)
@@ -177,6 +180,24 @@ export default function PersonDetail({
     loadData()
     loadGroupsList()
     loadGender()
+  }, [personId])
+
+  // How this person is related to you, in words. Deliberately NOT part of loadData's Promise.all:
+  // it costs the same three queries the family tree already pays, and the profile shouldn't wait on
+  // them to paint. Nothing renders unless there's something worth saying, so a friend with no
+  // family link on file gets no "not related" noise.
+  useEffect(() => {
+    let cancelled = false
+    setKinToSelf(null)
+    loadFamilyGraph().then((g) => {
+      if (cancelled || !g.selfId || g.selfId === personId) return
+      const k = calculateRelationship(g, g.selfId, personId)
+      if (k.kind === 'unrelated') return
+      setKinToSelf({ label: k.label, path: describeKinPath(g, k) })
+    })
+    return () => {
+      cancelled = true
+    }
   }, [personId])
 
   // Own query, separate from the main person select in loadData() below — see the "isolate a new
@@ -692,6 +713,7 @@ export default function PersonDetail({
       gender={gender}
       savingGender={savingGender}
       onChangeGender={saveGender}
+      kinToSelf={kinToSelf}
       newFact={newFact}
       onNewFactChange={setNewFact}
       saving={saving}
@@ -785,6 +807,7 @@ export function PersonDetailView({
   gender = null,
   savingGender = false,
   onChangeGender = () => {},
+  kinToSelf = null,
   // Left undefined by the live container on purpose — PetsSection runs its own isolated query.
   // Only the demo passes this, so the public demo makes no Supabase call for pets.
   pets = undefined,
@@ -870,6 +893,9 @@ export function PersonDetailView({
   gender?: string | null
   savingGender?: boolean
   onChangeGender?: (value: string) => void
+  // How this person is related to the account holder, already resolved to words. Optional and
+  // passed in rather than computed here so the demo can supply one from its static graph.
+  kinToSelf?: { label: string; path: string } | null
   pets?: Pet[]
   // Undefined in the demo, which has no pet pages to navigate to — PetsSection renders the pets
   // as plain (disabled) rows in that case rather than dead links.
@@ -929,6 +955,10 @@ export function PersonDetailView({
   const groupNameById = new Map(allGroupsList.map((g) => [g.id, g.name]))
   // Lets groupDisplayName walk the whole ancestor chain rather than stopping at one level.
   const groupParentById = new Map(allGroupsList.map((g) => [g.id, g.parent_group_id ?? null]))
+
+  // The chip states the relationship; the chain behind it is one tap away rather than always on,
+  // since most of the time you only want the answer.
+  const [kinPathOpen, setKinPathOpen] = useState(false)
 
   const fullName = person ? computeFullName(person) : personName
   const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => f.category === c.category))
@@ -1046,6 +1076,20 @@ export function PersonDetailView({
           {!readOnly && <EditButton label="Edit name" onClick={onStartEditName} />}
         </div>
       )}
+
+      {kinToSelf && (
+        <button
+          type="button"
+          style={styles.kinChip}
+          onClick={() => setKinPathOpen((open) => !open)}
+          aria-expanded={kinPathOpen}
+          title={kinToSelf.path || undefined}
+        >
+          Your {kinToSelf.label}
+          {kinToSelf.path && <span style={styles.kinChevron}>{kinPathOpen ? ' ▴' : ' ▾'}</span>}
+        </button>
+      )}
+      {kinToSelf && kinPathOpen && kinToSelf.path && <p style={styles.kinPath}>{kinToSelf.path}</p>}
 
       {!loading && (
         <button
@@ -1577,6 +1621,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
     textDecoration: 'underline',
   },
+  kinChip: {
+    display: 'inline-block',
+    backgroundColor: neutral.offWhite,
+    border: border.default,
+    borderRadius: radius.pill,
+    color: colors.ink,
+    fontSize: fontSize.body,
+    fontFamily,
+    padding: '0.25rem 0.7rem',
+    marginBottom: space.md,
+    cursor: 'pointer',
+  },
+  kinChevron: { color: colors.textMuted },
+  kinPath: { fontSize: fontSize.body, color: colors.textMuted, margin: `0 0 ${space.md}`, lineHeight: 1.6 },
   renameForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: space.xl },
   nameInputRow: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
   renameInput: {
