@@ -21,14 +21,15 @@ import SearchAddPicker from './SearchAddPicker'
 import { border, colors, fontFamily, fontSize, radius, space } from '../lib/theme'
 
 // The Calendar page's "Countdowns" card (2026-08-06): how long it's BEEN since the milestones
-// already on file (↑), and how long UNTIL the things the founder is looking forward to (↓).
+// already on file (↑), and how long UNTIL the things the founder is looking forward to (↓). Sits at
+// the BOTTOM of the page, under the month grid (founder preference, same day it shipped).
 //
 // Most cards need nothing added — past events tagged "Milestone" and birthdays/anniversaries with a
 // year on record derive themselves (see lib/countdowns.ts buildCards). Only what the founder adds,
 // pins, or dismisses is stored.
 //
-// Deliberately NOT auto-listing every upcoming event: the Upcoming list sits directly below this
-// card and already does that. A future countdown is here because the founder put it here.
+// Deliberately NOT auto-listing every upcoming event: the page's Upcoming list already does that.
+// A future countdown is here because the founder put it here.
 //
 // `moments`/`people` are handed down from Calendar's own load — this section adds exactly one query
 // (its own table), and that query is isolated and fail-open so a pre-migration database costs the

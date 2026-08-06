@@ -246,15 +246,6 @@ export default function Calendar({
         </button>
       )}
 
-      {/* Milestones (how long it's been) and the things you're waiting on — reads the same
-          moments/people already loaded above, plus its own `countdowns` table. */}
-      <CountdownsSection
-        moments={moments}
-        people={people}
-        onSelectEvent={onSelectEvent}
-        onSelectPerson={onSelectPerson}
-      />
-
       <div style={styles.card}>
         <h2 style={styles.sectionHeading}>Upcoming</h2>
         {upcoming.length === 0 ? (
@@ -354,6 +345,17 @@ export default function Calendar({
           Dates you add to events, and birthdays/anniversaries on people's profiles, will show up here.
         </p>
       )}
+
+      {/* Milestones (how long it's been) and the things you're waiting on. Last on the page by
+          founder preference (2026-08-06) — the calendar itself is what this tab is for; countdowns
+          are the thing you scroll down to. Reads the same moments/people loaded above, plus its own
+          `countdowns` table. */}
+      <CountdownsSection
+        moments={moments}
+        people={people}
+        onSelectEvent={onSelectEvent}
+        onSelectPerson={onSelectPerson}
+      />
     </div>
   )
 }
