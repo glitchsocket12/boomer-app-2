@@ -32,7 +32,7 @@ export type ChildEventRef = {
   event_end_date: string | null
   created_at: string
   parent_moment_id: string
-  notes: { people: { id: string } | null }[]
+  notes: { people: PersonRef | null }[]
 }
 
 export type DecoratedMoment = {
@@ -105,12 +105,27 @@ function resolveDateRange(filter: DateFilter): { start: Date | null; end: Date |
   }
 }
 
-export function decorateMoments(moments: Moment[]): DecoratedMoment[] {
+export function decorateMoments(
+  moments: Moment[],
+  // Parent id -> its sub-events, so their attendees roll up into the parent's list below.
+  // Optional/defaulted for the landing-page demo, which has no sub-events.
+  childrenByParentId: Map<string, ChildEventRef[]> = new Map()
+): DecoratedMoment[] {
   return moments.map((moment) => {
     // Attendees can repeat across multiple notes for the same moment — dedupe by person id
     const attendees = new Map<string, PersonRef>()
     for (const n of moment.notes ?? []) {
       if (n.people) attendees.set(n.people.id, n.people)
+    }
+    // Anyone at a sub-event was at the parent event by definition (founder, 2026-08-07), so they
+    // roll up here rather than being visible only after expanding the sub-event list. Derived at
+    // render time, never written back: the note stays on the sub-event, so there's no duplicate
+    // row to keep in sync and untagging them there removes them here too. Same rollup runs on the
+    // event's own page — see EventDetail.tsx's Who Was There.
+    for (const child of childrenByParentId.get(moment.id) ?? []) {
+      for (const n of child.notes ?? []) {
+        if (n.people) attendees.set(n.people.id, n.people)
+      }
     }
 
     const summary = summarize(moment.occasion, moment.raw_description)
@@ -216,7 +231,7 @@ export default function Events({
   async function loadChildEvents() {
     const { data, error } = await supabase
       .from('moments')
-      .select('id, occasion, event_date, event_end_date, created_at, parent_moment_id, notes(people(id))')
+      .select('id, occasion, event_date, event_end_date, created_at, parent_moment_id, notes(people(id, name, last_name))')
       .not('parent_moment_id', 'is', null)
       .order('event_date', { ascending: true, nullsFirst: false })
     if (error || !data) {
@@ -390,7 +405,7 @@ export function EventsView({
   // under the trip, once again as flat standalone cards.
   const childIds = new Set(Array.from(childrenByParentId.values()).flat().map((c) => c.id))
   const rootMoments = moments.filter((m) => !childIds.has(m.id))
-  const decorated = decorateMoments(rootMoments)
+  const decorated = decorateMoments(rootMoments, childrenByParentId)
   const filteredMoments = filterMoments(decorated, filters, groupLabel)
   const yearGroups = groupMomentsByYear(filteredMoments)
   const query = filters.search.trim().toLowerCase()
