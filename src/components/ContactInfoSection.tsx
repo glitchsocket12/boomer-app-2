@@ -129,6 +129,18 @@ export default function ContactInfoSection({ personId, readOnly = false }: { per
   if (loading) return null
   if (!open && !hasAnyContactData(data, birthday, anniversary) && readOnly) return null
 
+  // Same fix as PetsSection: a full bordered card just for a collapsed "▸ Contact Info" toggle
+  // was permanently visible even with nothing on file (founder feedback 2026-08-07). A quiet line
+  // replaces it in live mode; clicking it goes straight into the edit form, since that's the only
+  // way this section ever gets its first piece of data.
+  if (!readOnly && !editing && !hasAnyContactData(data, birthday, anniversary) && !open) {
+    return (
+      <button type="button" onClick={startEditing} style={styles.quietAdd}>
+        + Add contact info
+      </button>
+    )
+  }
+
   return (
     <div style={styles.section}>
       <div style={styles.headingRow}>
@@ -392,5 +404,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.textMuted,
     cursor: 'pointer',
     fontFamily,
+  },
+  quietAdd: {
+    background: 'none',
+    border: 'none',
+    padding: '0.35rem 0',
+    margin: '0 0 1rem',
+    color: colors.primary,
+    fontSize: fontSize.label,
+    fontWeight: 'bold',
+    fontFamily,
+    cursor: 'pointer',
+    display: 'block',
   },
 }

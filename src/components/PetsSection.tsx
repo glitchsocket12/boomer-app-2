@@ -95,6 +95,18 @@ export default function PetsSection({
   if (!available) return null
   if (readOnly && pets.length === 0) return null
 
+  // A permanently-visible bordered card just to show a collapsed "▸ Pets" toggle read as clutter
+  // on every profile that doesn't have one (founder feedback 2026-08-07) — most don't. A single
+  // quiet line replaces it until there's something to show; clicking it expands into the full
+  // card below (picker included), same as it always has.
+  if (!readOnly && pets.length === 0 && !open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} style={styles.quietAdd}>
+        + Add pet
+      </button>
+    )
+  }
+
   const linkedIds = new Set(pets.map((p) => p.id))
   const pickerItems = allPets
     .filter((p) => !linkedIds.has(p.id))
@@ -214,4 +226,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     flexShrink: 0,
   },
   pickerWrap: { marginTop: '0.75rem' },
+  quietAdd: {
+    background: 'none',
+    border: 'none',
+    padding: '0.35rem 0',
+    margin: '0 0 1rem',
+    color: colors.primary,
+    fontSize: fontSize.label,
+    fontWeight: 'bold',
+    fontFamily,
+    cursor: 'pointer',
+    display: 'block',
+  },
 }

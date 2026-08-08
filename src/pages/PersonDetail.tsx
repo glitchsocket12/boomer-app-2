@@ -1173,7 +1173,10 @@ export function PersonDetailView({
         </>
       )}
 
-      <PhotoGallery />
+      {/* readOnly (demo) gets no personId — PhotoGallery has no static-data override like
+          PetsSection's `pets` prop, so passing it unconditionally would fire a real Supabase
+          query from the logged-out demo. */}
+      <PhotoGallery personId={readOnly ? undefined : personId} />
 
       {!loading && !factsLoading && showNudge && (
         <div style={styles.nudgeBox}>
