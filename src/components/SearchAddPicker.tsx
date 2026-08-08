@@ -1,8 +1,16 @@
 import { useEffect, useId, useState } from 'react'
 import SearchBox from './SearchBox'
+import { rankSearchMatches } from '../lib/searchRank'
 import { border, colors, fontFamily, fontSize, radius, space } from '../lib/theme'
 
 type Item = { id: string; label: string }
+
+// How many matches a search can show at once. The list scrolls, so this is a "don't render a
+// thousand buttons" guard rather than a real limit — it used to be 8, which silently hid the
+// group you were looking for whenever it shared a name with a pile of subgroups. Ranking (see
+// searchRank.ts) means anything cut here is genuinely the least relevant, and `truncated` tells
+// the reader when there IS more.
+const MAX_RESULTS = 50
 
 // Type a few letters, tap a result to add it — used wherever a page needs "search everything
 // you've got and pick one," as opposed to the suggestion-chip pattern (which only surfaces
@@ -41,7 +49,10 @@ export default function SearchAddPicker({
   const [highlight, setHighlight] = useState(-1)
   const q = query.trim().toLowerCase()
   const browsing = browseAll && focused && !q
-  const results = browsing ? items : q ? items.filter((item) => item.label.toLowerCase().includes(q)).slice(0, 8) : []
+  // Browsing shows the caller's list in the caller's order (it's a bounded vocabulary they've
+  // already sorted); searching hands the ordering to the ranker so the best match is row one.
+  const ranked = q ? rankSearchMatches(items, q, MAX_RESULTS) : { results: [], truncated: false }
+  const results = browsing ? items : ranked.results
   const showList = browsing || !!q
 
   // Every row Enter/arrows can land on, in render order: the matches, then the optional "+ Add"
@@ -151,6 +162,9 @@ export default function SearchAddPicker({
               )
             })
           )}
+          {/* Said out loud rather than left implicit: the old silent cap was exactly how the
+              right group went missing. */}
+          {ranked.truncated && <p style={styles.moreHint}>Showing the {MAX_RESULTS} closest matches — keep typing to narrow it down.</p>}
         </div>
       )}
     </div>
@@ -162,7 +176,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     display: 'flex',
     flexDirection: 'column',
     gap: space.sm,
-    maxHeight: '220px',
+    // Roughly seven rows before it scrolls (was ~four): with paths like "98 FTS / 2016" a family
+    // of near-identical siblings needs enough visible rows to tell them apart at a glance.
+    maxHeight: '340px',
     overflowY: 'auto',
     marginTop: '-0.75rem',
     marginBottom: space.xl,
@@ -179,6 +195,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   empty: { color: colors.textFaintest, fontSize: fontSize.label, fontStyle: 'italic', margin: 0 },
+  moreHint: { color: colors.textFaintest, fontSize: fontSize.label, fontStyle: 'italic', margin: `${space.xs} 0 0` },
   // Layered over whichever base row style applies. Note the border is re-stated as a full
   // shorthand at the call site rather than as `borderColor` here — the base styles set the
   // `border` shorthand, and mixing the two on one element makes React warn about conflicting

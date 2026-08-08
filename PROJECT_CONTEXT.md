@@ -87,6 +87,14 @@ src/
 │   ├── moments.ts             — (2026-08-06) `createEventShell()`: the blank-event insert +
 │   │                            self-attendee note, lifted out of Events.tsx so the Countdowns
 │   │                            section's "a countdown and a real event" uses the same write path.
+│   ├── searchRank.ts          — (2026-08-08, tested) rankSearchMatches(): relevance ordering for
+│   │                            SearchAddPicker. Tiers exact label → exact own name (last `/`
+│   │                            segment) → label prefix → segment prefix → word start → substring;
+│   │                            ties break shallower-path-first, then shorter, then alphabetical.
+│   │                            The `/` awareness is the point: group labels are full ancestor
+│   │                            paths, so a parent's name matches all its descendants too and must
+│   │                            outrank them. Returns `{results, truncated}` so the cap is visible
+│   │                            to the user rather than silent.
 │   ├── summarize.ts           — short title helper (tested)
 │   ├── people.ts              — sortByLastName
 │   ├── pets.ts                — (2026-08-01) the single write path for pets: loadPetsForPerson
@@ -1339,6 +1347,16 @@ Full story: PROJECT_HISTORY.md.
 │   │                            role=option under aria-activedescendant; the active
 │   │                            border is restated as a full `border` shorthand
 │   │                            (not `borderColor`) or React warns about mixing.
+│   │                            Ranked results (2026-08-08, all callers): search
+│   │                            matches go through `lib/searchRank.ts` instead of a
+│   │                            raw `includes()` filter, and the cap went 8 → 50 with
+│   │                            an explicit "showing the 50 closest matches" line
+│   │                            when it bites. Fixes: typing a parent group's name
+│   │                            offered only its subgroups, because every descendant's
+│   │                            path label contains the parent's name and the unranked
+│   │                            top-8 filled up with children. Results list maxHeight
+│   │                            220px → 340px (~7 rows) so near-identical sibling
+│   │                            paths are distinguishable without scrolling.
 │   ├── UndoBanner.tsx         — "Added X. Undo" line for actions that commit with no
 │   │                            confirm step (GroupDetail's member add, 2026-08-03).
 │   │                            Persists until replaced/dismissed rather than fading
