@@ -130,7 +130,12 @@ src/
 │   │                            load a full roster and call groupDisplayName directly.
 │   ├── relationshipsTable.ts  — browser-side upsertRelationship/getRelationshipsForPerson
 │   │                            against the `relationships` table (mirrors the Deno copy in
-│   │                            supabase/functions/_shared/)
+│   │                            supabase/functions/_shared/). getRelationshipsMap's scoped id
+│   │                            list is URL-budgeted (2026-08-07 fix): >150 ids fetches the table
+│   │                            unscoped, below that ids go out in batches of 50. A scoped
+│   │                            `.in.()` names the list once per column (~74 chars/id), so 457
+│   │                            ids built a 35 KB URL the gateway 400'd — which read back as
+│   │                            "no relationships" and silently killed Home's family suggestions.
 │   ├── suggestConnections.ts  — (2026-07-25) loadConnectionSuggestions(): generalizes
 │   │                            GroupDetail.tsx's own per-group membership-suggestion signal
 │   │                            (event attendance on a group-tagged moment, or membership in a
@@ -146,7 +151,9 @@ src/
 │   │                            member, same `suggestFamilyMembers` chaining GroupDetail.tsx's own
 │   │                            "Family of a current member?" box uses, scoped to people already
 │   │                            in some group with a backfill `people` lookup for a suggested
-│   │                            spouse/child who isn't.
+│   │                            spouse/child who isn't. That family signal was silently dead from
+│   │                            2026-07-26 to 2026-08-07 — see relationshipsTable.ts's URL-budget
+│   │                            note; the scoped fetch 400'd and read back as "no relationships".
 │   ├── writeRelationship.ts   — linkRelationship/createAndLinkRelationship: the shared "+"
 │   │                            write path (relationships table row + both-sides reciprocal
 │   │                            note) used by Circle.tsx and FamilyTree.tsx. syncFamilyClique
