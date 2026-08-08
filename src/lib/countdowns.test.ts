@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   breakdown,
+  breakdownIn,
   buildCards,
   displayUnits,
+  nextOccurrence,
   parseDateOnly,
   tickMs,
   unitsForCard,
+  type CountdownCard,
   type CountdownMoment,
   type CountdownPerson,
   type CountdownRow,
@@ -106,9 +109,67 @@ describe('displayUnits', () => {
   })
 })
 
+describe('breakdownIn', () => {
+  it('gives the TOTAL in a unit when nothing bigger is selected', () => {
+    // Picking Days alone on a four-year-old milestone must read 1,523 days, not 1.
+    expect(breakdownIn(at(2022, 6, 5), at(2026, 8, 6), ['days'])).toEqual([{ label: 'Days', value: 1523 }])
+    expect(breakdownIn(at(2022, 6, 5), at(2026, 8, 6), ['months'])).toEqual([{ label: 'Months', value: 50 }])
+    expect(breakdownIn(at(2022, 6, 5), at(2026, 8, 6), ['weeks'])).toEqual([{ label: 'Weeks', value: 217 }])
+  })
+
+  it('cascades the remainder through the units that ARE selected', () => {
+    expect(breakdownIn(at(2022, 6, 5), at(2026, 8, 6), ['years', 'days'])).toEqual([
+      { label: 'Years', value: 4 },
+      { label: 'Days', value: 62 },
+    ])
+  })
+
+  it('folds unselected days into hours', () => {
+    expect(breakdownIn(at(2026, 8, 4), at(2026, 8, 6, 5, 0, 0), ['hours'])).toEqual([
+      { label: 'Hours', value: 53 },
+    ])
+  })
+
+  it('lists the units in ladder order however they were picked, and is zeroes for a reversed pair', () => {
+    expect(breakdownIn(at(2026, 8, 1), at(2026, 8, 6), ['days', 'years']).map((u) => u.label)).toEqual([
+      'Years',
+      'Days',
+    ])
+    expect(breakdownIn(at(2026, 8, 6), at(2026, 8, 1), ['days'])).toEqual([{ label: 'Days', value: 0 }])
+    expect(breakdownIn(at(2026, 8, 1), at(2026, 8, 6), [])).toEqual([])
+  })
+})
+
+describe('nextOccurrence', () => {
+  const now = at(2026, 8, 6, 9, 0, 0)
+
+  it('rolls a past date forward to the next one on or after today', () => {
+    expect(nextOccurrence(at(2022, 2, 10), 'yearly', now)).toEqual(at(2027, 2, 10))
+    expect(nextOccurrence(at(2026, 1, 20), 'monthly', now)).toEqual(at(2026, 8, 20))
+    expect(nextOccurrence(at(2026, 7, 30), 'weekly', now)).toEqual(at(2026, 8, 6))
+  })
+
+  it('leaves a date that has not happened yet alone, and keeps today as today', () => {
+    expect(nextOccurrence(at(2027, 1, 1), 'yearly', now)).toEqual(at(2027, 1, 1))
+    expect(nextOccurrence(at(2026, 8, 6), 'yearly', now)).toEqual(at(2026, 8, 6))
+  })
+
+  it('clamps a leap day instead of spilling into March', () => {
+    expect(nextOccurrence(at(2024, 2, 29), 'yearly', now)).toEqual(at(2027, 2, 28))
+  })
+})
+
 describe('tickMs', () => {
   const now = at(2026, 8, 6, 9, 0, 0)
-  const card = (date: Date) => ({ key: 'k', title: 't', date, direction: 'down' as const, derived: false })
+  const card = (date: Date): CountdownCard => ({
+    key: 'k',
+    title: 't',
+    defaultTitle: 't',
+    date,
+    direction: 'down' as const,
+    derived: false,
+    keepCounting: true,
+  })
 
   it('ticks every second only when something on screen shows minutes or seconds', () => {
     expect(tickMs([card(at(2026, 8, 8, 12, 0, 0))], now)).toBe(1000)
@@ -119,14 +180,37 @@ describe('tickMs', () => {
 })
 
 describe('unitsForCard', () => {
+  const upCard = (date: Date, units?: CountdownCard['units']): CountdownCard => ({
+    key: 'k',
+    title: 't',
+    defaultTitle: 't',
+    date,
+    direction: 'up',
+    derived: true,
+    keepCounting: true,
+    units,
+  })
+
   it('measures a count-up to the start of today, so it reads as whole days', () => {
-    const card = { key: 'k', title: 't', date: at(2026, 8, 1), direction: 'up' as const, derived: true }
-    expect(unitsForCard(card, at(2026, 8, 6, 23, 45, 0))).toEqual([{ label: 'Days', value: 5 }])
+    expect(unitsForCard(upCard(at(2026, 8, 1)), at(2026, 8, 6, 23, 45, 0))).toEqual([{ label: 'Days', value: 5 }])
   })
 
   it('renders nothing for a count-up dated today (the card says "Today" instead)', () => {
-    const card = { key: 'k', title: 't', date: at(2026, 8, 6), direction: 'up' as const, derived: true }
-    expect(unitsForCard(card, at(2026, 8, 6, 10, 0, 0))).toEqual([])
+    expect(unitsForCard(upCard(at(2026, 8, 6)), at(2026, 8, 6, 10, 0, 0))).toEqual([])
+  })
+
+  it('uses the units the card was set to instead of the automatic ladder', () => {
+    expect(unitsForCard(upCard(at(2026, 8, 1), ['days']), at(2026, 8, 6, 23, 45, 0))).toEqual([
+      { label: 'Days', value: 5 },
+    ])
+  })
+
+  it('counts a count-up to the live time once hours or finer were asked for', () => {
+    // Whole days by default; explicitly picking Hours means the card should be ticking, not frozen
+    // at midnight.
+    expect(unitsForCard(upCard(at(2026, 8, 5), ['hours']), at(2026, 8, 6, 9, 0, 0))).toEqual([
+      { label: 'Hours', value: 33 },
+    ])
   })
 })
 
@@ -247,7 +331,7 @@ describe('buildCards', () => {
     expect(cards[0]).toMatchObject({ reminderId: 'rem1', personId: 'p1', derived: true })
   })
 
-  it('orders upcoming soonest-first, then past most-recent-first', () => {
+  it('runs as one timeline, oldest first — the order the Today line splits', () => {
     const cards = buildCards({
       ...empty,
       moments: [
@@ -259,6 +343,44 @@ describe('buildCards', () => {
         row({ id: 'r2', label: 'Near future', target_date: '2026-09-01' }),
       ],
     })
-    expect(cards.map((c) => c.title)).toEqual(['Near future', 'Far future', 'Recent milestone', 'Old milestone'])
+    expect(cards.map((c) => c.title)).toEqual(['Old milestone', 'Recent milestone', 'Near future', 'Far future'])
+    // Everything before the first count-down is past, everything from it on is ahead — what the
+    // section slices on to place the Today line.
+    expect(cards.findIndex((c) => c.direction === 'down')).toBe(2)
+  })
+
+  it('shows a repeating countdown at its next occurrence', () => {
+    const cards = buildCards({
+      ...empty,
+      rows: [row({ id: 'r1', label: 'Rent', target_date: '2026-01-15', repeat_rule: 'monthly' })],
+    })
+    expect(cards[0]).toMatchObject({ direction: 'down', date: parseDateOnly('2026-08-15') })
+  })
+
+  it('retires a passed countdown that was set not to keep counting', () => {
+    const passed = row({ id: 'r1', label: 'Flight', target_date: '2026-08-01', keep_counting: false })
+    expect(buildCards({ ...empty, rows: [passed] })).toHaveLength(0)
+    // The same row still shows while the day itself is on.
+    const today = row({ id: 'r2', label: 'Flight', target_date: '2026-08-06', keep_counting: false })
+    expect(buildCards({ ...empty, rows: [today] })).toHaveLength(1)
+    // And the default (no setting saved) is unchanged: it counts up.
+    expect(buildCards({ ...empty, rows: [row({ id: 'r3', label: 'Flight', target_date: '2026-08-01' })] })).toHaveLength(1)
+  })
+
+  it('renames a card without touching the event it came from', () => {
+    const cards = buildCards({
+      ...empty,
+      moments: [moment({ id: 'm1', occasion: 'Conor & Shelly’s wedding', event_date: '2027-06-17' })],
+      rows: [row({ id: 'r1', moment_id: 'm1', custom_title: 'The wedding!!' })],
+    })
+    expect(cards[0]).toMatchObject({ title: 'The wedding!!', defaultTitle: 'Conor & Shelly’s wedding' })
+  })
+
+  it('carries a row’s chosen units onto its card and drops anything unrecognised', () => {
+    const cards = buildCards({
+      ...empty,
+      rows: [row({ id: 'r1', label: 'Baby due date', target_date: '2027-02-10', units: ['days', 'fortnights'] })],
+    })
+    expect(cards[0].units).toEqual(['days'])
   })
 })
