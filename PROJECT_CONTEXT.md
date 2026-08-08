@@ -712,7 +712,11 @@ src/
 │   │                            2026-07-25 chronological-ordering prompt fix),
 │   │                            editable description,
 │   │                            who-was-there (hover-untag, non-destructive) +
-│   │                            search-and-add picker, suggested attendees from
+│   │                            search-and-add picker (2026-08-07: also creates a
+│   │                            person who isn't on file yet — `+ Add "<name>" as a
+│   │                            new person` row, `handleCreateAndAddAttendee`, same
+│   │                            first-word/rest name split and inline-create pattern
+│   │                            as GroupDetail's member picker), suggested attendees from
 │   │                            group rosters AND family (2026-07-25 — "Was their
 │   │                            family there too?": spouse/partner suggested once
 │   │                            one of a couple is attending, their kids suggested

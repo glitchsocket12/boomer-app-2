@@ -332,6 +332,33 @@ export default function EventDetail({
     await handleNoteSaved()
   }
 
+  // The "someone who isn't on file yet was there" half of the attendee picker. Splits the typed
+  // name the same way every other create-a-person path in the app does (first word is `name`, the
+  // rest is `last_name`), so someone added here is indistinguishable from one added via import,
+  // the chat box, or a group's member list.
+  async function handleCreateAndAddAttendee(rawName: string) {
+    const typed = rawName.trim()
+    if (!typed) return
+    setActionError(null)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const [first, ...rest] = typed.split(' ')
+    const { data: newPerson, error } = await supabase
+      .from('people')
+      .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
+      .select('id, name, last_name')
+      .single()
+    if (error || !newPerson) {
+      setActionError("Couldn't add that person — please try again.")
+      return
+    }
+    // Keep the local roster in sync so the new name is immediately searchable in this same picker
+    // (and matches the suggestion lookups) without a full page reload.
+    setAllPeople((prev) => [...prev, newPerson as PersonRef])
+    await handleAddAttendee(newPerson as PersonRef)
+  }
+
   async function handleTagGroup(groupId: string) {
     await supabase
       .from('moment_groups')
@@ -621,6 +648,7 @@ export default function EventDetail({
       onCreateAndTagMoment={handleCreateAndTagMoment}
       onUntagMoment={handleUntagMoment}
       onAddAttendee={handleAddAttendee}
+      onCreateAndAddAttendee={handleCreateAndAddAttendee}
       onRemoveAttendee={handleRemoveAttendee}
       onEditNote={handleEditNote}
       onDeleteNote={handleDeleteNote}
@@ -708,6 +736,7 @@ export function EventDetailView({
   onCreateAndTagMoment = () => {},
   onUntagMoment = () => {},
   onAddAttendee = () => {},
+  onCreateAndAddAttendee = () => {},
   onRemoveAttendee = () => {},
   onEditNote = () => {},
   onDeleteNote = () => {},
@@ -784,6 +813,7 @@ export function EventDetailView({
   onCreateAndTagMoment?: (name: string) => void
   onUntagMoment?: (tagId: string) => void
   onAddAttendee?: (person: PersonRef) => void
+  onCreateAndAddAttendee?: (name: string) => void
   onRemoveAttendee?: (person: PersonRef) => void
   onEditNote?: (noteIds: string[], newContent: string) => void
   onDeleteNote?: (noteIds: string[]) => void
@@ -1071,12 +1101,15 @@ export function EventDetailView({
           items={allPeople
             .filter((p) => !attendees.has(p.id))
             .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
-          placeholder="Search people to tag…"
+          placeholder="Search people to tag, or type a new name…"
           onSelect={(item) => {
             const person = allPeople.find((p) => p.id === item.id)
             if (person) onAddAttendee(person)
           }}
-          emptyText="No one matches."
+          // Someone who was there but isn't on file yet gets created and tagged in one step —
+          // otherwise you'd have to leave the event, add them on the People page, and come back.
+          onCreateNew={(name) => onCreateAndAddAttendee(name)}
+          createLabel={(name) => `+ Add "${name}" as a new person`}
         />
       )}
 
