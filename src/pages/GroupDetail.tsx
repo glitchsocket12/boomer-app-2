@@ -30,6 +30,8 @@ import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
 import UndoBanner from '../components/UndoBanner'
+import ManagePanel from '../components/ManagePanel'
+import FloatingNoteButton from '../components/FloatingNoteButton'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -126,6 +128,10 @@ export default function GroupDetail({
   const [membersExpanded, setMembersExpanded] = useState(false)
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(false)
   const [deleteConfirming, setDeleteConfirming] = useState(false)
+  // Consolidates rename-adjacent-but-rare actions (type, merge/nest, delete) behind one "⋯ Manage"
+  // trigger (2026-08-07 redesign) — previously the type picker sat inline on the page and
+  // merge/delete lived in a permanently-visible "danger zone" at the bottom.
+  const [manageOpen, setManageOpen] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [mergeOpen, setMergeOpen] = useState(false)
@@ -187,6 +193,7 @@ export default function GroupDetail({
     setName(groupName)
     setNameInput(groupName)
     setEditingName(false)
+    setManageOpen(false)
     setDeleteConfirming(false)
     setMergeOpen(false)
     setMergeCandidate(null)
@@ -984,6 +991,9 @@ export default function GroupDetail({
       }}
       savingType={savingType}
       onChangeType={handleChangeType}
+      manageOpen={manageOpen}
+      onOpenManage={() => setManageOpen(true)}
+      onCloseManage={() => setManageOpen(false)}
       refreshingSummary={refreshingSummary}
       onRefreshSummary={refreshSummary}
       membersExpanded={membersExpanded}
@@ -1107,6 +1117,9 @@ export function GroupDetailView({
   onCancelEditName = () => {},
   savingType = false,
   onChangeType = () => {},
+  manageOpen = false,
+  onOpenManage = () => {},
+  onCloseManage = () => {},
   refreshingSummary = false,
   onRefreshSummary = () => {},
   membersExpanded = false,
@@ -1203,6 +1216,9 @@ export function GroupDetailView({
   onCancelEditName?: () => void
   savingType?: boolean
   onChangeType?: (value: string) => void
+  manageOpen?: boolean
+  onOpenManage?: () => void
+  onCloseManage?: () => void
   refreshingSummary?: boolean
   onRefreshSummary?: () => void
   membersExpanded?: boolean
@@ -1386,28 +1402,9 @@ export function GroupDetailView({
         </button>
       )}
 
-      {readOnly ? (
-        groupType && <span style={styles.typeBadgeStatic}>{groupType}</span>
-      ) : (
-        <select
-          value={groupType ?? ''}
-          onChange={(e) => onChangeType(e.target.value)}
-          disabled={savingType}
-          style={styles.typeSelect}
-          aria-label="Group type"
-        >
-          <option value="">No type set</option>
-          {/* A type the group still carries but that's been deleted from the list stays selectable
-              here, so opening the group doesn't silently look like its type was cleared. */}
-          {Array.from(new Set(groupType ? [...groupTypeOptions, groupType] : groupTypeOptions))
-            .sort((a, b) => a.localeCompare(b))
-            .map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-        </select>
-      )}
+      {/* Editable picker moved into "⋯ Manage" (2026-08-07) — a static badge is still shown here
+          in both modes so the type reads at a glance without opening anything. */}
+      {groupType && <span style={styles.typeBadgeStatic}>{groupType}</span>}
 
       {groupType === 'Family' && (
         <button
@@ -1428,7 +1425,7 @@ export function GroupDetailView({
       <PhotoGallery />
 
       <div style={styles.suggestionHeaderRow}>
-        <h2 style={styles.membersHeading}>Who's in this group ({explicitMembers.length})</h2>
+        <h2 style={styles.membersHeading}>Who was there ({explicitMembers.length})</h2>
         {/* No longer gated on `!parentGroup` — a subgroup with its own subgroups can bulk-add its
             members down into them exactly like a root group can. */}
         {!readOnly && subgroups.length > 0 && explicitMembers.length > 0 && (
@@ -1650,6 +1647,66 @@ export function GroupDetailView({
         </>
       )}
 
+      {/* Events tagged to this group — same content as before, now under its own heading and
+          moved up (2026-08-07) to match the consistent Who was there → Associated Events →
+          Associated Groups → Notes → Manage order used across Event/Group. */}
+      <h2 style={styles.membersHeading}>Associated Events</h2>
+      {moments.length === 0 && (
+        <p style={styles.empty}>No events tagged to this group yet — mention this affiliation on Home while telling a story and it'll show up here.</p>
+      )}
+
+      <div style={styles.list}>
+        {moments.map((moment) => {
+          const momentSummary = summarize(moment.occasion, moment.raw_description)
+
+          const attendees = new Map<string, PersonRef>()
+          for (const n of moment.notes ?? []) {
+            if (n.people) attendees.set(n.people.id, n.people)
+          }
+
+          const groups = (moment.moment_groups ?? [])
+            .map((mg) => mg.groups)
+            .filter((g): g is GroupRef => g !== null)
+
+          return (
+            <div key={moment.id} style={styles.card}>
+              <button onClick={() => onSelectEvent({ id: moment.id, summary: momentSummary })} style={styles.titleButton}>
+                {moment.occasion || 'Untitled moment'}
+              </button>
+              <p style={styles.meta}>
+                {[moment.when_text, moment.location].filter(Boolean).join(' · ') ||
+                  new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+              </p>
+
+              {groups.length > 0 && (
+                <div style={styles.chipRow}>
+                  {groups.map((g) => (
+                    <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onSelectGroup(g)} />
+                  ))}
+                </div>
+              )}
+
+              <p style={styles.description}>{moment.summary || 'Putting this memory into words…'}</p>
+
+              {attendees.size > 0 && (
+                <>
+                  <p style={styles.chipLabel}>Who was there</p>
+                  <div style={styles.chipRow}>
+                    {sortByLastName(Array.from(attendees.values())).map((p) => (
+                      <PersonChip
+                        key={p.id}
+                        label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
+                        onClick={() => onSelectPerson(p)}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
       {/* Rendered at every depth (2026-08-03) — a subgroup gets its own subgroups, and so on down.
           Previously gated on `!parentGroup`, which capped the tree at one level. */}
       <div style={styles.suggestionHeaderRow}>
@@ -1745,62 +1802,6 @@ export function GroupDetailView({
         </>
       )}
 
-      {moments.length === 0 && (
-        <p style={styles.empty}>No events tagged to this group yet — mention this affiliation on Home while telling a story and it'll show up here.</p>
-      )}
-
-      <div style={styles.list}>
-        {moments.map((moment) => {
-          const momentSummary = summarize(moment.occasion, moment.raw_description)
-
-          const attendees = new Map<string, PersonRef>()
-          for (const n of moment.notes ?? []) {
-            if (n.people) attendees.set(n.people.id, n.people)
-          }
-
-          const groups = (moment.moment_groups ?? [])
-            .map((mg) => mg.groups)
-            .filter((g): g is GroupRef => g !== null)
-
-          return (
-            <div key={moment.id} style={styles.card}>
-              <button onClick={() => onSelectEvent({ id: moment.id, summary: momentSummary })} style={styles.titleButton}>
-                {moment.occasion || 'Untitled moment'}
-              </button>
-              <p style={styles.meta}>
-                {[moment.when_text, moment.location].filter(Boolean).join(' · ') ||
-                  new Date(moment.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-              </p>
-
-              {groups.length > 0 && (
-                <div style={styles.chipRow}>
-                  {groups.map((g) => (
-                    <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onSelectGroup(g)} />
-                  ))}
-                </div>
-              )}
-
-              <p style={styles.description}>{moment.summary || 'Putting this memory into words…'}</p>
-
-              {attendees.size > 0 && (
-                <>
-                  <p style={styles.chipLabel}>Who was there</p>
-                  <div style={styles.chipRow}>
-                    {sortByLastName(Array.from(attendees.values())).map((p) => (
-                      <PersonChip
-                        key={p.id}
-                        label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`}
-                        onClick={() => onSelectPerson(p)}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
       <div style={styles.notesHeaderRow}>
         <h2 style={styles.editHeading}>Notes</h2>
         {groupNotes.length > 0 && (
@@ -1810,10 +1811,7 @@ export function GroupDetailView({
         )}
       </div>
       {!readOnly && (
-        <>
-          <p style={styles.chatHint}>Free-form context about this group — no event needed. I'll also check for anyone new to add as a member.</p>
-          <div style={styles.noteBoxWrapper}>{noteBox}</div>
-        </>
+        <p style={styles.chatHint}>Free-form context about this group — no event needed. I'll also check for anyone new to add as a member.</p>
       )}
 
       {notesOpen && groupNotes.length > 0 && (
@@ -1830,36 +1828,66 @@ export function GroupDetailView({
       )}
 
       {!readOnly && (
-        <div style={styles.dangerZone}>
-          <span style={styles.dangerHeading}>Group</span>
+        <div style={styles.manageTriggerRow}>
+          <button type="button" onClick={onOpenManage} style={styles.manageTriggerButton}>
+            ⋯ Manage
+          </button>
+        </div>
+      )}
 
-          {actionError && <p style={styles.actionErrorBanner}>{actionError}</p>}
+      {!readOnly && <FloatingNoteButton label="Add a note or ask something">{noteBox}</FloatingNoteButton>}
 
-          {!mergeOpen && !deleteConfirming && (
-            <div style={styles.dangerButtonRow}>
-              <button type="button" onClick={() => onOpenMerge('nest')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
-                Move this under another group…
+      <ManagePanel open={manageOpen} onClose={onCloseManage} title="Manage this group" subtitle={name}>
+        <div style={styles.manageTypeRow}>
+          <label style={styles.manageTypeLabel}>Type</label>
+          <select
+            value={groupType ?? ''}
+            onChange={(e) => onChangeType(e.target.value)}
+            disabled={savingType}
+            style={styles.typeSelect}
+            aria-label="Group type"
+          >
+            <option value="">No type set</option>
+            {/* A type the group still carries but that's been deleted from the list stays
+                selectable here, so opening the group doesn't silently look like its type was
+                cleared. */}
+            {Array.from(new Set(groupType ? [...groupTypeOptions, groupType] : groupTypeOptions))
+              .sort((a, b) => a.localeCompare(b))
+              .map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+          </select>
+        </div>
+
+        {actionError && <p style={styles.actionErrorBanner}>{actionError}</p>}
+
+        {!mergeOpen && !deleteConfirming && (
+          <div style={styles.dangerButtonRow}>
+            <button type="button" onClick={() => onOpenMerge('nest')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+              Move this under another group…
+            </button>
+            <button type="button" onClick={() => onOpenMerge('merge')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+              This is a duplicate — merge it away…
+            </button>
+            {/* Only offered when there's actually a parent to leave. Kept next to "move under"
+                so the two directions of the same action sit together. */}
+            {parentGroup && (
+              <button type="button" onClick={onMoveToTopLevel} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                Move to top level
               </button>
-              <button type="button" onClick={() => onOpenMerge('merge')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
-                This is a duplicate — merge it away…
-              </button>
-              {/* Only offered when there's actually a parent to leave. Kept next to "move under"
-                  so the two directions of the same action sit together. */}
-              {parentGroup && (
-                <button type="button" onClick={onMoveToTopLevel} style={styles.dangerSecondaryButton} disabled={actionBusy}>
-                  Move to top level
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={onStartDelete}
-                style={styles.dangerDeleteButton}
-                disabled={actionBusy}
-              >
-                Delete this group
-              </button>
-            </div>
-          )}
+            )}
+            <button
+              type="button"
+              onClick={onStartDelete}
+              style={styles.dangerDeleteButton}
+              disabled={actionBusy}
+            >
+              Delete this group
+            </button>
+          </div>
+        )}
 
           {deleteConfirming && (
             <div style={styles.suggestBanner}>
@@ -1970,8 +1998,7 @@ export function GroupDetailView({
               )}
             </div>
           )}
-        </div>
-      )}
+      </ManagePanel>
     </div>
     <DragOverlay>
       {activeId && selectedPeopleCount > 0 ? (
@@ -2671,7 +2698,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
     whiteSpace: 'nowrap',
   },
-  noteBoxWrapper: { marginBottom: space.xl },
   notesList: { display: 'flex', flexDirection: 'column', gap: space.xl, marginBottom: space.xl },
   noteCardWrapper: { position: 'relative' },
   noteBadgeRow: { position: 'absolute', top: '-6px', right: '-6px', display: 'flex', gap: '0.3rem' },
@@ -2711,15 +2737,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.textMuted,
     cursor: 'pointer',
   },
-  dangerZone: {
-    marginTop: '2.5rem',
-    paddingTop: space.xxl,
-    borderTop: `1px solid ${colors.dividerWarm}`,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: space.lg,
+  manageTriggerRow: { marginTop: '2.5rem', paddingTop: space.xxl, borderTop: `1px solid ${colors.dividerWarm}`, textAlign: 'center' },
+  manageTriggerButton: {
+    fontSize: fontSize.label,
+    padding: '0.5rem 1.1rem',
+    borderRadius: radius.pill,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
+    cursor: 'pointer',
+    fontFamily,
   },
-  dangerHeading: { fontSize: fontSize.tiny, textTransform: 'uppercase', letterSpacing: '0.04em', color: neutral.sage, fontWeight: 700 },
+  manageTypeRow: { display: 'flex', alignItems: 'center', gap: space.md },
+  manageTypeLabel: { fontSize: fontSize.label, fontWeight: 'bold', color: colors.ink },
   dangerButtonRow: { display: 'flex', gap: space.lg, flexWrap: 'wrap' },
   dangerSecondaryButton: {
     fontSize: fontSize.label,

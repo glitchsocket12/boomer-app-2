@@ -4,6 +4,8 @@ import NoteWithDetection from '../components/NoteWithDetection'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import PhotoGallery from '../components/PhotoGallery'
+import ManagePanel from '../components/ManagePanel'
+import FloatingNoteButton from '../components/FloatingNoteButton'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
@@ -82,10 +84,8 @@ export default function EventDetail({
 }) {
   const [moment, setMoment] = useState<MomentDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [titleInput, setTitleInput] = useState('')
-  const [savingTitle, setSavingTitle] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
+  const [manageOpen, setManageOpen] = useState(false)
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -111,20 +111,23 @@ export default function EventDetail({
   const [childEvents, setChildEvents] = useState<ChildEventRef[]>([])
   const [addingSubEvent, setAddingSubEvent] = useState(false)
   const [subEventError, setSubEventError] = useState<string | null>(null)
-  // Manual date/location fallback (2026-07-30) — chat parsing is still the primary way these get
-  // set, but there was previously no way to fix a wrong/missing one by hand at all.
-  const [editingMeta, setEditingMeta] = useState(false)
+  // Name, date, and location edited together as one flow (2026-08-07 redesign) — previously two
+  // separate pencils (rename up top, "Edit date & location" in the meta row) with two separate
+  // forms. Chat parsing is still the primary way these get set day to day; this is the manual
+  // fallback for fixing a wrong/missing one by hand.
+  const [editingBasics, setEditingBasics] = useState(false)
+  const [titleInput, setTitleInput] = useState('')
   const [dateInput, setDateInput] = useState('')
   const [locationInput, setLocationInput] = useState('')
-  const [savingMeta, setSavingMeta] = useState(false)
+  const [savingBasics, setSavingBasics] = useState(false)
 
   useEffect(() => {
     loadMoment()
     loadPickerLists()
     loadChildEvents()
-    setEditingTitle(false)
+    setEditingBasics(false)
     setEditingDescription(false)
-    setEditingMeta(false)
+    setManageOpen(false)
     setDeleteConfirming(false)
     setMergeOpen(false)
     setMergeCandidate(null)
@@ -443,50 +446,41 @@ export default function EventDetail({
     await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
   }
 
-  function startEditingMeta() {
+  function startEditingBasics() {
+    setTitleInput(moment?.occasion ?? '')
     setDateInput(moment?.event_date ?? '')
     setLocationInput(moment?.location ?? '')
-    setEditingMeta(true)
+    setEditingBasics(true)
   }
 
-  // Direct edit of event_date/location, not a chat turn — the reliable fallback for when chat
-  // parsing gets the date wrong or leaves it null (see handleSaveDescription's comment above for
-  // the same reasoning applied to the description field). when_text is left untouched: the display
-  // already prefers event_date over when_text whenever event_date is set (see formatFullDate call
-  // sites below), so there's no stale-text mismatch to worry about.
-  async function handleSaveMeta(e: FormEvent) {
-    e.preventDefault()
-    if (!moment) return
-    const newDate = dateInput || null
-    const newLocation = locationInput.trim() || null
-    if (newDate === moment.event_date && newLocation === moment.location) {
-      setEditingMeta(false)
-      return
-    }
-    setSavingMeta(true)
-    const { error } = await supabase.from('moments').update({ event_date: newDate, location: newLocation }).eq('id', moment.id)
-    setSavingMeta(false)
-    if (error) return
-    setMoment({ ...moment, event_date: newDate, location: newLocation })
-    setEditingMeta(false)
-  }
-
-  async function handleSaveTitle(e: FormEvent) {
+  // Name, date, and location saved together as one write (2026-08-07 — previously two separate
+  // forms/handlers). Direct edit, not a chat turn — the reliable fallback for when chat parsing
+  // gets the date wrong or leaves it null (see handleSaveDescription's comment above for the same
+  // reasoning applied to the description field). when_text is left untouched: the display already
+  // prefers event_date over when_text whenever event_date is set (see formatFullDate call sites
+  // below), so there's no stale-text mismatch to worry about.
+  async function handleSaveBasics(e: FormEvent) {
     e.preventDefault()
     if (!moment) return
     const trimmed = titleInput.trim()
     const newOccasion = trimmed || null
-    if (newOccasion === moment.occasion) {
-      setEditingTitle(false)
+    const newDate = dateInput || null
+    const newLocation = locationInput.trim() || null
+    const unchanged = newOccasion === moment.occasion && newDate === moment.event_date && newLocation === moment.location
+    if (unchanged) {
+      setEditingBasics(false)
       return
     }
-    setSavingTitle(true)
-    const { error } = await supabase.from('moments').update({ occasion: newOccasion }).eq('id', moment.id)
-    setSavingTitle(false)
+    setSavingBasics(true)
+    const { error } = await supabase
+      .from('moments')
+      .update({ occasion: newOccasion, event_date: newDate, location: newLocation })
+      .eq('id', moment.id)
+    setSavingBasics(false)
     if (error) return
 
-    setMoment({ ...moment, occasion: newOccasion })
-    setEditingTitle(false)
+    setMoment({ ...moment, occasion: newOccasion, event_date: newDate, location: newLocation })
+    setEditingBasics(false)
     onRenamed?.(summarize(newOccasion, moment.raw_description))
   }
 
@@ -593,16 +587,17 @@ export default function EventDetail({
       allTagsList={allTagsList}
       relationshipsById={relationshipsById}
       selfId={selfId}
-      editingTitle={editingTitle}
+      editingBasics={editingBasics}
       titleInput={titleInput}
-      savingTitle={savingTitle}
-      onStartEditTitle={() => {
-        setTitleInput(moment.occasion ?? '')
-        setEditingTitle(true)
-      }}
+      dateInput={dateInput}
+      locationInput={locationInput}
+      savingBasics={savingBasics}
+      onStartEditBasics={startEditingBasics}
       onTitleInputChange={setTitleInput}
-      onSaveTitle={handleSaveTitle}
-      onCancelEditTitle={() => setEditingTitle(false)}
+      onDateInputChange={setDateInput}
+      onLocationInputChange={setLocationInput}
+      onSaveBasics={handleSaveBasics}
+      onCancelEditBasics={() => setEditingBasics(false)}
       editingDescription={editingDescription}
       descriptionInput={descriptionInput}
       savingDescription={savingDescription}
@@ -610,15 +605,9 @@ export default function EventDetail({
       onDescriptionInputChange={setDescriptionInput}
       onSaveDescription={handleSaveDescription}
       onCancelEditDescription={() => setEditingDescription(false)}
-      editingMeta={editingMeta}
-      dateInput={dateInput}
-      locationInput={locationInput}
-      savingMeta={savingMeta}
-      onStartEditMeta={startEditingMeta}
-      onDateInputChange={setDateInput}
-      onLocationInputChange={setLocationInput}
-      onSaveMeta={handleSaveMeta}
-      onCancelEditMeta={() => setEditingMeta(false)}
+      manageOpen={manageOpen}
+      onOpenManage={() => setManageOpen(true)}
+      onCloseManage={() => setManageOpen(false)}
       refreshingSummary={refreshingSummary}
       onRefreshSummary={handleRefreshSummary}
       photosImporting={photosImporting}
@@ -685,13 +674,17 @@ export function EventDetailView({
   relationshipsById = new Map(),
   selfId = null,
   readOnly = false,
-  editingTitle = false,
+  editingBasics = false,
   titleInput = '',
-  savingTitle = false,
-  onStartEditTitle = () => {},
+  dateInput = '',
+  locationInput = '',
+  savingBasics = false,
+  onStartEditBasics = () => {},
   onTitleInputChange = () => {},
-  onSaveTitle = () => {},
-  onCancelEditTitle = () => {},
+  onDateInputChange = () => {},
+  onLocationInputChange = () => {},
+  onSaveBasics = () => {},
+  onCancelEditBasics = () => {},
   editingDescription = false,
   descriptionInput = '',
   savingDescription = false,
@@ -699,15 +692,9 @@ export function EventDetailView({
   onDescriptionInputChange = () => {},
   onSaveDescription = () => {},
   onCancelEditDescription = () => {},
-  editingMeta = false,
-  dateInput = '',
-  locationInput = '',
-  savingMeta = false,
-  onStartEditMeta = () => {},
-  onDateInputChange = () => {},
-  onLocationInputChange = () => {},
-  onSaveMeta = () => {},
-  onCancelEditMeta = () => {},
+  manageOpen = false,
+  onOpenManage = () => {},
+  onCloseManage = () => {},
   refreshingSummary = false,
   onRefreshSummary = () => {},
   photosImporting = false,
@@ -763,13 +750,17 @@ export function EventDetailView({
   relationshipsById?: Map<string, PersonRelationships>
   selfId?: string | null
   readOnly?: boolean
-  editingTitle?: boolean
+  editingBasics?: boolean
   titleInput?: string
-  savingTitle?: boolean
-  onStartEditTitle?: () => void
+  dateInput?: string
+  locationInput?: string
+  savingBasics?: boolean
+  onStartEditBasics?: () => void
   onTitleInputChange?: (v: string) => void
-  onSaveTitle?: (e: FormEvent) => void
-  onCancelEditTitle?: () => void
+  onDateInputChange?: (v: string) => void
+  onLocationInputChange?: (v: string) => void
+  onSaveBasics?: (e: FormEvent) => void
+  onCancelEditBasics?: () => void
   editingDescription?: boolean
   descriptionInput?: string
   savingDescription?: boolean
@@ -777,15 +768,9 @@ export function EventDetailView({
   onDescriptionInputChange?: (v: string) => void
   onSaveDescription?: () => void
   onCancelEditDescription?: () => void
-  editingMeta?: boolean
-  dateInput?: string
-  locationInput?: string
-  savingMeta?: boolean
-  onStartEditMeta?: () => void
-  onDateInputChange?: (v: string) => void
-  onLocationInputChange?: (v: string) => void
-  onSaveMeta?: (e: FormEvent) => void
-  onCancelEditMeta?: () => void
+  manageOpen?: boolean
+  onOpenManage?: () => void
+  onCloseManage?: () => void
   refreshingSummary?: boolean
   onRefreshSummary?: () => void
   photosImporting?: boolean
@@ -836,6 +821,22 @@ export function EventDetailView({
   const attendees = new Map<string, PersonRef>()
   for (const n of moment.notes ?? []) {
     if (n.people) attendees.set(n.people.id, n.people)
+  }
+
+  // Anyone at a sub-event was at this event by definition (founder, 2026-08-07), so sub-event
+  // attendees roll up into Who Was There instead of only showing as a head count on the sub-event
+  // tile. Purely derived — nothing is written back to this moment, so their note stays on the
+  // sub-event (untagging them there drops them here too, with no duplicate row to keep in sync).
+  // Tracked separately from the directly-tagged set because the hover-untag badge below has
+  // nothing to act on for them: there's no note tied to THIS event to unlink.
+  const rolledUpAttendeeIds = new Set<string>()
+  for (const child of childEvents) {
+    for (const n of child.notes ?? []) {
+      if (n.people && !attendees.has(n.people.id)) {
+        attendees.set(n.people.id, n.people)
+        rolledUpAttendeeIds.add(n.people.id)
+      }
+    }
   }
 
   // Notes created together from a single Home-page entry get identical content per tagged
@@ -911,8 +912,8 @@ export function EventDetailView({
         </button>
       )}
 
-      {editingTitle ? (
-        <form onSubmit={onSaveTitle} style={styles.renameForm}>
+      {editingBasics ? (
+        <form onSubmit={onSaveBasics} style={styles.renameForm}>
           <input
             type="text"
             value={titleInput}
@@ -921,25 +922,6 @@ export function EventDetailView({
             style={styles.renameInput}
             autoFocus
           />
-          <button type="submit" disabled={savingTitle} style={styles.saveButton}>
-            {savingTitle ? '…' : 'Save'}
-          </button>
-          <button
-            type="button"
-            onClick={onCancelEditTitle}
-            style={styles.cancelButton}
-          >
-            Cancel
-          </button>
-        </form>
-      ) : (
-        <div style={styles.headingRow}>
-          <h1 style={styles.heading}>{moment.occasion || 'Untitled moment'}</h1>
-          {!readOnly && <EditButton label="Rename event" onClick={onStartEditTitle} />}
-        </div>
-      )}
-      {editingMeta ? (
-        <form onSubmit={onSaveMeta} style={styles.metaEditForm}>
           <label style={styles.metaEditLabel}>
             Date
             <input
@@ -959,45 +941,206 @@ export function EventDetailView({
               style={styles.metaEditInput}
             />
           </label>
+          <button type="submit" disabled={savingBasics} style={styles.saveButton}>
+            {savingBasics ? '…' : 'Save'}
+          </button>
+          <button type="button" onClick={onCancelEditBasics} style={styles.cancelButton} disabled={savingBasics}>
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <>
+          <div style={styles.headingRow}>
+            <h1 style={styles.heading}>{moment.occasion || 'Untitled moment'}</h1>
+            {!readOnly && <EditButton label="Edit name, date & location" onClick={onStartEditBasics} />}
+          </div>
+          <div style={styles.metaRow}>
+            <p style={styles.meta}>
+              {moment.event_date || moment.when_text || moment.location ? (
+                <>
+                  {moment.event_date ? formatFullDate(moment) : moment.when_text}
+                  {(moment.event_date || moment.when_text) && moment.location && ' · '}
+                  {moment.location && (
+                    <a
+                      href={mapsUrl!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={styles.locationLink}
+                    >
+                      {moment.location}
+                    </a>
+                  )}
+                </>
+              ) : (
+                formatFullDate(moment)
+              )}
+            </p>
+          </div>
+        </>
+      )}
+
+      {editingDescription ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            onSaveDescription()
+          }}
+          style={styles.descriptionEditForm}
+        >
+          <div style={styles.descriptionEditRow}>
+            <AutoGrowTextarea
+              value={descriptionInput}
+              onChange={onDescriptionInputChange}
+              onEnter={onSaveDescription}
+              placeholder="What happened?"
+              style={styles.descriptionEditInput}
+              disabled={savingDescription}
+            />
+            <VoiceInputButton
+              disabled={savingDescription}
+              onTranscribed={(text) => onDescriptionInputChange(descriptionInput ? `${descriptionInput} ${text}` : text)}
+            />
+          </div>
           <div style={styles.suggestButtonRow}>
-            <button type="submit" disabled={savingMeta} style={styles.saveButton}>
-              {savingMeta ? '…' : 'Save'}
+            <button type="submit" disabled={savingDescription} style={styles.saveButton}>
+              {savingDescription ? '…' : 'Save'}
             </button>
-            <button type="button" onClick={onCancelEditMeta} style={styles.cancelButton} disabled={savingMeta}>
+            <button type="button" onClick={onCancelEditDescription} style={styles.cancelButton} disabled={savingDescription}>
               Cancel
             </button>
           </div>
         </form>
       ) : (
-        <div style={styles.metaRow}>
-          <p style={styles.meta}>
-            {moment.event_date || moment.when_text || moment.location ? (
-              <>
-                {moment.event_date ? formatFullDate(moment) : moment.when_text}
-                {(moment.event_date || moment.when_text) && moment.location && ' · '}
-                {moment.location && (
-                  <a
-                    href={mapsUrl!}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={styles.locationLink}
-                  >
-                    {moment.location}
-                  </a>
-                )}
-              </>
-            ) : (
-              formatFullDate(moment)
-            )}
+        <div style={styles.descriptionRow}>
+          <p style={styles.description}>
+            {moment.summary ||
+              (moment.raw_description.trim() ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
           </p>
-          {!readOnly && <EditButton label="Edit date & location" onClick={onStartEditMeta} />}
+          {!readOnly && (
+            <RefreshButton label="Refresh summary" onClick={onRefreshSummary} refreshing={refreshingSummary} />
+          )}
+          {!readOnly && <EditButton label="Edit description" onClick={onStartEditDescription} />}
         </div>
       )}
 
+      {details.length > 0 && (
+        <div style={styles.detailsBox}>
+          {details.map(([key, value]) => (
+            <p key={key} style={styles.detailRow}>
+              <span style={styles.detailKey}>{key}: </span>
+              {String(value)}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <PhotoGallery momentId={moment.id} key={photosRefreshKey} />
+      {!readOnly && (
+        <div style={styles.photosActionRow}>
+          <button onClick={onAddPhotos} style={styles.photosButton} disabled={photosImporting}>
+            {photosImporting ? 'Working…' : 'Add photos from Google Photos'}
+          </button>
+          {photosStatus && <p style={styles.photosStatus}>{photosStatus}</p>}
+          {photosError && <p style={styles.photosError}>{photosError}</p>}
+        </div>
+      )}
+
+      <h2 style={styles.subheading}>Who was there</h2>
+      {attendees.size > 0 && (
+        <>
+          <p style={styles.chatHint}>
+            {readOnly ? 'Tap a name for their profile.' : 'Tap a name for their profile, or hover to untag them from this event.'}
+            {rolledUpAttendeeIds.size > 0 && ' Everyone tagged on a sub-event is included here too.'}
+          </p>
+          <div style={styles.chipRow}>
+            {sortByLastName(Array.from(attendees.values())).map((p) => (
+              <AttendeeChip
+                key={p.id}
+                person={p}
+                isSelf={p.id === selfId}
+                viaSubEvent={rolledUpAttendeeIds.has(p.id)}
+                onSelect={() => onSelectPerson(p)}
+                onRemove={readOnly || rolledUpAttendeeIds.has(p.id) ? undefined : () => onRemoveAttendee(p)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+      {!readOnly && (
+        <SearchAddPicker
+          items={allPeople
+            .filter((p) => !attendees.has(p.id))
+            .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
+          placeholder="Search people to tag…"
+          onSelect={(item) => {
+            const person = allPeople.find((p) => p.id === item.id)
+            if (person) onAddAttendee(person)
+          }}
+          emptyText="No one matches."
+        />
+      )}
+
+      {!readOnly && suggestedAttendees.size > 0 && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <h2 style={{ ...styles.subheading, margin: 0 }}>Also from the associated group?</h2>
+            {suggestedAttendees.size > 1 && (
+              <button
+                onClick={() => onDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
+                style={styles.removeAllButton}
+              >
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
+          <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
+          <div style={styles.chipRow}>
+            {sortByLastName(Array.from(suggestedAttendees.values())).map((p) => (
+              <SuggestedAttendeeChip
+                key={p.id}
+                person={p}
+                onApprove={() => onAddAttendee(p)}
+                onDeny={() => onDenySuggestion(p)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {!readOnly && suggestedFamily.size > 0 && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <h2 style={{ ...styles.subheading, margin: 0 }}>Was their family there too?</h2>
+            {suggestedFamily.size > 1 && (
+              <button
+                onClick={() => onDenyAllSuggestions(Array.from(suggestedFamily.values()))}
+                style={styles.removeAllButton}
+              >
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
+          <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
+          <div style={styles.chipRow}>
+            {sortByLastName(Array.from(suggestedFamily.values())).map((p) => (
+              <SuggestedAttendeeChip
+                key={p.id}
+                person={p}
+                onApprove={() => onAddAttendee(p)}
+                onDeny={() => onDenySuggestion(p)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Sub-events, under this section's new name (2026-08-07) — same content/logic as before,
+          just relabeled to match the consistent Title → Date/Location → Summary → Who was there →
+          Associated Events → Associated Groups → Notes → Manage order used across Event/Group. */}
       {!parentEvent && (
         <>
           <div style={styles.suggestionHeaderRow}>
-            <h2 style={styles.subheading}>Sub-events</h2>
+            <h2 style={styles.subheading}>Associated Events</h2>
             {!readOnly && (
               <button type="button" onClick={onAddSubEvent} style={styles.addButton} disabled={addingSubEvent}>
                 {addingSubEvent ? '…' : '+ New Sub-event'}
@@ -1110,159 +1253,6 @@ export function EventDetailView({
         </div>
       )}
 
-      {editingDescription ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            onSaveDescription()
-          }}
-          style={styles.descriptionEditForm}
-        >
-          <div style={styles.descriptionEditRow}>
-            <AutoGrowTextarea
-              value={descriptionInput}
-              onChange={onDescriptionInputChange}
-              onEnter={onSaveDescription}
-              placeholder="What happened?"
-              style={styles.descriptionEditInput}
-              disabled={savingDescription}
-            />
-            <VoiceInputButton
-              disabled={savingDescription}
-              onTranscribed={(text) => onDescriptionInputChange(descriptionInput ? `${descriptionInput} ${text}` : text)}
-            />
-          </div>
-          <div style={styles.suggestButtonRow}>
-            <button type="submit" disabled={savingDescription} style={styles.saveButton}>
-              {savingDescription ? '…' : 'Save'}
-            </button>
-            <button type="button" onClick={onCancelEditDescription} style={styles.cancelButton} disabled={savingDescription}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : (
-        <div style={styles.descriptionRow}>
-          <p style={styles.description}>
-            {moment.summary ||
-              (moment.raw_description.trim() ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
-          </p>
-          {!readOnly && (
-            <RefreshButton label="Refresh summary" onClick={onRefreshSummary} refreshing={refreshingSummary} />
-          )}
-          {!readOnly && <EditButton label="Edit description" onClick={onStartEditDescription} />}
-        </div>
-      )}
-
-      {details.length > 0 && (
-        <div style={styles.detailsBox}>
-          {details.map(([key, value]) => (
-            <p key={key} style={styles.detailRow}>
-              <span style={styles.detailKey}>{key}: </span>
-              {String(value)}
-            </p>
-          ))}
-        </div>
-      )}
-
-      <PhotoGallery momentId={moment.id} key={photosRefreshKey} />
-      {!readOnly && (
-        <div style={styles.photosActionRow}>
-          <button onClick={onAddPhotos} style={styles.photosButton} disabled={photosImporting}>
-            {photosImporting ? 'Working…' : 'Add photos from Google Photos'}
-          </button>
-          {photosStatus && <p style={styles.photosStatus}>{photosStatus}</p>}
-          {photosError && <p style={styles.photosError}>{photosError}</p>}
-        </div>
-      )}
-
-      <h2 style={styles.subheading}>Who was there</h2>
-      {attendees.size > 0 && (
-        <>
-          <p style={styles.chatHint}>
-            {readOnly ? 'Tap a name for their profile.' : 'Tap a name for their profile, or hover to untag them from this event.'}
-          </p>
-          <div style={styles.chipRow}>
-            {sortByLastName(Array.from(attendees.values())).map((p) => (
-              <AttendeeChip
-                key={p.id}
-                person={p}
-                isSelf={p.id === selfId}
-                onSelect={() => onSelectPerson(p)}
-                onRemove={readOnly ? undefined : () => onRemoveAttendee(p)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-      {!readOnly && (
-        <SearchAddPicker
-          items={allPeople
-            .filter((p) => !attendees.has(p.id))
-            .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
-          placeholder="Search people to tag…"
-          onSelect={(item) => {
-            const person = allPeople.find((p) => p.id === item.id)
-            if (person) onAddAttendee(person)
-          }}
-          emptyText="No one matches."
-        />
-      )}
-
-      {!readOnly && suggestedAttendees.size > 0 && (
-        <>
-          <div style={styles.suggestionHeaderRow}>
-            <h2 style={{ ...styles.subheading, margin: 0 }}>Also from the associated group?</h2>
-            {suggestedAttendees.size > 1 && (
-              <button
-                onClick={() => onDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
-                style={styles.removeAllButton}
-              >
-                × Remove all suggestions
-              </button>
-            )}
-          </div>
-          <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
-          <div style={styles.chipRow}>
-            {sortByLastName(Array.from(suggestedAttendees.values())).map((p) => (
-              <SuggestedAttendeeChip
-                key={p.id}
-                person={p}
-                onApprove={() => onAddAttendee(p)}
-                onDeny={() => onDenySuggestion(p)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
-      {!readOnly && suggestedFamily.size > 0 && (
-        <>
-          <div style={styles.suggestionHeaderRow}>
-            <h2 style={{ ...styles.subheading, margin: 0 }}>Was their family there too?</h2>
-            {suggestedFamily.size > 1 && (
-              <button
-                onClick={() => onDenyAllSuggestions(Array.from(suggestedFamily.values()))}
-                style={styles.removeAllButton}
-              >
-                × Remove all suggestions
-              </button>
-            )}
-          </div>
-          <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
-          <div style={styles.chipRow}>
-            {sortByLastName(Array.from(suggestedFamily.values())).map((p) => (
-              <SuggestedAttendeeChip
-                key={p.id}
-                person={p}
-                onApprove={() => onAddAttendee(p)}
-                onDeny={() => onDenySuggestion(p)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
       {(moment.notes.length > 0 || !readOnly) && (
         <>
           <div style={styles.notesHeaderRow}>
@@ -1280,7 +1270,6 @@ export function EventDetailView({
           <p style={styles.notesHint}>
             These are the individual details you shared for this memory — exactly what fed the summary above.
           </p>
-          {!readOnly && <div style={styles.noteBoxWrapper}>{noteBox}</div>}
           {notesOpen && moment.notes.length > 0 && (
             <div style={styles.notesList}>
               {noteGroups.map((group) => (
@@ -1297,106 +1286,112 @@ export function EventDetailView({
       )}
 
       {!readOnly && (
-        <div style={styles.dangerZone}>
-          <span style={styles.dangerHeading}>Event</span>
+        <div style={styles.manageTriggerRow}>
+          <button type="button" onClick={onOpenManage} style={styles.manageTriggerButton}>
+            ⋯ Manage
+          </button>
+        </div>
+      )}
 
-          {actionError && <p style={styles.factErrorBanner}>{actionError}</p>}
+      {!readOnly && <FloatingNoteButton label="Add a note or ask something">{noteBox}</FloatingNoteButton>}
 
-          {!mergeOpen && !deleteConfirming && (
-            <div style={styles.dangerButtonRow}>
-              <button type="button" onClick={onOpenMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
-                This is a duplicate — merge it away…
+      <ManagePanel open={manageOpen} onClose={onCloseManage} title="Manage this event" subtitle={moment.occasion || 'Untitled moment'}>
+        {actionError && <p style={styles.factErrorBanner}>{actionError}</p>}
+
+        {!mergeOpen && !deleteConfirming && (
+          <div style={styles.dangerButtonRow}>
+            <button type="button" onClick={onOpenMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+              This is a duplicate — merge it away…
+            </button>
+            <button
+              type="button"
+              onClick={onStartDelete}
+              style={styles.dangerDeleteButton}
+              disabled={actionBusy}
+            >
+              Delete this event
+            </button>
+          </div>
+        )}
+
+        {deleteConfirming && (
+          <div style={styles.suggestBanner}>
+            <span>
+              Delete this event permanently? This removes all of its notes.
+              {childEvents.length > 0 &&
+                ` Its ${childEvents.length} sub-event${childEvents.length === 1 ? '' : 's'} will become independent top-level event${childEvents.length === 1 ? '' : 's'}, not deleted.`}{' '}
+              This can't be undone.
+            </span>
+            <div style={styles.suggestButtonRow}>
+              <button type="button" onClick={onConfirmDelete} style={styles.dangerDeleteButton} disabled={actionBusy}>
+                {actionBusy ? 'Deleting…' : 'Yes, delete'}
               </button>
               <button
                 type="button"
-                onClick={onStartDelete}
-                style={styles.dangerDeleteButton}
+                onClick={onCancelDelete}
+                style={styles.suggestNoButton}
                 disabled={actionBusy}
               >
-                Delete this event
+                Cancel
               </button>
             </div>
-          )}
+          </div>
+        )}
 
-          {deleteConfirming && (
-            <div style={styles.suggestBanner}>
-              <span>
-                Delete this event permanently? This removes all of its notes.
-                {childEvents.length > 0 &&
-                  ` Its ${childEvents.length} sub-event${childEvents.length === 1 ? '' : 's'} will become independent top-level event${childEvents.length === 1 ? '' : 's'}, not deleted.`}{' '}
-                This can't be undone.
-              </span>
-              <div style={styles.suggestButtonRow}>
-                <button type="button" onClick={onConfirmDelete} style={styles.dangerDeleteButton} disabled={actionBusy}>
-                  {actionBusy ? 'Deleting…' : 'Yes, delete'}
-                </button>
-                <button
-                  type="button"
-                  onClick={onCancelDelete}
-                  style={styles.suggestNoButton}
-                  disabled={actionBusy}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          {mergeOpen && (
-            <div style={styles.suggestBanner}>
-              {!mergeCandidate ? (
-                <>
-                  <span>Search for the event you want to keep. Everything here will move there, and this event will be deleted:</span>
-                  <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search events…" />
-                  <div style={styles.mergeResultsList}>
-                    {otherEvents
-                      .filter((e) => {
-                        const label = summarize(e.occasion, e.raw_description).toLowerCase()
-                        return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
-                      })
-                      .slice(0, 8)
-                      .map((e) => (
-                        <button
-                          key={e.id}
-                          type="button"
-                          onClick={() => onSelectMergeCandidate(e)}
-                          style={styles.mergeResultButton}
-                        >
-                          {summarize(e.occasion, e.raw_description)}
-                        </button>
-                      ))}
-                  </div>
-                  <div style={styles.suggestButtonRow}>
-                    <button type="button" onClick={onCancelMerge} style={styles.suggestNoButton}>
-                      Cancel
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <span>
-                    Merge this event into "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}"?
-                    All notes and group tags move there, this event is deleted, and you'll be taken to the kept event. This can't be undone.
-                  </span>
-                  <div style={styles.suggestButtonRow}>
-                    <button type="button" onClick={onConfirmMerge} style={styles.suggestYesButton} disabled={actionBusy}>
-                      {actionBusy ? 'Merging…' : 'Yes, merge'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onBackFromMergeCandidate}
-                      style={styles.suggestNoButton}
-                      disabled={actionBusy}
-                    >
-                      Back
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+        {mergeOpen && (
+          <div style={styles.suggestBanner}>
+            {!mergeCandidate ? (
+              <>
+                <span>Search for the event you want to keep. Everything here will move there, and this event will be deleted:</span>
+                <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search events…" />
+                <div style={styles.mergeResultsList}>
+                  {otherEvents
+                    .filter((e) => {
+                      const label = summarize(e.occasion, e.raw_description).toLowerCase()
+                      return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
+                    })
+                    .slice(0, 8)
+                    .map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() => onSelectMergeCandidate(e)}
+                        style={styles.mergeResultButton}
+                      >
+                        {summarize(e.occasion, e.raw_description)}
+                      </button>
+                    ))}
+                </div>
+                <div style={styles.suggestButtonRow}>
+                  <button type="button" onClick={onCancelMerge} style={styles.suggestNoButton}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <span>
+                  Merge this event into "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}"?
+                  All notes and group tags move there, this event is deleted, and you'll be taken to the kept event. This can't be undone.
+                </span>
+                <div style={styles.suggestButtonRow}>
+                  <button type="button" onClick={onConfirmMerge} style={styles.suggestYesButton} disabled={actionBusy}>
+                    {actionBusy ? 'Merging…' : 'Yes, merge'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onBackFromMergeCandidate}
+                    style={styles.suggestNoButton}
+                    disabled={actionBusy}
+                  >
+                    Back
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </ManagePanel>
     </div>
   )
 }
@@ -1422,15 +1417,18 @@ const PENCIL_ICON = (
 // Hovering reveals a small trash badge in the corner (a separate control, not a swap of the
 // chip's own content/click behavior), matching GroupDetail.tsx's MemberChip pattern, which was
 // specifically chosen after an earlier hover-swap version caused a resize-driven flicker loop.
-// `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
+// `onRemove` omitted (demo read-only mode, or a sub-event rollup with nothing on this event to
+// untag) simply never shows the hover badge.
 function AttendeeChip({
   person,
   isSelf = false,
+  viaSubEvent = false,
   onSelect,
   onRemove,
 }: {
   person: PersonRef
   isSelf?: boolean
+  viaSubEvent?: boolean
   onSelect: () => void
   onRemove?: () => void
 }) {
@@ -1439,7 +1437,11 @@ function AttendeeChip({
 
   return (
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <button onClick={onSelect} style={styles.attendeeChip}>
+      <button
+        onClick={onSelect}
+        style={styles.attendeeChip}
+        title={viaSubEvent ? `${label} is tagged on a sub-event — untag them there` : undefined}
+      >
         {label}
       </button>
       {(hovered || IS_TOUCH) && onRemove && (
@@ -1737,7 +1739,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   notesHint: { margin: '0 0 0.75rem 0', fontSize: fontSize.label, color: colors.textFaintest, fontStyle: 'italic' },
-  noteBoxWrapper: { marginBottom: space.xl },
   description: { fontSize: '1.05rem', color: colors.inkPlain, lineHeight: 1.6, margin: 0, flex: 1 },
   descriptionRow: { display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: space.xxxl },
   descriptionEditForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: space.xxxl },
@@ -1963,15 +1964,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.suggest,
     cursor: 'pointer',
   },
-  dangerZone: {
-    marginTop: '2.5rem',
-    paddingTop: space.xxl,
-    borderTop: `1px solid ${colors.dividerWarm}`,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: space.lg,
+  manageTriggerRow: { marginTop: '2.5rem', paddingTop: space.xxl, borderTop: `1px solid ${colors.dividerWarm}`, textAlign: 'center' },
+  manageTriggerButton: {
+    fontSize: fontSize.label,
+    padding: '0.5rem 1.1rem',
+    borderRadius: radius.pill,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
+    cursor: 'pointer',
+    fontFamily,
   },
-  dangerHeading: { fontSize: fontSize.tiny, textTransform: 'uppercase', letterSpacing: '0.04em', color: neutral.sage, fontWeight: 700 },
   dangerButtonRow: { display: 'flex', gap: space.lg, flexWrap: 'wrap' },
   dangerSecondaryButton: {
     fontSize: fontSize.label,
