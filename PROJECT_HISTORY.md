@@ -1126,4 +1126,20 @@ Two things came out of it. `loadFamilyGraph` now surfaces the column's absence a
 
 ---
 
+## The account outgrew a URL (2026-08-07)
+
+Three console 400s on page load, noticed in passing while verifying an unrelated change. Nothing was visibly broken, which is the whole story.
+
+The failing request was `relationships`, scoped by `getRelationshipsMap(personIds)`. PostgREST filters travel in the query string, and this one names its id list **twice** — once for `person_a_id.in.()`, once for `person_b_id.in.()` — so every UUID costs ~74 characters. `suggestConnections.ts` passes everyone already in a group. At 457 people that's a 35,719-character URL, which the API gateway refuses with a bare `Bad Request` (not a PostgREST JSON error — it never reaches PostgREST). `const { data } = await query` then leaves `data` null, and `for (const row of data ?? [])` reads that as *nobody is related to anybody*.
+
+So Home's "Connections to make" card has been running on two of its three signals since 2026-07-26. Event attendance and associated-group membership kept working, the card kept showing suggestions, and the family signal — spouse of a member, then that couple's kids — contributed exactly zero for twelve days. Nothing looked wrong because the card is a rotating sample of a candidate pool; a smaller pool just looks like a different sample.
+
+The scoping comment in `suggestConnections.ts` said the id list was "cheaper than a full-table relationships fetch." That was true when it was written. The whole table is 341 rows — one 102-character request. The scoped version was asking for nearly every person in the account and paying 35 KB of URL to say so. The optimization inverted as the account grew, and no test could have caught it: it only fails past a few hundred people, and only against a real gateway.
+
+Fixed in `getRelationshipsMap` rather than at the call site, so no future caller can trip it by simply having a bigger account — past 150 ids it fetches the table unscoped, below that ids go out in batches of 50 and merge. Callers on the unscoped path get a superset map, which is safe because `suggestFamilyMembers` only ever walks out from the seed ids it's handed.
+
+**The lesson worth keeping, and it's the same one as the gender-column entry above:** a fail-open `?? []` turns a broken request into a plausible-looking empty answer. Both bugs survived because the degraded state was indistinguishable from a legitimate one — an in-law with no gender recorded, a group with no family to suggest. Worth being suspicious of any console error that "doesn't seem to break anything," and worth asking of any `?? []` whether an empty result and a failed request should really look the same to the code downstream.
+
+---
+
 _End of document. Update this file as the project progresses — it's meant to be the single source of truth for anyone (human or AI) picking this project up._
