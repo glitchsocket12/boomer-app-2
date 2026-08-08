@@ -89,11 +89,31 @@ export async function getRelationshipsForPerson(personId: string): Promise<Perso
   return result
 }
 
+// PostgREST filters travel in the query string, so a scoped `.in.(…)` list is spent directly out
+// of the URL budget — and this query names the list TWICE (once per column), so each id costs ~74
+// characters. Past a few hundred people the URL outgrows what the API gateway accepts and the
+// whole request comes back as a bare 400 "Bad Request", which `data ?? []` below then quietly
+// reads as "nobody is related to anybody" (found 2026-08-07: 457 ids -> a 35 KB URL -> every
+// family suggestion on the Home page silently missing). Two guards, so no caller can trip that
+// again by simply having a bigger account:
+//   - MAX_SCOPED_IDS: past this the scope isn't buying much anyway (the list is approaching the
+//     whole account), so fetch the table unscoped instead — one small request with no filter at
+//     all, the same "one full-table fetch" pattern familyTree.ts and ImportReview.tsx already use.
+//     Callers get a superset map, which is safe: suggestFamilyMembers only ever walks out from the
+//     seed ids it's handed, so extra entries are never read.
+//   - ID_BATCH_SIZE: below that, the ids go out in URL-sized batches whose results merge into one
+//     map. A row matches if EITHER side is in ANY batch, exactly as the single query did, so the
+//     merged result is identical to what one (working) request would have returned.
+const MAX_SCOPED_IDS = 150
+const ID_BATCH_SIZE = 50
+
+type RelationshipRow = { person_a_id: string; person_b_id: string; kind: string }
+
 // Batched form of getRelationshipsForPerson, for callers that need several people's relationships
 // at once (e.g. suggestFamilyMembers in relationshipSuggestions.ts) without one round-trip each.
 // Pass an id list to scope the query to just those people (either side of the row); omit it to
-// pull the whole table in one shot, same "one full-table fetch" pattern familyTree.ts already
-// uses for the same table. An empty array short-circuits to an empty map, not a scopeless fetch.
+// pull the whole table in one shot. An empty array short-circuits to an empty map, not a scopeless
+// fetch. A long list is handled for you — see the URL-budget note above.
 export async function getRelationshipsMap(personIds?: string[]): Promise<Map<string, PersonRelationships>> {
   const result = new Map<string, PersonRelationships>()
   function ensure(id: string): PersonRelationships {
@@ -105,33 +125,43 @@ export async function getRelationshipsMap(personIds?: string[]): Promise<Map<str
     return rel
   }
 
+  function absorb(rows: RelationshipRow[] | null) {
+    for (const row of rows ?? []) {
+      if (row.kind === 'parent') {
+        ensure(row.person_a_id).childIds.push(row.person_b_id)
+        ensure(row.person_b_id).parentIds.push(row.person_a_id)
+        continue
+      }
+      const a = ensure(row.person_a_id)
+      const b = ensure(row.person_b_id)
+      if (row.kind === 'spouse') {
+        a.spouseIds.push(row.person_b_id)
+        b.spouseIds.push(row.person_a_id)
+      } else if (row.kind === 'partner') {
+        a.partnerIds.push(row.person_b_id)
+        b.partnerIds.push(row.person_a_id)
+      } else if (row.kind === 'sibling') {
+        a.siblingIds.push(row.person_b_id)
+        b.siblingIds.push(row.person_a_id)
+      }
+    }
+  }
+
   if (personIds && personIds.length === 0) return result
 
-  let query = supabase.from('relationships').select('person_a_id, person_b_id, kind')
-  if (personIds) {
-    const idList = personIds.join(',')
-    query = query.or(`person_a_id.in.(${idList}),person_b_id.in.(${idList})`)
+  if (!personIds || personIds.length > MAX_SCOPED_IDS) {
+    const { data } = await supabase.from('relationships').select('person_a_id, person_b_id, kind')
+    absorb(data as RelationshipRow[] | null)
+    return result
   }
-  const { data } = await query
 
-  for (const row of data ?? []) {
-    if (row.kind === 'parent') {
-      ensure(row.person_a_id).childIds.push(row.person_b_id)
-      ensure(row.person_b_id).parentIds.push(row.person_a_id)
-      continue
-    }
-    const a = ensure(row.person_a_id)
-    const b = ensure(row.person_b_id)
-    if (row.kind === 'spouse') {
-      a.spouseIds.push(row.person_b_id)
-      b.spouseIds.push(row.person_a_id)
-    } else if (row.kind === 'partner') {
-      a.partnerIds.push(row.person_b_id)
-      b.partnerIds.push(row.person_a_id)
-    } else if (row.kind === 'sibling') {
-      a.siblingIds.push(row.person_b_id)
-      b.siblingIds.push(row.person_a_id)
-    }
+  for (let i = 0; i < personIds.length; i += ID_BATCH_SIZE) {
+    const idList = personIds.slice(i, i + ID_BATCH_SIZE).join(',')
+    const { data } = await supabase
+      .from('relationships')
+      .select('person_a_id, person_b_id, kind')
+      .or(`person_a_id.in.(${idList}),person_b_id.in.(${idList})`)
+    absorb(data as RelationshipRow[] | null)
   }
   return result
 }

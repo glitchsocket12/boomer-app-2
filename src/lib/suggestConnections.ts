@@ -79,8 +79,11 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
   // Family signal: spouse of a current member, then that couple's kids once the spouse is ALSO a
   // member — same suggestFamilyMembers chaining as GroupDetail.tsx's own per-group "Family of a
   // current member?" box, generalized across every group here (founder feedback 2026-07-26).
-  // Scoped to just people already in some group (cheaper than a full-table relationships fetch);
-  // a suggested spouse/child not yet in personById gets backfilled by id below.
+  // Asks for everyone already in some group. On a small account that scopes the query; past a few
+  // hundred it's most of the table anyway, so getRelationshipsMap fetches it unscoped rather than
+  // building a URL too long for the gateway to accept (see its own note — that overflow was a live
+  // bug here until 2026-08-07). A suggested spouse/child not yet in personById gets backfilled by
+  // id below.
   const relationshipsById = await getRelationshipsMap([...personById.keys()])
   const familyCandidates: { groupId: string; personId: string }[] = []
   for (const group of groups) {
