@@ -96,11 +96,19 @@ export default function VoiceInputButton({
           const { data, error } = await supabase.functions.invoke('transcribe', {
             body: { audio: base64, mimeType: mimeTypeRef.current || 'audio/webm' },
           })
-          if (error || !data?.text) {
+          if (error) {
             showError("Couldn't turn that into text — the voice service may not be set up yet. Try typing this one.")
             return
           }
-          onTranscribed(data.text.trim())
+          // Whisper returns an empty or whitespace-only string for silence, a too-short clip, or an
+          // unusable recording. That's truthy, so it used to count as success and hand back nothing
+          // at all — the mic just went back to idle as though it had worked.
+          const transcript = (data?.text ?? '').trim()
+          if (!transcript) {
+            showError("I didn't catch any words in that — try again, a bit closer to the mic, or type it instead.")
+            return
+          }
+          onTranscribed(transcript)
           setStatus('idle')
         } catch {
           showError("Couldn't turn that into text — try again, or type it instead.")

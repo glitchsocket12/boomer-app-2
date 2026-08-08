@@ -226,6 +226,15 @@ ${otherEvents || "(none)"}`
     let changed = false
     let appliedRename: string | null = null
 
+    // What actually landed, for the progress checklist the frontend shows after a note (see
+    // NoteWithDetection.tsx). Same purpose as update-moment's `applied`, group-shaped.
+    const peopleCreated: string[] = []
+    const peopleAdded: string[] = []
+    const peopleRemoved: string[] = []
+    let eventsTagged = 0
+    let eventsUntagged = 0
+    let notesAdded = 0
+
     if (parsed.rename && parsed.rename.trim()) {
       appliedRename = parsed.rename.trim()
       await supabaseClient.from("groups").update({ name: appliedRename }).eq("id", groupId)
@@ -249,6 +258,7 @@ ${otherEvents || "(none)"}`
           personId = newPerson.id
           idByName[key] = personId
           nameById[personId] = name.trim()
+          peopleCreated.push(name.trim())
         }
       }
       if (personId && !currentMemberIds.has(personId)) {
@@ -257,6 +267,7 @@ ${otherEvents || "(none)"}`
           .upsert({ person_id: personId, group_id: groupId }, { onConflict: "person_id,group_id", ignoreDuplicates: true })
         currentMemberIds.add(personId)
         changed = true
+        peopleAdded.push(nameById[personId] ?? name.trim())
       }
     }
 
@@ -266,6 +277,7 @@ ${otherEvents || "(none)"}`
         await supabaseClient.from("person_groups").delete().eq("person_id", personId).eq("group_id", groupId)
         currentMemberIds.delete(personId)
         changed = true
+        peopleRemoved.push(nameById[personId] ?? name.trim())
       }
     }
 
@@ -276,6 +288,7 @@ ${otherEvents || "(none)"}`
           .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
         taggedMomentIds.add(momentId)
         changed = true
+        eventsTagged++
       }
     }
 
@@ -283,6 +296,7 @@ ${otherEvents || "(none)"}`
       await supabaseClient.from("moment_groups").delete().eq("moment_id", momentId).eq("group_id", groupId)
       taggedMomentIds.delete(momentId)
       changed = true
+      eventsUntagged++
     }
 
     for (const note of parsed.notes ?? []) {
@@ -295,6 +309,7 @@ ${otherEvents || "(none)"}`
           source_group_id: groupId,
         })
         changed = true
+        notesAdded++
       }
     }
 
@@ -320,6 +335,9 @@ ${otherEvents || "(none)"}`
         needsClarification: parsed.needs_clarification === true,
         changed,
         rename: appliedRename,
+        // Itemised so the frontend can tick off what actually happened — see update-moment's
+        // matching `applied` and NoteWithDetection.tsx.
+        applied: { renamed: appliedRename, peopleCreated, peopleAdded, peopleRemoved, eventsTagged, eventsUntagged, notesAdded },
         relationshipSuggestions: familyResult.relationshipSuggestions,
         newPersonSuggestions: familyResult.newPersonSuggestions,
       }),

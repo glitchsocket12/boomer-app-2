@@ -15,6 +15,8 @@ import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { summarize } from '../lib/summarize'
 import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
+import { sortSubEventsByDate } from '../lib/subEvents'
+import { ATTENDEE_PLACEHOLDER, hasSomethingToSummarize } from '../lib/moments'
 import { findOrCreateTagId } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
@@ -111,6 +113,13 @@ export default function EventDetail({
   const [childEvents, setChildEvents] = useState<ChildEventRef[]>([])
   const [addingSubEvent, setAddingSubEvent] = useState(false)
   const [subEventError, setSubEventError] = useState<string | null>(null)
+  // "+ New Sub-event" asks for the date up front instead of creating a shell straight away
+  // (2026-08-08). The parent's start date is still the default — it's usually right, and one tap
+  // accepts it — but showing it makes the inherited date a deliberate choice rather than a silent
+  // one. That matters now that "Associated Events" is ordered by date: an unnoticed inherited date
+  // is what put a whole trip's sub-events on day one and left them sorting by creation order.
+  const [subEventFormOpen, setSubEventFormOpen] = useState(false)
+  const [subEventDateInput, setSubEventDateInput] = useState('')
   // Name, date, and location edited together as one flow (2026-08-07 redesign) — previously two
   // separate pencils (rename up top, "Edit date & location" in the meta row) with two separate
   // forms. Chat parsing is still the primary way these get set day to day; this is the manual
@@ -242,17 +251,25 @@ export default function EventDetail({
       .select('id, occasion, event_date, event_end_date, created_at, notes(people(id, name, last_name))')
       .eq('parent_moment_id', eventId)
       .order('event_date', { ascending: true, nullsFirst: false })
-    setChildEvents(error ? [] : (data as unknown as ChildEventRef[]) ?? [])
+    // Query-level .order() gets the rough order; sortSubEventsByDate makes the same-date tie-breaks
+    // deliberate instead of falling back to creation order (see src/lib/subEvents.ts).
+    setChildEvents(error ? [] : sortSubEventsByDate((data as unknown as ChildEventRef[]) ?? []))
     loadParentEvent()
   }
 
-  // No form up front, same reasoning as GroupDetail.tsx's handleAddSubgroup — creates a blank
-  // shell and drops straight onto its own page. Inherits the parent's event_date (a low-stakes,
-  // trivially-editable default that's very often correct for "one sub-event per day of a trip"),
-  // but deliberately does NOT auto-tag the founder as an attendee the way the top-level "+ Add
-  // Event" flow does — a sub-event carved out of a bigger event isn't necessarily one the founder
-  // personally attended.
-  async function handleAddSubEvent() {
+  function startAddSubEvent() {
+    setSubEventDateInput(moment?.event_date ?? '')
+    setSubEventError(null)
+    setSubEventFormOpen(true)
+  }
+
+  // Everything except the date still follows GroupDetail.tsx's handleAddSubgroup — a blank shell
+  // that drops straight onto its own page, with no attempt to auto-tag the founder as an attendee
+  // the way the top-level "+ Add Event" flow does (a sub-event carved out of a bigger event isn't
+  // necessarily one the founder personally attended). The date is the one thing asked for up
+  // front, defaulted to the parent's start date; see the subEventFormOpen comment above.
+  async function handleAddSubEvent(e: FormEvent) {
+    e.preventDefault()
     if (!moment) return
     setAddingSubEvent(true)
     setSubEventError(null)
@@ -268,7 +285,7 @@ export default function EventDetail({
         raw_description: '',
         location: null,
         when_text: null,
-        event_date: moment.event_date,
+        event_date: subEventDateInput || null,
         parent_moment_id: eventId,
       })
       .select()
@@ -280,6 +297,7 @@ export default function EventDetail({
       return
     }
 
+    setSubEventFormOpen(false)
     onSelectEvent({ id: data.id, summary: 'Untitled moment' })
   }
 
@@ -298,17 +316,43 @@ export default function EventDetail({
     if (!silent) setLoading(false)
 
     // Only worth an AI call once there's actually something to summarize — a freshly-created
-    // blank shell (manual "Add Event") starts with an empty raw_description, and would otherwise
-    // burn a summary call on nothing every time its page loads.
-    if (loaded && !loaded.summary && loaded.raw_description.trim()) {
+    // blank shell (manual "Add Event") has nothing in it but the auto-inserted self-attendee row,
+    // and would otherwise burn a summary call on nothing every time its page loads. Notes alone
+    // are enough though: this used to test raw_description only, which meant a manually-created
+    // event could accumulate any number of notes and stay stuck on "Nothing written yet" forever
+    // (summarize-moment reads the notes perfectly well). See lib/moments.ts.
+    if (loaded && !loaded.summary && hasSomethingToSummarize(loaded)) {
       generateSummary()
     }
+    return loaded
   }
 
+  // Single-flight. Every note produces at least two onSaved calls — one the instant it's inserted,
+  // one when update-moment's detection comes back with changed:true — and each applied suggestion
+  // banner adds another. Without this, each one is a separate paid summarize call, and their
+  // writes can land out of order: an earlier call finishing last overwrites the newer summary with
+  // a staler one that predates the attendee notes. Overlapping requests collapse into a single
+  // trailing rerun, which always sees final state. Also caps tapping in five attendees at 2 calls.
+  const summarizingRef = useRef(false)
+  const resummarizeQueuedRef = useRef(false)
+
   async function generateSummary() {
-    const { data } = await supabase.functions.invoke('summarize-moment', { body: { momentId: eventId } })
-    if (data?.summary) {
-      setMoment((prev) => (prev ? { ...prev, summary: data.summary } : prev))
+    if (summarizingRef.current) {
+      resummarizeQueuedRef.current = true
+      return
+    }
+    summarizingRef.current = true
+    try {
+      const { data } = await supabase.functions.invoke('summarize-moment', { body: { momentId: eventId } })
+      if (data?.summary) {
+        setMoment((prev) => (prev ? { ...prev, summary: data.summary } : prev))
+      }
+    } finally {
+      summarizingRef.current = false
+      if (resummarizeQueuedRef.current) {
+        resummarizeQueuedRef.current = false
+        generateSummary()
+      }
     }
   }
 
@@ -321,14 +365,21 @@ export default function EventDetail({
   }
 
   async function handleNoteSaved() {
+    const previousOccasion = moment?.occasion ?? null
     // Silent refresh: this fires after every chat turn that changed something (not just when the
     // conversation ends), so it must not flash the whole page to a "Loading…" state mid-conversation.
     await supabase.from('moments').update({ summary: null }).eq('id', eventId)
-    await loadMoment(true)
+    const loaded = await loadMoment(true)
+    // update-moment can now name a previously-untitled event on its own, so the breadcrumb has to
+    // follow the same way it does after a manual rename — otherwise the back label sits on
+    // "Untitled moment" while the page heading already shows the real name.
+    if (loaded?.occasion && loaded.occasion !== previousOccasion) {
+      onRenamed?.(summarize(loaded.occasion, loaded.raw_description))
+    }
   }
 
   async function handleAddAttendee(person: PersonRef) {
-    await supabase.from('notes').insert({ person_id: person.id, moment_id: eventId, content: 'Was there.' })
+    await supabase.from('notes').insert({ person_id: person.id, moment_id: eventId, content: ATTENDEE_PLACEHOLDER })
     await handleNoteSaved()
   }
 
@@ -606,6 +657,11 @@ export default function EventDetail({
       childEvents={childEvents}
       addingSubEvent={addingSubEvent}
       subEventError={subEventError}
+      subEventFormOpen={subEventFormOpen}
+      subEventDateInput={subEventDateInput}
+      onStartAddSubEvent={startAddSubEvent}
+      onSubEventDateInputChange={setSubEventDateInput}
+      onCancelAddSubEvent={() => setSubEventFormOpen(false)}
       onAddSubEvent={handleAddSubEvent}
       onBack={onBack}
       backLabel={backLabel}
@@ -693,6 +749,11 @@ export function EventDetailView({
   childEvents = [],
   addingSubEvent = false,
   subEventError = null,
+  subEventFormOpen = false,
+  subEventDateInput = '',
+  onStartAddSubEvent = () => {},
+  onSubEventDateInputChange = () => {},
+  onCancelAddSubEvent = () => {},
   onAddSubEvent = () => {},
   onBack,
   backLabel,
@@ -770,7 +831,12 @@ export function EventDetailView({
   childEvents?: ChildEventRef[]
   addingSubEvent?: boolean
   subEventError?: string | null
-  onAddSubEvent?: () => void
+  subEventFormOpen?: boolean
+  subEventDateInput?: string
+  onStartAddSubEvent?: () => void
+  onSubEventDateInputChange?: (v: string) => void
+  onCancelAddSubEvent?: () => void
+  onAddSubEvent?: (e: FormEvent) => void
   onBack: () => void
   backLabel: string
   allPeople?: PersonRef[]
@@ -841,6 +907,10 @@ export function EventDetailView({
 }) {
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
+  // Save sits right next to the mic in the description editor, so it has to be held shut while a
+  // recording is still being transcribed — otherwise saving mid-transcription silently drops
+  // whatever was just said. See VoiceInputButton's onBusyChange.
+  const [descriptionVoiceBusy, setDescriptionVoiceBusy] = useState(false)
 
   // Built from the full roster (not just tagged groups) so a subgroup's parent name resolves
   // even when the parent itself isn't tagged to this event.
@@ -1028,11 +1098,12 @@ export function EventDetailView({
             />
             <VoiceInputButton
               disabled={savingDescription}
+              onBusyChange={setDescriptionVoiceBusy}
               onTranscribed={(text) => onDescriptionInputChange(descriptionInput ? `${descriptionInput} ${text}` : text)}
             />
           </div>
           <div style={styles.suggestButtonRow}>
-            <button type="submit" disabled={savingDescription} style={styles.saveButton}>
+            <button type="submit" disabled={savingDescription || descriptionVoiceBusy} style={styles.saveButton}>
               {savingDescription ? '…' : 'Save'}
             </button>
             <button type="button" onClick={onCancelEditDescription} style={styles.cancelButton} disabled={savingDescription}>
@@ -1044,7 +1115,7 @@ export function EventDetailView({
         <div style={styles.descriptionRow}>
           <p style={styles.description}>
             {moment.summary ||
-              (moment.raw_description.trim() ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
+              (hasSomethingToSummarize(moment) ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
           </p>
           {!readOnly && (
             <RefreshButton label="Refresh summary" onClick={onRefreshSummary} refreshing={refreshingSummary} />
@@ -1174,13 +1245,45 @@ export function EventDetailView({
         <>
           <div style={styles.suggestionHeaderRow}>
             <h2 style={styles.subheading}>Associated Events</h2>
-            {!readOnly && (
-              <button type="button" onClick={onAddSubEvent} style={styles.addButton} disabled={addingSubEvent}>
+            {!readOnly && !subEventFormOpen && (
+              <button type="button" onClick={onStartAddSubEvent} style={styles.addButton} disabled={addingSubEvent}>
                 {addingSubEvent ? '…' : '+ New Sub-event'}
               </button>
             )}
           </div>
           {subEventError && <p style={styles.factErrorBanner}>{subEventError}</p>}
+          {/* Confirm the date before creating (2026-08-08). The parent's start date is prefilled,
+              so accepting it is one click — but it's now a decision, not a silent default, which is
+              what keeps these tiles genuinely in date order. */}
+          {!readOnly && subEventFormOpen && (
+            <form onSubmit={onAddSubEvent} style={styles.subEventForm}>
+              <label style={styles.metaEditLabel}>
+                What day was this?
+                <input
+                  type="date"
+                  value={subEventDateInput}
+                  onChange={(e) => onSubEventDateInputChange(e.target.value)}
+                  style={styles.metaEditInput}
+                  autoFocus
+                />
+              </label>
+              <p style={styles.subEventFormHint}>
+                {moment.event_date
+                  ? moment.event_end_date && moment.event_end_date !== moment.event_date
+                    ? `"${summarize(moment.occasion, moment.raw_description)}" ran ${formatFullDate(moment)} — pick the day this one happened.`
+                    : `Defaults to the date of "${summarize(moment.occasion, moment.raw_description)}". Change it if this happened on a different day.`
+                  : "This event doesn't have a date yet — add one here if you know it, or leave it blank."}
+              </p>
+              <div style={styles.subEventFormButtons}>
+                <button type="submit" style={styles.saveButton} disabled={addingSubEvent}>
+                  {addingSubEvent ? 'Creating…' : 'Create sub-event'}
+                </button>
+                <button type="button" onClick={onCancelAddSubEvent} style={styles.cancelButton} disabled={addingSubEvent}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
           {childEvents.length === 0 ? (
             <p style={styles.empty}>No sub-events yet.</p>
           ) : (
@@ -1196,7 +1299,11 @@ export function EventDetailView({
                   >
                     <span style={styles.childEventTileName}>{ce.occasion || 'Untitled moment'}</span>
                     <span style={styles.childEventTileMeta}>
-                      {formatFullDate(ce)} · {attendeeCount} {attendeeCount === 1 ? 'person' : 'people'}
+                      {/* Say "Date not set" rather than letting formatFullDate fall back to
+                          created_at (2026-08-08) — on a tile in a date-ordered row, a creation
+                          date reads as the day it happened and makes the ordering look wrong. */}
+                      {ce.event_date ? formatFullDate(ce) : 'Date not set'} · {attendeeCount}{' '}
+                      {attendeeCount === 1 ? 'person' : 'people'}
                     </span>
                   </button>
                 )
@@ -1708,6 +1815,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.onFill,
     cursor: 'pointer',
   },
+  subEventForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: space.sm,
+    alignItems: 'flex-start',
+    margin: `${space.sm} 0 ${space.lg} 0`,
+  },
+  subEventFormHint: { margin: 0, fontSize: fontSize.label, color: colors.textFaint, maxWidth: '34rem' },
+  subEventFormButtons: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
   cancelButton: {
     fontSize: fontSize.body,
     padding: '0.5rem 0.9rem',

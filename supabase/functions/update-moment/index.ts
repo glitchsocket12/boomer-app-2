@@ -69,8 +69,11 @@ serve(async (req) => {
       supabaseClient.from("moments").select("occasion, when_text").neq("id", momentId),
     ])
 
+    // An untitled moment has occasion === null, which template-literals into the truthy string
+    // "null (last week)" and survives .filter(Boolean) — dropping a literal "null" into the
+    // 1h-cached roster tier. Skip unnamed moments outright; they add nothing to the roster anyway.
     const otherEventsRoster = (otherMoments ?? [])
-      .map((m: any) => (m.when_text ? `${m.occasion} (${m.when_text})` : m.occasion))
+      .map((m: any) => (m.occasion ? (m.when_text ? `${m.occasion} (${m.when_text})` : m.occasion) : null))
       .filter(Boolean)
       .join(", ")
 
@@ -124,7 +127,13 @@ serve(async (req) => {
       })
       .join(", ")
 
-    const existingSummary = `Occasion: ${moment?.occasion ?? "unknown"} | Location: ${moment?.location ?? "unknown"} | When (in the user's words): ${moment?.when_text ?? "unknown"} | Resolved calendar date: ${moment?.event_date ?? "not set"} | Resolved end date: ${moment?.event_end_date ?? "not set"} | Already tagged to groups: ${taggedGroupNames.join(", ") || "none"}. Already recorded notes: ${(existingNotes ?? [])
+    // "(not named yet)" is load-bearing: stableInstructions keys its auto-naming rule off this
+    // exact phrase. It rides here in the volatile per-moment tier rather than in the 1h-cached
+    // instruction block, so the cached prefix stays byte-identical (CLAUDE.md rule 3). The old
+    // "unknown" read to the model as "not my business" rather than "this needs a name".
+    const occasionText = moment?.occasion?.trim() || "(not named yet)"
+
+    const existingSummary = `Occasion: ${occasionText} | Location: ${moment?.location ?? "unknown"} | When (in the user's words): ${moment?.when_text ?? "unknown"} | Resolved calendar date: ${moment?.event_date ?? "not set"} | Resolved end date: ${moment?.event_end_date ?? "not set"} | Already tagged to groups: ${taggedGroupNames.join(", ") || "none"}. Already recorded notes: ${(existingNotes ?? [])
       .map((n: any) => `${nameById[n.person_id] ?? "someone"}: ${n.content}`)
       .join("; ") || "none"}`
 
@@ -175,8 +184,9 @@ CRITICAL — the "Who was there" list on the event page is driven ENTIRELY by "a
 - "when_text": the user's own words describing timing (e.g. "fall of 2025"), only when they give timing info different from what's already known.
 - "event_date": your best-guess actual calendar date as "YYYY-MM-DD" matching whatever "when_text" you just set. Resolve relative phrases against today's date, given below — this includes ordinal-day phrasing ("the 4th" = the 4th of the current or most recently-implied month), weekday phrasing ("next Tuesday", "last Saturday" = the nearest matching weekday in that direction from today), and compound phrasing ("two weeks from Saturday", "a week from tomorrow" = do the arithmetic from today's date), not just "last week"/whole-season phrasing. If they name a season, use its first day for the year they mean (spring=Mar 1, summer=Jun 1, fall=Sep 1, winter=Dec 1). If they give a specific month/year, use the 1st of that month. If only a year, use January 1. Always give your single closest best guess rather than a range.
 - "event_end_date": your best-guess actual END calendar date as "YYYY-MM-DD", ONLY when the user describes or corrects a genuine date RANGE (e.g. "it ran from the 3rd to the 10th", "we were there through the following weekend"). Leave null for a single day or when no end is given — never invent a range that wasn't stated.
-- "location" / "occasion": only set when the user is giving new or corrected info for that specific field.
-Leave any of these five keys null when the user didn't touch that field this turn.
+- "location": only set when the user is giving new or corrected info about where the event happened. Never supply a place they didn't name.
+- "occasion": the event's own short name, a few words (e.g. "Fourth of July at the lake", "Sarah's graduation dinner"). Set it when the user gives a new or corrected name for the event — AND ALSO whenever the moment context in this prompt shows the occasion as "(not named yet)". A moment with no name shows up in the user's event list as "Untitled moment", so in that case work a name out from whatever they just described, even if they never stated a literal title. Naming an unnamed event is NOT inventing a detail and does not override the rule above: a name is only a label, so build it strictly out of words and facts the user actually gave you this turn or that are already recorded in this prompt — never out of a guessed place, date, occasion type, or reason. Only leave it null when the occasion is already named, or when what they said is genuinely too thin to name anything from (a single word, or a note purely about a person with no hint of what the occasion was).
+Leave any of these five keys null when the user didn't touch that field this turn — the one exception is "occasion" for a moment shown as "(not named yet)", per the rule above.
 
 "add_groups" is for tagging this MOMENT to a recurring, ongoing affiliation — a school, team, military unit, workplace, or friend circle (the "Associated Groups" section on the event page) — NOT a one-off detail. Only add a group here when the user explicitly says this event belongs with/under that affiliation (e.g. "tag this under my high school friends", "this was a Pop Warner thing", "add this to the Air Force Academy group"), or clearly confirms it after you ask. Reuse an existing group by name from the roster provided in this prompt if it's clearly the same thing (e.g. "my high school friends" matching an existing "High School Friends"); otherwise use exactly the name/phrasing they gave you to create a new one. If the user's own framing strongly suggests a recurring affiliation but doesn't say so explicitly enough to be sure, ask a quick clarifying question ("Want me to tag this under a 'High School Friends' group?") instead of guessing — don't invent a group from a passing mention of a place or a single unaffiliated detail. A group in the roster written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "Parent" — when you mean one already on file, copy its name EXACTLY as listed including that form, since a bare "Pilots" when two are on file can't be resolved and the tag is dropped. If the user's phrasing doesn't make clear which same-named subgroup they mean, ask instead of guessing. Only use the "Parent / Child" form for a new group when you specifically mean a new subgroup under an existing parent.`
 
@@ -222,7 +232,10 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
         },
         body: JSON.stringify({
           model: "claude-sonnet-5",
-          max_tokens: 1500,
+          // 1500 was tight for a turn producing a reply plus several attendee notes plus family
+          // signals — and truncation there silently discarded every structured update while still
+          // returning a friendly reply (see the stop_reason guard below). converse runs 4096.
+          max_tokens: 3000,
           // Four tiers ordered stable-to-volatile — see the matching comment in converse/index.ts.
           system: [
             { type: "text", text: stableInstructions, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -243,6 +256,21 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       }
 
       const data = await response.json()
+
+      // Cache-health check required whenever this function is touched (CLAUDE.md rule 3): on a
+      // repeat turn against the same moment, cache_read_input_tokens must be non-zero. Token
+      // counts only, no prompt content.
+      console.log("update-moment usage", JSON.stringify(data.usage ?? null))
+
+      // A response cut off at max_tokens can't parse as JSON, and the regex fallback below
+      // salvages ONLY "reply" — so without this guard every additional_notes and
+      // moment_field_updates gets silently dropped while the user is told it's all handled.
+      // Fail instead, which triggers the one retry below.
+      if (data.stop_reason === "max_tokens") {
+        console.error("Anthropic response truncated at max_tokens — structured updates would be lost")
+        return { parsed: DEFAULT_PARSED, ok: false }
+      }
+
       const textBlock = data.content?.find((b: any) => b.type === "text")
 
       let parsed: any = { ...DEFAULT_PARSED }
@@ -285,6 +313,14 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
 
     const parsed = result.parsed
 
+    // What actually landed in the database, for the progress checklist the frontend shows after a
+    // note (see NoteWithDetection.tsx). Only ever appended to on a write that succeeded — the
+    // whole point is that the user isn't told something happened when it didn't.
+    const peopleCreated: string[] = []
+    const peopleTagged: string[] = []
+    const groupsAdded: string[] = []
+    const fieldsSet: string[] = []
+
     for (const name of parsed.new_people ?? []) {
       const key = name.toLowerCase()
       if (!idByName[key]) {
@@ -299,6 +335,7 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
         if (newPerson) {
           idByName[key] = newPerson.id
           nameById[newPerson.id] = name.trim()
+          peopleCreated.push(name.trim())
         }
       }
     }
@@ -334,6 +371,8 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
           notesFailed++
         } else {
           notesAdded++
+          const displayName = nameById[personId] ?? rawPerson
+          if (!peopleTagged.includes(displayName)) peopleTagged.push(displayName)
         }
       } else {
         console.error("Could not resolve person for note, skipping", JSON.stringify(note), "known names:", Object.keys(idByName))
@@ -368,7 +407,11 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
           .from("notes")
           .insert({ person_id: existingId, moment_id: momentId, content: note })
         if (error) console.error("Failed to save mentioned-name note", error.message, name)
-        else notesAdded++
+        else {
+          notesAdded++
+          const displayName = nameById[existingId] ?? name
+          if (!peopleTagged.includes(displayName)) peopleTagged.push(displayName)
+        }
         continue
       }
       // Anyone the family-signal path is already asking about gets one banner, not two.
@@ -401,8 +444,20 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     const sanitizedEventEndDate = sanitizeIsoDate(updates?.event_end_date)
     if (sanitizedEventDate) fieldUpdates.event_date = sanitizedEventDate
     if (sanitizedEventEndDate) fieldUpdates.event_end_date = sanitizedEventEndDate
+    let renamed: string | null = null
+    let fieldsApplied = false
     if (Object.keys(fieldUpdates).length > 0) {
-      await supabaseClient.from("moments").update(fieldUpdates).eq("id", momentId)
+      // The error was previously discarded, so an RLS rejection here still reported changed:true
+      // and a cheerful reply while the title stayed "Untitled moment".
+      const { error: fieldError } = await supabaseClient.from("moments").update(fieldUpdates).eq("id", momentId)
+      if (fieldError) {
+        console.error("Failed to apply moment field updates", fieldError.message, JSON.stringify(fieldUpdates))
+      } else {
+        fieldsApplied = true
+        if (fieldUpdates.occasion) renamed = fieldUpdates.occasion
+        if (fieldUpdates.location) fieldsSet.push("location")
+        if (fieldUpdates.when_text || fieldUpdates.event_date || fieldUpdates.event_end_date) fieldsSet.push("date")
+      }
     }
 
     let groupsTagged = 0
@@ -423,17 +478,22 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
         }
       }
       if (groupId && !taggedGroupIds.has(groupId)) {
-        await supabaseClient
+        const { error: tagError } = await supabaseClient
           .from("moment_groups")
           .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
+        if (tagError) {
+          console.error("Failed to tag moment to group", tagError.message, groupName)
+          continue
+        }
         // The group's cached AI summary (see summarize-group) is now stale since its tagged events changed.
         await supabaseClient.from("groups").update({ summary: null }).eq("id", groupId)
         taggedGroupIds.add(groupId)
         groupsTagged++
+        groupsAdded.push(groupNameById[groupId] ?? groupName)
       }
     }
 
-    const changed = (parsed.new_people?.length ?? 0) > 0 || notesAdded > 0 || Object.keys(fieldUpdates).length > 0 || groupsTagged > 0
+    const changed = peopleCreated.length > 0 || notesAdded > 0 || fieldsApplied || groupsTagged > 0
 
     // If everything the user just said failed to save, don't tell them it's handled —
     // the chat bubble is the only feedback they get.
@@ -447,6 +507,9 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
         reply,
         needsClarification: parsed.needs_clarification === true,
         changed,
+        // Itemised so the frontend can tick off what actually happened rather than leaving the
+        // user staring at an unchanged page wondering whether anything ran (see NoteWithDetection).
+        applied: { renamed, fieldsSet, peopleCreated, peopleTagged, groupsTagged: groupsAdded },
         relationshipSuggestions: familyResult.relationshipSuggestions,
         newPersonSuggestions: familyResult.newPersonSuggestions,
         mentionedPeopleSuggestions,

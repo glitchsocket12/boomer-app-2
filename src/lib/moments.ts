@@ -7,6 +7,32 @@ import { supabase } from './supabase'
 
 export type NewEventShell = { id: string }
 
+// The auto-inserted self-attendee row every manual shell starts with (see createEventShell below,
+// and EventDetail's handleAddAttendee). Exported because "is this event still empty?" has to be
+// able to discount it.
+export const ATTENDEE_PLACEHOLDER = 'Was there.'
+
+/**
+ * Is there anything here worth spending a summarize-moment call on? True for a real description,
+ * or for at least one note carrying actual content.
+ *
+ * A freshly-created shell is NOT noteless — it already holds one auto-inserted "Was there." row —
+ * so that placeholder alone doesn't count, or every blank-shell page view would burn an AI call
+ * (CLAUDE.md rule 3). This used to test `raw_description` alone, which meant a manually-created
+ * event (whose raw_description is permanently '') could accumulate any number of notes and still
+ * render "Nothing written yet" forever, even though summarize-moment reads the notes just fine.
+ */
+export function hasSomethingToSummarize(moment: {
+  raw_description: string
+  notes?: { content: string }[] | null
+}): boolean {
+  if (moment.raw_description?.trim()) return true
+  return (moment.notes ?? []).some((n) => {
+    const content = n.content?.trim()
+    return !!content && content !== ATTENDEE_PLACEHOLDER
+  })
+}
+
 /**
  * No form up front — this creates a blank shell (matches "add a person" being an instant save, not
  * a multi-step wizard) for the caller to drop the user onto EventDetail, where title/description/
@@ -44,7 +70,7 @@ export async function createEventShell(): Promise<NewEventShell | null> {
   // notes-row shape EventDetail.tsx's own handleAddAttendee writes.
   const { data: self } = await supabase.from('people').select('id').eq('is_self', true).maybeSingle()
   if (self) {
-    await supabase.from('notes').insert({ person_id: self.id, moment_id: data.id, content: 'Was there.' })
+    await supabase.from('notes').insert({ person_id: self.id, moment_id: data.id, content: ATTENDEE_PLACEHOLDER })
   }
 
   return { id: data.id }

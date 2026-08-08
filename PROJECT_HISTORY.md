@@ -1142,4 +1142,32 @@ Fixed in `getRelationshipsMap` rather than at the call site, so no future caller
 
 ---
 
+## 2026-08-08 — Two doors into the same room: why "+ Add Event" events never filled themselves in
+
+The founder made an event on their phone via **+ Add Event**, left a note by voice, and watched nothing happen: still "Untitled moment", nobody tagged, description still "Nothing written yet". The question they asked is the one worth recording — *"why does it sometimes seem to populate the event with relevant info and other times it seems to just get stuck?"*
+
+It was never intermittent. There are two ways an event gets created, and only one of them was ever taught to fill an event in.
+
+An event born in the **Home chat** goes through `converse`, which carries an explicit instruction: *every `new_moment` entry needs a concise `occasion`… work one out from whatever the user described even if they never stated a literal title.* Those events arrive named and populated.
+
+An event created with **+ Add Event** is a blank shell, and notes on it go through `update-moment` — whose prompt said `occasion` should *"only [be] set when the user is giving new or corrected info for that specific field."* A title is the one field that can never be *stated*; it has to be derived. So that rule structurally excluded the only field that needed deriving, and the event stayed untitled forever. Two functions, two prompts, one instruction present in one and absent in the other — and the founder experienced the gap as flakiness.
+
+**The compounding failures are the more interesting part**, because each one independently produced the same symptom (nothing visibly happened) by a different mechanism:
+
+- **The description could never regenerate.** `handleNoteSaved` cleared the cached summary, then the reload gate refused to rebuild it because it required `raw_description.trim()` — permanently `''` on a manual shell. Meanwhile `summarize-moment` had been reading `moment.notes` correctly the whole time. The summarizer was fine; nobody was allowed to call it.
+- **Long notes silently lost everything.** `max_tokens: 1500`, no `stop_reason` check. A truncated response fails to parse, the regex fallback salvages `reply` and nothing else, and the function returns **200 with a friendly acknowledgement** while every attendee and field update it found is discarded. The nicer the reply, the more convincing the failure.
+- **Write errors were discarded.** An RLS rejection on the title update still reported `changed: true`.
+- **The UI swallowed every failure.** `if (fnError || !data) return`. No spinner (the saving flag cleared *before* the AI call started), no error, and the assistant's reply — including the function's own "That didn't save — mind trying again?" — was never rendered for events at all. A 500 and a successful no-op were pixel-identical.
+- **The mic failed invisibly.** Whisper returns `" "` for silence; `!data?.text` is false for `" "`, so it counted as success and inserted nothing.
+
+**Two lessons worth keeping.**
+
+First: *the same instruction living in two prompts will drift, and users experience the drift as randomness.* `converse` and `update-moment` are both "extract structure from what the user said" paths that had diverged. When a behavior is supposed to be true of the app rather than of one code path, the absence of it somewhere else won't announce itself — it shows up as a founder asking why the app is inconsistent.
+
+Second, and this echoes the fail-open `?? []` lesson above: *a friendly reply is not evidence of success.* Three separate defects here returned cheerful, well-formed, HTTP-200 responses while dropping the user's data on the floor. Truncation, a rejected write, and a swallowed error all rendered as "everything's fine." Worth being suspicious of any path where the success message is generated independently of the thing that was supposed to succeed. The fix that generalizes: the new `applied` payload reports only what a write actually returned without error, and the UI checklist is built from that — so the app can no longer tell the founder it renamed something it didn't.
+
+The progress panel was the founder's own call, and their framing was right: *"I just don't want the user to have to sit there and wonder if the app is doing what it's supposed to."* Notably, we did **not** build fake staged checkmarks ticking off on a timer — the entire wait is one AI call and the database writes after it take under a second, so there is genuinely nothing to stream. One earned checkmark ("Saved your note", true the moment the row lands), an honest pending line, then the real results. Faking granular progress would have been the easy version and a lie about what the app was doing.
+
+---
+
 _End of document. Update this file as the project progresses — it's meant to be the single source of truth for anyone (human or AI) picking this project up._
