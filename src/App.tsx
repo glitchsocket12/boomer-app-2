@@ -36,6 +36,8 @@ import FamilyTree from './pages/FamilyTree'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 import FeedbackWidget from './components/FeedbackWidget'
+import ChoiceSheet from './components/ChoiceSheet'
+import { border, colors, fontFamily, fontSize, radius, shadow, space } from './lib/theme'
 
 type Tab = 'home' | 'people' | 'events' | 'calendar' | 'groups'
 type AuthView = 'landing' | 'login' | 'signup' | 'demo'
@@ -176,6 +178,11 @@ function restoreNav(): { view: Tab; navStack: Crumb[] } {
 export default function App() {
   const [session, setSession] = useState<any>(null)
   const [checkingSession, setCheckingSession] = useState(true)
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  // Avatar initials/label for the account menu — prefers the real self person's name (kept in
+  // sync with however they've actually set it up, e.g. via PersonDetail), falling back to the
+  // auth email for an account that hasn't finished onboarding yet.
+  const [accountLabel, setAccountLabel] = useState<{ initials: string; name: string } | null>(null)
   const [authView, setAuthView] = useState<AuthView>(() => parseAuthViewFromPath(window.location.pathname) ?? 'landing')
   // null = still checking, true = show the standalone onboarding experience instead of the app
   // shell. Gated on two signals together: the account hasn't already finished/skipped onboarding
@@ -313,6 +320,36 @@ export default function App() {
 
     return () => listener.subscription.unsubscribe()
   }, [])
+
+  // Isolated from the main session effect above on purpose — same "don't take the whole shell
+  // down over one field" reasoning as PersonDetail.tsx's gender/contact-info queries (see
+  // project_boomer_infra.md): the avatar is cosmetic, so a missing self person or a slow query
+  // just leaves it on the email-initials fallback rather than blocking anything.
+  useEffect(() => {
+    if (!session?.user) {
+      setAccountLabel(null)
+      return
+    }
+    let cancelled = false
+    supabase
+      .from('people')
+      .select('name, last_name')
+      .eq('is_self', true)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        if (data?.name) {
+          const initials = `${data.name[0] ?? ''}${data.last_name?.[0] ?? ''}`.toUpperCase() || '?'
+          setAccountLabel({ initials, name: [data.name, data.last_name].filter(Boolean).join(' ') })
+        } else {
+          const email = session.user.email ?? ''
+          setAccountLabel({ initials: email.slice(0, 2).toUpperCase() || '?', name: email })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session?.user?.id])
 
   async function checkOnboarding(session: any) {
     if (!session?.user) {
@@ -666,26 +703,61 @@ export default function App() {
     )
   }
 
+  const TABS: { tab: Tab; label: string }[] = [
+    { tab: 'home', label: 'Home' },
+    { tab: 'people', label: 'People' },
+    { tab: 'events', label: 'Events' },
+    { tab: 'calendar', label: 'Calendar' },
+    { tab: 'groups', label: 'Groups' },
+  ]
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem 1.5rem' }}>
-        <div>
-          <button onClick={() => goToTab('home')} style={{ marginRight: '0.5rem' }}>Home</button>
-          <button onClick={() => goToTab('people')} style={{ marginRight: '0.5rem' }}>People</button>
-          <button onClick={() => goToTab('events')} style={{ marginRight: '0.5rem' }}>Events</button>
-          <button onClick={() => goToTab('calendar')} style={{ marginRight: '0.5rem' }}>Calendar</button>
-          <button onClick={() => goToTab('groups')}>Groups</button>
+      <div style={navStyles.bar}>
+        <div style={navStyles.left}>
+          <span style={navStyles.wordmark}>Boomer</span>
+          {TABS.map((t) => (
+            <button
+              key={t.tab}
+              onClick={() => goToTab(t.tab)}
+              style={view === t.tab ? navStyles.linkActive : navStyles.link}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
-        <div>
-          <button
-            onClick={() => pushCrumb({ type: 'settings', id: 'settings', label: 'Settings' })}
-            style={{ marginRight: '0.5rem' }}
-          >
-            Settings
-          </button>
-          <button onClick={() => supabase.auth.signOut()}>Log out</button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setAccountMenuOpen(true)}
+          style={navStyles.avatar}
+          title={accountLabel?.name ?? 'Account'}
+          aria-label="Account menu"
+        >
+          {accountLabel?.initials ?? '·'}
+        </button>
       </div>
+
+      <ChoiceSheet
+        open={accountMenuOpen}
+        onClose={() => setAccountMenuOpen(false)}
+        title={accountLabel?.name ?? 'Account'}
+        actions={[
+          {
+            label: 'Settings',
+            onClick: () => {
+              setAccountMenuOpen(false)
+              pushCrumb({ type: 'settings', id: 'settings', label: 'Settings' })
+            },
+          },
+          {
+            label: 'Log out',
+            onClick: () => {
+              setAccountMenuOpen(false)
+              supabase.auth.signOut()
+            },
+          },
+        ]}
+      />
 
       {breadcrumbItems && <Breadcrumb items={breadcrumbItems} />}
 
@@ -694,4 +766,56 @@ export default function App() {
       <FeedbackWidget pageLabel={feedbackPageLabel} />
     </div>
   )
+}
+
+const navStyles: { [key: string]: React.CSSProperties } = {
+  bar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0.75rem 1.5rem',
+    borderBottom: border.light,
+    backgroundColor: colors.surface,
+    fontFamily,
+  },
+  left: { display: 'flex', alignItems: 'center', gap: space.xs },
+  wordmark: { fontSize: fontSize.lead, fontWeight: 'bold', color: colors.ink, marginRight: space.lg },
+  link: {
+    background: 'none',
+    border: 'none',
+    color: colors.textMuted,
+    fontSize: fontSize.body,
+    fontFamily,
+    padding: '0.4rem 0.6rem',
+    borderRadius: radius.sm,
+    cursor: 'pointer',
+  },
+  linkActive: {
+    background: 'none',
+    border: 'none',
+    color: colors.ink,
+    fontWeight: 'bold',
+    fontSize: fontSize.body,
+    fontFamily,
+    padding: '0.4rem 0.6rem',
+    borderRadius: radius.sm,
+    cursor: 'pointer',
+  },
+  avatar: {
+    width: '34px',
+    height: '34px',
+    borderRadius: radius.circle,
+    border: 'none',
+    backgroundColor: colors.primary,
+    color: colors.onFill,
+    fontSize: fontSize.small,
+    fontWeight: 'bold',
+    fontFamily,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    letterSpacing: '-0.02em',
+    boxShadow: shadow.button,
+  },
 }
