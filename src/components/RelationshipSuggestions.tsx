@@ -345,7 +345,7 @@ export const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.4rem 0.85rem',
     borderRadius: radius.sm,
     border: 'none',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     cursor: 'pointer',
   },

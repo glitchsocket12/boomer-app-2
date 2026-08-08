@@ -12,78 +12,96 @@
 // that EVERY screen reads from here, so a palette or type-scale change is ~8 lines instead of a
 // 46-file edit — the sweep of the remaining files is tracked there and is not done yet.
 
-/** Brand + semantic colors. Names describe the ROLE, so the hex can change without renaming. */
+/**
+ * Brand + semantic colors. Names describe the ROLE, so the hex can change without renaming.
+ *
+ * Repositioned 2026-08-07 (founder-directed, mockup-approved): flatter/cooler "Airtable-inspired"
+ * palette in place of the original warm forest-green set. The one role that actually SPLIT rather
+ * than just changing value is `ink` — it used to do double duty as both text color and the fill
+ * color for buttons/active accents. It's now text-only; `primary` is the new accent. Anywhere that
+ * used `colors.ink` as a background/border accent (not as text) was swept over to `colors.primary`
+ * alongside this change — see the sweep note in PROJECT_CONTEXT.md.
+ *
+ * The `suggest`/`event`/`tree`/`info` family below is deliberately built from ONE shared HSL
+ * recipe (same saturation/lightness, only the hue changes) rather than four independently-picked
+ * hexes — that inconsistency is exactly what read as "disjointed" in the mockup review.
+ */
 export const colors = {
   // --- Core brand -------------------------------------------------------------------
-  /** Deep forest green. The primary brand color: headings, body text, filled buttons. */
-  ink: '#2E4034',
+  /** Near-black. Heading/body text — no longer doubles as a button fill (see `primary`). */
+  ink: '#1D1F25',
   /** Softer near-black used for secondary body copy that shouldn't read as branded. */
   inkPlain: '#2E2E2E',
-  /** Pale green. Borders/backgrounds of "resting" cards in the green family. */
-  inkPale: '#CFE0D6',
-  /** Very light green wash, e.g. subtle highlighted rows. */
-  inkWash: '#F4F8F5',
+  /** Pale blue. Borders/backgrounds of "resting" cards in the brand-accent family. */
+  inkPale: '#DCEAFC',
+  /** Very light blue wash, e.g. subtle highlighted rows. */
+  inkWash: '#E8F1FE',
 
-  /** Terracotta. Destructive/negative actions (remove, delete, reject) and error text. */
-  danger: '#B04A3B',
+  /** The brand accent: filled buttons, active states, links — what `ink` used to do. */
+  primary: '#2D7FF9',
+  /** Hover/pressed state for `primary`. */
+  primaryHover: '#1C6FE8',
+
+  /** Destructive/negative actions (remove, delete, reject) and error text. */
+  danger: '#E5484D',
   /** Brighter red for a live/recording state (VoiceInputButton) — deliberately louder than danger. */
-  dangerLoud: '#B23B3B',
+  dangerLoud: '#FF4D4F',
 
   /** Success/confirmation text ("Saved", "Added to group"). */
-  success: '#3A7A4A',
+  success: '#1F9254',
 
   // --- Suggestion / "needs your attention" family (the gold set) ---------------------
   /** Gold text on suggestion chips and pending-review copy. */
-  suggest: '#8A6A1F',
+  suggest: 'hsl(40, 55%, 30%)',
   /** Darker gold for denser suggestion body text. */
-  suggestDeep: '#5A4A20',
+  suggestDeep: 'hsl(40, 55%, 22%)',
   /** Gold used as a fill (accept-suggestion buttons). */
-  suggestFill: '#B08B2E',
+  suggestFill: 'hsl(40, 68%, 55%)',
   /** Gold border on suggestion cards/chips. */
-  suggestBorder: '#E6D6AC',
+  suggestBorder: 'hsl(40, 45%, 70%)',
   /** Cream background behind suggestion cards/chips. */
-  suggestBg: '#FBF3E0',
+  suggestBg: 'hsl(40, 50%, 95%)',
 
-  // --- Event family (the blue set on event chips) ------------------------------------
+  // --- Event family (the teal set on event chips) -------------------------------------
   /** Text on an event chip. */
-  event: '#2C5079',
+  event: 'hsl(168, 55%, 28%)',
   /** Event-chip border. */
-  eventBorder: '#3B6EA5',
+  eventBorder: 'hsl(168, 45%, 65%)',
   /** Event-chip background. */
-  eventBg: '#EAF1FA',
+  eventBg: 'hsl(168, 50%, 95%)',
 
   /** Purple accent, used only for family-tree links out of Circle.tsx. */
-  tree: '#6B4E9E',
-  /** Teal accent, used for calendar/import affordances. */
-  info: '#4A7A8A',
+  tree: 'hsl(265, 55%, 32%)',
+  /** Rose accent, used for calendar/import affordances. */
+  info: 'hsl(336, 55%, 34%)',
 
   // --- Surfaces ---------------------------------------------------------------------
   /** App background (also set on <body> in index.css — keep the two in sync). */
-  appBg: '#F7F5F2',
+  appBg: '#F8F8FA',
   /** Card/panel surface. */
-  surface: '#FFF',
+  surface: '#FFFFFF',
   /** Slightly recessed surface (inset panels, disabled fields). */
-  surfaceSunk: '#FAFAFA',
-  /** Warm divider tint on the app background. */
-  divider: '#F0EEE8',
-  /** Warmer divider, one step darker than `divider`. */
-  dividerWarm: '#E2DFD6',
+  surfaceSunk: '#F3F4F6',
+  /** Divider tint on the app background. */
+  divider: '#EDEEF0',
+  /** Divider, one step darker than `divider`. */
+  dividerWarm: '#E3E5E8',
 
   // --- Neutral text ramp (dark → light) ---------------------------------------------
-  textStrong: '#222',
-  textBody: '#555',
-  textMuted: '#666',
-  textSubtle: '#777',
-  textFaint: '#888',
-  textFaintest: '#999',
+  textStrong: '#1D1F25',
+  textBody: '#4A4F57',
+  textMuted: '#6B7280',
+  textSubtle: '#80868F',
+  textFaint: '#9AA0A8',
+  textFaintest: '#A6ACB4',
   /** Text on a filled dark button. */
-  onFill: '#FFF',
+  onFill: '#FFFFFF',
 
   // --- Neutral lines ----------------------------------------------------------------
   /** Default input/card border. */
-  line: '#CCC',
+  line: '#DDE1E6',
   /** Lighter hairline. */
-  lineLight: '#E0E0E0',
+  lineLight: '#EDEEF0',
 } as const
 
 /**
@@ -153,10 +171,10 @@ export const subgroupPalette = [
 
 /** Border-radius scale. `pill` for chips/tags, `circle` for avatars. */
 export const radius = {
-  sm: '6px',
-  md: '8px',
-  lg: '10px',
-  xl: '12px',
+  sm: '7px',
+  md: '9px',
+  lg: '12px',
+  xl: '16px',
   pill: '999px',
   circle: '50%',
 } as const
@@ -176,8 +194,8 @@ export const fontSize = {
   h1: '2rem',
 } as const
 
-/** The app is set in Georgia throughout — this is the single source for that. */
-export const fontFamily = 'Georgia, serif'
+/** System sans throughout — this is the single source for that (was Georgia serif). */
+export const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
 
 /**
  * Spacing scale, for `gap` and the two halves of a `padding` shorthand.
@@ -205,10 +223,10 @@ export const maxWidth = {
 
 /** Elevation. `card` is the default resting shadow; `raised` for menus/modals. */
 export const shadow = {
-  card: '0 1px 6px rgba(0,0,0,0.06)',
-  button: '0 1px 3px rgba(0,0,0,0.15)',
-  raised: '0 2px 12px rgba(0,0,0,0.08)',
-  modal: '0 4px 14px rgba(0,0,0,0.12)',
+  card: '0 1px 2px rgba(16,24,40,0.03), 0 2px 6px rgba(16,24,40,0.06)',
+  button: '0 1px 3px rgba(16,24,40,0.12)',
+  raised: '0 4px 16px rgba(16,24,40,0.10)',
+  modal: '0 8px 28px rgba(16,24,40,0.16)',
 } as const
 
 /** Pre-composed 1px borders — these exact shorthands appear ~150 times across the app. */
@@ -216,8 +234,10 @@ export const border = {
   /** Default input/card outline. */
   default: `1px solid ${colors.line}`,
   light: `1px solid ${colors.lineLight}`,
-  /** Green-family card outline. */
+  /** Near-black outline — text-emphasis contexts, not buttons (use `primary` for that). */
   ink: `1px solid ${colors.ink}`,
+  /** Brand-accent outline — active/selected cards, and buttons (was `ink`'s job). */
+  primary: `1px solid ${colors.primary}`,
   inkPale: `1px solid ${colors.inkPale}`,
   /** Suggestion-card outline (gold). */
   suggest: `1px solid ${colors.suggestBorder}`,

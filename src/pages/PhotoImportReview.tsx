@@ -353,7 +353,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 1rem',
     borderRadius: radius.md,
     border: 'none',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     cursor: 'pointer',
     fontFamily,
@@ -389,6 +389,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   clusterActions: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' },
   choiceButton: { fontSize: fontSize.label, padding: '0.4rem 0.75rem', borderRadius: radius.md, border: border.default, backgroundColor: colors.surface, color: colors.inkPlain, cursor: 'pointer', fontFamily },
-  choiceButtonActive: { fontSize: fontSize.label, padding: '0.4rem 0.75rem', borderRadius: radius.md, border: border.ink, backgroundColor: neutral.sageWash, color: colors.ink, cursor: 'pointer', fontFamily },
+  choiceButtonActive: { fontSize: fontSize.label, padding: '0.4rem 0.75rem', borderRadius: radius.md, border: border.primary, backgroundColor: neutral.sageWash, color: colors.ink, cursor: 'pointer', fontFamily },
   pickerWrap: { flex: 1, minWidth: '220px' },
 }

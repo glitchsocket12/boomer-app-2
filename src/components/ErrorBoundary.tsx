@@ -33,7 +33,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
                 padding: '0.75rem 1.75rem',
                 borderRadius: radius.md,
                 border: 'none',
-                backgroundColor: colors.ink,
+                backgroundColor: colors.primary,
                 color: neutral.white,
                 cursor: 'pointer',
                 marginTop: space.md,

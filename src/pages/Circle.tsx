@@ -296,7 +296,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 1rem',
     borderRadius: radius.md,
     border: 'none',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     cursor: 'pointer',
     fontFamily,

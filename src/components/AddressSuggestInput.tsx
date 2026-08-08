@@ -162,7 +162,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   resultButtonHighlighted: {
     backgroundColor: colors.inkWash,
-    border: border.ink,
+    border: border.primary,
   },
   liveBadge: {
     fontSize: fontSize.micro,

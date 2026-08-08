@@ -36,7 +36,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.body,
     padding: '0.35rem 0.8rem',
     borderRadius: radius.pill,
-    border: border.ink,
+    border: border.primary,
     backgroundColor: 'transparent',
     color: colors.ink,
     cursor: 'pointer',

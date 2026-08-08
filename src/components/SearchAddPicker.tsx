@@ -128,7 +128,7 @@ export default function SearchAddPicker({
               const base = row.kind === 'create' ? styles.createButton : styles.resultButton
               // Dashed stays dashed when highlighted, so the create row keeps reading as "this
               // makes something new" rather than turning into just another match.
-              const activeBorder = `1px ${row.kind === 'create' ? 'dashed' : 'solid'} ${colors.ink}`
+              const activeBorder = `1px ${row.kind === 'create' ? 'dashed' : 'solid'} ${colors.primary}`
               return (
                 <button
                   key={row.kind === 'create' ? '__create__' : row.item.id}
@@ -185,7 +185,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   // style properties across rerenders.
   activeRow: {
     backgroundColor: colors.inkWash,
-    boxShadow: `inset 3px 0 0 ${colors.ink}`,
+    boxShadow: `inset 3px 0 0 ${colors.primary}`,
   },
   createButton: {
     textAlign: 'left',

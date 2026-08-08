@@ -430,7 +430,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 1.1rem',
     borderRadius: radius.md,
     border: 'none',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.surface,
     cursor: 'pointer',
     whiteSpace: 'nowrap',

@@ -671,7 +671,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 1.1rem',
     borderRadius: radius.md,
     border: 'none',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
@@ -699,8 +699,8 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   // Deliberately the green "ink" family rather than the gold "suggestion" family used for AI
   // suggestions elsewhere, so "I dragged this myself" never reads as "the AI proposed this".
-  cardDroppable: { outline: `1px dashed ${colors.ink}`, outlineOffset: '2px' },
-  cardDropActive: { outline: `2px solid ${colors.ink}`, outlineOffset: '2px', backgroundColor: colors.inkWash },
+  cardDroppable: { outline: `1px dashed ${colors.primary}`, outlineOffset: '2px' },
+  cardDropActive: { outline: `2px solid ${colors.primary}`, outlineOffset: '2px', backgroundColor: colors.inkWash },
   cardBeingDragged: { opacity: 0.4 },
   dragHandle: {
     cursor: 'grab',
@@ -715,14 +715,14 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.base,
     padding: '0.5rem 1rem',
     borderRadius: radius.pill,
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     boxShadow: shadow.card,
     fontFamily,
     cursor: 'grabbing',
   },
   rootDropStrip: {
-    border: `1px dashed ${colors.ink}`,
+    border: `1px dashed ${colors.primary}`,
     borderRadius: radius.md,
     padding: '0.75rem 1rem',
     marginBottom: space.lg,
@@ -731,7 +731,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'center',
     backgroundColor: colors.inkWash,
   },
-  rootDropStripActive: { border: `2px solid ${colors.ink}`, backgroundColor: colors.inkPale, color: colors.inkPlain },
+  rootDropStripActive: { border: `2px solid ${colors.primary}`, backgroundColor: colors.inkPale, color: colors.inkPlain },
   collapseButton: {
     background: 'none',
     border: 'none',

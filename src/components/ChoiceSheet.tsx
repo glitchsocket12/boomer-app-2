@@ -131,7 +131,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   actionPrimary: {
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     border: 'none',
   },

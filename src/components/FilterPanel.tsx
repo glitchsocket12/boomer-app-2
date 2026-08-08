@@ -129,7 +129,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.5rem 0.25rem',
   },
   doneButton: {
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     border: 'none',
     borderRadius: radius.md,

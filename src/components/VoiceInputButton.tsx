@@ -210,7 +210,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     right: 0,
     width: 'max-content',
     maxWidth: '240px',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.primary,
     color: colors.onFill,
     fontSize: fontSize.label,
     lineHeight: 1.4,
