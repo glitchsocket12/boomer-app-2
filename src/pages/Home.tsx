@@ -17,11 +17,15 @@ import MentionedPeopleSuggestionBanners, {
 import DevOnboardingReset from '../components/DevOnboardingReset'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import {
-  loadConnectionSuggestions,
+  loadHomeSuggestions,
   acceptConnectionSuggestion,
   dismissConnectionSuggestion,
-  type ConnectionSuggestion,
+  suggestionKey,
+  type HomeSuggestion,
 } from '../lib/suggestConnections'
+import { dismissSuggestion } from '../lib/dismissedSuggestions'
+import { acceptCoParentGap, acceptCoupleGap } from '../lib/suggestRelationshipGaps'
+import { acceptEventGroupSuggestion } from '../lib/suggestEventGroups'
 import {
   loadFamilyTagSuggestions,
   acceptFamilyTagSuggestion,
@@ -91,7 +95,7 @@ export default function Home({
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [mentionedPeopleSuggestions, setMentionedPeopleSuggestions] = useState<MentionedPersonSuggestion[]>([])
-  const [connectionSuggestions, setConnectionSuggestions] = useState<ConnectionSuggestion[]>([])
+  const [connectionSuggestions, setConnectionSuggestions] = useState<HomeSuggestion[]>([])
   const [familyTagSuggestions, setFamilyTagSuggestions] = useState<FamilyTagSuggestion[]>([])
   const [suggestionActionError, setSuggestionActionError] = useState<string | null>(null)
   const groupRoster = useGroupRoster()
@@ -161,9 +165,9 @@ export default function Home({
   }, [])
 
   // Free/deterministic, so it's cheap to just recompute on every Home visit rather than caching —
-  // see lib/suggestConnections.ts for the actual signal (event attendance + associated groups).
+  // see lib/suggestConnections.ts for the four signals this pools together.
   useEffect(() => {
-    loadConnectionSuggestions().then(setConnectionSuggestions)
+    loadHomeSuggestions().then(setConnectionSuggestions)
   }, [])
 
   // Same "cheap enough to recompute every visit" reasoning as loadConnectionSuggestions —
@@ -212,26 +216,51 @@ export default function Home({
 
   // Only drop the suggestion from local state once the write is confirmed — previously this
   // removed it optimistically and never checked for an error, so a failed write (silently)
-  // left nothing saved, and since loadConnectionSuggestions recomputes from the DB fresh on
-  // every visit, the same suggestion just reappeared next time (bug reported 2026-08-03).
-  async function handleAcceptConnection(suggestion: ConnectionSuggestion) {
+  // left nothing saved, and since the suggestions recompute from the DB fresh on every visit,
+  // the same suggestion just reappeared next time (bug reported 2026-08-03). Every branch below
+  // keeps that contract, including the three question types added 2026-08-08.
+  async function runSuggestionAction(suggestion: HomeSuggestion, write: () => Promise<{ error: string | null }>) {
     setSuggestionActionError(null)
-    const { error } = await acceptConnectionSuggestion(suggestion.person.id, suggestion.group.id)
+    const { error } = await write()
     if (error) {
       setSuggestionActionError(`Couldn't save that — ${error}`)
       return
     }
-    setConnectionSuggestions((prev) => prev.filter((s) => s !== suggestion))
+    const key = suggestionKey(suggestion)
+    setConnectionSuggestions((prev) => prev.filter((s) => suggestionKey(s) !== key))
   }
 
-  async function handleDismissConnection(suggestion: ConnectionSuggestion) {
-    setSuggestionActionError(null)
-    const { error } = await dismissConnectionSuggestion(suggestion.person.id, suggestion.group.id)
-    if (error) {
-      setSuggestionActionError(`Couldn't save that — ${error}`)
-      return
-    }
-    setConnectionSuggestions((prev) => prev.filter((s) => s !== suggestion))
+  async function handleAcceptConnection(suggestion: HomeSuggestion) {
+    await runSuggestionAction(suggestion, () => {
+      switch (suggestion.kind) {
+        case 'person_group':
+          return acceptConnectionSuggestion(suggestion.person.id, suggestion.group.id)
+        case 'family_coparent':
+          return acceptCoParentGap(suggestion)
+        case 'family_couple':
+          return acceptCoupleGap(suggestion)
+        case 'event_group':
+          return acceptEventGroupSuggestion(suggestion.momentId, suggestion.groupId)
+      }
+    })
+  }
+
+  // person_group keeps writing to groups.dismissed_person_ids so a "No" here still holds when that
+  // group's own page is opened later; the newer types have no such column and use the shared
+  // dismissed_suggestions table instead (see lib/dismissedSuggestions.ts).
+  async function handleDismissConnection(suggestion: HomeSuggestion) {
+    await runSuggestionAction(suggestion, () => {
+      switch (suggestion.kind) {
+        case 'person_group':
+          return dismissConnectionSuggestion(suggestion.person.id, suggestion.group.id)
+        case 'family_coparent':
+          return dismissSuggestion('family_coparent', suggestion.parentId, suggestion.childId)
+        case 'family_couple':
+          return dismissSuggestion('family_couple', suggestion.aId, suggestion.bId)
+        case 'event_group':
+          return dismissSuggestion('event_group', suggestion.momentId, suggestion.groupId)
+      }
+    })
   }
 
   async function handleAcceptFamilyTag(suggestion: FamilyTagSuggestion) {
@@ -429,9 +458,9 @@ export function HomeView({
   setMentionedPeopleSuggestions?: Dispatch<SetStateAction<MentionedPersonSuggestion[]>>
   // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
   groupLabel?: GroupLabelFn
-  connectionSuggestions?: ConnectionSuggestion[]
-  onAcceptConnection?: (suggestion: ConnectionSuggestion) => void
-  onDismissConnection?: (suggestion: ConnectionSuggestion) => void
+  connectionSuggestions?: HomeSuggestion[]
+  onAcceptConnection?: (suggestion: HomeSuggestion) => void
+  onDismissConnection?: (suggestion: HomeSuggestion) => void
   familyTagSuggestions?: FamilyTagSuggestion[]
   onAcceptFamilyTag?: (suggestion: FamilyTagSuggestion) => void
   onDismissFamilyTag?: (suggestion: FamilyTagSuggestion) => void
@@ -569,20 +598,81 @@ export function HomeView({
               {connectionSuggestions.length > 0 && (
                 <div style={styles.leaderboardCard}>
                   <h3 style={styles.leaderboardTitle}>Connections to make</h3>
-                  <p style={styles.leaderboardSubtitle}>People who look connected to a group, based on events and shared circles</p>
+                  <p style={styles.leaderboardSubtitle}>Things that look true from your own data, but were never written down</p>
                   {connectionSuggestions.map((s) => (
-                    <div key={`${s.group.id}:${s.person.id}`} style={styles.connectionRow}>
+                    <div key={suggestionKey(s)} style={styles.connectionRow}>
                       <span style={styles.connectionText}>
-                        Add{' '}
-                        <button onClick={() => onSelectPerson(s.person)} style={styles.connectionLink}>
-                          {s.person.name}
-                          {s.person.last_name ? ` ${s.person.last_name}` : ''}
-                        </button>{' '}
-                        to{' '}
-                        <button onClick={() => onSelectGroup(s.group)} style={styles.connectionLink}>
-                          {groupLabel(s.group.id, s.group.name)}
-                        </button>
-                        ?
+                        {s.kind === 'person_group' && (
+                          <>
+                            Add{' '}
+                            <button onClick={() => onSelectPerson(s.person)} style={styles.connectionLink}>
+                              {s.person.name}
+                              {s.person.last_name ? ` ${s.person.last_name}` : ''}
+                            </button>{' '}
+                            to{' '}
+                            <button onClick={() => onSelectGroup(s.group)} style={styles.connectionLink}>
+                              {groupLabel(s.group.id, s.group.name)}
+                            </button>
+                            ?
+                          </>
+                        )}
+                        {s.kind === 'family_coparent' && (
+                          <>
+                            Is{' '}
+                            <button
+                              onClick={() => onSelectPerson({ id: s.parentId, name: s.parentName })}
+                              style={styles.connectionLink}
+                            >
+                              {s.parentName}
+                            </button>{' '}
+                            also a parent of{' '}
+                            <button
+                              onClick={() => onSelectPerson({ id: s.childId, name: s.childName })}
+                              style={styles.connectionLink}
+                            >
+                              {s.childName}
+                            </button>
+                            ?
+                          </>
+                        )}
+                        {s.kind === 'family_couple' && (
+                          <>
+                            Are{' '}
+                            <button
+                              onClick={() => onSelectPerson({ id: s.aId, name: s.aName })}
+                              style={styles.connectionLink}
+                            >
+                              {s.aName}
+                            </button>{' '}
+                            and{' '}
+                            <button
+                              onClick={() => onSelectPerson({ id: s.bId, name: s.bName })}
+                              style={styles.connectionLink}
+                            >
+                              {s.bName}
+                            </button>{' '}
+                            married? They share a child ({s.childName}).
+                          </>
+                        )}
+                        {s.kind === 'event_group' && (
+                          <>
+                            Tag{' '}
+                            <button
+                              onClick={() => onSelectEvent({ id: s.momentId, summary: s.momentTitle })}
+                              style={styles.connectionLink}
+                            >
+                              {s.momentTitle}
+                            </button>{' '}
+                            as{' '}
+                            <button
+                              onClick={() => onSelectGroup({ id: s.groupId, name: s.groupName })}
+                              style={styles.connectionLink}
+                            >
+                              {groupLabel(s.groupId, s.groupName)}
+                            </button>
+                            ? Everyone who was there is a member.
+                          </>
+                        )}
                       </span>
                       <div style={styles.connectionButtons}>
                         <button onClick={() => onAcceptConnection?.(s)} style={styles.connectionYesButton}>

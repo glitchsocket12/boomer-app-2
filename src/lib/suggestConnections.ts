@@ -1,14 +1,38 @@
 import { supabase } from './supabase'
 import { getRelationshipsMap } from './relationshipsTable'
 import { suggestFamilyMembers } from './relationshipSuggestions'
+import { loadDismissals } from './dismissedSuggestions'
+import type { RelationshipGapSuggestion } from './suggestRelationshipGaps'
+import { loadRelationshipGapSuggestions } from './suggestRelationshipGaps'
+import type { EventGroupSuggestion } from './suggestEventGroups'
+import { loadEventGroupSuggestions } from './suggestEventGroups'
 
 export type ConnectionPerson = { id: string; name: string; last_name: string | null }
 export type ConnectionGroup = { id: string; name: string }
-export type ConnectionSuggestion = { person: ConnectionPerson; group: ConnectionGroup }
+export type ConnectionSuggestion = { kind: 'person_group'; person: ConnectionPerson; group: ConnectionGroup }
+
+// Everything Home's "Connections to make" card can ask about. One card, several question shapes —
+// see loadHomeSuggestions at the bottom for why they're pooled rather than given a card each.
+export type HomeSuggestion = ConnectionSuggestion | RelationshipGapSuggestion | EventGroupSuggestion
+
+// Stable identity for a suggestion, independent of object identity — Home uses it as the React key
+// and to drop the right row from local state once a write comes back clean.
+export function suggestionKey(s: HomeSuggestion): string {
+  switch (s.kind) {
+    case 'person_group':
+      return `person_group:${s.group.id}:${s.person.id}`
+    case 'family_coparent':
+      return `family_coparent:${s.parentId}:${s.childId}`
+    case 'family_couple':
+      return `family_couple:${s.aId}:${s.bId}`
+    case 'event_group':
+      return `event_group:${s.momentId}:${s.groupId}`
+  }
+}
 
 // How many suggestions Home shows at once — a rotating sample (see the shuffle below), not a
 // fixed batch, since founders add people over time and the full candidate pool changes as they do.
-const SAMPLE_SIZE = 4
+const SAMPLE_SIZE = 6
 
 // Generalizes GroupDetail.tsx's own per-group suggestion logic (event attendance on a
 // group-tagged moment, membership in a CONFIRMED associated group, or family — spouse of a
@@ -16,6 +40,9 @@ const SAMPLE_SIZE = 4
 // Home-page nudge. Deliberately free/deterministic, no AI call — same signals GroupDetail already
 // surfaces one group at a time, just aggregated, so it's cheap enough to recompute on every Home
 // visit instead of needing a cache (CLAUDE.md rule 3).
+//
+// Returns the WHOLE candidate pool; sampling happens in loadHomeSuggestions, which has to balance
+// this pool against the other question types.
 export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[]> {
   const [groupsRes, personGroupsRes, associationsRes] = await Promise.all([
     supabase.from('groups').select('id, name, dismissed_person_ids, suggestions_enabled'),
@@ -64,7 +91,11 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
     if (!group) return
     if (group.suggestions_enabled !== true) return
     if ((group.dismissed_person_ids ?? []).includes(person.id)) return
-    suggestionsByKey.set(`${groupId}:${person.id}`, { person, group: { id: group.id, name: group.name } })
+    suggestionsByKey.set(`${groupId}:${person.id}`, {
+      kind: 'person_group',
+      person,
+      group: { id: group.id, name: group.name },
+    })
   }
 
   for (const row of (attendanceRes.data as unknown as { person_id: string; moment_id: string; people: ConnectionPerson | null }[]) ?? []) {
@@ -101,15 +132,59 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
   }
   for (const f of familyCandidates) addCandidate(f.groupId, personById.get(f.personId))
 
-  const all = [...suggestionsByKey.values()]
-  // Fisher-Yates shuffle so repeat Home visits surface a different slice of a large candidate
-  // pool instead of always the same first few (a founder who never gets to today's batch would
-  // otherwise never see the rest).
+  return [...suggestionsByKey.values()]
+}
+
+// Fisher-Yates, so repeat Home visits surface a different slice of a large candidate pool instead
+// of always the same first few (a founder who never gets to today's batch would otherwise never
+// see the rest).
+function shuffled<T>(items: T[]): T[] {
+  const all = [...items]
   for (let i = all.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
     ;[all[i], all[j]] = [all[j], all[i]]
   }
-  return all.slice(0, SAMPLE_SIZE)
+  return all
+}
+
+// Round-robin across the question types rather than shuffling them all together. A single pooled
+// shuffle can hand back six rows of the same kind — which is how the card spent its life looking
+// like it only knew one trick, and the founder would never learn it does anything else.
+export function sampleAcrossKinds(pools: HomeSuggestion[][], limit = SAMPLE_SIZE): HomeSuggestion[] {
+  const queues = pools.map((pool) => shuffled(pool))
+  const out: HomeSuggestion[] = []
+  for (let round = 0; out.length < limit; round++) {
+    const before = out.length
+    for (const queue of queues) {
+      if (out.length >= limit) break
+      const next = queue[round]
+      if (next) out.push(next)
+    }
+    if (out.length === before) break
+  }
+  return out
+}
+
+// The one call Home makes. All four question types are free and deterministic — no Anthropic call
+// anywhere in here — so the whole thing is recomputed per Home visit rather than cached
+// (CLAUDE.md rule 3). The two newer types self-suppress when their dismissal table is missing, so
+// a pre-migration account quietly keeps the original person->group behaviour.
+export async function loadHomeSuggestions(): Promise<HomeSuggestion[]> {
+  const dismissals = await loadDismissals()
+  const [personGroup, relationshipGaps, eventGroups] = await Promise.all([
+    loadConnectionSuggestions(),
+    loadRelationshipGapSuggestions(dismissals),
+    loadEventGroupSuggestions(dismissals),
+  ])
+  // family_coparent and family_couple are split into separate pools on purpose: they come from one
+  // source but read as different questions, and pooling them lets a big pile of co-parent gaps
+  // crowd out everything else.
+  return sampleAcrossKinds([
+    personGroup,
+    relationshipGaps.filter((s) => s.kind === 'family_coparent'),
+    relationshipGaps.filter((s) => s.kind === 'family_couple'),
+    eventGroups,
+  ])
 }
 
 // Mirrors GroupDetail.tsx's handleAddMember exactly (same upsert shape, same summary
