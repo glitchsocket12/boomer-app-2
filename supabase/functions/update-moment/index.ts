@@ -7,6 +7,7 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
+import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
@@ -61,9 +62,17 @@ serve(async (req) => {
         .eq("id", momentId)
         .single(),
       supabaseClient.from("notes").select("content, person_id").eq("moment_id", momentId),
-      supabaseClient
-        .from("people")
-        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self"),
+      // Paged, and newly ORDERED. 700 people already, and without an explicit sort Postgres was
+      // free to return this roster in a different order per call — which reshuffles the prompt
+      // text and misses the cache on turns where nothing changed (CLAUDE.md rule 3, the same
+      // reasoning converse's queries carry).
+      fetchAllRows((from, to) =>
+        supabaseClient
+          .from("people")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+          .order("id")
+          .range(from, to)
+      ),
       supabaseClient.from("groups").select("id, name, parent_group_id"),
       supabaseClient.from("moment_groups").select("group_id").eq("moment_id", momentId),
       supabaseClient.from("moments").select("occasion, when_text").neq("id", momentId),

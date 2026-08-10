@@ -5,6 +5,7 @@ import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
 import { formatEventDateText } from "../_shared/eventDates.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
+import { fetchAllRows } from "../_shared/pagedSelect.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -229,7 +230,16 @@ async function scanUser(
 ): Promise<{ sourcesScanned: number; candidatesAdded: number; birthdayCandidatesAdded: number }> {
   const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes, existingBirthdayRes] = await Promise.all([
     supabase.from("calendar_sources").select("id, ical_url, label, source_type").eq("user_id", userId),
-    supabase.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self").eq("user_id", userId),
+    // Paged: 700 people on the founder's account already, and attendee matching silently getting
+    // worse for everyone past the 1000th person is exactly the failure this sweep was chasing.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("people")
+        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+        .eq("user_id", userId)
+        .order("id")
+        .range(from, to)
+    ),
     supabase.from("tags").select("name").eq("user_id", userId),
     supabase.from("groups").select("id, name, parent_group_id").eq("user_id", userId),
     supabase.from("moment_import_candidates").select("id, ical_uid, status, event_date, event_end_date").eq("user_id", userId),
@@ -312,8 +322,20 @@ async function scanUser(
   // group_id that traces back to this user anyway.
   const allGroupIds = (groupsRes.data ?? []).map((g: any) => g.id)
   const [personGroupsRes, momentGroupsRes] = await Promise.all([
+    // Paged: this spans EVERY group the user owns, so it's the whole person_groups table for this
+    // account (1183 rows when this was written) and the unpaged version was silently returning the
+    // first 1000 — which quietly dropped ~15% of the memberships this function infers group tags
+    // from. See _shared/pagedSelect.ts.
     allGroupIds.length > 0
-      ? supabase.from("person_groups").select("person_id, group_id").in("group_id", allGroupIds)
+      ? fetchAllRows<{ person_id: string; group_id: string }>((from, to) =>
+          supabase
+            .from("person_groups")
+            .select("person_id, group_id")
+            .in("group_id", allGroupIds)
+            .order("person_id")
+            .order("group_id")
+            .range(from, to)
+        )
       : Promise.resolve({ data: [] as { person_id: string; group_id: string }[], error: null }),
     supabase.from("moment_groups").select("moment_id, group_id, moments!inner(user_id)").eq("moments.user_id", userId),
   ])
@@ -329,8 +351,19 @@ async function scanUser(
   }
   const groupTaggedMomentIds = Object.keys(groupIdsByMoment)
   const attendanceRes =
+    // Paged: spans every group-tagged moment, so it approaches "all event-attached notes" — 796 of
+    // the 1000 cap already on the founder's account.
     groupTaggedMomentIds.length > 0
-      ? await supabase.from("notes").select("person_id, moment_id").in("moment_id", groupTaggedMomentIds).not("person_id", "is", null)
+      ? await fetchAllRows<{ person_id: string; moment_id: string }>((from, to) =>
+          supabase
+            .from("notes")
+            .select("person_id, moment_id")
+            .in("moment_id", groupTaggedMomentIds)
+            .not("person_id", "is", null)
+            .order("moment_id")
+            .order("person_id")
+            .range(from, to)
+        )
       : { data: [] as { person_id: string; moment_id: string }[], error: null }
   if (attendanceRes.error) console.error("Failed to load notes for group-attendance inference", attendanceRes.error.message)
   for (const n of attendanceRes.data ?? []) {

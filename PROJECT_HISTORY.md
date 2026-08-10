@@ -1205,3 +1205,21 @@ Then the deployed chat failed on "how many people are in the Air Force group?" �
 **The lesson worth keeping: a wrong prediction is evidence, not noise.** Both bugs surfaced because a number disagreed with another number and the disagreement got chased instead of explained away. The 1000-row cap in particular fails in the most dangerous possible way — a successful-looking response that is quietly incomplete — and it is still worth auditing the other Edge Functions for unpaged reads on tables that can cross it.
 
 **A footnote that was NOT a bug.** Mid-verification the Groups list showed "Travis Phoenix Spark" indented under 22 AS when it belongs to Air Force. Running `flattenGroupTree` against real data showed correct depths for all 68 groups: it was stale in-memory state from a drag accidentally triggered while the browser viewport was desynced from the pane. Worth knowing the drag-to-reparent is easy to fire by accident. Separately, the chat answers 295 where the app says 296 — that one is real duplicate data, two distinct person records both named "Benn Hawkins", and the model reasonably assumed one person from a name-only roster.
+
+---
+
+## Sweeping the 1000-row cap across every Edge Function (2026-08-10, same day)
+
+**Why.** Fixing `converse`'s unpaged `person_groups` read the same morning proved the failure mode existed; the founder asked whether it existed anywhere else. It did.
+
+**Method, in the order that mattered.** First get real row counts per table, so the audit chases only reads that can actually cross 1000 — three tables already do (`contact_import_candidates` 2008, `notes` 1456, `person_groups` 1183) and `people` is at 700 and climbing. Then classify every `.from()` site: writes are unaffected, `.eq()`-on-one-id and `.limit(n)` reads are bounded, and only flat account-wide reads are exposed.
+
+**The check that prevented a false report.** `moments.select("notes(...)")` returned 796 of 1456 notes, which looked like embedded selects were capped too — and would have meant `converse`'s entire moment context was missing 45% of its notes. It wasn't: exactly 796 notes have a non-null `moment_id`, the other 660 are person-only notes correctly absent from any event. **Embedded selects are not capped.** Worth knowing permanently, and worth the two minutes it took to check rather than reporting a dramatic bug that didn't exist.
+
+**Two live bugs, one of which manufactured work rather than degrading a result.** `scan-calendar-sources` read `person_groups` across every group the user owns — the whole table — so calendar-import group inference had been running on ~85% of the memberships. Worse, `import-contacts` read `contact_import_candidates.row_key` as its re-upload dedupe set against a 2008-row table: the other ~1008 already-triaged contacts looked brand new, so re-importing the same vCard would have silently doubled the founder's review queue with contacts they had already worked through. Truncation there doesn't quietly weaken an answer, it creates hours of duplicate manual work.
+
+**Also fixed while in there.** `update-moment` and `update-group` read the full `people` roster with no `.order()` at all — unstable row order feeding a cached prompt, which is a cache miss on turns where nothing changed (CLAUDE.md rule 3). Paging forced an explicit sort, so that got fixed for free.
+
+**Verified.** Both bug fixes proven against real data through the actual shared helper, not a reimplementation: dedupe keys 1000 → 2008, calendar memberships 1000 → 1183 with all 1183 distinct (the distinct count is the part that proves the `.order()` isn't duplicating or skipping across page boundaries). All six functions type-check at their pre-existing error counts and deploy clean; `converse` and `person-facts` were exercised live. `import-contacts` and `scan-calendar-sources` were NOT run end-to-end — both write real candidates into the founder's review queue, and the paging mechanism they share is the same one proven above.
+
+**The generalisable lesson.** This class of bug is invisible by construction: the query succeeds, the array is just short. Nothing will ever alert on it. The only defences are knowing the cap exists, knowing which tables are near it, and paging by default on any read that isn't narrowed to a handful of ids.

@@ -7,6 +7,7 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
+import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
 
 const corsHeaders = {
@@ -49,9 +50,14 @@ serve(async (req) => {
       .eq("id", groupId)
       .single()
 
-    const { data: allPeople } = await supabaseClient
-      .from("people")
-      .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+    // Paged + ordered, same reasoning as update-moment's roster read (see _shared/pagedSelect.ts).
+    const { data: allPeople } = await fetchAllRows((from, to) =>
+      supabaseClient
+        .from("people")
+        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+        .order("id")
+        .range(from, to)
+    )
     const { data: allMoments } = await supabaseClient.from("moments").select("id, occasion, raw_description")
 
     const fullName = (p: { name: string; last_name: string | null }) =>

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { getRelationshipsForPerson } from "../_shared/relationshipsTable.ts"
+import { fetchAllRows } from "../_shared/pagedSelect.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,7 +32,16 @@ serve(async (req) => {
     const [{ data: person }, { data: notes }, { data: allPeople }] = await Promise.all([
       supabaseClient.from("people").select("name, last_name, key_facts").eq("id", personId).single(),
       supabaseClient.from("notes").select("id, content").eq("person_id", personId).order("created_at", { ascending: true }),
-      supabaseClient.from("people").select("id, name, last_name, nicknames, middle_name, goes_by_other"),
+      // Paged + ordered — this is the whole roster, used to resolve names in key facts into real
+      // links. At 700 people it still fits; past 1000 the extra people would silently stop being
+      // linkable. See _shared/pagedSelect.ts.
+      fetchAllRows((from, to) =>
+        supabaseClient
+          .from("people")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other")
+          .order("id")
+          .range(from, to)
+      ),
     ])
 
     // Serve the cached facts unless the caller explicitly asks to regenerate (token-efficiency

@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { parseVcf, type VCardContact } from "../_shared/vcard.ts"
 import { findBestPersonMatch, buildPersonIndex, type MatchablePerson } from "../_shared/nameMatch.ts"
+import { fetchAllRows } from "../_shared/pagedSelect.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,11 +62,28 @@ serve(async (req) => {
     const noNameSkipped = totalBlocks - contacts.length
 
     const [peopleRes, existingRes] = await Promise.all([
-      supabaseClient
-        .from("people")
-        .select("id, name, last_name, nicknames, middle_name, goes_by_other, emails, phones")
-        .eq("user_id", user.id),
-      supabaseClient.from("contact_import_candidates").select("row_key").eq("user_id", user.id),
+      // Both paged — see _shared/pagedSelect.ts. `people` is 700 and climbing.
+      fetchAllRows((from, to) =>
+        supabaseClient
+          .from("people")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, emails, phones")
+          .eq("user_id", user.id)
+          .order("id")
+          .range(from, to)
+      ),
+      // This one was actively broken: `row_key` is the re-upload dedupe set, and the table is at
+      // 2008 rows — so the unpaged read saw the first 1000 and the other ~1000 already-reviewed
+      // contacts looked brand new. Re-importing the same vCard would have re-added them as fresh
+      // candidates, silently doubling the founder's review queue with contacts they'd already
+      // triaged. Truncation here doesn't degrade a result, it manufactures duplicate work.
+      fetchAllRows<{ row_key: string }>((from, to) =>
+        supabaseClient
+          .from("contact_import_candidates")
+          .select("row_key")
+          .eq("user_id", user.id)
+          .order("row_key")
+          .range(from, to)
+      ),
     ])
 
     const people: MatchablePerson[] = (peopleRes.data ?? []).map((p: any) => ({

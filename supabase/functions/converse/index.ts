@@ -13,6 +13,7 @@ import { isoDateInTimeZone, fullDateInTimeZone } from "../_shared/tz.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { rollUpGroupMemberIds } from "../_shared/groupRollup.ts"
+import { fetchAllRows } from "../_shared/pagedSelect.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,25 +27,10 @@ const corsHeaders = {
 // would confidently answer "who's in X?" from an incomplete list. Every page keeps the same
 // .order() so the serialized roster stays byte-identical between turns and the 1h prompt cache
 // still matches.
-const PAGE_SIZE = 1000
-async function fetchAllPersonGroups(
-  client: { from: (t: string) => any }
-): Promise<{ data: { person_id: string; group_id: string }[] }> {
-  const rows: { person_id: string; group_id: string }[] = []
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await client
-      .from("person_groups")
-      .select("person_id, group_id")
-      .order("person_id")
-      .order("group_id")
-      .range(from, from + PAGE_SIZE - 1)
-    // Fail soft, matching the rest of this block: a partial roster still lets the turn answer,
-    // where throwing would take the whole chat down over one page.
-    if (error || !data) break
-    rows.push(...data)
-    if (data.length < PAGE_SIZE) break
-  }
-  return { data: rows }
+function fetchAllPersonGroups(client: { from: (t: string) => any }) {
+  return fetchAllRows<{ person_id: string; group_id: string }>((from, to) =>
+    client.from("person_groups").select("person_id, group_id").order("person_id").order("group_id").range(from, to)
+  )
 }
 
 serve(async (req) => {
@@ -95,10 +81,15 @@ serve(async (req) => {
       { data: pets },
       { data: personPets },
     ] = await Promise.all([
-      supabaseClient
-        .from("people")
-        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
-        .order("id"),
+      // Paged for the same reason person_groups is (see fetchAllPersonGroups): 700 people already,
+      // and the 1000th person onward would just stop existing as far as the model is concerned.
+      fetchAllRows((from, to) =>
+        supabaseClient
+          .from("people")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+          .order("id")
+          .range(from, to)
+      ),
       supabaseClient
         .from("moments")
         .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
