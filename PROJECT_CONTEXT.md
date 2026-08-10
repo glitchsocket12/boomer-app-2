@@ -131,6 +131,17 @@ src/
 │   │                            has; isUnassigned() drives the "Not in a subgroup" filter.
 │   │                            Structural input type (SubgroupLike), not an import from
 │   │                            pages/. Direct children only. Nothing persisted.
+│   ├── groupRollup.ts         — (2026-08-10, tested) the membership side of the group tree:
+│   │                            anyone in a subgroup is a member of every group above it,
+│   │                            at ANY depth. descendantGroupIds() (cycle-guarded),
+│   │                            mergeRolledUpMembers() → { members, rolledUpIds }, and the
+│   │                            batch rollUpMembersByGroup() for Groups.tsx, which already
+│   │                            holds every roster so its rollup costs no extra query.
+│   │                            DERIVED ONLY — nothing is written to person_groups, so the
+│   │                            row stays on the subgroup and this stays reversible. Rolls
+│   │                            UP only; parent → subgroup auto-fill remains off the table
+│   │                            (2026-07-26 lesson). Group-side twin of the sub-event
+│   │                            attendee rollup in EventDetail.tsx/Events.tsx.
 │   ├── groupRoster.ts         — (2026-08-01) useGroupRoster() → { nameById, label(id,
 │   │                            fallbackName) }. One small `groups` select on mount, no
 │   │                            cache (converse can create a group server-side mid-chat, so
@@ -537,7 +548,10 @@ src/
 │   │                            was silently frozen at whatever name you navigated
 │   │                            in with, invisible until a same-visit rename made it
 │   │                            obvious (2026-07-20)
-│   ├── Groups.tsx             — group tiles (summary, ≤5 member chips, event chips,
+│   ├── Groups.tsx             — group tiles (summary, ≤5 member chips — subgroup members
+│   │                            rolled up into every ancestor's card as of 2026-08-10, from
+│   │                            the one all-groups query already loaded, so search on a
+│   │                            member's name now finds the parent too; event chips,
 │   │                            type badge); manual "add group" (blank shell, no
 │   │                            form, 2026-07-20) → lands on its detail page to
 │   │                            rename via the pencil; type filter dropdown
@@ -677,6 +691,19 @@ src/
 │   │                            "+N") since subgroup memberships are independent. Chip
 │   │                            title/aria-label names the subgroups so colour isn't the
 │   │                            only carrier.
+│   │                            Subgroup member rollup (2026-08-10, founder ask): "Who was
+│   │                            there (N)" is the explicit roster PLUS everyone in a
+│   │                            subgroup at any depth (lib/groupRollup.ts), loaded by one
+│   │                            flat person_groups query over descendantIds (fail-open, PAGED —
+│   │                            PostgREST silently caps at 1000 rows and the account was already
+│   │                            at 1183 person_groups rows) and refetched when a drag-drop
+│   │                            writes into a subgroup. Rolled-up
+│   │                            chips get NO trash badge (their row lives on the subgroup —
+│   │                            tooltip says so), never count as "Not in a subgroup", and
+│   │                            are excluded from every suggestion box so nobody is offered
+│   │                            as a member they already are. Hint line appears only when
+│   │                            something actually rolled up. explicitMembers state stays
+│   │                            the narrow write-target; `members` is the merged read.
 │   ├── Events.tsx             — all moments, sorted by event_date (fallback
 │   │                            created_at), full date incl. day (e.g. "August 3,
 │   │                            2026") via formatEventWhen (2026-08-03), grouped under
@@ -858,6 +885,14 @@ src/
 │   │                            it regenerates without the old text.
 │   │                            Verified live (single note + a 2-person
 │   │                            grouped note).
+│   │                            "Were they at this one too?" (2026-08-10, item 87) — on a
+│   │                            SUB-event only, suggests everyone tagged on the parent
+│   │                            event and its other sub-events, ranked by how many of them
+│   │                            each person turns up in (`src/lib/siblingAttendees.ts`).
+│   │                            Sits above the group/family suggestion boxes and its ids
+│   │                            are excluded from both, so nobody is suggested twice.
+│   │                            `loadSiblingEvents` is a separate fail-open query, same
+│   │                            reasoning as loadParentEvent.
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
 │   ├── ManageTags.tsx         — (item 28 follow-up, 2026-07-22) reached via "Manage
@@ -1313,6 +1348,15 @@ Full story: PROJECT_HISTORY.md.
                                 addresses the founder has typed before, plus live Geoapify
                                 suggestions once a key is configured.
 ├── components/
+│   ├── FloatingActionBubble.tsx — (2026-08-08, landed 2026-08-10) bottom-right "+" bubble that
+│   │                            expands into a note box (mic included, the primary use) plus a
+│   │                            row of secondary actions, each opening its own panel. Owns its
+│   │                            open/closed state, so pages no longer keep their own
+│   │                            `showXPicker` flags. REPLACED FloatingNoteButton.tsx, now
+│   │                            deleted. On EventDetail (attendees / associate a group / new
+│   │                            sub-event / Manage) and GroupDetail (add people / associate a
+│   │                            group / new subgroup / Manage). Hidden when `readOnly`, so the
+│   │                            demo never renders it.
 │   ├── AddressSuggestInput.tsx — (2026-07-26) drop-in text input with a suggestion dropdown:
 │   │                            previously-typed values (instant, local, from the `recentValues`
 │   │                            prop) first, then live Geoapify address suggestions (debounced,
@@ -1729,9 +1773,14 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               nested subgroups, e.g. a mission under a squadron or a class year under a
               school group — ARBITRARY DEPTH in both schema and UI as of 2026-08-03 (was
               one level deep in the UI only, a gate on !parentGroup in GroupDetail.tsx;
-              migrated live 2026-07-26). Subgroup membership is deliberately independent of
-              the parent's — no sync trigger. One was added by mistake 2026-07-26 and removed
-              same day before ever being run (contradicted this design decision) — so a person
+              migrated live 2026-07-26). Subgroup membership WRITES are deliberately
+              independent of the parent's — still no sync trigger, and still no downward
+              auto-population (a new subgroup starts empty). One was added by mistake
+              2026-07-26 and removed same day before ever being run. Upward, though, a
+              subgroup's members ARE the parent's members as of 2026-08-10 (founder ask):
+              DERIVED at render by lib/groupRollup.ts, at any depth, never written to
+              person_groups — the row stays on the subgroup, so removing someone there
+              removes them from every ancestor with nothing to keep in sync. A person
               can sit in several sibling subgroups at once, which is why GroupDetail's member
               chips carry a LIST of colour dots, not one. There is NO colour column: subgroup
               colours are assigned in the client by position (2026-08-04, see lib/
@@ -1753,7 +1802,10 @@ groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
               subgroups too — still one summarize-group call per group EVER, cached in
               groups.summary (CLAUDE.md rule 3). See §3 Groups.tsx.
 person_groups person_id + group_id (PK) — THE definition of membership (explicit
-              only; event attendees are never members, only suggestions)
+              only; event attendees are never members, only suggestions). A row is only
+              ever written for the group it was added to: what the UI shows as a group's
+              members is these rows PLUS the subgroup rollup (see groups.parent_group_id
+              above), computed at render, never stored.
 group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
               string sort), created_at
 moment_groups moment_id + group_id (PK)
@@ -1969,6 +2021,7 @@ Also worth noting: a separate concurrent session was actively editing `EventDeta
 
 85. ~~"Connections to make" only ever asked one kind of question~~ — **DONE 2026-08-08.** Feedback-widget note from 2026-07-27 ("this is also a great feature - we probably need to beef it up"), scoped with the founder 2026-08-08. The card only asked "add this person to this group?"; it now pools four question types (see §3 `suggestConnections.ts`, `suggestRelationshipGaps.ts`, `suggestEventGroups.ts`, `dismissedSuggestions.ts`, and §6 `dismissed_suggestions`), shows 6 instead of 4, and round-robins so no one type crowds the others out. Founder decisions: family gaps + event tagging (NOT "suggest a group for the 196 people in no group" — too close to the per-group signal switched off in item 57), and **deterministic, no AI call**, keeping the card free to recompute per visit. Measured on the real account: 7 co-parent gaps, 1 couple gap, 9 event-tag pairs, 25 person→group. Verified live end-to-end (both accept paths written and confirmed in the DB, dismissals persisted across a reload, pre-migration fail-closed path confirmed by probe before the table existed). Deliberately out of scope: item 58's auto-refill, a per-row "why" line, revisiting `suggestions_enabled` for the other 63 groups.
 86. **`syncFamilyClique` unions parents across a whole sibling clique — wrong for blended families.** Found 2026-08-08 while verifying item 85, on real data. Accepting "Is Lisa Dunn also a parent of Liam/Cormac?" (a step-parent link, correct per the founder) made all three Dunn children one sibling clique, and the clique sync then gave every child the union of every parent — writing **Tara Dunn (Brian's ex-wife) as Elizabeth's mother**, a person she has no relationship to. Deleted manually; the two step-sibling links and Brian→Elizabeth were correct and kept. This is pre-existing behaviour shared with FamilyTree.tsx's accept buttons, NOT introduced by item 85 — but item 85 raises the odds by surfacing step-parent suggestions account-wide, and the sync can silently re-add the bad row the next time anything in that family is edited. Founder decision 2026-08-08: ship item 85 as-is and file this. Likely fix: don't union parents across a clique whose members have differing parent sets (a blended family), or ask instead of asserting — the option costed at the time was a warning on the card ("this will also link Elizabeth as a sibling and give her Tara as a parent"). Not scoped yet.
+87. ~~A new sub-event should suggest the people who were at the other sub-events~~ — **DONE 2026-08-10.** Founder ask: everyone at Day 1 of the Defenders of Freedom demo was probably at Days 2 and 3, so a fresh sub-event shouldn't start from an empty "Who was there". New "Were they at this one too?" box on sub-event pages (§3 EventDetail.tsx, `src/lib/siblingAttendees.ts`, 7 unit tests). Candidate pool = the parent event's directly-tagged attendees + every sibling sub-event's; ranked by how many of those a person appears in, ties alphabetical. Reuses the existing SuggestedAttendeeChip / `onAddAttendee` / `dismissed_person_ids` machinery unchanged, so tap-to-add and dismiss behave exactly like the group and family boxes. Verified live on the real account against Day 3 of the demo event (19 correct suggestions, Patrick Mojica ranked first on 3 sub-events; parent page correctly shows no box). **Not re-tested: the tap-to-add and dismiss writes** — shared, already-shipped handlers, and exercising them would have written wrong attendance into real data.
 
 **Flagged from feedback widget — needs founder scope decision (not filed as bounded items, left open in the widget):**
 - *(Jake's birthday dinner, 2026-08-03)* Founder: the chat didn't add the right people to the event or spell all the names correctly, and wants it to actively extract people/event details from a narrative, infer who they are from existing contacts/context, suggest adding them — and if it's fully confident, add them automatically. This overlaps with item 15's person-to-person inference thread and item 76's chat-unification effort; worth deciding whether it's its own item or folds into one of those before scoping.

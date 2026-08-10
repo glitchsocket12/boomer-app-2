@@ -19,6 +19,7 @@ import SearchBox from '../components/SearchBox'
 import { DEFAULT_GROUP_TYPES, loadGroupTypeNames } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { isSelfOrDescendant } from '../lib/groupDisplayName'
+import { rollUpMembersByGroup } from '../lib/groupRollup'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
 type PersonRef = { id: string; name: string; last_name: string | null; is_self?: boolean }
@@ -44,8 +45,11 @@ const MEMBER_LIMIT = 5
 const INDENT_MAX_DEPTH = 4
 
 export type GroupRow = {
+  // This group's own person_groups roster PLUS everyone in a subgroup below it, at any depth
+  // (see lib/groupRollup.ts) — the same "anyone in a subgroup is in the group above it" rule
+  // GroupDetail's member list uses, so a card's chips match what opening it shows.
+  members: PersonRef[]
   group: Group
-  explicitMembers: PersonRef[]
   events: { id: string; summary: string }[]
 }
 export type FlatGroupRow = GroupRow & { depth: number; hasChildren: boolean }
@@ -93,10 +97,19 @@ export function filterGroups(
   // subgroups. Defaults to the bare name (landing-page demo, which has no subgroups).
   groupLabel: GroupLabelFn = (_id, fallbackName) => fallbackName
 ): GroupRow[] {
+  // Every group is loaded in one query on this page, so rolling subgroup members up into their
+  // ancestors costs no extra round trip — it's the same list, re-read as a tree. No-ops for the
+  // landing-page demo, whose groups have no parent_group_id at all.
+  const rolledUp = rollUpMembersByGroup(
+    groups.map((group) => ({
+      id: group.id,
+      parent_group_id: group.parent_group_id,
+      members: (group.person_groups ?? []).map((pg) => pg.people).filter((p): p is PersonRef => p !== null),
+    }))
+  )
+
   const decorated = groups.map((group) => {
-    const explicitMembers = (group.person_groups ?? [])
-      .map((pg) => pg.people)
-      .filter((p): p is PersonRef => p !== null)
+    const members = rolledUp.get(group.id)?.members ?? []
 
     const eventMap = new Map<string, { id: string; summary: string }>()
     for (const mg of group.moment_groups ?? []) {
@@ -106,11 +119,11 @@ export function filterGroups(
     }
     const events = [...eventMap.values()]
 
-    return { group, explicitMembers, events }
+    return { group, members, events }
   })
 
   const query = search.trim().toLowerCase()
-  return decorated.filter(({ group, explicitMembers }) => {
+  return decorated.filter(({ group, members }) => {
     if (typeFilter === 'untyped' && group.group_type) return false
     if (typeFilter !== 'all' && typeFilter !== 'untyped' && group.group_type !== typeFilter) return false
     // Subgroups are IN the resting list as of 2026-08-03 (founder ask), nested and indented under
@@ -121,7 +134,7 @@ export function filterGroups(
     // Excludes the founder's own name from the match — searching your own name should surface
     // groups that mention someone ELSE by that name, or that are literally named for it, not
     // every group you happen to personally belong to.
-    const memberNames = explicitMembers.filter((p) => !p.is_self).map((p) => `${p.name} ${p.last_name ?? ''}`)
+    const memberNames = members.filter((p) => !p.is_self).map((p) => `${p.name} ${p.last_name ?? ''}`)
     const haystack = [groupLabel(group.id, group.name), group.summary, ...memberNames].filter(Boolean).join(' ').toLowerCase()
     return haystack.includes(query)
   })
@@ -468,11 +481,11 @@ export function GroupsView({
       )}
 
       <div style={styles.list}>
-        {rows.map(({ group, explicitMembers, events, depth, hasChildren }) => (
+        {rows.map(({ group, members, events, depth, hasChildren }) => (
           <GroupCard
             key={group.id}
             group={group}
-            explicitMembers={explicitMembers}
+            members={members}
             events={events}
             // Bare name in the tree — the indentation already shows the parent, so a qualified
             // "A / B / C" on an indented row is both redundant and much wider on a phone.
@@ -545,7 +558,7 @@ function TopLevelDropStrip({ isActive }: { isActive: boolean }) {
 // card's primary interaction.
 function GroupCard({
   group,
-  explicitMembers,
+  members,
   events,
   label,
   depth,
@@ -561,7 +574,7 @@ function GroupCard({
   onSelectEvent,
 }: {
   group: Group
-  explicitMembers: PersonRef[]
+  members: PersonRef[]
   events: { id: string; summary: string }[]
   label: string
   depth: number
@@ -576,7 +589,7 @@ function GroupCard({
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
-  const shownMembers = explicitMembers.slice(0, MEMBER_LIMIT)
+  const shownMembers = members.slice(0, MEMBER_LIMIT)
   const shownEvents = events.slice(0, AFFILIATION_LIMIT)
 
   // Prefixed ids: a card is BOTH a draggable and a droppable, and dnd-kit keeps those in separate
@@ -635,15 +648,15 @@ function GroupCard({
 
       <p style={styles.summary}>{group.summary || 'Figuring out what this group is about…'}</p>
 
-      {explicitMembers.length === 0 ? (
+      {members.length === 0 ? (
         <p style={styles.empty}>No members yet.</p>
       ) : (
         <div style={styles.chipRow}>
           {shownMembers.map((p) => (
             <PersonChip key={p.id} label={`${p.name}${p.last_name ? ` ${p.last_name}` : ''}`} onClick={() => onSelectPerson(p)} />
           ))}
-          {explicitMembers.length > MEMBER_LIMIT && (
-            <span style={styles.moreText}>+{explicitMembers.length - MEMBER_LIMIT} more</span>
+          {members.length > MEMBER_LIMIT && (
+            <span style={styles.moreText}>+{members.length - MEMBER_LIMIT} more</span>
           )}
         </div>
       )}

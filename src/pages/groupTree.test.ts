@@ -13,7 +13,7 @@ function row(id: string, parent: string | null): GroupRow {
       person_groups: [],
       moment_groups: [],
     },
-    explicitMembers: [],
+    members: [],
     events: [],
   }
 }

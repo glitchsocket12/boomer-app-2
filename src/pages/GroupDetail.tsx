@@ -18,6 +18,7 @@ import { sortByLastName } from '../lib/people'
 import { DEFAULT_GROUP_TYPES, loadGroupTypeNames } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { isSelfOrDescendant } from '../lib/groupDisplayName'
+import { buildChildIndex, descendantGroupIds, mergeRolledUpMembers } from '../lib/groupRollup'
 import { isUnassigned, subgroupColorMap, subgroupsByPerson } from '../lib/subgroupColors'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
@@ -31,7 +32,7 @@ import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
 import UndoBanner from '../components/UndoBanner'
 import ManagePanel from '../components/ManagePanel'
-import FloatingNoteButton from '../components/FloatingNoteButton'
+import FloatingActionBubble from '../components/FloatingActionBubble'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -68,6 +69,12 @@ const MEMBER_LIST_LIMIT = 12
 // groups can otherwise surface hundreds of candidates at once. Adding or dismissing one shrinks
 // the underlying suggestion pool, so the next candidate fills the batch in automatically.
 const MEMBER_SUGGESTION_LIMIT = 20
+// Module-level so the demo (which passes no rolled-up ids) gets the same Set identity on every
+// render rather than a fresh empty one each time.
+const EMPTY_ID_SET: Set<string> = new Set()
+// PostgREST's own default response cap — matching it exactly is what makes "a short page means
+// the last page" a safe stopping rule in loadDescendantMembers.
+const PAGE_SIZE = 1000
 
 export default function GroupDetail({
   groupId,
@@ -121,7 +128,6 @@ export default function GroupDetail({
   const requestedMomentSummaries = useRef(new Set<string>())
   const [groupNotes, setGroupNotes] = useState<GroupNote[]>([])
   const [notesOpen, setNotesOpen] = useState(true)
-  const [showGroupPicker, setShowGroupPicker] = useState(false)
   const [pickableGroups, setPickableGroups] = useState<GroupRef[]>([])
   const [loadingPickableGroups, setLoadingPickableGroups] = useState(false)
   const [groupPickerSearch, setGroupPickerSearch] = useState('')
@@ -149,6 +155,12 @@ export default function GroupDetail({
   const [parentGroup, setParentGroup] = useState<GroupRef | null>(null)
   const [parentMembers, setParentMembers] = useState<PersonRef[]>([])
   const [subgroups, setSubgroups] = useState<SubgroupRef[]>([])
+  // Everyone in a subgroup below this one, at ANY depth — `subgroups` above only holds the direct
+  // children's rosters, and a crew under a flight under a squadron still belongs to the squadron.
+  const [descendantMembers, setDescendantMembers] = useState<PersonRef[]>([])
+  // Bumped when this page writes into a subgroup's roster (the drag-and-drop bulk add), so the
+  // rollup below refetches instead of showing a stale parent list until the next navigation.
+  const [descendantRefreshKey, setDescendantRefreshKey] = useState(0)
   const [addingSubgroup, setAddingSubgroup] = useState(false)
   const [subgroupError, setSubgroupError] = useState<string | null>(null)
   const [lastAdd, setLastAdd] = useState<PendingAdd | null>(null)
@@ -202,6 +214,32 @@ export default function GroupDetail({
     setLastAdd(null)
   }, [groupId])
 
+  // The whole subtree under this group, from the account-wide roster the hook already loads — no
+  // extra query to find them. Keyed off a joined string so the fetch below only reruns when the
+  // shape of the tree actually changes, not on every render of a new array.
+  const descendantIds = useMemo(
+    () =>
+      descendantGroupIds(
+        groupId,
+        buildChildIndex([...roster.parentById].map(([id, parent_group_id]) => ({ id, parent_group_id })))
+      ),
+    [groupId, roster.parentById]
+  )
+  const descendantIdsKey = descendantIds.join(',')
+
+  useEffect(() => {
+    loadDescendantMembers(descendantIdsKey ? descendantIdsKey.split(',') : [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [descendantIdsKey, descendantRefreshKey])
+
+  // What "in this group" means everywhere below this line: the explicit roster plus the rollup.
+  // `explicitMembers` stays the narrower thing on purpose — it's what a write on THIS page can
+  // add to or remove from, so anything that edits membership still goes through it.
+  const { members, rolledUpIds: rolledUpMemberIds } = useMemo(
+    () => mergeRolledUpMembers(explicitMembers, descendantMembers),
+    [explicitMembers, descendantMembers]
+  )
+
   // Account-wide, not scoped to groupId — fetched once since it doesn't change as you navigate
   // between groups. Only needed to attach a name to a family-suggestion candidate below (see
   // memberIdsKey), same "small, one account's own data" reasoning as EventDetail.tsx's allPeople.
@@ -217,7 +255,7 @@ export default function GroupDetail({
   // ties matter for the suggestion box below, so this stays scoped to a small id list rather than
   // pulling the whole relationships table on every group page view. Keyed off a sorted/joined
   // string so it only refetches when membership actually changes.
-  const memberIdsKey = useMemo(() => explicitMembers.map((p) => p.id).sort().join(','), [explicitMembers])
+  const memberIdsKey = useMemo(() => members.map((p) => p.id).sort().join(','), [members])
 
   useEffect(() => {
     getRelationshipsMap(memberIdsKey ? memberIdsKey.split(',') : []).then(setRelationshipsById)
@@ -347,9 +385,47 @@ export default function GroupDetail({
     loadParent()
   }
 
+  // The rollup half of subgroup membership (founder, 2026-08-10): anyone in a subgroup is in this
+  // group too, however deep the subgroup sits. One flat query over the whole subtree rather than
+  // per-level recursion, since `descendantIds` already knows every group involved. Purely derived
+  // — nothing is written into THIS group's person_groups, so the row stays on the subgroup it was
+  // added to and removing it there removes them from here as well (see lib/groupRollup.ts).
+  //
+  // Fails open, same as loadParent/loadSubgroups: an error leaves this empty and the page shows
+  // exactly the explicit roster it always did.
+  async function loadDescendantMembers(ids: string[]) {
+    if (ids.length === 0) {
+      setDescendantMembers([])
+      return
+    }
+    // Paged. PostgREST caps a response at 1000 rows and says nothing about it, and a big group's
+    // subtree can pass that on its own (the account was at 1183 person_groups rows the day this
+    // was written) — an unpaged query would just stop returning members partway down the roster
+    // with no error to notice.
+    const byId = new Map<string, PersonRef>()
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from('person_groups')
+        .select('people(id, name, last_name)')
+        .in('group_id', ids)
+        .range(from, from + PAGE_SIZE - 1)
+      if (error) {
+        setDescendantMembers([])
+        return
+      }
+      const rows = (data as unknown as { people: PersonRef | null }[]) ?? []
+      for (const row of rows) {
+        if (row.people) byId.set(row.people.id, row.people)
+      }
+      if (rows.length < PAGE_SIZE) break
+    }
+    setDescendantMembers([...byId.values()])
+  }
+
   // No form up front, same reasoning as Groups.tsx's handleAddGroup and EventDetail.tsx's "add an
   // event" — creates a blank shell and drops straight onto its own page. Deliberately does NOT
-  // pre-populate membership from the parent roster (2026-07-26 lesson: no auto-added membership).
+  // pre-populate membership from the parent roster (2026-07-26 lesson: no auto-added membership;
+  // the 2026-08-10 rollup runs the other way, child up to parent, and writes nothing).
   async function handleAddSubgroup() {
     setAddingSubgroup(true)
     setSubgroupError(null)
@@ -402,7 +478,7 @@ export default function GroupDetail({
   // any one member's full ego graph, so opening it from a Family-typed group shows the whole
   // family's downward fan from its eldest known generation instead of an arbitrary person's view.
   function handleGenerateFamilyTree() {
-    const memberIds = explicitMembers.map((p) => p.id)
+    const memberIds = members.map((p) => p.id)
     onOpenFamilyTree(memberIds[0] ?? '', `${displayTitle} family tree`, memberIds)
   }
 
@@ -486,12 +562,9 @@ export default function GroupDetail({
   // directly, independent of the event/member-based suggestion signals above. Reuses
   // handleApproveGroupSuggestion for the actual write, so a manually-added group behaves
   // identically to an approved suggestion (and disappears from this list once confirmed).
+  // Opened from the action bubble, which owns its own open/closed state — so this only ever
+  // loads, and no longer toggles the way the old on-page "+ Associate a New Group" button did.
   async function openGroupPicker() {
-    if (showGroupPicker) {
-      setShowGroupPicker(false)
-      return
-    }
-    setShowGroupPicker(true)
     setGroupPickerSearch('')
     setLoadingPickableGroups(true)
     const { data } = await supabase.from('groups').select('id, name').neq('id', groupId).order('name')
@@ -609,6 +682,10 @@ export default function GroupDetail({
       )
     loadSubgroups() // refreshes subgroup tile member counts -- NOT loadMembers(), which only
                      // refetches this page's own (parent) roster and would be a no-op here
+    // ...but the rollup DOES read the subgroup rosters, so it has to refetch: dropping someone
+    // into a subgroup of a subgroup is how a person can arrive in this page's own member list
+    // without any write to this group at all.
+    setDescendantRefreshKey((k) => k + 1)
     // Invalidate (not regenerate) the target subgroup's cached summary -- per CLAUDE.md's cost
     // rule, never spend an API call regenerating content that hasn't been viewed yet. It lazily
     // regenerates next time someone actually opens that subgroup, same as any other stale summary.
@@ -877,7 +954,9 @@ export default function GroupDetail({
   // (event-based) and anyone who's an explicit member of a CONFIRMED associated group
   // (association-based, from loadAssociatedGroupMembers). Same "either signal is enough to
   // suggest" reasoning as the Associated Groups suggestions above.
-  const explicitIds = new Set(explicitMembers.map((p) => p.id))
+  // Rolled-up members count as members here too — otherwise someone already showing as a member
+  // chip would also be offered back as a suggestion to add, in every box below.
+  const explicitIds = new Set(members.map((p) => p.id))
   const dismissedIds = new Set(dismissedPersonIds)
   const suggestedMembersById = new Map<string, PersonRef>()
   for (const m of moments) {
@@ -960,7 +1039,8 @@ export default function GroupDetail({
       groupTypeOptions={groupTypeOptions}
       summary={summary}
       moments={moments}
-      explicitMembers={explicitMembers}
+      explicitMembers={members}
+      rolledUpMemberIds={rolledUpMemberIds}
       selfId={selfId}
       suggestedMembers={suggestedMembers}
       suggestedFamilyMembers={suggestedFamilyMembers}
@@ -1011,7 +1091,6 @@ export default function GroupDetail({
       onDropAddToSubgroup={handleDropAddToSubgroup}
       onDenySuggestion={handleDenySuggestion}
       onDenyAllSuggestions={handleDenyAllSuggestions}
-      showGroupPicker={showGroupPicker}
       onToggleGroupPicker={openGroupPicker}
       groupPickerSearch={groupPickerSearch}
       onGroupPickerSearchChange={setGroupPickerSearch}
@@ -1089,6 +1168,7 @@ export function GroupDetailView({
   summary,
   moments,
   explicitMembers,
+  rolledUpMemberIds = EMPTY_ID_SET,
   selfId = null,
   suggestedMembers,
   suggestedFamilyMembers = [],
@@ -1137,7 +1217,6 @@ export function GroupDetailView({
   onApproveAllSuggestions = () => {},
   onDenySuggestion = () => {},
   onDenyAllSuggestions = () => {},
-  showGroupPicker = false,
   onToggleGroupPicker = () => {},
   groupPickerSearch = '',
   onGroupPickerSearchChange = () => {},
@@ -1185,7 +1264,12 @@ export function GroupDetailView({
   groupTypeOptions?: string[]
   summary: string | null
   moments: Moment[]
+  // Named for what it was before the rollup, and still the only list of members this page renders
+  // — it now arrives already merged with everyone from the subgroups below (lib/groupRollup.ts).
   explicitMembers: PersonRef[]
+  // Which of those are here ONLY via a subgroup: no person_groups row on this group, so no untag
+  // badge and no "not in a subgroup" — same treatment as EventDetail's rolled-up attendees.
+  rolledUpMemberIds?: Set<string>
   selfId?: string | null
   suggestedMembers: PersonRef[]
   suggestedFamilyMembers?: PersonRef[]
@@ -1234,7 +1318,6 @@ export function GroupDetailView({
   onApproveAllSuggestions?: (people: PersonRef[]) => void
   onDenySuggestion?: (person: PersonRef) => void
   onDenyAllSuggestions?: (people: PersonRef[]) => void
-  showGroupPicker?: boolean
   onToggleGroupPicker?: () => void
   groupPickerSearch?: string
   onGroupPickerSearchChange?: (v: string) => void
@@ -1335,9 +1418,14 @@ export function GroupDetailView({
   // them, and "no dot at all" answers "nobody's sorted her yet."
   const subgroupColors = useMemo(() => subgroupColorMap(subgroups), [subgroups])
   const memberSubgroups = useMemo(() => subgroupsByPerson(subgroups), [subgroups])
+  // A rolled-up member is by definition in a subgroup somewhere, so they're never "unassigned" —
+  // even when the subgroup they're in is a grandchild, too deep to have a colour dot of its own
+  // (dots only cover this group's DIRECT subgroups).
+  const isUnsorted = (personId: string) => isUnassigned(personId, memberSubgroups) && !rolledUpMemberIds.has(personId)
   const unassignedCount = useMemo(
-    () => explicitMembers.filter((p) => isUnassigned(p.id, memberSubgroups)).length,
-    [explicitMembers, memberSubgroups]
+    () => explicitMembers.filter((p) => isUnsorted(p.id)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [explicitMembers, memberSubgroups, rolledUpMemberIds]
   )
   // The toggle hides itself when it would do nothing (no subgroups) or filter to nothing
   // (everyone's sorted) -- but it stays visible while it's ON, or turning it on would make the
@@ -1346,7 +1434,7 @@ export function GroupDetailView({
 
   const sortedExplicitMembers = sortByLastName(explicitMembers)
     .filter((p) => !memberQuery || `${p.name} ${p.last_name ?? ''}`.toLowerCase().includes(memberQuery))
-    .filter((p) => !unassignedOnly || isUnassigned(p.id, memberSubgroups))
+    .filter((p) => !unassignedOnly || isUnsorted(p.id))
   const visibleExplicitMembers =
     membersExpanded || memberQuery ? sortedExplicitMembers : sortedExplicitMembers.slice(0, MEMBER_LIST_LIMIT)
   const visibleSuggestedMembers = suggestedMembers.slice(0, MEMBER_SUGGESTION_LIMIT)
@@ -1469,6 +1557,9 @@ export function GroupDetailView({
         <p style={styles.empty}>No members yet — type a name below to add someone.</p>
       ) : (
         <>
+          {rolledUpMemberIds.size > 0 && (
+            <p style={styles.chatHint}>Everyone in a subgroup is included here too.</p>
+          )}
           {showUnassignedToggle && (
             <div style={styles.unassignedRow}>
               <button
@@ -1497,8 +1588,11 @@ export function GroupDetailView({
                   key={p.id}
                   person={p}
                   isSelf={p.id === selfId}
+                  viaSubgroup={rolledUpMemberIds.has(p.id)}
                   onSelect={() => onSelectPerson(p)}
-                  onRemove={readOnly ? undefined : () => onRemoveMember(p)}
+                  // Nothing on THIS group to unlink for a rolled-up member — their membership row
+                  // lives on the subgroup, so that's the only place it can be removed.
+                  onRemove={readOnly || rolledUpMemberIds.has(p.id) ? undefined : () => onRemoveMember(p)}
                   selectable={selectMode}
                   selected={selectedIds.has(p.id)}
                   onToggleSelect={() => handleToggleSelect(p.id)}
@@ -1512,39 +1606,6 @@ export function GroupDetailView({
             <button onClick={onToggleMembersExpanded} style={styles.showMoreButton}>
               {membersExpanded ? '▾ Show fewer members' : `▸ Show all ${sortedExplicitMembers.length} members`}
             </button>
-          )}
-        </>
-      )}
-
-      {/* Manual member entry, matching the event page's "who was there" picker: type a name to
-          pick someone already on file, or add a brand-new person without leaving the group.
-          Renders whether or not the group has members yet — an empty group is exactly when
-          you most need it. Sits outside the length check above for that reason. */}
-      {!readOnly && (
-        <>
-          <SearchAddPicker
-            items={allPeople
-              .filter((p) => !explicitMembers.some((m) => m.id === p.id))
-              .map((p) => ({ id: p.id, label: personLabel(p) }))}
-            placeholder="Type a name to add someone…"
-            onSelect={(item) => {
-              const person = allPeople.find((p) => p.id === item.id)
-              if (person) onAddMember(person)
-            }}
-            onCreateNew={onCreateAndAddMember}
-            createLabel={(q) => `+ Add "${q}" as a new person`}
-            emptyText="No one matches — keep typing to add them as someone new."
-          />
-          {lastAdd && (
-            <UndoBanner
-              message={
-                lastAdd.createdPerson
-                  ? `Added ${lastAdd.label} as a new person.`
-                  : `Added ${lastAdd.label} to this group.`
-              }
-              onUndo={onUndoAdd}
-              busy={undoBusy}
-            />
           )}
         </>
       )}
@@ -1709,17 +1770,12 @@ export function GroupDetailView({
 
       {/* Rendered at every depth (2026-08-03) — a subgroup gets its own subgroups, and so on down.
           Previously gated on `!parentGroup`, which capped the tree at one level. */}
-      <div style={styles.suggestionHeaderRow}>
-        <h2 style={styles.membersHeading}>Subgroups</h2>
-        {!readOnly && (
-          <button type="button" onClick={onAddSubgroup} style={styles.addGroupButton} disabled={addingSubgroup}>
-            {addingSubgroup ? '…' : '+ New Subgroup'}
-          </button>
-        )}
-      </div>
+      <h2 style={styles.membersHeading}>Subgroups</h2>
       {subgroupError && <p style={styles.actionErrorBanner}>{subgroupError}</p>}
       {subgroups.length === 0 ? (
-        <p style={styles.empty}>No subgroups yet.</p>
+        <p style={styles.empty}>
+          {readOnly ? 'No subgroups yet.' : 'No subgroups yet — tap the + button to add one.'}
+        </p>
       ) : (
         <div style={styles.subgroupGrid}>
           {subgroups.map((sg) => (
@@ -1734,36 +1790,12 @@ export function GroupDetailView({
         </div>
       )}
 
-      <div style={styles.suggestionHeaderRow}>
-        <h2 style={styles.membersHeading}>Associated Groups</h2>
-        {!readOnly && (
-          <button onClick={onToggleGroupPicker} style={styles.addGroupButton}>
-            + Associate a New Group
-          </button>
-        )}
-      </div>
-
-      {showGroupPicker && (
-        <div style={styles.groupPickerPanel}>
-          <SearchBox value={groupPickerSearch} onChange={onGroupPickerSearchChange} placeholder="Search groups…" />
-          {loadingPickableGroups ? (
-            <p style={styles.empty}>Loading…</p>
-          ) : filteredPickableGroups.length === 0 ? (
-            <p style={styles.empty}>
-              {groupPickerQuery ? `No groups match "${groupPickerSearch}".` : 'No other groups to associate yet.'}
-            </p>
-          ) : (
-            <div style={{ ...styles.chipRow, marginBottom: '0.5rem' }}>
-              {filteredPickableGroups.map((g) => (
-                <GroupChip key={g.id} label={groupLabel(g.id, g.name)} onClick={() => onApproveGroupSuggestion(g)} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <h2 style={styles.membersHeading}>Associated Groups</h2>
 
       {sortedConfirmedAssociatedGroups.length === 0 ? (
-        <p style={styles.empty}>No groups at this time.</p>
+        <p style={styles.empty}>
+          {readOnly ? 'No groups at this time.' : 'No groups yet — tap the + button to associate one.'}
+        </p>
       ) : (
         <div style={styles.chipRow}>
           {sortedConfirmedAssociatedGroups.map((g) => (
@@ -1828,14 +1860,103 @@ export function GroupDetailView({
       )}
 
       {!readOnly && (
-        <div style={styles.manageTriggerRow}>
-          <button type="button" onClick={onOpenManage} style={styles.manageTriggerButton}>
-            ⋯ Manage
-          </button>
-        </div>
+        <FloatingActionBubble
+          label="Add to this group"
+          // Note box first, mic and all — same reasoning as the event page: voice is the primary
+          // way this gets used, so it doesn't go behind a row of its own.
+          primaryBody={noteBox}
+          actions={[
+            {
+              key: 'members',
+              icon: '👥',
+              label: 'Add people to this group',
+              body: (
+                <>
+                  <SearchAddPicker
+                    items={allPeople
+                      .filter((p) => !explicitMembers.some((m) => m.id === p.id))
+                      .map((p) => ({ id: p.id, label: personLabel(p) }))}
+                    placeholder="Type a name to add someone…"
+                    onSelect={(item) => {
+                      const person = allPeople.find((p) => p.id === item.id)
+                      if (person) onAddMember(person)
+                    }}
+                    onCreateNew={onCreateAndAddMember}
+                    createLabel={(q) => `+ Add "${q}" as a new person`}
+                    emptyText="No one matches — keep typing to add them as someone new."
+                  />
+                  {/* Doubles as the "it worked" confirmation, which matters more now that the
+                      chip it created may be scrolled off behind this panel. */}
+                  {lastAdd && (
+                    <UndoBanner
+                      message={
+                        lastAdd.createdPerson
+                          ? `Added ${lastAdd.label} as a new person.`
+                          : `Added ${lastAdd.label} to this group.`
+                      }
+                      onUndo={onUndoAdd}
+                      busy={undoBusy}
+                    />
+                  )}
+                </>
+              ),
+            },
+            {
+              key: 'group',
+              icon: '👨‍👩‍👧',
+              label: 'Associate a group',
+              // Lazily loads every other group the first time it's opened.
+              onSelect: onToggleGroupPicker,
+              body: (
+                <>
+                  <SearchBox
+                    value={groupPickerSearch}
+                    onChange={onGroupPickerSearchChange}
+                    placeholder="Search groups…"
+                  />
+                  {loadingPickableGroups ? (
+                    <p style={styles.empty}>Loading…</p>
+                  ) : filteredPickableGroups.length === 0 ? (
+                    <p style={styles.empty}>
+                      {groupPickerQuery
+                        ? `No groups match "${groupPickerSearch}".`
+                        : 'No other groups to associate yet.'}
+                    </p>
+                  ) : (
+                    <div style={{ ...styles.chipRow, marginBottom: '0.5rem' }}>
+                      {filteredPickableGroups.map((g) => (
+                        <GroupChip
+                          key={g.id}
+                          label={groupLabel(g.id, g.name)}
+                          onClick={() => onApproveGroupSuggestion(g)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              ),
+            },
+            {
+              key: 'subgroup',
+              icon: '🧩',
+              label: addingSubgroup ? 'Creating…' : 'New subgroup',
+              hint: 'A smaller group inside this one.',
+              disabled: addingSubgroup,
+              onSelect: onAddSubgroup,
+            },
+            {
+              key: 'manage',
+              icon: '⋯',
+              label: 'Manage',
+              hint: 'Change the type, merge, or delete this group.',
+              // Kept apart from the additive actions, and it deletes nothing on its own —
+              // ManagePanel still requires a separate, explicit confirmation.
+              secondary: true,
+              onSelect: onOpenManage,
+            },
+          ]}
+        />
       )}
-
-      {!readOnly && <FloatingNoteButton label="Add a note or ask something">{noteBox}</FloatingNoteButton>}
 
       <ManagePanel open={manageOpen} onClose={onCloseManage} title="Manage this group" subtitle={name}>
         <div style={styles.manageTypeRow}>
@@ -2097,6 +2218,7 @@ function GroupNoteCard({
 function MemberChip({
   person,
   isSelf = false,
+  viaSubgroup = false,
   onSelect,
   onRemove,
   selectable = false,
@@ -2107,6 +2229,9 @@ function MemberChip({
 }: {
   person: PersonRef
   isSelf?: boolean
+  // Here only because they're in a subgroup below — the chip looks the same (they really are a
+  // member), it just says where the membership lives instead of offering a remove badge.
+  viaSubgroup?: boolean
   onSelect: () => void
   onRemove?: () => void
   selectable?: boolean
@@ -2126,8 +2251,14 @@ function MemberChip({
   const shownDots = inSubgroups.slice(0, 3)
   const extraDots = inSubgroups.length - shownDots.length
   // Color alone can't carry meaning, so the names ride along on the chip's title/aria-label —
-  // and the "Not in a subgroup" toggle above gives the same answer with no color at all.
-  const subgroupLabel = inSubgroups.length ? `${label} — in ${inSubgroups.map((s) => s.name).join(', ')}` : undefined
+  // and the "Not in a subgroup" toggle above gives the same answer with no color at all. A
+  // rolled-up member gets the same treatment for the missing trash badge: the tooltip is the only
+  // thing that can explain why this one chip can't be removed from here.
+  const subgroupLabel = inSubgroups.length
+    ? `${label} — in ${inSubgroups.map((s) => s.name).join(', ')}${viaSubgroup ? ', so a member of this group too' : ''}`
+    : viaSubgroup
+      ? `${label} is in a subgroup of this group — remove them there`
+      : undefined
 
   // Only a selected chip is a real drag source -- dragging always means "drag the whole current
   // selection," never just this one chip alone. An unselected chip in select mode just toggles on
@@ -2627,13 +2758,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
     whiteSpace: 'nowrap',
   },
-  groupPickerPanel: {
-    backgroundColor: colors.surface,
-    border: border.light,
-    borderRadius: radius.lg,
-    padding: '0.85rem 0.85rem 0.25rem',
-    marginBottom: space.xl,
-  },
   renameInput: {
     fontSize: fontSize.h2,
     fontFamily,
@@ -2736,17 +2860,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: 'transparent',
     color: colors.textMuted,
     cursor: 'pointer',
-  },
-  manageTriggerRow: { marginTop: '2.5rem', paddingTop: space.xxl, borderTop: `1px solid ${colors.dividerWarm}`, textAlign: 'center' },
-  manageTriggerButton: {
-    fontSize: fontSize.label,
-    padding: '0.5rem 1.1rem',
-    borderRadius: radius.pill,
-    border: border.default,
-    backgroundColor: colors.surface,
-    color: colors.textBody,
-    cursor: 'pointer',
-    fontFamily,
   },
   manageTypeRow: { display: 'flex', alignItems: 'center', gap: space.md },
   manageTypeLabel: { fontSize: fontSize.label, fontWeight: 'bold', color: colors.ink },
