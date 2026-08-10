@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
+import MatchCallout from '../components/MatchCallout'
 import ReviewNoteField from '../components/ReviewNoteField'
 import { groupDisplayName } from '../lib/groupDisplayName'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
@@ -655,6 +656,32 @@ function CandidateCard({
     )
   }
 
+  // Shared by both picker branches: inside the match callout it's the "or link to someone
+  // else" fallback, and without a match it's the only way to link to an existing person.
+  const searchArea = (
+    <>
+      <SearchBox value={search} onChange={setSearch} placeholder="Search your people…" />
+      {searchResults.length > 0 && (
+        <div style={styles.searchResults}>
+          {searchResults.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              style={styles.searchResultRow}
+              onClick={() => {
+                setLinkedPersonId(p.id)
+                setPickerOpen(false)
+                setSearch('')
+              }}
+            >
+              {personLabel(p)}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  )
+
   return (
     <div style={styles.card}>
       <p style={styles.cardTitle}>{candidate.full_name}</p>
@@ -678,8 +705,9 @@ function CandidateCard({
       <div style={styles.linkSection}>
         {linkedPerson && !pickerOpen ? (
           <>
-            <p style={styles.body}>
-              Goes to: <strong>{personLabel(linkedPerson)}</strong>{' '}
+            <p style={styles.linkedLine}>
+              <span style={styles.linkedTick}>✓</span> Goes to{' '}
+              <span style={styles.linkedName}>{personLabel(linkedPerson)}</span>{' '}
               <button type="button" onClick={() => setPickerOpen(true)} style={styles.linkButton}>
                 change
               </button>
@@ -697,71 +725,44 @@ function CandidateCard({
           </>
         ) : (
           <div>
-            <p style={styles.body}>
-              {linkedPerson ? 'Confirm who this belongs to:' : "Couldn't match this to anyone on file — add as a new person, or link to someone existing:"}
-            </p>
-            {linkedPerson && existingPersonGroups.length > 0 && (
-              <div style={styles.existingGroupsBlock}>
-                <p style={styles.matchGroupsLabel}>{personLabel(linkedPerson)} is already in:</p>
-                <div style={styles.chipRow}>
-                  {existingPersonGroups.map((g) => (
-                    <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById, groupParentById)} />
-                  ))}
-                </div>
-              </div>
-            )}
-            <SearchBox value={search} onChange={setSearch} placeholder="Search your people…" />
-            {searchResults.length > 0 && (
-              <div style={styles.searchResults}>
-                {searchResults.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    style={styles.searchResultRow}
-                    onClick={() => {
-                      setLinkedPersonId(p.id)
-                      setPickerOpen(false)
-                      setSearch('')
-                    }}
-                  >
-                    {personLabel(p)}
-                  </button>
-                ))}
-              </div>
-            )}
-            {!linkedPerson && (
-              <p style={styles.body}>
-                Leaving this blank and accepting will add <strong>{candidate.full_name}</strong> as a new person.
-              </p>
-            )}
-            {linkedPerson && (
-              <button
-                type="button"
-                onClick={() => {
-                  setLinkedPersonId(candidate.matched_person_id)
-                  setPickerOpen(false)
-                }}
-                style={styles.linkButton}
-              >
-                cancel
-              </button>
-            )}
-            {linkedPerson && (
-              // The escape hatch that was missing: a high-confidence auto-match (e.g. two
-              // different people sharing a phone number) previously had no way to say "no,
-              // that's not them" — only pick a DIFFERENT existing person, or cancel back to
-              // the same wrong match. Clearing linkedPersonId flips the view below to the
-              // !linkedPerson branch, which shows the editable name fields for a brand-new person.
-              <button
-                type="button"
-                onClick={() => {
+            {linkedPerson ? (
+              // "No — add as new person" is the escape hatch for a wrong auto-match (e.g. two
+              // different people sharing a phone number). Clearing linkedPersonId flips the view
+              // below to the !linkedPerson branch, which shows the editable name fields for a
+              // brand-new person.
+              <MatchCallout
+                candidateName={candidate.full_name}
+                matchName={personLabel(linkedPerson)}
+                onConfirm={() => setPickerOpen(false)}
+                onNotSame={() => {
                   setLinkedPersonId(null)
                   setSearch('')
                 }}
-                style={styles.linkButtonSecondary}
+                evidence={
+                  existingPersonGroups.length > 0 ? (
+                    <div style={styles.existingGroupsBlock}>
+                      <p style={styles.matchGroupsLabel}>{personLabel(linkedPerson)} is already in:</p>
+                      <div style={styles.chipRow}>
+                        {existingPersonGroups.map((g) => (
+                          <ExistingGroupChip key={g.id} label={groupDisplayName(g, groupNameById, groupParentById)} />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null
+                }
               >
-                Not the same person — add as new
-              </button>
+                {searchArea}
+              </MatchCallout>
+            ) : (
+              <>
+                <p style={styles.body}>
+                  Couldn't match this to anyone on file — add as a new person, or link to someone existing:
+                </p>
+                {searchArea}
+                <p style={styles.body}>
+                  Leaving this blank and accepting will add <strong>{candidate.full_name}</strong> as a new person.
+                </p>
+              </>
             )}
           </div>
         )}
@@ -878,6 +879,9 @@ const styles: { [key: string]: React.CSSProperties } = {
   cardTitle: { fontSize: fontSize.lead, color: colors.ink, margin: '0 0 0.25rem', fontWeight: 'bold' },
   metaText: { fontSize: fontSize.label, color: colors.textMuted, margin: '0 0 0.25rem' },
   linkSection: { margin: '0.75rem 0' },
+  linkedLine: { fontSize: fontSize.bodyLg, color: colors.textBody, lineHeight: 1.5, margin: '0 0 0.5rem' },
+  linkedTick: { color: colors.success, fontWeight: 700 },
+  linkedName: { color: colors.ink, fontWeight: 700 },
   existingGroupsBlock: { margin: '0 0 0.5rem' },
   matchGroupsLabel: { fontSize: fontSize.small, color: colors.textMuted, margin: '0 0 0.35rem' },
   existingGroupChip: {
@@ -910,17 +914,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.label,
     fontFamily,
     padding: 0,
-  },
-  linkButtonSecondary: {
-    background: 'none',
-    border: 'none',
-    color: colors.danger,
-    textDecoration: 'underline',
-    cursor: 'pointer',
-    fontSize: fontSize.label,
-    fontFamily,
-    padding: 0,
-    marginLeft: '0.75rem',
   },
   searchResults: { display: 'flex', flexDirection: 'column', gap: space.xs, marginBottom: '0.5rem' },
   searchResultRow: {
