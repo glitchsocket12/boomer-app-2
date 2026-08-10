@@ -116,6 +116,12 @@ src/
 │   ├── groupDisplayName.ts    — groupDisplayName(group, nameById) → "Parent / Child" for a
 │   │                            subgroup, bare name otherwise. Always qualifies (no
 │   │                            collision check). Single source of the format.
+│   ├── searchRanking.ts       — (2026-08-10, tested) rankMatches()/matchScore() for
+│   │                            SearchAddPicker: orders substring matches exact-first,
+│   │                            then prefix ("98 FTS / …" descendants), then own-name
+│   │                            (text past the last "/"), ties shallowest-then-shortest.
+│   │                            Exists because full-chain labels made a parent group
+│   │                            match-collide with all its subgroups and lose.
 │   ├── subgroupColors.ts      — (2026-08-04, tested) subgroupColorMap() assigns a
 │   │                            `subgroupPalette` colour per subgroup BY POSITION (cycles past
 │   │                            8; position not a hash of the id, because a hash collides and
@@ -1416,6 +1422,14 @@ Full story: PROJECT_HISTORY.md.
 │   │                            role=option under aria-activedescendant; the active
 │   │                            border is restated as a full `border` shorthand
 │   │                            (not `borderColor`) or React warns about mixing.
+│   │                            Results are RANKED, not just filtered (2026-08-10,
+│   │                            lib/searchRanking.ts) — a plain substring filter cut to
+│   │                            the caller's first 8 made a parent group unreachable,
+│   │                            since every descendant's full-chain label matches the
+│   │                            parent's name and outvoted it. Trimmed lists now show
+│   │                            "N more matches — keep typing" instead of dropping
+│   │                            silently. `browseAll` still bypasses ranking (unsorted
+│   │                            full list is the caller's job to order).
 │   ├── UndoBanner.tsx         — "Added X. Undo" line for actions that commit with no
 │   │                            confirm step (GroupDetail's member add, 2026-08-03).
 │   │                            Persists until replaced/dismissed rather than fading
