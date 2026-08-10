@@ -12,10 +12,39 @@ import { buildChatToneInstruction, getUserTimeZone } from "../_shared/userSettin
 import { isoDateInTimeZone, fullDateInTimeZone } from "../_shared/tz.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
+import { rollUpGroupMemberIds } from "../_shared/groupRollup.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+}
+
+// PostgREST caps any single response at 1000 rows and says nothing about having done it, so an
+// unpaged select just stops early and looks successful. person_groups is the one table here big
+// enough to hit that (1183 rows on the founder's account when this was written, 2026-08-10) —
+// which meant the model was being handed a roster with ~15% of its group memberships missing and
+// would confidently answer "who's in X?" from an incomplete list. Every page keeps the same
+// .order() so the serialized roster stays byte-identical between turns and the 1h prompt cache
+// still matches.
+const PAGE_SIZE = 1000
+async function fetchAllPersonGroups(
+  client: { from: (t: string) => any }
+): Promise<{ data: { person_id: string; group_id: string }[] }> {
+  const rows: { person_id: string; group_id: string }[] = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await client
+      .from("person_groups")
+      .select("person_id, group_id")
+      .order("person_id")
+      .order("group_id")
+      .range(from, from + PAGE_SIZE - 1)
+    // Fail soft, matching the rest of this block: a partial roster still lets the turn answer,
+    // where throwing would take the whole chat down over one page.
+    if (error || !data) break
+    rows.push(...data)
+    if (data.length < PAGE_SIZE) break
+  }
+  return { data: rows }
 }
 
 serve(async (req) => {
@@ -76,11 +105,7 @@ serve(async (req) => {
         .order("id")
         .order("created_at", { foreignTable: "notes" }),
       supabaseClient.from("groups").select("id, name, parent_group_id").order("id"),
-      supabaseClient
-        .from("person_groups")
-        .select("person_id, group_id")
-        .order("person_id")
-        .order("group_id"),
+      fetchAllPersonGroups(supabaseClient),
       supabaseClient
         .from("moment_groups")
         .select("moment_id, group_id")
@@ -148,11 +173,14 @@ serve(async (req) => {
       idByTagName[t.name.toLowerCase()] = t.id
     }
 
+    // Anyone in a subgroup is a member of every group above it, at any depth (founder,
+    // 2026-08-10) — the same rule the app's own group pages render. Without it the model answers
+    // "who's in Air Force?" from that group's own rows only and leaves out people the screen is
+    // visibly counting. Derived, exactly as it is in the app: nothing is written back.
+    const memberIdsByGroup = rollUpGroupMemberIds(groups ?? [], personGroups ?? [], (id) => !!nameById[id])
     const groupMemberNamesById: Record<string, string[]> = {}
-    for (const pg of personGroups ?? []) {
-      const personName = nameById[pg.person_id]
-      if (!personName) continue
-      ;(groupMemberNamesById[pg.group_id] ??= []).push(personName)
+    for (const [groupId, memberIds] of Object.entries(memberIdsByGroup)) {
+      groupMemberNamesById[groupId] = memberIds.map((personId) => nameById[personId])
     }
 
     // Pets are their own records joined to people via person_pets, so a household dog is one row
@@ -273,7 +301,7 @@ A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, 
 - If the user explicitly says a specific person belongs to one of these same affiliations — e.g. "he was on my Pop Warner team too," "she went through the Academy with me" — tag that person into the group via "person_group_tags" (this is turn-level, not tied to any one moment entry).
 - Don't invent a group from a passing mention of a place or a single unaffiliated event. Only tag a group when the user's own framing is about a recurring school/team/unit/organization, not a one-time location.
 - Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in that entry's "moment_groups" rather than waiting for a second, more explicit mention.
-- SUBGROUPS: a group in the roster written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "22 AS". When you mean an existing group, copy its name from the roster EXACTLY, including the "Parent / Child" form — a bare "Pilots" when the roster has two of them cannot be resolved and the tag will be dropped. Two different parents can each have a subgroup with the same short name, so if the user's phrasing doesn't make clear which one they mean, ask a quick clarifying question instead of guessing. When you're deliberately creating a NEW subgroup under an existing parent, write it in that same "Parent / Child" form; for any other new group, just give its plain name with no prefix.
+- SUBGROUPS: a group in the roster written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "22 AS". When you mean an existing group, copy its name from the roster EXACTLY, including the "Parent / Child" form — a bare "Pilots" when the roster has two of them cannot be resolved and the tag will be dropped. Two different parents can each have a subgroup with the same short name, so if the user's phrasing doesn't make clear which one they mean, ask a quick clarifying question instead of guessing. When you're deliberately creating a NEW subgroup under an existing parent, write it in that same "Parent / Child" form; for any other new group, just give its plain name with no prefix. Membership rolls UPWARD: a parent group's member list in the roster already includes everyone from its subgroups, so answer "who's in the parent?" straight from that list and never add the subgroups up yourself. It does not roll downward — being in the parent does not put someone in any particular subgroup, so to record that someone is in a subgroup you must tag the subgroup by name.
 
 A PET is an animal belonging to one or more people — a dog, cat, horse, fish, bird, reptile, anything. Pets are recorded in their own "pets" field, and the roster provided in this prompt lists every pet already on file with its owner(s).
 
@@ -390,7 +418,17 @@ ${context || "(none recorded yet)"}`
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 4096,
+        // 4096 → 8192 (2026-08-10). This model thinks before it answers, and thinking spends the
+        // SAME budget as the reply — so a question that takes real reasoning ("how many people are
+        // in the Air Force group?", against a roster of ~300 names) could burn the entire 4096 on
+        // thinking and return a response with no text block at all. That failed as an unparseable
+        // reply and showed "Sorry, I couldn't process that", having already been billed for 4096
+        // output tokens. Observed live: output_tokens 4096, thinking_tokens 4095, zero text.
+        //
+        // Not a cost regression — max_tokens is a ceiling, not a charge, and only turns that
+        // actually need the room bill for it. It replaces spend that currently buys nothing.
+        // Same fix, same reasoning as update-moment's 1500 → 3000 (2026-08-08).
+        max_tokens: 8192,
         // Four tiers ordered stable-to-volatile so a write only invalidates its own tier and
         // everything after it, never what comes before: instructions (never changes) -> roster
         // (rare writes) -> moments (frequent writes) -> today's date (uncached, see above). See
@@ -430,11 +468,21 @@ ${context || "(none recorded yet)"}`
     console.log("usage", JSON.stringify(data.usage ?? null))
     const textBlock = data.content?.find((b: any) => b.type === "text")
 
+    // No text block at all. The usual cause is the reply budget being spent entirely on thinking
+    // (see max_tokens above) — distinguishable from every other failure by stop_reason, and worth
+    // telling apart because the honest advice differs: this one is "ask something narrower", not
+    // "try again", which would just burn another full budget on the identical question.
+    const ranOutThinking = !textBlock && data.stop_reason === "max_tokens"
     if (!textBlock) {
-      console.error("Anthropic response had no text block", JSON.stringify(data))
+      console.error(
+        "Anthropic response had no text block",
+        JSON.stringify({ stop_reason: data.stop_reason, usage: data.usage })
+      )
     }
 
-    let parsed: any = { reply: "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
+    let parsed: any = { reply: ranOutThinking
+      ? "That one took more thinking than I had room for. Try asking about a smaller group, or narrowing the question."
+      : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""

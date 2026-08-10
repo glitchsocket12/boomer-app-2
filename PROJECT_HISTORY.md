@@ -1187,3 +1187,21 @@ Filed as item 86 rather than fixed on the spot — a founder call, and the right
 ---
 
 _End of document. Update this file as the project progresses — it's meant to be the single source of truth for anyone (human or AI) picking this project up._
+
+---
+
+## Subgroup membership rolls upward, and the thinking budget that ate the reply (2026-08-10)
+
+**The ask.** "Members of a subevent should automatically be included as members of the parent event. Same logic with groups." Events already did this — sub-event attendees have rolled up into the parent's "Who was there" since 2026-08-07 — so the real work was groups, plus the AI chat, which knew about neither.
+
+**The design call, and why it isn't the 2026-07-26 mistake.** PROJECT_CONTEXT had a standing "subgroup membership is deliberately independent of the parent's — no sync trigger" decision, with a sync trigger added by mistake and reverted the same day. That decision survives intact, because this roll-up is *derived at render and never written*: the `person_groups` row stays on the subgroup, so removing someone there removes them from every ancestor with nothing to keep in sync. It also only runs upward — a new subgroup still starts empty rather than inheriting its parent's roster. Writing the rows instead would have been unpickable later, exactly the trap the 2026-07-26 self-membership cleanup hit when there was no flag distinguishing real rows from bug-created ones.
+
+**Verified without credentials first.** The demo account has no nested groups, so before asking the founder to log in, two demo groups were temporarily nested, clicked through, and reverted — enough to prove the list card, the search, and the group page. That left only the live-data read unproven, which is what the login was actually for.
+
+**Two silent bugs, both found by not trusting the numbers.** Predicting Air Force's member count from a direct query gave 282; the page said 296. The gap was PostgREST's undocumented 1000-row response cap against 1183 `person_groups` rows — the *prediction* was wrong, not the page. That immediately implicated two real code paths: the new descendant query (paged before shipping) and, worse, `converse`'s roster read, which had been unpaged all along and had been feeding the model a roster missing ~15% of every membership in the account. Nothing had ever errored.
+
+Then the deployed chat failed on "how many people are in the Air Force group?" — reproducibly, while "is Caroline Volin in the Air Force group?" worked. The function logs gave the answer with no guesswork: `output_tokens` 4096, `thinking_tokens` 4095, and a response whose only content block was an empty `thinking` block. This model thinks before answering and thinking spends the same budget as the reply, so a counting question against ~300 names consumed the entire allowance and emitted no text — parse failure, generic apology, full billing, nothing delivered. `max_tokens` went to 8192, and the no-text case now gets its own message telling the user to narrow the question rather than "try again", which would only burn another full budget identically.
+
+**The lesson worth keeping: a wrong prediction is evidence, not noise.** Both bugs surfaced because a number disagreed with another number and the disagreement got chased instead of explained away. The 1000-row cap in particular fails in the most dangerous possible way — a successful-looking response that is quietly incomplete — and it is still worth auditing the other Edge Functions for unpaged reads on tables that can cross it.
+
+**A footnote that was NOT a bug.** Mid-verification the Groups list showed "Travis Phoenix Spark" indented under 22 AS when it belongs to Air Force. Running `flattenGroupTree` against real data showed correct depths for all 68 groups: it was stale in-memory state from a drag accidentally triggered while the browser viewport was desynced from the pane. Worth knowing the drag-to-reparent is easy to fire by accident. Separately, the chat answers 295 where the app says 296 — that one is real duplicate data, two distinct person records both named "Benn Hawkins", and the model reasonably assumed one person from a name-only roster.
