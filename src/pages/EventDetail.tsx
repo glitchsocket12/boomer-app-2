@@ -5,7 +5,7 @@ import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
 import PhotoGallery from '../components/PhotoGallery'
 import ManagePanel from '../components/ManagePanel'
-import FloatingNoteButton from '../components/FloatingNoteButton'
+import FloatingActionBubble, { type BubbleNav } from '../components/FloatingActionBubble'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
@@ -16,6 +16,7 @@ import { summarize } from '../lib/summarize'
 import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { sortSubEventsByDate } from '../lib/subEvents'
+import { rankSiblingAttendees } from '../lib/siblingAttendees'
 import { ATTENDEE_PLACEHOLDER, hasSomethingToSummarize } from '../lib/moments'
 import { findOrCreateTagId } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
@@ -39,6 +40,9 @@ export type NoteWithPerson = { id: string; content: string; created_at: string; 
 // the card can act on all of them together.
 export type NoteGroup = { key: string; content: string; created_at: string; source: string | null; people: PersonRef[]; ids: string[] }
 export type OtherEvent = { id: string; occasion: string | null; raw_description: string }
+// The parent event and this sub-event's siblings, stripped down to just who was tagged on each —
+// the pool the "were they at this one too?" suggestions are ranked from (lib/siblingAttendees.ts).
+export type SiblingEventRef = { id: string; notes: { people: PersonRef | null }[] }
 export type ChildEventRef = {
   id: string
   occasion: string | null
@@ -110,15 +114,17 @@ export default function EventDetail({
   const [photosRefreshKey, setPhotosRefreshKey] = useState(0)
   const photosImportHandle = useRef<{ cancel: () => void } | null>(null)
   const [parentEvent, setParentEvent] = useState<OtherEvent | null>(null)
+  const [siblingEvents, setSiblingEvents] = useState<SiblingEventRef[]>([])
   const [childEvents, setChildEvents] = useState<ChildEventRef[]>([])
   const [addingSubEvent, setAddingSubEvent] = useState(false)
   const [subEventError, setSubEventError] = useState<string | null>(null)
-  // "+ New Sub-event" asks for the date up front instead of creating a shell straight away
+  // "New sub-event" asks for the date up front instead of creating a shell straight away
   // (2026-08-08). The parent's start date is still the default — it's usually right, and one tap
   // accepts it — but showing it makes the inherited date a deliberate choice rather than a silent
   // one. That matters now that "Associated Events" is ordered by date: an unnoticed inherited date
   // is what put a whole trip's sub-events on day one and left them sorting by creation order.
-  const [subEventFormOpen, setSubEventFormOpen] = useState(false)
+  // The form itself lives in the action bubble now, which owns its own open/closed state — hence
+  // no `subEventFormOpen` here; `startAddSubEvent` only seeds the default date.
   const [subEventDateInput, setSubEventDateInput] = useState('')
   // Name, date, and location edited together as one flow (2026-08-07 redesign) — previously two
   // separate pencils (rename up top, "Edit date & location" in the meta row) with two separate
@@ -234,10 +240,26 @@ export default function EventDetail({
     const parentId = error ? null : (data as { parent_moment_id: string | null } | null)?.parent_moment_id ?? null
     if (!parentId) {
       setParentEvent(null)
+      setSiblingEvents([])
       return
     }
     const { data: parent } = await supabase.from('moments').select('id, occasion, raw_description').eq('id', parentId).single()
     setParentEvent((parent as OtherEvent) ?? null)
+    loadSiblingEvents(parentId)
+  }
+
+  // Item 87 (2026-08-10): the crowd at a multi-day event is largely the same crowd every day, so a
+  // sub-event suggests everyone tied to the rest of the event rather than starting from a blank
+  // "Who was there". The pool is the parent's own directly-tagged attendees plus every sibling
+  // sub-event's — one query covering the parent row and all its children, minus this one. Same
+  // fail-open-on-missing-column reasoning as loadParentEvent above: no siblings beats a broken page.
+  async function loadSiblingEvents(parentId: string) {
+    const { data, error } = await supabase
+      .from('moments')
+      .select('id, notes(people(id, name, last_name))')
+      .or(`id.eq.${parentId},parent_moment_id.eq.${parentId}`)
+    const rows = error ? [] : ((data as unknown as SiblingEventRef[]) ?? [])
+    setSiblingEvents(rows.filter((row) => row.id !== eventId))
   }
 
   // Item 35 (2026-07-30): sub-events nested one level under this one — e.g. a specific day of a
@@ -260,14 +282,13 @@ export default function EventDetail({
   function startAddSubEvent() {
     setSubEventDateInput(moment?.event_date ?? '')
     setSubEventError(null)
-    setSubEventFormOpen(true)
   }
 
   // Everything except the date still follows GroupDetail.tsx's handleAddSubgroup — a blank shell
   // that drops straight onto its own page, with no attempt to auto-tag the founder as an attendee
   // the way the top-level "+ Add Event" flow does (a sub-event carved out of a bigger event isn't
   // necessarily one the founder personally attended). The date is the one thing asked for up
-  // front, defaulted to the parent's start date; see the subEventFormOpen comment above.
+  // front, defaulted to the parent's start date; see the subEventDateInput comment above.
   async function handleAddSubEvent(e: FormEvent) {
     e.preventDefault()
     if (!moment) return
@@ -297,7 +318,7 @@ export default function EventDetail({
       return
     }
 
-    setSubEventFormOpen(false)
+    // No need to close the bubble — navigating unmounts this whole page, bubble and all.
     onSelectEvent({ id: data.id, summary: 'Untitled moment' })
   }
 
@@ -654,14 +675,14 @@ export default function EventDetail({
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
       parentEvent={parentEvent}
+      siblingEvents={siblingEvents}
       childEvents={childEvents}
       addingSubEvent={addingSubEvent}
       subEventError={subEventError}
-      subEventFormOpen={subEventFormOpen}
       subEventDateInput={subEventDateInput}
       onStartAddSubEvent={startAddSubEvent}
       onSubEventDateInputChange={setSubEventDateInput}
-      onCancelAddSubEvent={() => setSubEventFormOpen(false)}
+      onCancelAddSubEvent={() => setSubEventError(null)}
       onAddSubEvent={handleAddSubEvent}
       onBack={onBack}
       backLabel={backLabel}
@@ -746,10 +767,10 @@ export function EventDetailView({
   onSelectGroup,
   onSelectEvent,
   parentEvent = null,
+  siblingEvents = [],
   childEvents = [],
   addingSubEvent = false,
   subEventError = null,
-  subEventFormOpen = false,
   subEventDateInput = '',
   onStartAddSubEvent = () => {},
   onSubEventDateInputChange = () => {},
@@ -828,10 +849,10 @@ export function EventDetailView({
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   parentEvent?: OtherEvent | null
+  siblingEvents?: SiblingEventRef[]
   childEvents?: ChildEventRef[]
   addingSubEvent?: boolean
   subEventError?: string | null
-  subEventFormOpen?: boolean
   subEventDateInput?: string
   onStartAddSubEvent?: () => void
   onSubEventDateInputChange?: (v: string) => void
@@ -905,8 +926,10 @@ export function EventDetailView({
   actionError?: string | null
   noteBox?: ReactNode
 }) {
-  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
-  const [tagPickerOpen, setTagPickerOpen] = useState(false)
+  // The action bubble sits over the bottom-right of the page, so a chip appearing further up
+  // isn't reliable confirmation that an add worked. Each picker echoes its last add underneath
+  // itself instead; picking a different action clears it.
+  const [justAdded, setJustAdded] = useState<string | null>(null)
   // Save sits right next to the mic in the description editor, so it has to be held shut while a
   // recording is still being transcribed — otherwise saving mid-transcription silently drops
   // whatever was just said. See VoiceInputButton's onBusyChange.
@@ -969,10 +992,21 @@ export function EventDetailView({
     .sort((a, b) => a.name.localeCompare(b.name))
 
   const dismissedIds = new Set(moment.dismissed_person_ids ?? [])
+
+  // Strongest signal on a sub-event page, so it's computed first and everything below excludes it:
+  // whoever was at the rest of this event is a better guess for this day than whoever happens to
+  // be on a tagged group's roster. Empty on a root event — siblingEvents is only ever loaded for a
+  // sub-event (see loadSiblingEvents). Ranked most-overlapping-first by lib/siblingAttendees.ts.
+  const suggestedFromSiblings = rankSiblingAttendees(
+    siblingEvents,
+    new Set([...attendees.keys(), ...dismissedIds])
+  )
+  const siblingSuggestedIds = new Set(suggestedFromSiblings.map((p) => p.id))
+
   const suggestedAttendees = new Map<string, PersonRef>()
   for (const g of groups) {
     for (const pg of g.person_groups ?? []) {
-      if (pg.people && !attendees.has(pg.people.id) && !dismissedIds.has(pg.people.id)) {
+      if (pg.people && !attendees.has(pg.people.id) && !dismissedIds.has(pg.people.id) && !siblingSuggestedIds.has(pg.people.id)) {
         suggestedAttendees.set(pg.people.id, pg.people)
       }
     }
@@ -984,7 +1018,7 @@ export function EventDetailView({
   // need self to be manually added first. Excludes anyone already covered by the group-roster
   // suggestion above so a person never appears as a suggestion in both boxes at once.
   const suggestedFamily = new Map<string, PersonRef>()
-  const familyExcludeIds = new Set([...dismissedIds, ...suggestedAttendees.keys()])
+  const familyExcludeIds = new Set([...dismissedIds, ...suggestedAttendees.keys(), ...siblingSuggestedIds])
   const familySeedIds = new Set(attendees.keys())
   if (selfId) familySeedIds.add(selfId)
   for (const id of suggestFamilyMembers(familySeedIds, relationshipsById, familyExcludeIds)) {
@@ -1136,18 +1170,18 @@ export function EventDetailView({
       )}
 
       <PhotoGallery momentId={moment.id} key={photosRefreshKey} />
-      {!readOnly && (
+      {/* The "Add photos" button moved into the action bubble (2026-08-08), but the import's
+          progress and errors stay here next to the gallery they're about — that's output, not a
+          control, and it'd be invisible in a panel the user closes as soon as the import starts. */}
+      {!readOnly && (photosStatus || photosError) && (
         <div style={styles.photosActionRow}>
-          <button onClick={onAddPhotos} style={styles.photosButton} disabled={photosImporting}>
-            {photosImporting ? 'Working…' : 'Add photos from Google Photos'}
-          </button>
           {photosStatus && <p style={styles.photosStatus}>{photosStatus}</p>}
           {photosError && <p style={styles.photosError}>{photosError}</p>}
         </div>
       )}
 
       <h2 style={styles.subheading}>Who was there</h2>
-      {attendees.size > 0 && (
+      {attendees.size > 0 ? (
         <>
           <p style={styles.chatHint}>
             {readOnly ? 'Tap a name for their profile.' : 'Tap a name for their profile, or hover to untag them from this event.'}
@@ -1166,22 +1200,38 @@ export function EventDetailView({
             ))}
           </div>
         </>
+      ) : (
+        <p style={styles.empty}>{readOnly ? 'No one tagged yet.' : ADD_HINT.attendee}</p>
       )}
-      {!readOnly && (
-        <SearchAddPicker
-          items={allPeople
-            .filter((p) => !attendees.has(p.id))
-            .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
-          placeholder="Search people to tag, or type a new name…"
-          onSelect={(item) => {
-            const person = allPeople.find((p) => p.id === item.id)
-            if (person) onAddAttendee(person)
-          }}
-          // Someone who was there but isn't on file yet gets created and tagged in one step —
-          // otherwise you'd have to leave the event, add them on the People page, and come back.
-          onCreateNew={(name) => onCreateAndAddAttendee(name)}
-          createLabel={(name) => `+ Add "${name}" as a new person`}
-        />
+
+      {/* Sub-event pages only (siblingEvents is empty otherwise). Sits above the group and family
+          boxes because it's the strongest signal here — the same crowd usually turns up to every
+          part of a multi-day event. Ordered by how many other parts each person came to, not by
+          name, so the surest bets are the first ones under the thumb. */}
+      {!readOnly && suggestedFromSiblings.length > 0 && (
+        <>
+          <div style={styles.suggestionHeaderRow}>
+            <h2 style={{ ...styles.subheading, margin: 0 }}>Were they at this one too?</h2>
+            {suggestedFromSiblings.length > 1 && (
+              <button onClick={() => onDenyAllSuggestions(suggestedFromSiblings)} style={styles.removeAllButton}>
+                × Remove all suggestions
+              </button>
+            )}
+          </div>
+          <p style={styles.chatHint}>
+            {`These people were at other parts of ${parentEvent?.occasion || 'this event'}. Tap a name to add them to who was there, or hover to dismiss.`}
+          </p>
+          <div style={styles.chipRow}>
+            {suggestedFromSiblings.map((p) => (
+              <SuggestedAttendeeChip
+                key={p.id}
+                person={p}
+                onApprove={() => onAddAttendee(p)}
+                onDeny={() => onDenySuggestion(p)}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       {!readOnly && suggestedAttendees.size > 0 && (
@@ -1243,49 +1293,9 @@ export function EventDetailView({
           Associated Events → Associated Groups → Notes → Manage order used across Event/Group. */}
       {!parentEvent && (
         <>
-          <div style={styles.suggestionHeaderRow}>
-            <h2 style={styles.subheading}>Associated Events</h2>
-            {!readOnly && !subEventFormOpen && (
-              <button type="button" onClick={onStartAddSubEvent} style={styles.addButton} disabled={addingSubEvent}>
-                {addingSubEvent ? '…' : '+ New Sub-event'}
-              </button>
-            )}
-          </div>
-          {subEventError && <p style={styles.factErrorBanner}>{subEventError}</p>}
-          {/* Confirm the date before creating (2026-08-08). The parent's start date is prefilled,
-              so accepting it is one click — but it's now a decision, not a silent default, which is
-              what keeps these tiles genuinely in date order. */}
-          {!readOnly && subEventFormOpen && (
-            <form onSubmit={onAddSubEvent} style={styles.subEventForm}>
-              <label style={styles.metaEditLabel}>
-                What day was this?
-                <input
-                  type="date"
-                  value={subEventDateInput}
-                  onChange={(e) => onSubEventDateInputChange(e.target.value)}
-                  style={styles.metaEditInput}
-                  autoFocus
-                />
-              </label>
-              <p style={styles.subEventFormHint}>
-                {moment.event_date
-                  ? moment.event_end_date && moment.event_end_date !== moment.event_date
-                    ? `"${summarize(moment.occasion, moment.raw_description)}" ran ${formatFullDate(moment)} — pick the day this one happened.`
-                    : `Defaults to the date of "${summarize(moment.occasion, moment.raw_description)}". Change it if this happened on a different day.`
-                  : "This event doesn't have a date yet — add one here if you know it, or leave it blank."}
-              </p>
-              <div style={styles.subEventFormButtons}>
-                <button type="submit" style={styles.saveButton} disabled={addingSubEvent}>
-                  {addingSubEvent ? 'Creating…' : 'Create sub-event'}
-                </button>
-                <button type="button" onClick={onCancelAddSubEvent} style={styles.cancelButton} disabled={addingSubEvent}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
+          <h2 style={styles.subheading}>Associated Events</h2>
           {childEvents.length === 0 ? (
-            <p style={styles.empty}>No sub-events yet.</p>
+            <p style={styles.empty}>{readOnly ? 'No sub-events yet.' : ADD_HINT.subEvent}</p>
           ) : (
             <div style={styles.childEventGrid}>
               {childEvents.map((ce) => {
@@ -1313,14 +1323,7 @@ export function EventDetailView({
         </>
       )}
 
-      <div style={styles.suggestionHeaderRow}>
-        <h2 style={styles.subheading}>Associated Groups</h2>
-        {!readOnly && (
-          <button onClick={() => setGroupPickerOpen((v) => !v)} style={styles.addButton}>
-            + Associate a New Group
-          </button>
-        )}
-      </div>
+      <h2 style={styles.subheading}>Associated Groups</h2>
       {groups.length > 0 ? (
         <>
           <p style={styles.chatHint}>
@@ -1339,29 +1342,10 @@ export function EventDetailView({
           </div>
         </>
       ) : (
-        <p style={styles.empty}>No groups at this time.</p>
-      )}
-      {!readOnly && groupPickerOpen && (
-        <div style={styles.pickerPanel}>
-          <SearchAddPicker
-            items={allGroupsList
-              .filter((g) => !groups.some((tagged) => tagged.id === g.id))
-              .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById, groupParentById) }))}
-            placeholder="Tag this event to a group…"
-            onSelect={(item) => onTagGroup(item.id)}
-            emptyText="No groups match."
-          />
-        </div>
+        <p style={styles.empty}>{readOnly ? 'No groups at this time.' : ADD_HINT.group}</p>
       )}
 
-      <div style={styles.suggestionHeaderRow}>
-        <h2 style={styles.subheading}>Tags</h2>
-        {!readOnly && (
-          <button onClick={() => setTagPickerOpen((v) => !v)} style={styles.addButton}>
-            + Add a Tag
-          </button>
-        )}
-      </div>
+      <h2 style={styles.subheading}>Tags</h2>
       {tags.length > 0 ? (
         <>
           <p style={styles.chatHint}>
@@ -1374,23 +1358,7 @@ export function EventDetailView({
           </div>
         </>
       ) : (
-        <p style={styles.empty}>No tags yet.</p>
-      )}
-      {!readOnly && tagPickerOpen && (
-        <div style={styles.pickerPanel}>
-          <SearchAddPicker
-            items={[...allTagsList]
-              .filter((t) => !tags.some((tagged) => tagged.id === t.id))
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((t) => ({ id: t.id, label: t.name }))}
-            placeholder="Tag this event (e.g. milestone, vacation)…"
-            onSelect={(item) => onTagMoment(item.id)}
-            onCreateNew={(name) => onCreateAndTagMoment(name)}
-            createLabel={(q) => `+ Add "${q}" as a new tag`}
-            emptyText="No tags match."
-            browseAll
-          />
-        </div>
+        <p style={styles.empty}>{readOnly ? 'No tags yet.' : ADD_HINT.tag}</p>
       )}
 
       {(moment.notes.length > 0 || !readOnly) && (
@@ -1426,14 +1394,173 @@ export function EventDetailView({
       )}
 
       {!readOnly && (
-        <div style={styles.manageTriggerRow}>
-          <button type="button" onClick={onOpenManage} style={styles.manageTriggerButton}>
-            ⋯ Manage
-          </button>
-        </div>
+        <FloatingActionBubble
+          label="Add to this event"
+          // The note box (and its mic) sits on the first screen rather than behind a row of its
+          // own: voice is the main way this app gets used, so it stays exactly as reachable as it
+          // was when this bubble did nothing else.
+          primaryBody={noteBox}
+          actions={[
+            {
+              key: 'people',
+              icon: '👥',
+              label: 'Add people who were there',
+              onSelect: () => setJustAdded(null),
+              body: (
+                <>
+                  <SearchAddPicker
+                    items={allPeople
+                      .filter((p) => !attendees.has(p.id))
+                      .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
+                    placeholder="Search people to tag, or type a new name…"
+                    onSelect={(item) => {
+                      const person = allPeople.find((p) => p.id === item.id)
+                      if (person) {
+                        onAddAttendee(person)
+                        setJustAdded(`${person.name}${person.last_name ? ` ${person.last_name}` : ''}`)
+                      }
+                    }}
+                    // Someone who was there but isn't on file yet gets created and tagged in one
+                    // step — otherwise you'd have to leave the event, add them on the People page,
+                    // and come back.
+                    onCreateNew={(name) => {
+                      onCreateAndAddAttendee(name)
+                      setJustAdded(name)
+                    }}
+                    createLabel={(name) => `+ Add "${name}" as a new person`}
+                  />
+                  <AddedLine name={justAdded} />
+                </>
+              ),
+            },
+            {
+              key: 'tag',
+              icon: '🏷️',
+              label: 'Add a tag',
+              onSelect: () => setJustAdded(null),
+              body: (
+                <>
+                  <SearchAddPicker
+                    items={[...allTagsList]
+                      .filter((t) => !tags.some((tagged) => tagged.id === t.id))
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((t) => ({ id: t.id, label: t.name }))}
+                    placeholder="Tag this event (e.g. milestone, vacation)…"
+                    onSelect={(item) => {
+                      onTagMoment(item.id)
+                      setJustAdded(item.label)
+                    }}
+                    onCreateNew={(name) => {
+                      onCreateAndTagMoment(name)
+                      setJustAdded(name)
+                    }}
+                    createLabel={(q) => `+ Add "${q}" as a new tag`}
+                    emptyText="No tags match."
+                    browseAll
+                  />
+                  <AddedLine name={justAdded} />
+                </>
+              ),
+            },
+            {
+              key: 'group',
+              icon: '👨‍👩‍👧',
+              label: 'Associate a group',
+              onSelect: () => setJustAdded(null),
+              body: (
+                <>
+                  <SearchAddPicker
+                    items={allGroupsList
+                      .filter((g) => !groups.some((tagged) => tagged.id === g.id))
+                      .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById, groupParentById) }))}
+                    placeholder="Tag this event to a group…"
+                    onSelect={(item) => {
+                      onTagGroup(item.id)
+                      setJustAdded(item.label)
+                    }}
+                    emptyText="No groups match."
+                  />
+                  <AddedLine name={justAdded} />
+                </>
+              ),
+            },
+            {
+              key: 'photos',
+              icon: '📷',
+              label: photosImporting ? 'Importing photos…' : 'Add photos from Google Photos',
+              hint: 'Progress shows next to the photos above.',
+              disabled: photosImporting,
+              onSelect: onAddPhotos,
+            },
+            // Sub-events belong to the top-level event only — there's no row to open here when
+            // you're already looking at one.
+            ...(parentEvent
+              ? []
+              : [
+                  {
+                    key: 'subevent',
+                    icon: '📅',
+                    label: 'New sub-event',
+                    hint: 'A single day inside this one.',
+                    // Seeds the date input with this event's own date before the form renders.
+                    onSelect: onStartAddSubEvent,
+                    // No back() on submit: a success navigates to the new sub-event and unmounts
+                    // this page anyway, and a failure needs to leave the form up with its error
+                    // rather than dumping you back to a list with nothing to explain what went
+                    // wrong. That's also why the error banner renders in here, not on the page.
+                    body: ({ back }: BubbleNav) => (
+                      <form onSubmit={onAddSubEvent} style={styles.subEventForm}>
+                        {subEventError && <p style={styles.factErrorBanner}>{subEventError}</p>}
+                        <label style={styles.metaEditLabel}>
+                          What day was this?
+                          <input
+                            type="date"
+                            value={subEventDateInput}
+                            onChange={(e) => onSubEventDateInputChange(e.target.value)}
+                            style={styles.metaEditInput}
+                            autoFocus
+                          />
+                        </label>
+                        <p style={styles.subEventFormHint}>
+                          {moment.event_date
+                            ? moment.event_end_date && moment.event_end_date !== moment.event_date
+                              ? `"${summarize(moment.occasion, moment.raw_description)}" ran ${formatFullDate(moment)} — pick the day this one happened.`
+                              : `Defaults to the date of "${summarize(moment.occasion, moment.raw_description)}". Change it if this happened on a different day.`
+                            : "This event doesn't have a date yet — add one here if you know it, or leave it blank."}
+                        </p>
+                        <div style={styles.subEventFormButtons}>
+                          <button type="submit" style={styles.saveButton} disabled={addingSubEvent}>
+                            {addingSubEvent ? 'Creating…' : 'Create sub-event'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onCancelAddSubEvent()
+                              back()
+                            }}
+                            style={styles.cancelButton}
+                            disabled={addingSubEvent}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ),
+                  },
+                ]),
+            {
+              key: 'manage',
+              icon: '⋯',
+              label: 'Manage',
+              hint: 'Merge a duplicate, or delete this event.',
+              // Set apart from the additive actions above, and it doesn't delete anything itself
+              // — ManagePanel still makes deletion a separate, explicitly confirmed step.
+              secondary: true,
+              onSelect: onOpenManage,
+            },
+          ]}
+        />
       )}
-
-      {!readOnly && <FloatingNoteButton label="Add a note or ask something">{noteBox}</FloatingNoteButton>}
 
       <ManagePanel open={manageOpen} onClose={onCloseManage} title="Manage this event" subtitle={moment.occasion || 'Untitled moment'}>
         {actionError && <p style={styles.factErrorBanner}>{actionError}</p>}
@@ -1552,6 +1679,23 @@ const PENCIL_ICON = (
     <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 )
+
+// Every "add" control on this page moved into the action bubble (2026-08-08), so an empty section
+// would otherwise be a dead end with nothing to click. These point at the bubble instead. Only
+// shown when the page is writable — the read-only demo has no bubble to point at.
+const ADD_HINT = {
+  attendee: 'No one tagged yet — tap the + button to add who was there.',
+  group: 'No groups yet — tap the + button to associate one.',
+  tag: 'No tags yet — tap the + button to add one.',
+  subEvent: 'No sub-events yet — tap the + button to add one.',
+}
+
+// Echoes the most recent add back inside the bubble. The panel covers the corner of the page, so
+// the chip that just appeared in the section above may well be behind it or off-screen.
+function AddedLine({ name }: { name: string | null }) {
+  if (!name) return null
+  return <p style={styles.addedLine}>✓ Added {name}.</p>
+}
 
 // Clicking the chip always goes to the person's profile — same as any other chip in the app.
 // Hovering reveals a small trash badge in the corner (a separate control, not a swap of the
@@ -1904,42 +2048,12 @@ const styles: { [key: string]: React.CSSProperties } = {
   detailKey: { fontWeight: 'bold', textTransform: 'capitalize' },
   subheading: { fontSize: '1.2rem', color: colors.ink, margin: '1.5rem 0 0.5rem 0' },
   photosActionRow: { margin: '-1rem 0 1rem' },
-  photosButton: {
-    fontSize: fontSize.label,
-    padding: '0.45rem 0.85rem',
-    borderRadius: radius.md,
-    border: border.primary,
-    backgroundColor: colors.surface,
-    color: colors.ink,
-    cursor: 'pointer',
-    fontFamily,
-  },
   photosStatus: { fontSize: fontSize.small, color: colors.success, margin: '0.4rem 0 0' },
   photosError: { fontSize: fontSize.small, color: colors.danger, margin: '0.4rem 0 0' },
   chatHint: { margin: '0 0 0.25rem 0', fontSize: fontSize.body, color: colors.textFaint },
   suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: space.lg, flexWrap: 'wrap' },
-  addButton: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '0.3rem',
-    fontSize: fontSize.label,
-    padding: '0.3rem 0.7rem',
-    borderRadius: radius.md,
-    border: border.suggestFill,
-    backgroundColor: 'transparent',
-    color: colors.suggest,
-    cursor: 'pointer',
-    fontFamily,
-    whiteSpace: 'nowrap',
-  },
-  pickerPanel: {
-    backgroundColor: colors.surface,
-    border: border.light,
-    borderRadius: radius.lg,
-    padding: '0.85rem 0.85rem 0.25rem',
-    marginBottom: space.xl,
-  },
   empty: { fontSize: fontSize.body, color: colors.textFaint, margin: '0 0 1rem 0' },
+  addedLine: { fontSize: fontSize.body, color: colors.success, margin: 0 },
   removeAllButton: {
     fontSize: fontSize.label,
     background: 'none',
@@ -2112,17 +2226,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: 'transparent',
     color: colors.suggest,
     cursor: 'pointer',
-  },
-  manageTriggerRow: { marginTop: '2.5rem', paddingTop: space.xxl, borderTop: `1px solid ${colors.dividerWarm}`, textAlign: 'center' },
-  manageTriggerButton: {
-    fontSize: fontSize.label,
-    padding: '0.5rem 1.1rem',
-    borderRadius: radius.pill,
-    border: border.default,
-    backgroundColor: colors.surface,
-    color: colors.textBody,
-    cursor: 'pointer',
-    fontFamily,
   },
   dangerButtonRow: { display: 'flex', gap: space.lg, flexWrap: 'wrap' },
   dangerSecondaryButton: {
