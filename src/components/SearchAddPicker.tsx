@@ -1,8 +1,13 @@
 import { useEffect, useId, useState } from 'react'
 import SearchBox from './SearchBox'
+import { rankMatches } from '../lib/searchRanking'
 import { border, colors, fontFamily, fontSize, radius, space } from '../lib/theme'
 
 type Item = { id: string; label: string }
+
+// Enough rows to choose from without the list swallowing the page. Anything past this is
+// summarised by the "more matches" line rather than silently dropped — see rankMatches.
+const MAX_RESULTS = 8
 
 // Type a few letters, tap a result to add it — used wherever a page needs "search everything
 // you've got and pick one," as opposed to the suggestion-chip pattern (which only surfaces
@@ -41,7 +46,9 @@ export default function SearchAddPicker({
   const [highlight, setHighlight] = useState(-1)
   const q = query.trim().toLowerCase()
   const browsing = browseAll && focused && !q
-  const results = browsing ? items : q ? items.filter((item) => item.label.toLowerCase().includes(q)).slice(0, 8) : []
+  const matches = q ? rankMatches(items, q) : []
+  const results = browsing ? items : matches.slice(0, MAX_RESULTS)
+  const hiddenCount = matches.length - results.length
   const showList = browsing || !!q
 
   // Every row Enter/arrows can land on, in render order: the matches, then the optional "+ Add"
@@ -151,6 +158,13 @@ export default function SearchAddPicker({
               )
             })
           )}
+          {/* Says out loud that the list was trimmed, so a missing name reads as "narrow the
+              search" rather than "the app doesn't have it." */}
+          {hiddenCount > 0 && (
+            <p style={styles.moreHint}>
+              {hiddenCount} more {hiddenCount === 1 ? 'match' : 'matches'} — keep typing to narrow it down.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -179,6 +193,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   empty: { color: colors.textFaintest, fontSize: fontSize.label, fontStyle: 'italic', margin: 0 },
+  moreHint: { color: colors.textFaintest, fontSize: fontSize.label, fontStyle: 'italic', margin: 0, padding: '0 0.2rem' },
   // Layered over whichever base row style applies. Note the border is re-stated as a full
   // shorthand at the call site rather than as `borderColor` here — the base styles set the
   // `border` shorthand, and mixing the two on one element makes React warn about conflicting
