@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 
 // Shared "No, don't ask me that again" store for Home's newer suggestion types. The original
 // person->group suggestions keep using groups.dismissed_person_ids (single source of truth with
@@ -30,7 +31,11 @@ export function normalizePair(kind: DismissalKind, subjectId: string, objectId: 
 // loadFamilyTagSuggestions (suggestFamilyTag.ts): a table that doesn't exist yet should degrade
 // this one feature, not 400 every other query on the page.
 export async function loadDismissals(): Promise<Dismissals> {
-  const { data, error } = await supabase.from('dismissed_suggestions').select('kind, subject_id, object_id')
+  // Paged: this table only ever grows (one row per "No" the founder has ever clicked), and a
+  // dismissal lost to the 1000-row cap brings a question back that was explicitly dismissed.
+  const { data, error } = await fetchAllRows((from, to) =>
+    supabase.from('dismissed_suggestions').select('kind, subject_id, object_id').order('id').range(from, to)
+  )
   if (error || !data) return { has: () => false, supported: false }
   const set = new Set(
     (data as { kind: DismissalKind; subject_id: string; object_id: string }[]).map((r) =>

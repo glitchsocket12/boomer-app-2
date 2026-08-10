@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 import type { Dismissals } from './dismissedSuggestions'
 
 // "This event has no group on it, but everyone who was there belongs to the same one." Roughly
@@ -94,10 +95,13 @@ export function deriveEventGroupSuggestions(
 export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise<EventGroupSuggestion[]> {
   if (!dismissals.supported) return []
 
+  // All three are account-wide, so all three are paged (lib/pagedSelect.ts). `tagged` matters most:
+  // a moment_groups row lost to the 1000-row cap makes an already-tagged event look untagged, and
+  // the card asks to tag it again — the exact shape of the founder's "Yes doesn't stick" report.
   const [momentsRes, taggedRes, groupsRes] = await Promise.all([
-    supabase.from('moments').select('id, occasion'),
-    supabase.from('moment_groups').select('moment_id'),
-    supabase.from('groups').select('id, name'),
+    fetchAllRows((from, to) => supabase.from('moments').select('id, occasion').order('id').range(from, to)),
+    fetchAllRows((from, to) => supabase.from('moment_groups').select('moment_id').order('moment_id').order('group_id').range(from, to)),
+    fetchAllRows((from, to) => supabase.from('groups').select('id, name').order('id').range(from, to)),
   ])
 
   const tagged = new Set((taggedRes.data as { moment_id: string }[] | null)?.map((r) => r.moment_id) ?? [])
@@ -110,15 +114,21 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
   // there" and suggestConnections' own attendance pass read. Scoped by the untagged moment ids
   // rather than by people: the moment list is the smaller side, which is the precaution the
   // scan-calendar-sources URL-length bug taught (PROJECT_CONTEXT §2).
-  const { data: attendanceData } = await supabase
-    .from('notes')
-    .select('moment_id, person_id')
-    .in('moment_id', untagged.map((m) => m.id))
-    .not('person_id', 'is', null)
+  const { data: attendanceData } = await fetchAllRows((from, to) =>
+    supabase
+      .from('notes')
+      .select('moment_id, person_id')
+      .in('moment_id', untagged.map((m) => m.id))
+      .not('person_id', 'is', null)
+      .order('id')
+      .range(from, to)
+  )
   const attendance = (attendanceData as AttendanceRow[] | null) ?? []
   if (attendance.length === 0) return []
 
-  const { data: membershipData } = await supabase.from('person_groups').select('person_id, group_id')
+  const { data: membershipData } = await fetchAllRows((from, to) =>
+    supabase.from('person_groups').select('person_id, group_id').order('person_id').order('group_id').range(from, to)
+  )
   const groupNameById = new Map(
     ((groupsRes.data as { id: string; name: string }[] | null) ?? []).map((g) => [g.id, g.name])
   )

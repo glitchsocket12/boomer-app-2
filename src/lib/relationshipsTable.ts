@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 
 // Browser-side mirror of supabase/functions/_shared/relationshipsTable.ts — the `relationships`
 // table is the shared source of truth (2026-07-20 migration), so a relationship confirmed via a
@@ -150,7 +151,17 @@ export async function getRelationshipsMap(personIds?: string[]): Promise<Map<str
   if (personIds && personIds.length === 0) return result
 
   if (!personIds || personIds.length > MAX_SCOPED_IDS) {
-    const { data } = await supabase.from('relationships').select('person_a_id, person_b_id, kind')
+    // Paged — this is the whole-table branch, and PostgREST silently caps a response at 1000 rows.
+    // A truncated map here doesn't error, it just quietly stops proposing family links.
+    const { data } = await fetchAllRows((from, to) =>
+      supabase
+        .from('relationships')
+        .select('person_a_id, person_b_id, kind')
+        .order('person_a_id')
+        .order('person_b_id')
+        .order('kind')
+        .range(from, to)
+    )
     absorb(data as RelationshipRow[] | null)
     return result
   }

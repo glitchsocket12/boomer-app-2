@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 import { getRelationshipsMap } from './relationshipsTable'
 import { suggestFamilyMembers } from './relationshipSuggestions'
 import { loadDismissals } from './dismissedSuggestions'
@@ -44,10 +45,29 @@ const SAMPLE_SIZE = 6
 // Returns the WHOLE candidate pool; sampling happens in loadHomeSuggestions, which has to balance
 // this pool against the other question types.
 export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[]> {
+  // Every read in here is account-wide, so every one of them is paged (see lib/pagedSelect.ts).
+  // person_groups is the load-bearing one: it was over the 1000-row cap on the founder's account,
+  // and a membership missing from this map reads as "not a member yet", which regenerates a
+  // suggestion the founder has already accepted.
   const [groupsRes, personGroupsRes, associationsRes] = await Promise.all([
-    supabase.from('groups').select('id, name, dismissed_person_ids, suggestions_enabled'),
-    supabase.from('person_groups').select('person_id, group_id, people(id, name, last_name)'),
-    supabase.from('group_associations').select('group_id_a, group_id_b'),
+    fetchAllRows((from, to) =>
+      supabase
+        .from('groups')
+        .select('id, name, dismissed_person_ids, suggestions_enabled')
+        .order('id')
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from('person_groups')
+        .select('person_id, group_id, people(id, name, last_name)')
+        .order('person_id')
+        .order('group_id')
+        .range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase.from('group_associations').select('group_id_a, group_id_b').order('group_id_a').order('group_id_b').range(from, to)
+    ),
   ])
 
   const groups = (groupsRes.data ?? []) as { id: string; name: string; dismissed_person_ids: string[] | null; suggestions_enabled: boolean | null }[]
@@ -72,7 +92,15 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
   // same "moment_groups -> notes with a person_id" path GroupDetail reads, scoped by the small
   // groups list rather than the much larger people list (see the scan-calendar-sources gotcha in
   // PROJECT_CONTEXT.md §2 about `.in()` scoping — same precaution, kept consistent here).
-  const { data: momentGroupsData } = await supabase.from('moment_groups').select('moment_id, group_id').in('group_id', groupIds)
+  const { data: momentGroupsData } = await fetchAllRows((from, to) =>
+    supabase
+      .from('moment_groups')
+      .select('moment_id, group_id')
+      .in('group_id', groupIds)
+      .order('moment_id')
+      .order('group_id')
+      .range(from, to)
+  )
   const groupIdsByMoment: Record<string, string[]> = {}
   for (const row of (momentGroupsData as { moment_id: string; group_id: string }[]) ?? []) {
     ;(groupIdsByMoment[row.moment_id] ??= []).push(row.group_id)
@@ -80,7 +108,15 @@ export async function loadConnectionSuggestions(): Promise<ConnectionSuggestion[
   const momentIds = Object.keys(groupIdsByMoment)
   const attendanceRes =
     momentIds.length > 0
-      ? await supabase.from('notes').select('person_id, moment_id, people(id, name, last_name)').in('moment_id', momentIds).not('person_id', 'is', null)
+      ? await fetchAllRows((from, to) =>
+          supabase
+            .from('notes')
+            .select('person_id, moment_id, people(id, name, last_name)')
+            .in('moment_id', momentIds)
+            .not('person_id', 'is', null)
+            .order('id')
+            .range(from, to)
+        )
       : { data: [] as { person_id: string; moment_id: string; people: ConnectionPerson | null }[] }
 
   const suggestionsByKey = new Map<string, ConnectionSuggestion>()

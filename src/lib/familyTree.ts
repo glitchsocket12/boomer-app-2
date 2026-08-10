@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 import { describeRelationship, relationOf } from './relationshipLabels'
 import { guessGenderFromName } from './nameGender'
 
@@ -154,13 +155,25 @@ function push(map: Map<string, string[]>, key: string, value: string) {
 export async function loadFamilyGraph(): Promise<Graph> {
   // Ordered by created_at so which parent/spouse ends up "first" (primaryParentId, the tree's
   // connector-line anchor) is stable across reloads instead of depending on unspecified row order.
+  // All three are whole-table reads, so all three are paged (lib/pagedSelect.ts) — people was at
+  // 700 of PostgREST's silent 1000-row cap on 2026-08-10, and a person truncated out of this graph
+  // takes their whole branch of the family with them, with no error anywhere to notice.
   const [{ data: people }, { data: rels }, { data: genderRows, error: genderError }] = await Promise.all([
-    supabase.from('people').select('id, name, last_name, is_self, deceased_date'),
-    supabase.from('relationships').select('person_a_id, person_b_id, kind, ended_reason').order('created_at'),
+    fetchAllRows((from, to) =>
+      supabase.from('people').select('id, name, last_name, is_self, deceased_date').order('id').range(from, to)
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from('relationships')
+        .select('person_a_id, person_b_id, kind, ended_reason')
+        .order('created_at')
+        .order('person_a_id')
+        .range(from, to)
+    ),
     // Own query, separate from the main people select above — see TreePerson.gender's comment:
     // if `gender` doesn't exist yet (migration not run), this call alone fails (data comes back
     // null) and the tree still renders fine with no icons, instead of breaking entirely.
-    supabase.from('people').select('id, gender'),
+    fetchAllRows((from, to) => supabase.from('people').select('id, gender').order('id').range(from, to)),
   ])
 
   const genderById = new Map<string, string>()
