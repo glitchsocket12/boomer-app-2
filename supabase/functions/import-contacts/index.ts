@@ -95,8 +95,10 @@ serve(async (req) => {
       phones: p.phones ?? [],
     }))
 
-    // Same name/nickname-matching approach as scan-calendar-sources' idByName — an exact/nickname
-    // hit is treated as 'high' confidence outright, ahead of the fuzzy overlap fallback below.
+    // Whole-name equality only — the fast path for the common case. First names and nicknames used
+    // to claim keys here too, which meant an imported "Alex Lesar" locked onto whichever lone
+    // "Alex" was on file at 'high' confidence; those cases now go through findBestPersonMatch,
+    // which weighs the surname and downgrades the confidence accordingly.
     const idByName: Record<string, string> = {}
     const ambiguousKeys = new Set<string>()
     function claimKey(key: string, id: string) {
@@ -104,14 +106,10 @@ serve(async (req) => {
       if (idByName[key] && idByName[key] !== id) ambiguousKeys.add(key)
       else idByName[key] = id
     }
+    const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
     for (const p of peopleRes.data ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
-      claimKey(String(fullName).toLowerCase(), p.id)
-      claimKey(String(p.name).toLowerCase(), p.id)
-      const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
-      if (p.middle_name) nicknames.push(String(p.middle_name).trim())
-      if (p.goes_by_other) nicknames.push(String(p.goes_by_other).trim())
-      for (const n of nicknames) claimKey(n.toLowerCase(), p.id)
+      claimKey(nameKey(String(fullName)), p.id)
     }
     for (const key of ambiguousKeys) delete idByName[key]
 
@@ -124,7 +122,7 @@ serve(async (req) => {
       const rowKey = await rowKeyFor(contact)
       if (existingRowKeys.has(rowKey)) continue
 
-      const exactMatchId = idByName[contact.fullName.toLowerCase()] ?? null
+      const exactMatchId = idByName[nameKey(contact.fullName)] ?? null
       let matchedPersonId: string | null = exactMatchId
       let matchConfidence: "high" | "none" = exactMatchId ? "high" : "none"
       if (!matchedPersonId) {

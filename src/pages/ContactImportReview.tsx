@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { nameMatchStrength, personNameKeys } from '../lib/nameMatchStrength'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
@@ -37,7 +38,14 @@ type Candidate = {
   matched_person_id: string | null
   match_confidence: 'high' | 'none'
 }
-type PersonRef = { id: string; name: string; last_name: string | null }
+type PersonRef = {
+  id: string
+  name: string
+  last_name: string | null
+  nicknames?: string | null
+  middle_name?: string | null
+  goes_by_other?: string | null
+}
 type GroupRef = { id: string; name: string; parent_group_id?: string | null }
 
 // What handleAccept actually touched, captured at accept time so handleUndo can put things back
@@ -78,6 +86,29 @@ function formatDate(month: number | null, day: number | null, year: number | nul
 
 function personLabel(p: PersonRef): string {
   return p.last_name ? `${p.name} ${p.last_name}` : p.name
+}
+
+// Second-guesses a match import-contacts stored on a candidate, using the same rule the Edge
+// Function now applies (src/lib/nameMatchStrength.ts). It's re-checked here as well as there
+// because the old word-overlap matcher left this queue full of "is Alex Smith the same person as
+// Alex Lesar?" — 574 of the founder's 576 stored matches were that bug — and re-checking on read
+// fixes those rows without needing the whole address book re-imported.
+function matchIsImplausible(fullName: string, matchedPersonId: string | null, people: Map<string, PersonRef>): boolean {
+  if (!matchedPersonId) return false
+  const person = people.get(matchedPersonId)
+  // Not in the roster we loaded (deleted, or beyond it) — leave the stored match alone rather than
+  // clearing one on evidence we don't have.
+  if (!person) return false
+  const aliases = [person.nicknames, person.middle_name, person.goes_by_other]
+    .filter(Boolean)
+    .flatMap((v) => String(v).split(','))
+  return nameMatchStrength(fullName, personNameKeys(person.name, person.last_name, aliases)) === 'none'
+}
+
+const CLEARED_MATCH = { matched_person_id: null, match_confidence: 'none' } as const
+
+function dropImplausibleMatches(rows: Candidate[], people: Map<string, PersonRef>): Candidate[] {
+  return rows.map((c) => (matchIsImplausible(c.full_name, c.matched_person_id, people) ? { ...c, ...CLEARED_MATCH } : c))
 }
 
 // Same gold dot-badge look as components/Chips.tsx's GroupChip (used app-wide for group tiles),
@@ -155,21 +186,63 @@ export default function ContactImportReview({
   const [allGroups, setAllGroups] = useState<GroupRef[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    loadRoster()
-  }, [])
+  // The roster has to be in hand before the first page renders, not alongside it: cards read the
+  // match off their candidate at mount, so the re-check in dropImplausibleMatches has to happen
+  // before setCandidates or a demoted match would still show on screen.
+  const rosterRef = useRef<Promise<Map<string, PersonRef>> | null>(null)
+  const sweepRef = useRef<Promise<void> | null>(null)
 
   useEffect(() => {
     loadPage()
   }, [page, matchFilter])
 
-  async function loadRoster() {
+  function ensureRoster(): Promise<Map<string, PersonRef>> {
+    if (!rosterRef.current) rosterRef.current = loadRoster()
+    return rosterRef.current
+  }
+
+  // The per-page re-check below keeps what's on screen honest, but the filter buttons and the
+  // "N contacts" count are database counts — so a queue full of bad matches would keep claiming
+  // hundreds are "Already in Boomer" while every card says otherwise, and the founder would have
+  // to visit all 29 pages to clear them. This sweeps the whole selected set once per visit
+  // instead. After the first pass it's a near-empty read, since only real matches are left.
+  function ensureSweep(roster: Map<string, PersonRef>): Promise<void> {
+    if (!sweepRef.current) sweepRef.current = sweepImplausibleMatches(roster)
+    return sweepRef.current
+  }
+
+  async function sweepImplausibleMatches(roster: Map<string, PersonRef>) {
+    const READ_CHUNK = 1000
+    const stale: string[] = []
+    for (let from = 0; ; from += READ_CHUNK) {
+      const { data, error } = await supabase
+        .from('contact_import_candidates')
+        .select('id, full_name, matched_person_id')
+        .eq('status', 'selected')
+        .not('matched_person_id', 'is', null)
+        .order('id')
+        .range(from, from + READ_CHUNK - 1)
+      if (error || !data || data.length === 0) break
+      for (const row of data) {
+        if (matchIsImplausible(row.full_name, row.matched_person_id, roster)) stale.push(row.id)
+      }
+      if (data.length < READ_CHUNK) break
+    }
+    // Chunked because the id list travels in the URL — 570 UUIDs in one filter is a ~21KB request.
+    for (let i = 0; i < stale.length; i += 100) {
+      await supabase.from('contact_import_candidates').update(CLEARED_MATCH).in('id', stale.slice(i, i + 100))
+    }
+  }
+
+  async function loadRoster(): Promise<Map<string, PersonRef>> {
     const [peopleRes, groupsRes] = await Promise.all([
-      supabase.from('people').select('id, name, last_name').order('name'),
+      supabase.from('people').select('id, name, last_name, nicknames, middle_name, goes_by_other').order('name'),
       supabase.from('groups').select('id, name, parent_group_id').order('name'),
     ])
-    setAllPeople((peopleRes.data as PersonRef[]) ?? [])
+    const people = (peopleRes.data as PersonRef[]) ?? []
+    setAllPeople(people)
     setAllGroups((groupsRes.data as GroupRef[]) ?? [])
+    return new Map(people.map((p) => [p.id, p]))
   }
 
   // Filtering by whether matched_person_id is set (not match_confidence) is deliberate: it's the
@@ -186,6 +259,8 @@ export default function ContactImportReview({
     setLoading(true)
     const from = page * PAGE_SIZE
     const to = from + PAGE_SIZE - 1
+    const roster = await ensureRoster()
+    await ensureSweep(roster)
     const [candidatesRes, countRes] = await Promise.all([
       applyMatchFilter(
         supabase
@@ -202,15 +277,15 @@ export default function ContactImportReview({
         supabase.from('contact_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'selected')
       ),
     ])
-    const data = (candidatesRes.data as Candidate[]) ?? []
+    const raw = (candidatesRes.data as Candidate[]) ?? []
     const count = countRes.count ?? 0
     // Guards against a page emptying out mid-review (e.g. accepting the last card on the last
     // page) by stepping back a page instead of showing a false "nothing left to review".
-    if (data.length === 0 && page > 0 && count > 0) {
+    if (raw.length === 0 && page > 0 && count > 0) {
       setPage((p) => Math.max(0, p - 1))
       return
     }
-    setCandidates(data)
+    setCandidates(dropImplausibleMatches(raw, roster))
     setTotalSelected(count)
     setLoading(false)
   }

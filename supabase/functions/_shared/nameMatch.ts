@@ -1,33 +1,137 @@
-// Free, client-side "might already be on file" heuristic — no AI call. Ported from
-// ImportReview.tsx's titleWords/titleOverlapRatio (word-overlap on event titles) and adapted to
-// person names for contacts-import matching. Deliberately simple and tunable rather than a fuzzy-
-// match library, since a human always reviews the suggestion (via ContactImportReview.tsx) before
-// anything writes to a real person.
+// Free, no-AI "is this imported contact someone already on file?" heuristic, used by
+// import-contacts to pre-fill matched_person_id on every candidate row. A human confirms every
+// suggestion on ContactImportReview.tsx before anything touches a real person — but a suggestion
+// that's wrong more often than right is worse than no suggestion, because it trains the founder to
+// click past the question.
+//
+// The first version scored names by word overlap divided by the SHORTER name: "Alex Lesar" vs.
+// "Alex Smith" came out at 0.5 (a match) and vs. a bare "Alex" on file at 1.0 (high confidence),
+// so every Alex in the address book was proposed as every other Alex. Surnames decide now.
+//
+// MIRROR: nameTokens/personNameKeys/nameMatchStrength & friends below are a byte-for-byte copy of
+// src/lib/nameMatchStrength.ts, which the review screen uses to re-check stored matches (Deno
+// can't import from src/). nameMatch.test.ts runs both over the same cases and fails on drift.
 
-const STOPWORDS = new Set(["the", "a", "an", "and", "or", "of", "for", "to", "with", "at", "in", "on"])
-export const NAME_OVERLAP_THRESHOLD = 0.5
-export const HIGH_CONFIDENCE_NAME_THRESHOLD = 0.8
+/** Titles and suffixes are noise on both sides of the comparison, never a given name or surname. */
+const HONORIFICS = new Set(["mr", "mrs", "ms", "miss", "mx", "dr", "prof", "professor", "rev", "sir", "dame"])
+const SUFFIXES = new Set(["jr", "jnr", "sr", "snr", "ii", "iii", "iv", "md", "phd", "dds", "dvm", "esq", "jd", "rn", "cpa"])
 
-function nameWords(s: string): Set<string> {
-  return new Set(
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w && !STOPWORDS.has(w))
-  )
+/** The name keys for one person on file: what they might be called, and their surname(s). */
+export type PersonNameKeys = { givens: Set<string>; surnames: Set<string> }
+
+function nameTokens(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t && !HONORIFICS.has(t) && !SUFFIXES.has(t))
 }
 
-function overlapRatioFromWordSets(wa: Set<string>, wb: Set<string>): number {
-  if (wa.size === 0 || wb.size === 0) return 0
-  let intersection = 0
-  for (const w of wa) if (wb.has(w)) intersection++
-  return intersection / Math.min(wa.size, wb.size)
+// Single letters are dropped from surnames on purpose: a middle initial is not a surname, and
+// keeping them would make "Alex J Smith" and "Alex J Lesar" agree on "j".
+function surnameSet(tokens: string[]): Set<string> {
+  return new Set(tokens.filter((t) => t.length > 1))
 }
 
-export function nameOverlapRatio(a: string, b: string): number {
-  return overlapRatioFromWordSets(nameWords(a), nameWords(b))
+/**
+ * Builds the comparison keys for someone already on file. `aliases` is anything else they answer
+ * to — nicknames, middle name, goes-by — which count as given names but never as surnames, so a
+ * nickname can't quietly overrule a surname that disagrees.
+ */
+export function personNameKeys(name: string, lastName: string | null, aliases: string[] = []): PersonNameKeys {
+  const tokens = nameTokens(name)
+  const givens = new Set<string>()
+  if (tokens[0]) givens.add(tokens[0])
+  for (const alias of aliases) {
+    const aliasTokens = nameTokens(alias)
+    if (aliasTokens[0]) givens.add(aliasTokens[0])
+  }
+  // people.name is normally the first name with the surname in last_name, but rows predating that
+  // split hold a whole name — so fall back to "everything after the first word" when last_name is
+  // empty rather than treating those people as having no surname at all.
+  const surnames = lastName ? surnameSet(nameTokens(lastName)) : surnameSet(tokens.slice(1))
+  return { givens, surnames }
 }
+
+function givenRelation(given: string | null, givens: Set<string>): "match" | "initial" | "none" {
+  if (!given || givens.size === 0) return "none"
+  if (givens.has(given)) return "match"
+  // "A. Lesar" in a vCard vs. "Alex Lesar" on file, either direction.
+  for (const g of givens) {
+    if ((given.length === 1 && g.startsWith(given)) || (g.length === 1 && given.startsWith(g))) return "initial"
+  }
+  return "none"
+}
+
+// True when one insertion, deletion, or substitution turns `a` into `b`. Only ever called on a
+// pair whose given names already agree, so it never runs at import-wide scale.
+function withinOneEdit(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false
+  let i = 0
+  let j = 0
+  let edits = 0
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++
+      j++
+      continue
+    }
+    if (++edits > 1) return false
+    if (a.length > b.length) i++
+    else if (a.length < b.length) j++
+    else {
+      i++
+      j++
+    }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1
+}
+
+// 'near' is a one-character difference on a long surname — "Baerman" against "Baermann", i.e. a
+// typo in one of the two records rather than a different family. Worth asking about, never worth
+// asserting, so it's kept distinct from an exact 'match'.
+function surnameRelation(a: Set<string>, b: Set<string>): "match" | "near" | "conflict" | "unknown" {
+  // Neither side has a surname at all, so the names are simply equal — nothing is left unknown.
+  if (a.size === 0 && b.size === 0) return "match"
+  if (a.size === 0 || b.size === 0) return "unknown"
+  let near = false
+  for (const s of a) {
+    if (b.has(s)) return "match"
+    for (const t of b) if (s.length >= 5 && t.length >= 5 && withinOneEdit(s, t)) near = true
+  }
+  return near ? "near" : "conflict"
+}
+
+/** True when both names carry a surname and they share one — used to let an exact email/phone hit
+ *  rescue a given-name mismatch ("Bob Smith" imported, "Robert Smith" on file, same address). */
+export function sharesSurname(contactFullName: string, keys: PersonNameKeys): boolean {
+  const relation = surnameRelation(surnameSet(nameTokens(contactFullName).slice(1)), keys.surnames)
+  return relation === "match" || relation === "near"
+}
+
+/**
+ * `strong` — same given name and same surname; safe to propose confidently.
+ * `weak`   — plausible but unproven: matching given name where one side has no surname on file, or
+ *            a matching initial against a matching surname. Worth asking about, not asserting.
+ * `none`   — surnames disagree, or the given names have nothing in common.
+ */
+export function nameMatchStrength(contactFullName: string, keys: PersonNameKeys): "strong" | "weak" | "none" {
+  const tokens = nameTokens(contactFullName)
+  const given = tokens[0] ?? null
+  const relation = givenRelation(given, keys.givens)
+  if (relation === "none") return "none"
+  const surnames = surnameRelation(surnameSet(tokens.slice(1)), keys.surnames)
+  if (surnames === "conflict") return "none"
+  if (surnames === "match") return relation === "match" ? "strong" : "weak"
+  // Surname near-miss or unknown on one side: a shared first name is worth a question, but a
+  // shared initial on top of an inexact surname is two guesses stacked, so it doesn't count.
+  return relation === "match" ? "weak" : "none"
+}
+
+// ---------------------------------------------------------------------------
+// Import-side wiring: index every person once, then score each incoming contact.
+// ---------------------------------------------------------------------------
 
 export type MatchablePerson = {
   id: string
@@ -40,39 +144,46 @@ export type MatchablePerson = {
 
 export type NameMatchResult = { personId: string; confidence: "high" | "none" } | null
 
-function normalizeContact(v: string): string {
-  return v.toLowerCase().replace(/[^a-z0-9]/g, "")
+function normalizeEmail(v: string): string {
+  return v.trim().toLowerCase()
 }
 
-// Exact phone/email corroboration is stronger evidence than fuzzy name overlap, so it bumps
-// straight to 'high' confidence regardless of how the names compare (e.g. "Bob Smith" imported
-// vs. "Robert Smith" on file, same email on both) — see the contactMatch check in
-// findBestPersonMatch below, using each person's precomputed emails/phones Sets.
+// Digits only, then the last 10 — so "+1 (555) 123-4567" from a vCard and "555-123-4567" typed
+// into the app are the same number. Anything shorter is compared as-is.
+function normalizePhone(v: string): string {
+  const digits = v.replace(/\D/g, "")
+  return digits.length > 10 ? digits.slice(-10) : digits
+}
+
 export type PersonIndexEntry = {
   id: string
   emails: Set<string>
   phones: Set<string>
-  candidateWordSets: Set<string>[]
+  keys: PersonNameKeys
 }
 
-// Precomputes the per-person work (word-splitting names/nicknames, normalizing emails/phones into
-// Sets) once for the whole import, rather than redoing it for every imported contact. Importing a
-// real address book (thousands of contacts) against an established account (hundreds of people)
-// means this comparison runs in the hundreds-of-thousands to millions of pairs — recomputing
-// regex/Set work per pair at that scale was slow enough to blow the Edge Function's compute budget
-// (WORKER_RESOURCE_LIMIT), even though the request payload itself was small.
+// Precomputes the per-person work (tokenizing names, normalizing emails/phones into Sets) once for
+// the whole import rather than redoing it for every imported contact. A real address book
+// (thousands of contacts) against an established account (hundreds of people) runs this comparison
+// hundreds of thousands of times — recomputing regex/Set work per pair at that scale was slow
+// enough to blow the Edge Function's compute budget (WORKER_RESOURCE_LIMIT).
 export function buildPersonIndex(people: MatchablePerson[]): PersonIndexEntry[] {
-  return people.map((person) => {
-    const personFullName = [person.name, person.last_name].filter(Boolean).join(" ")
-    const candidateNames = [personFullName, ...(person.nicknames ?? "").split(",").map((n) => n.trim()).filter(Boolean)]
-    return {
-      id: person.id,
-      emails: new Set((person.emails ?? []).map((e) => normalizeContact(e.value))),
-      phones: new Set((person.phones ?? []).map((p) => normalizeContact(p.value))),
-      candidateWordSets: candidateNames.map(nameWords),
-    }
-  })
+  return people.map((person) => ({
+    id: person.id,
+    emails: new Set((person.emails ?? []).map((e) => normalizeEmail(e.value)).filter(Boolean)),
+    phones: new Set((person.phones ?? []).map((p) => normalizePhone(p.value)).filter(Boolean)),
+    keys: personNameKeys(
+      person.name,
+      person.last_name,
+      (person.nicknames ?? "").split(",").map((n) => n.trim()).filter(Boolean)
+    ),
+  }))
 }
+
+// Tiers, best first. Anything at TIER_CONFIDENT or above is safe to pre-confirm (the review card
+// opens collapsed); TIER_ASK still proposes the person but leaves the picker open for a decision.
+const TIER_ASK = 1
+const TIER_CONFIDENT = 2
 
 export function findBestPersonMatch(
   fullName: string,
@@ -80,26 +191,39 @@ export function findBestPersonMatch(
   contactPhones: string[],
   personIndex: PersonIndexEntry[]
 ): NameMatchResult {
-  const contactWords = nameWords(fullName)
-  const normEmails = contactEmails.map(normalizeContact)
-  const normPhones = contactPhones.map(normalizeContact)
-  let best: NameMatchResult = null
-  let bestScore = 0
-  for (const entry of personIndex) {
-    let overlap = 0
-    for (const wb of entry.candidateWordSets) {
-      const o = overlapRatioFromWordSets(contactWords, wb)
-      if (o > overlap) overlap = o
-    }
-    const contactMatch = normEmails.some((e) => entry.emails.has(e)) || normPhones.some((p) => entry.phones.has(p))
+  const normEmails = contactEmails.map(normalizeEmail).filter(Boolean)
+  const normPhones = contactPhones.map(normalizePhone).filter(Boolean)
+  let bestId: string | null = null
+  let bestTier = 0
+  let bestTies = 0
 
-    if (contactMatch && overlap >= NAME_OVERLAP_THRESHOLD) {
-      return { personId: entry.id, confidence: "high" }
-    }
-    if (overlap >= NAME_OVERLAP_THRESHOLD && overlap > bestScore) {
-      bestScore = overlap
-      best = { personId: entry.id, confidence: overlap >= HIGH_CONFIDENCE_NAME_THRESHOLD ? "high" : "none" }
+  for (const entry of personIndex) {
+    const contactHit = normEmails.some((e) => entry.emails.has(e)) || normPhones.some((p) => entry.phones.has(p))
+    const strength = nameMatchStrength(fullName, entry.keys)
+
+    let tier = 0
+    if (strength === "strong") tier = contactHit ? 3 : TIER_CONFIDENT
+    else if (strength === "weak") tier = contactHit ? TIER_CONFIDENT : TIER_ASK
+    // A shared email or phone is strong evidence, but not on its own: households share a landline
+    // and a family address, so "Jane Doe" must not match "John Smith" just because a number is on
+    // both. Requiring a shared surname keeps the nickname case ("Bob"/"Robert Smith") working
+    // without opening that door.
+    else if (contactHit && sharesSurname(fullName, entry.keys)) tier = TIER_ASK
+
+    if (tier === 0) continue
+    if (tier > bestTier) {
+      bestTier = tier
+      bestId = entry.id
+      bestTies = 1
+    } else if (tier === bestTier) {
+      bestTies++
     }
   }
-  return best
+
+  if (!bestId) return null
+  // Two people scored identically — say, the account really does hold two Alex Lesars, or three
+  // people on file are recorded as just "Alex". Picking one at random is a coin flip, so a
+  // confident tier drops to a question and a merely-plausible tier is dropped entirely.
+  if (bestTies > 1 && bestTier <= TIER_ASK) return null
+  return { personId: bestId, confidence: bestTier >= TIER_CONFIDENT && bestTies === 1 ? "high" : "none" }
 }

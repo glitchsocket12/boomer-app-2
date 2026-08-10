@@ -1243,3 +1243,38 @@ Measured on the real account before the fix: **29 suggestions, 21 of which named
 **Verified.** Against the real account, through the app's own modules in the dev-server browser client — and, decisively, by stashing the fix to measure the old code on the same live data: 29 suggestions / 21 ghosts before, 9 suggestions / 0 ghosts after. `person_groups` paged returns 1183 rows, all 1183 distinct, which is what proves the ordering isn't duplicating or skipping across page boundaries. Build clean, 299 tests pass. **Not tested: clicking Yes end-to-end in the UI** — the read is what was broken, the write paths were already proven on 2026-08-08, and every remaining suggestion asserts a real fact about a real person that only the founder can confirm.
 
 **The generalisable lesson**, sharper than the last one: when a bug class is found, the sweep must be scoped by *where the data is read*, not by which folder the last one lived in. The previous entry's closing line — "page by default on any read that isn't narrowed to a handful of ids" — was already correct. It just wasn't applied to half the codebase.
+
+---
+
+## 2026-08-10 — "It's asking me if every single Alex is a match for Alex Lesar"
+
+The founder was working through the contacts review queue and hit the same question over and over: *is this Alex the same person as Alex Lesar?* Alex Smith. Alex Rodriguez. Alexandra Chen. Their instinct was exactly right — "if last names aren't matching, it is very unlikely it's the same person."
+
+**The bug was one line of arithmetic.** `_shared/nameMatch.ts` scored two names by counting shared words and dividing by the size of the *shorter* name:
+
+```
+intersection / Math.min(wordsA.size, wordsB.size)
+```
+
+"Alex Lesar" against "Alex Smith" shares one word out of two → 0.5, which cleared the 0.5 match threshold exactly. Worse, against a person recorded as just "Alex" with no surname, the divisor is 1 → a score of 1.0, comfortably over the 0.8 bar for **high** confidence. The metric was structurally incapable of noticing that surnames disagreed; a shorter name on file made a match *more* certain rather than less. The other half of the bug sat in `import-contacts` itself, where the exact-match index claimed a person's bare first name as a lookup key alongside their full name.
+
+Measured against the founder's real account before changing anything: **574 of 576 stored matches were wrong.** Not a tuning problem.
+
+**The replacement rule.** Split each name into a given name (first token) and surname(s) (everything after, minus honorifics, suffixes, and single-letter initials — a middle initial is not a surname, and keeping them would have made "Alex J Smith" and "Alex J Lesar" agree on "J"). Then:
+
+- both sides have a surname and they differ → **not the same person**, full stop
+- same given name + same surname → **strong**
+- same given name, one side has no surname on file → **weak** (ask, don't assert)
+- an initial against a matching surname, or a one-character typo in a surname of 5+ characters → **weak**
+
+Aliases (nicknames, middle name, goes-by) feed the given-name set but never the surname set, so a recorded nickname can't quietly overrule a surname that disagrees: "Bobby Lesar" matches Robert Lesar, "Bobby Smith" does not.
+
+Two further things fell out of testing against real data. A shared email or phone no longer rescues a given-name mismatch on its own — households share a landline, and "Jane Doe" must not match "John Smith" because a number appears on both; it now takes a shared surname too. And phone numbers compare on their last ten digits, so a vCard's `+1 (555) 123-4567` and a hand-typed `555-123-4567` are the same number.
+
+**The typo tolerance earned its place empirically.** The first pass dropped all 574 bad matches but also killed `Sean Baerman → Sean Baermann`, which is obviously the same person. Adding a one-edit allowance on long surnames (never short ones — "Lee"/"Lea" and "Kim"/"Kip" are different families) recovered five real matches: Baerman/Baermann, Galagher/Gallagher, McChord/McCord, Polanasky/Polanosky, Tulman/Tullman. Those come back as *weak*, so the card asks rather than assumes.
+
+**Fixing the matcher wasn't enough.** The Edge Function only runs at import time, so the founder's 576 bad rows would have sat there until a re-import. `ContactImportReview.tsx` now re-checks every stored match on read using a mirror of the same rule (`src/lib/nameMatchStrength.ts` — Deno can't import from `src/`, so it's a verbatim copy pinned by a parity test, the same arrangement as `kinship.ts`). The first version corrected only the 20 cards on the current page, which left the counts and the "Already in Boomer" filter still claiming hundreds of matches the cards themselves denied — and would have made the founder visit 29 pages to clean it up. It now sweeps the whole `selected` set once per visit, chunked at 100 ids per write because 570 UUIDs in one URL filter is a 21KB request.
+
+**Verified live on the founder's real account:** 576 stored matches → 7, in one page load. All seven are real (five typos, plus "Ben B → Ben Eagleton" and "Manny G → Manny Adelstein", where the contact has an initial for a surname). Every remaining one shows as a question with the picker open, not a pre-confirmed merge. 19 new tests in `_shared/nameMatch.test.ts`, build clean, 319 tests pass.
+
+**The lesson worth keeping:** a similarity score that can't represent *disagreement* isn't a weak heuristic, it's a broken one. Word overlap only ever counts evidence *for* a match — there was no arrangement of inputs where a conflicting surname could push the score down, because a conflicting word simply isn't in the intersection. Any future "is this the same thing?" check should be asked as "what would rule this out?" first, and only then "what supports it?"
