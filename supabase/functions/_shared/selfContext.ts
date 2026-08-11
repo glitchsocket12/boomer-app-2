@@ -6,7 +6,7 @@
 // the stable tier to stay byte-identical across every user/session (zero interpolated data), so
 // this must live in whichever tier already carries the per-user roster instead.
 
-import { getRelationshipsForPerson } from "./relationshipsTable.ts"
+import { fetchAllRelationshipRows, getRelationshipsForPerson, type RelationshipRow } from "./relationshipsTable.ts"
 import { bucketCloseKin, type KinGraph } from "./kinship.ts"
 
 export type SelfInfo = { id: string; name: string } | null
@@ -87,14 +87,24 @@ export async function buildSelfInstruction(
 // One unfiltered relationships select REPLACES the 4-6 bounded round-trips buildSelfInstruction
 // makes, so this is fewer queries, not more — and it ends the divergence between what the family
 // tree says and what the AI says, since both now run the same math.
+//
+// `rows` is optional: a caller that already has the whole table in hand (converse, which now also
+// serializes it into a per-person family roster) passes it in so the table is read ONCE per turn
+// rather than once per consumer. Omit it and this fetches its own copy, which is what
+// update-moment/update-group still do.
 export async function buildKinInstruction(
   supabaseClient: MinimalSupabaseClient,
   self: SelfInfo,
-  nameById: Record<string, string>
+  nameById: Record<string, string>,
+  rows?: RelationshipRow[] | null
 ): Promise<string> {
   if (!self || !self.name) return ""
 
-  const { data } = await supabaseClient.from("relationships").select("person_a_id, person_b_id, kind")
+  // Paged, not a bare select: PostgREST silently caps a response at 1000 rows, and a sibling clique
+  // writes a row per PAIR, so a large account blows past that without any error — it just quietly
+  // loses the far end of the user's own extended family (the same truncation the 2026-08-10 sweep
+  // fixed elsewhere; this call site was missed).
+  const data = rows ?? (await fetchAllRelationshipRows(supabaseClient))
   const parentsOf = new Map<string, string[]>()
   const childrenOf = new Map<string, string[]>()
   const spousesOf = new Map<string, string[]>()

@@ -8,6 +8,8 @@ import {
 } from "../_shared/relationships.ts"
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction, buildKinInstruction } from "../_shared/selfContext.ts"
+import { fetchAllRelationshipRows } from "../_shared/relationshipsTable.ts"
+import { buildFamilyRoster } from "../_shared/familyRoster.ts"
 import { buildChatToneInstruction, getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone, fullDateInTimeZone } from "../_shared/tz.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
@@ -86,7 +88,7 @@ serve(async (req) => {
       fetchAllRows((from, to) =>
         supabaseClient
           .from("people")
-          .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self, deceased_date")
           .order("id")
           .range(from, to)
       ),
@@ -132,9 +134,15 @@ serve(async (req) => {
         idByName[key] = id
       }
     }
+    // Presence of deceased_date is the whole signal (there's no separate flag). Feeds the family
+    // roster below so the model speaks about someone's late father in the past tense and never
+    // asks a follow-up that assumes he's alive — the same care the pets roster already takes with
+    // its "PASSED AWAY" marker.
+    const deceasedIds = new Set<string>()
     for (const p of people ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
+      if (p.deceased_date) deceasedIds.add(p.id)
       idByName[fullName.toLowerCase()] = p.id
       lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
@@ -322,6 +330,20 @@ Each time the user writes something, figure out what they're doing:
 
 ${familySignalPromptMultiSubject()}
 
+THE FAMILY TREE — the roster provided in this prompt includes a family tree section. This is the same tree the user built on the app's family tree screen, and it is the authoritative answer to any question about who someone is related to. Each line is ONE FAMILY, not one person, in one of three shapes:
+
+- "Anamaria Sucre + Manuel Sucre Sr. — children: Ale Sucre, Fede Sucre, Manuel Sucre" — the names BEFORE the dash are the parents; the names AFTER it are their children. So Anamaria and Manuel Sr. are the parents of all three, AND those three children are siblings of each other. A line with a single name before the dash means only one parent is on file, not that the child has one parent.
+- "Ale Sucre + Molly Sucre — couple" — a marriage or partnership with no children recorded.
+- "siblings: Ale Sucre, Fede Sucre" — people known to be siblings whose parents aren't on file.
+
+How to use it:
+
+- When asked about ANYONE's family ("tell me about Manuel's family", "who are Sarah's parents", "does Tom have siblings"), find every line that person appears on and read their relationships off it. Someone usually appears on two lines — once as a child in the family they grew up in, once as a parent in the family they made. Do NOT fall back to hunting through moment notes for family mentions and reporting only what you find there — the tree is more complete, and a relative who has never come up in a story is still their relative.
+- This section is EXHAUSTIVE for parents, spouses/partners, siblings, and children: if a relationship isn't shown on any line, it is not recorded. Never invent or assume one. If a person appears on no line at all, they have no family on file — say so plainly rather than guessing from a shared last name.
+- Relationships further out — grandparents, aunts/uncles, cousins, nieces/nephews, in-laws — are NOT written out anywhere, but you can work them out by chaining ACROSS lines. Emi Sucre is a child on the "Clare Sucre + Manuel Sucre" line; Manuel is a child on the "Anamaria Sucre + Manuel Sucre Sr." line; therefore Anamaria and Manuel Sr. are Emi's grandparents, and Ale and Fede are Emi's aunt/uncle. Do that chaining rather than saying you don't know — but only state a relationship the lines actually support.
+- A name marked "(deceased)" is someone who has died: speak about them in the past tense, and never ask a follow-up question that assumes they're alive. "(divorced)" after a couple marks a marriage or partnership that has ended — they're still the parents of any children on that line, but don't describe them as currently married.
+- This section is about who is RELATED to whom. It says nothing about what anyone is like or what they've done — that still comes from the moments and notes. A good answer about someone's family usually combines both: who they are related to, plus whatever the moments actually say about those people.
+
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
@@ -367,12 +389,22 @@ If the user describes the moment as spanning more than one day (e.g. "we were th
     // buildKinInstruction is wired into converse ONLY, not update-moment/update-group: those are
     // structured-extraction paths that never need cousin/aunt vocabulary, and leaving them alone
     // halves what this can affect. It rides the same 1h-cached roster tier below.
+    // The whole relationships table, read ONCE and shared by both consumers below (the kin
+    // instruction and the family roster) instead of each running its own select.
+    const relationshipRows = await fetchAllRelationshipRows(supabaseClient)
     const [selfInstruction, kinInstruction, chatToneInstruction, userTimeZone] = await Promise.all([
       buildSelfInstruction(supabaseClient, selfInfo, nameById),
-      buildKinInstruction(supabaseClient, selfInfo, nameById),
+      buildKinInstruction(supabaseClient, selfInfo, nameById, relationshipRows),
       buildChatToneInstruction(supabaseClient, user.id),
       getUserTimeZone(supabaseClient, user.id),
     ])
+
+    // The family tree, one line per person who has family on file. Before this (founder report,
+    // 2026-08-10) the tree reached the model ONLY for the is_self person, so "tell me about Manuel
+    // Sucre's family" could be answered only from whatever prose happened to be in moment notes —
+    // the parents and siblings sitting right there on his tree were invisible. Bounded by how much
+    // tree the user actually built, not by roster size: people with no relationships emit nothing.
+    const familyRoster = buildFamilyRoster(relationshipRows, nameById, { deceasedIds })
 
     const rosterContext = `Here are the groups already created:
 ${groupsContext || "(none yet)"}
@@ -383,7 +415,10 @@ Here is everyone already recorded, by full name where a last name is known:
 ${peopleRoster || "(none yet)"}
 
 Here are the pets already recorded, and who each one belongs to:
-${petsRoster || "(none yet)"}${selfInstruction}${kinInstruction}${chatToneInstruction}`
+${petsRoster || "(none yet)"}
+
+Here is the family tree already recorded, one line per person who has family on file:
+${familyRoster || "(none yet)"}${selfInstruction}${kinInstruction}${chatToneInstruction}`
 
     // Moments tier — changes on every new capture, the most frequent write in the app, so it's
     // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier

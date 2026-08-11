@@ -5,10 +5,39 @@
 // structured-graph concerns can each be read on their own — applyFamilySignals calls into this
 // for every note it writes so the two can never drift apart.
 
+import { fetchAllRows } from "./pagedSelect.ts"
+
 export type RelationshipKind = "spouse" | "sibling" | "partner" | "parent"
 
 type MinimalSupabaseClient = {
   from: (table: string) => any
+}
+
+export type RelationshipRow = {
+  person_a_id: string
+  person_b_id: string
+  kind: string
+  ended_reason?: string | null
+}
+
+// The whole table for this user (RLS scopes it), paged. Callers that need the full graph — the kin
+// instruction and the per-person family roster in converse — should share ONE call to this rather
+// than each running their own select. Unpaged, PostgREST caps the response at 1000 rows with no
+// error at all, and a sibling clique writes a row per PAIR, so a big family tree hits that ceiling
+// and quietly comes back a partial graph. The .order() is what makes paging safe (see pagedSelect).
+export async function fetchAllRelationshipRows(
+  supabaseClient: MinimalSupabaseClient
+): Promise<RelationshipRow[]> {
+  const { data } = await fetchAllRows<RelationshipRow>((from, to) =>
+    supabaseClient
+      .from("relationships")
+      .select("person_a_id, person_b_id, kind, ended_reason")
+      .order("person_a_id")
+      .order("person_b_id")
+      .order("kind")
+      .range(from, to)
+  )
+  return data
 }
 
 // spouse/sibling/partner are symmetric -> stored once, normalized so person_a_id < person_b_id
