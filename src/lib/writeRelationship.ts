@@ -52,6 +52,44 @@ export async function invalidateKeyFacts(personIds: (string | undefined | null)[
   await supabase.from('people').update({ key_facts: null, key_facts_updated_at: null }).in('id', ids)
 }
 
+/**
+ * Which of a sibling clique's pooled parents may be copied onto ONE member of it.
+ *
+ * Pure and exported so the rule is testable without a database, same reasoning as
+ * eligibleCoParentSpouse below: getting this wrong writes a false parent into a real family tree,
+ * and it did (backlog item 86, found on real data 2026-08-08). The clique used to hand every member
+ * the union of every parent known for anyone in it. That is right for a nuclear family and wrong for
+ * a blended one: accepting Lisa Dunn as a step-parent of Liam and Cormac merged all three Dunn
+ * children into one clique, and the union then wrote Tara Dunn — Brian's ex-wife, a person Elizabeth
+ * has no relationship to whatsoever — in as Elizabeth's mother.
+ *
+ * The rule, in one line: only fill an EMPTY seat, and never guess which one.
+ *
+ *   - Two or more parents already recorded → inherit nothing. The pair is complete, and a third is
+ *     the blended-family shape above (also the "three biological parents" case item 20's tree health
+ *     check would flag). Note this cap governs PROPAGATION only — a step-parent added deliberately
+ *     through the family tree's own picker is a direct write and still lands, third row or not.
+ *   - More candidates than open seats → inherit nothing, rather than picking one. Which of three
+ *     candidate parents belongs in a person's one remaining seat is a coin flip, and this data model
+ *     has no half/step/adoptive qualifier to record the answer with (backlog item 24, still open).
+ *
+ * Both refusals fail toward writing too little, which the founder can fix from the "+" picker in
+ * seconds. The old behaviour failed toward writing too much, which is silent, spreads on the next
+ * edit anywhere in that family, and has to be hunted down row by row.
+ */
+export function inheritableParents(input: {
+  memberId: string
+  memberParentIds: string[]
+  cliqueParentIds: string[]
+}): string[] {
+  const existing = new Set(input.memberParentIds)
+  const openSeats = 2 - existing.size
+  if (openSeats <= 0) return []
+  const candidates = input.cliqueParentIds.filter((p) => p !== input.memberId && !existing.has(p))
+  if (candidates.length > openSeats) return []
+  return candidates
+}
+
 // Siblings form a clique, and share parents. Whenever a sibling or parent link touching
 // anchorId is written, walk the full transitive sibling closure reachable from anchorId (not just
 // the pair that was just linked — a newly-added sibling of an EXISTING sibling group must connect
@@ -120,9 +158,12 @@ export async function syncFamilyClique(userId: string | undefined | null, anchor
     }
   }
   for (const id of ids) {
-    const existingParents = new Set(relById.get(id)!.parentIds)
-    for (const p of allParents) {
-      if (p !== id && !existingParents.has(p)) writes.push(upsertRelationship(userId, p, id, 'parent'))
+    for (const p of inheritableParents({
+      memberId: id,
+      memberParentIds: relById.get(id)!.parentIds,
+      cliqueParentIds: [...allParents],
+    })) {
+      writes.push(upsertRelationship(userId, p, id, 'parent'))
     }
   }
   await Promise.all(writes)

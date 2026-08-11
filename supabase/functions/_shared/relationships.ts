@@ -315,12 +315,32 @@ async function invalidateKeyFacts(supabaseClient: MinimalSupabaseClient, personI
   await supabaseClient.from("people").update({ key_facts: null, key_facts_updated_at: null }).in("id", ids)
 }
 
+// Deno-side twin of writeRelationship.ts's `inheritableParents` — same rule, same reasoning, kept
+// as a copy for the same reason the rest of this file is (no import across the Vite/Deno boundary;
+// see _shared/groupNames.ts for the same pattern). The browser copy carries the full explanation
+// and the unit tests. Short version: only fill an EMPTY parent seat and never guess which one, so a
+// blended family's clique can't hand one child the other children's other parent (item 86).
+function inheritableParents(input: {
+  memberId: string
+  memberParentIds: string[]
+  cliqueParentIds: string[]
+}): string[] {
+  const existing = new Set(input.memberParentIds)
+  const openSeats = 2 - existing.size
+  if (openSeats <= 0) return []
+  const candidates = input.cliqueParentIds.filter((p) => p !== input.memberId && !existing.has(p))
+  if (candidates.length > openSeats) return []
+  return candidates
+}
+
 // Siblings form a clique, and share parents. Whenever a sibling or parent link touching
 // anchorId is written, walk the full transitive sibling closure reachable from anchorId (not just
 // the pair that was just linked — a newly-added sibling of an EXISTING sibling group must connect
 // to every member of that group, not just the one it was directly linked to), then: (1) fill in
 // any missing sibling edge between every pair in that closure, and (2) give every closure member
-// every parent known for any other member. Distinct from findSharedParentSuggestions below, which
+// every parent known for any other member that it can safely be given — see inheritableParents
+// directly above, which is what keeps a blended family from cross-contaminating one of its own
+// children. Distinct from findSharedParentSuggestions below, which
 // is a best-effort AI-guessed banner over free-text notes — this is a direct, already-confirmed-
 // data copy (same discipline as the writeRelationship.ts mirror of this function on the frontend
 // "+" picker path), so it's safe to write immediately rather than queue as a suggestion.
@@ -381,9 +401,12 @@ async function syncFamilyClique(
     }
   }
   for (const id of ids) {
-    const existingParents = new Set(relById.get(id)!.parentIds)
-    for (const p of allParents) {
-      if (p !== id && !existingParents.has(p)) writes.push(upsertRelationship(supabaseClient, userId, p, id, "parent"))
+    for (const p of inheritableParents({
+      memberId: id,
+      memberParentIds: relById.get(id)!.parentIds,
+      cliqueParentIds: [...allParents],
+    })) {
+      writes.push(upsertRelationship(supabaseClient, userId, p, id, "parent"))
     }
   }
   await Promise.all(writes)

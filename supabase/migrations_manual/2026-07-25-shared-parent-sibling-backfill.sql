@@ -51,8 +51,22 @@ join people p on p.id = c.person_id
 where c.person_id <> c.other_id
 on conflict (person_a_id, person_b_id, kind) do nothing;
 
--- Step 3: give every member of a sibling group every parent known for any other member. Identical
--- mechanism to 2026-07-21-family-clique-backfill.sql's own step 2.
+-- Step 3: give every member of a sibling group the parents known for other members — but only where
+-- that can be done without guessing. REWRITTEN 2026-08-10 (backlog item 86). This step used to hand
+-- every member the union of every parent in the clique, which is right for a nuclear family and
+-- wrong for a blended one: on real data, accepting Lisa Dunn as a step-parent of Liam and Cormac
+-- merged all three Dunn children into one clique and the union then wrote Tara Dunn (Brian's
+-- ex-wife) in as Elizabeth's mother. Run unchanged, this file would have done that to every blended
+-- family in the database at once, additively and irreversibly.
+--
+-- The rule now matches inheritableParents() in src/lib/writeRelationship.ts and its Deno twin in
+-- supabase/functions/_shared/relationships.ts exactly — only fill an EMPTY parent seat, and never
+-- guess which one. A person with two parents already recorded is left alone (a third is the blended
+-- shape above), and so is one whose open seats are outnumbered by candidates (picking one would be
+-- a coin flip; there's no half/step/adoptive qualifier column to record the answer — item 24).
+--
+-- DRY RUN: replace the `insert into relationships (...)` line with `select * from` at the bottom to
+-- see exactly which parent rows this would add before committing to them.
 with recursive sibling_edges as (
   select person_a_id as a, person_b_id as b from relationships where kind = 'sibling'
   union all
@@ -66,13 +80,32 @@ closure as (
   select c.person_id, e.b as other_id
   from closure c
   join sibling_edges e on e.a = c.other_id
+),
+-- Every parent a clique member could pick up that isn't already recorded as theirs.
+candidate as (
+  select distinct c.person_id, par.person_a_id as parent_id
+  from closure c
+  join relationships par on par.kind = 'parent' and par.person_b_id = c.other_id
+  where par.person_a_id <> c.person_id
+    and not exists (
+      select 1 from relationships mine
+      where mine.kind = 'parent' and mine.person_b_id = c.person_id and mine.person_a_id = par.person_a_id
+    )
+),
+-- How many parents each of them already has.
+existing as (
+  select person_b_id as person_id, count(distinct person_a_id) as n
+  from relationships where kind = 'parent'
+  group by person_b_id
 )
 insert into relationships (user_id, person_a_id, person_b_id, kind)
-select distinct p.user_id, par.person_a_id, c.person_id, 'parent'
-from closure c
-join relationships par on par.kind = 'parent' and par.person_b_id = c.other_id
-join people p on p.id = c.person_id
-where par.person_a_id <> c.person_id
+select distinct p.user_id, cd.parent_id, cd.person_id, 'parent'
+from candidate cd
+join people p on p.id = cd.person_id
+left join existing e on e.person_id = cd.person_id
+-- Recorded + proposed must fit inside two seats. Anyone already at two, and anyone whose remaining
+-- seats can't hold all their candidates, gets nothing at all rather than an arbitrary pick.
+where coalesce(e.n, 0) + (select count(*) from candidate c2 where c2.person_id = cd.person_id) <= 2
 on conflict (person_a_id, person_b_id, kind) do nothing;
 
 -- Step 4: invalidate the cached Key Facts (person-facts/index.ts) for anyone with any family
