@@ -66,13 +66,23 @@ export default function FloatingActionBubble({
     if (!open) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
-      // Escape backs out one level at a time rather than dumping you all the way out — the same
-      // key that closed the old note-only bubble still closes this one, just from the top level.
+      // Escape already means "clear what I typed" inside the pickers and the note box, so while
+      // there's text in the focused field let the field have it. Otherwise typing a name, hitting
+      // Escape to correct it, and being thrown back to the action list is one keystroke away.
+      //
+      // Registered in the capture phase specifically so this check runs BEFORE the field's own
+      // React handler: that handler clears the value synchronously, so a bubble-phase listener
+      // would always see an empty field and navigate anyway.
+      const el = document.activeElement
+      const isTextField = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      if (isTextField && el.value) return
+      // Backs out one level at a time rather than dumping you all the way out — the same key that
+      // closed the old note-only bubble still closes this one, just from the top level.
       if (activeKey) setActiveKey(null)
       else setOpen(false)
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [open, activeKey])
 
   // Focus lands inside the panel on open and on every level change, so keyboard and VoiceOver
