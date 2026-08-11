@@ -10,6 +10,7 @@ import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import VoiceInputButton from '../components/VoiceInputButton'
+import SummaryText from '../components/SummaryText'
 import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
 import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { summarize } from '../lib/summarize'
@@ -1179,10 +1180,13 @@ export function EventDetailView({
         </form>
       ) : (
         <div style={styles.descriptionRow}>
-          <p style={styles.description}>
-            {moment.summary ||
-              (hasSomethingToSummarize(moment) ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')}
-          </p>
+          <SummaryText
+            style={styles.description}
+            text={
+              moment.summary ||
+              (hasSomethingToSummarize(moment) ? 'Putting this memory into words…' : 'Nothing written yet — add a description.')
+            }
+          />
           {!readOnly && (
             <RefreshButton label="Refresh summary" onClick={onRefreshSummary} refreshing={refreshingSummary} />
           )}
@@ -2088,10 +2092,11 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   notesHint: { margin: '0 0 0.75rem 0', fontSize: fontSize.label, color: colors.textFaintest, fontStyle: 'italic' },
-  // pre-wrap because a summary can be multi-line: a parent event's is an overview plus one line per
-  // sub-event, and plenty of ordinary summaries already contain paragraph breaks that used to
-  // collapse into one run-on block here.
-  description: { fontSize: '1.05rem', color: colors.inkPlain, lineHeight: 1.6, margin: 0, flex: 1, whiteSpace: 'pre-wrap' },
+  // Layout only — the summary's own typography (and the pre-wrap that keeps a multi-line summary
+  // from collapsing into one run-on block) now lives in SummaryText, which also styles a parent
+  // event's per-sub-event lines rather than printing them flat. minWidth:0 so a long unbroken word
+  // wraps instead of stretching this flex child past the refresh/edit buttons beside it.
+  description: { flex: 1, minWidth: 0 },
   descriptionRow: { display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: space.xxxl },
   descriptionEditForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: space.xxxl },
   descriptionEditRow: { display: 'flex', alignItems: 'flex-end', gap: space.md },

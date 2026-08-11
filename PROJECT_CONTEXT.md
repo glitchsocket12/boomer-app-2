@@ -94,6 +94,13 @@ src/
 │   │                            OR any note with real content; the auto-inserted self-attendee row
 │   │                            doesn't count, or every blank shell would burn a call per page view.
 │   ├── summarize.ts           — short title helper (tested)
+│   ├── summaryFormat.ts       — (2026-08-10, tested) parses a stored event summary into blocks for
+│   │                            SummaryText.tsx. Recognises the `<date> · <title> — <sentence>`
+│   │                            lines summarize-moment emits for a parent event's sub-events;
+│   │                            splits on the FIRST dash (sentences contain em dashes) and requires
+│   │                            a short date-shaped cell with a digit, so prose containing a "·"
+│   │                            isn't mistaken for a sub-event line. No prompt change — rendering
+│   │                            only, so no summary needs regenerating.
 │   ├── people.ts              — sortByLastName
 │   ├── pets.ts                — (2026-08-01) the single write path for pets: loadPetsForPerson
 │   │                            (returns `{pets, available}` — `available:false` means the
@@ -1491,6 +1498,10 @@ Full story: PROJECT_HISTORY.md.
 │   │                            passes the ids it already loaded, so no extra query. Merged
 │   │                            galleries order by `taken_at` then `created_at`.
 │   ├── RefreshButton.tsx      — spinning refresh icon
+│   ├── SummaryText.tsx        — (2026-08-10) renders an event summary. A parent event's sub-event
+│   │                            lines get a hairline left rail, an italic muted date, a bold title
+│   │                            and the sentence below; an ordinary prose summary renders exactly
+│   │                            as before (one pre-wrap paragraph). Parsing in lib/summaryFormat.ts.
 │   ├── SearchBox.tsx          — client-side list filter. Optional `onFocus`/`onBlur`
 │   │                            props (item 28 follow-up, 2026-07-22, additive)
 │   │                            passed straight through to the input, so a picker
@@ -2083,6 +2094,7 @@ Also worth noting: a separate concurrent session was actively editing `EventDeta
 
 90. ~~Fold every "add something to this page" control into the floating bubble~~ — **DONE 2026-08-10.** Founder ask: on a phone you scrolled hunting for "+ Associate a New Group" / "+ Add a Tag" / the attendee picker, while the chat bubble followed you everywhere doing only one thing. The bubble is now the single action surface on EventDetail (people / tag / associate a group / photos / new sub-event / Manage) and GroupDetail (people / associate a group / new subgroup / Manage); `FloatingNoteButton.tsx` → `FloatingActionBubble.tsx` (§3). Every on-page add-button and picker was deleted, chips and suggestion chips stay put, and empty sections now say "tap the + button" (guarded on `!readOnly` — the demo has no bubble). Founder-directed specifics: name/date editing deliberately stayed on the top pencil, and Manage is a muted sub-row that hands off to ManagePanel's existing two-step delete. The note box + mic stays on the bubble's first screen rather than behind a row, since voice is the primary input path. **Click-tested on the real account, both pages** — pickers add and persist, create-new-person/tag rows work, undo banner works, Escape's three stages, delete still gated, mobile viewport fits with all rows ≥44px, zero console errors; test data added during verification was removed afterward.
 91. **The action bubble's writes ignore their own errors.** `handleAddAttendee` (EventDetail) inserts a note and never checks the returned error — if the insert fails, the picker still shows "✓ Added X" and the chip appears until the next reload. Pre-existing (unchanged by item 90, same handler the old inline picker called), but the bubble makes it more visible because the confirmation line is now the main feedback. Worth an error check + a failure message in the panel. Same shape in `handleTagGroup`/`handleTagMoment`/`handleUntag*`.
+92. ~~A multi-day event's summary reads as a wall of text~~ — **DONE 2026-08-10.** Founder ask, on the Defenders of Freedom demo: the per-sub-event lines "don't read well", use basic formatting. Fixed purely in rendering (`src/components/SummaryText.tsx` + tested `src/lib/summaryFormat.ts`, §3): the `<date> · <title> — <sentence>` shape summarize-moment already emits is parsed and each part styled — italic muted date, bold title, sentence below, hairline left rail grouping the rows. The Edge Function prompt and its cached prefix are untouched, so no summary regenerates and no tokens are spent. Ordinary prose summaries render byte-identically to before.
 
 **Flagged from feedback widget — needs founder scope decision (not filed as bounded items, left open in the widget):**
 - *(Jake's birthday dinner, 2026-08-03)* Founder: the chat didn't add the right people to the event or spell all the names correctly, and wants it to actively extract people/event details from a narrative, infer who they are from existing contacts/context, suggest adding them — and if it's fully confident, add them automatically. This overlaps with item 15's person-to-person inference thread and item 76's chat-unification effort; worth deciding whether it's its own item or folds into one of those before scoping.
