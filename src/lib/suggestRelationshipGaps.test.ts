@@ -102,6 +102,22 @@ describe('deriveRelationshipGaps — co-parent gaps', () => {
     expect(gaps.map((g) => g.kind === 'family_coparent' && g.childId).sort()).toEqual(['kid', 'kid2'])
   })
 
+  it("stays quiet about a step-parent once the child's own two parents are both on file", () => {
+    // The blended-family shape: the kid's mother and father are both recorded, and mom is now
+    // married to Dana — a third adult, so a step-parent rather than a missing parent. (The
+    // couple gap for mom/dad is a separate, still-correct question, hence the filter.)
+    const parentsOf = new Map([['kid', ['mom', 'dad']]])
+    const gaps = deriveRelationshipGaps(
+      emptyGraph({
+        nameById: names,
+        parentsOf,
+        childrenOf: withChildren(parentsOf),
+        spousesOf: couple('mom', 'step'),
+      })
+    )
+    expect(gaps.filter((g) => g.kind === 'family_coparent')).toEqual([])
+  })
+
   it('refuses to invert an existing edge (child already on file as the spouse’s parent)', () => {
     // Bad data rather than a gap: "kid" is both mom's child and dad's parent. Filling this in
     // would write a cycle into the family graph.

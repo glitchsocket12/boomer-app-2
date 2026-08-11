@@ -83,17 +83,27 @@ function PhotoLightbox({
 // a person has no photos of their own, only ones inherited from moments. Group pages still don't
 // pass either prop and keep the placeholder unchanged; a group rollup is a later pass, not this
 // one. Real thumbnails open a full-screen lightbox on click.
+//
+// `subEventIds` (2026-08-10) is the third roll-up: a parent event's gallery shows its own photos
+// plus every sub-event's, since on a multi-day event the photos are attached to the individual
+// days. The caller passes the ids because EventDetail has already loaded them — no extra query.
 export default function PhotoGallery({
   momentId,
   personId,
+  subEventIds,
   count = 4,
 }: {
   momentId?: string
   personId?: string
+  subEventIds?: string[]
   count?: number
 }) {
   const [photos, setPhotos] = useState<{ id: string; url: string | null }[] | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+
+  // Joined rather than the array itself, so a parent re-render handing over a fresh array of the
+  // same ids doesn't refetch the whole gallery.
+  const subEventIdsKey = (subEventIds ?? []).join(',')
 
   useEffect(() => {
     if (!momentId && !personId) {
@@ -105,7 +115,7 @@ export default function PhotoGallery({
     async function run() {
       let momentIds: string[]
       if (momentId) {
-        momentIds = [momentId]
+        momentIds = [momentId, ...(subEventIdsKey ? subEventIdsKey.split(',') : [])]
       } else {
         // Same "who was there" signal EventDetail.tsx uses for attendance, read the other way —
         // every moment this person has a note tagging them to.
@@ -122,7 +132,14 @@ export default function PhotoGallery({
         return
       }
 
-      const { data, error } = await supabase.from('photos').select('id, storage_path').in('moment_id', momentIds)
+      // Ordered by when the photo was taken: once a gallery merges several moments (a parent's
+      // sub-events, or a person's whole history) the default arbitrary order interleaves days.
+      const { data, error } = await supabase
+        .from('photos')
+        .select('id, storage_path')
+        .in('moment_id', momentIds)
+        .order('taken_at', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true })
       if (cancelled) return
       if (error || !data || data.length === 0) {
         setPhotos([])
@@ -143,7 +160,7 @@ export default function PhotoGallery({
     return () => {
       cancelled = true
     }
-  }, [momentId, personId])
+  }, [momentId, personId, subEventIdsKey])
 
   if (photos && photos.length > 0) {
     return (

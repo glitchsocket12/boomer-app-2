@@ -49,6 +49,10 @@ export type ChildEventRef = {
   event_date: string | null
   event_end_date: string | null
   created_at: string
+  // Not rendered on the tiles — read only by the summary gate, which has to know whether the
+  // sub-events hold anything worth rolling up into this event's description. See lib/moments.ts.
+  summary: string | null
+  raw_description: string
   notes: { people: PersonRef | null }[]
 }
 
@@ -270,7 +274,7 @@ export default function EventDetail({
   async function loadChildEvents() {
     const { data, error } = await supabase
       .from('moments')
-      .select('id, occasion, event_date, event_end_date, created_at, notes(people(id, name, last_name))')
+      .select('id, occasion, event_date, event_end_date, created_at, summary, raw_description, notes(people(id, name, last_name))')
       .eq('parent_moment_id', eventId)
       .order('event_date', { ascending: true, nullsFirst: false })
     // Query-level .order() gets the rough order; sortSubEventsByDate makes the same-date tie-breaks
@@ -278,6 +282,10 @@ export default function EventDetail({
     setChildEvents(error ? [] : sortSubEventsByDate((data as unknown as ChildEventRef[]) ?? []))
     loadParentEvent()
   }
+
+  // Memoised so the gallery below only refetches when the actual set of sub-events changes, not on
+  // every unrelated reload of this page (rename, description edit, an attendee going in or out).
+  const childEventIds = useMemo(() => childEvents.map((c) => c.id), [childEvents])
 
   function startAddSubEvent() {
     setSubEventDateInput(moment?.event_date ?? '')
@@ -335,16 +343,6 @@ export default function EventDetail({
     const loaded = (data as unknown as MomentDetail) ?? null
     setMoment(loaded)
     if (!silent) setLoading(false)
-
-    // Only worth an AI call once there's actually something to summarize — a freshly-created
-    // blank shell (manual "Add Event") has nothing in it but the auto-inserted self-attendee row,
-    // and would otherwise burn a summary call on nothing every time its page loads. Notes alone
-    // are enough though: this used to test raw_description only, which meant a manually-created
-    // event could accumulate any number of notes and stay stuck on "Nothing written yet" forever
-    // (summarize-moment reads the notes perfectly well). See lib/moments.ts.
-    if (loaded && !loaded.summary && hasSomethingToSummarize(loaded)) {
-      generateSummary()
-    }
     return loaded
   }
 
@@ -376,6 +374,21 @@ export default function EventDetail({
       }
     }
   }
+
+  // Only worth an AI call once there's actually something to summarize — a freshly-created blank
+  // shell (manual "Add Event") has nothing in it but the auto-inserted self-attendee row, and would
+  // otherwise burn a summary call on nothing every time its page loads. Notes alone are enough
+  // though, and so are the sub-events' summaries on a parent event that's a pure container. See
+  // lib/moments.ts for both traps.
+  //
+  // This lives in an effect rather than at the end of loadMoment because the gate now needs BOTH
+  // the moment and its sub-events, and those two are fetched in parallel — whichever landed second
+  // would otherwise never re-run the check. The summarizingRef guard is what stops a second render
+  // queueing a duplicate (paid) rerun inside generateSummary while the first call is still open.
+  useEffect(() => {
+    if (!moment || moment.summary || summarizingRef.current) return
+    if (hasSomethingToSummarize(moment, childEvents)) generateSummary()
+  }, [moment, childEvents])
 
   // Manual re-synthesis on demand — e.g. for an event whose cached summary predates a prompt
   // improvement, or whose notes still read out of order for some other reason.
@@ -691,6 +704,7 @@ export default function EventDetail({
       siblingEvents={siblingEvents}
       childEvents={childEvents}
       addingSubEvent={addingSubEvent}
+      subEventIds={childEventIds}
       subEventError={subEventError}
       subEventDateInput={subEventDateInput}
       onStartAddSubEvent={startAddSubEvent}
@@ -784,6 +798,7 @@ export function EventDetailView({
   siblingEvents = [],
   childEvents = [],
   addingSubEvent = false,
+  subEventIds = [],
   subEventError = null,
   subEventDateInput = '',
   onStartAddSubEvent = () => {},
@@ -866,6 +881,7 @@ export function EventDetailView({
   parentEvent?: OtherEvent | null
   siblingEvents?: SiblingEventRef[]
   childEvents?: ChildEventRef[]
+  subEventIds?: string[]
   addingSubEvent?: boolean
   subEventError?: string | null
   subEventDateInput?: string
@@ -1185,7 +1201,10 @@ export function EventDetailView({
         </div>
       )}
 
-      <PhotoGallery momentId={moment.id} key={photosRefreshKey} />
+      {/* Cumulative: this event's own photos plus every sub-event's (founder ask 2026-08-10). Same
+          roll-up "Who was there" already does below — on a multi-day event the photos live on the
+          individual days, so a parent gallery that only showed its own would sit empty. */}
+      <PhotoGallery momentId={moment.id} subEventIds={subEventIds} key={photosRefreshKey} />
       {/* The "Add photos" button moved into the action bubble (2026-08-08), but the import's
           progress and errors stay here next to the gallery they're about — that's output, not a
           control, and it'd be invisible in a panel the user closes as soon as the import starts. */}
@@ -2069,7 +2088,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   notesHint: { margin: '0 0 0.75rem 0', fontSize: fontSize.label, color: colors.textFaintest, fontStyle: 'italic' },
-  description: { fontSize: '1.05rem', color: colors.inkPlain, lineHeight: 1.6, margin: 0, flex: 1 },
+  // pre-wrap because a summary can be multi-line: a parent event's is an overview plus one line per
+  // sub-event, and plenty of ordinary summaries already contain paragraph breaks that used to
+  // collapse into one run-on block here.
+  description: { fontSize: '1.05rem', color: colors.inkPlain, lineHeight: 1.6, margin: 0, flex: 1, whiteSpace: 'pre-wrap' },
   descriptionRow: { display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: space.xxxl },
   descriptionEditForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: space.xxxl },
   descriptionEditRow: { display: 'flex', alignItems: 'flex-end', gap: space.md },

@@ -56,6 +56,13 @@ export function deriveRelationshipGaps(g: Graph): RelationshipGapSuggestion[] {
       for (const childId of g.childrenOf.get(personId) ?? []) {
         if (childId === spouseId) continue
         if ((g.parentsOf.get(childId) ?? []).includes(spouseId)) continue
+        // Two parents already on file means the child's parenthood is accounted for and this
+        // spouse would be a THIRD — the blended-family shape, where they're a step-parent rather
+        // than a missing parent. Reported 2026-08-10: one such question per step-child, each
+        // needing its own No, on a family where the kids' own two parents were both recorded.
+        // The question stays live for a child with only one recorded parent, which is the case
+        // it was built for (a spouse never linked to the kids of a single-parent-on-file couple).
+        if ((g.parentsOf.get(childId) ?? []).length >= 2) continue
         // Never propose an edge that would invert an existing one — if the child is already on
         // file as the spouse's PARENT, this is bad data, not a gap to fill.
         if ((g.parentsOf.get(spouseId) ?? []).includes(childId)) continue
