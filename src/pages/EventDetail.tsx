@@ -404,6 +404,19 @@ export default function EventDetail({
     await handleNoteSaved()
   }
 
+  // Confirm a whole suggestion box at once — the counterpart to handleDenyAllSuggestions, and
+  // the same idea as GroupDetail's own handleApproveAllSuggestions. Deliberately ONE insert of
+  // every row plus ONE handleNoteSaved(), not a loop over handleAddAttendee: handleNoteSaved
+  // nulls the cached summary and reloads, so a loop would spend an AI summary regeneration per
+  // person for what the user experiences as a single click (CLAUDE.md rule 3).
+  async function handleApproveAllSuggestions(people: PersonRef[]) {
+    if (people.length === 0) return
+    await supabase
+      .from('notes')
+      .insert(people.map((p) => ({ person_id: p.id, moment_id: eventId, content: ATTENDEE_PLACEHOLDER })))
+    await handleNoteSaved()
+  }
+
   // The "someone who isn't on file yet was there" half of the attendee picker. Splits the typed
   // name the same way every other create-a-person path in the app does (first word is `name`, the
   // rest is `last_name`), so someone added here is indistinguishable from one added via import,
@@ -731,6 +744,7 @@ export default function EventDetail({
       onDeleteNote={handleDeleteNote}
       onDenySuggestion={handleDenySuggestion}
       onDenyAllSuggestions={handleDenyAllSuggestions}
+      onApproveAllSuggestions={handleApproveAllSuggestions}
       notesOpen={notesOpen}
       onToggleNotesOpen={() => setNotesOpen((o) => !o)}
       deleteConfirming={deleteConfirming}
@@ -824,6 +838,7 @@ export function EventDetailView({
   onDeleteNote = () => {},
   onDenySuggestion = () => {},
   onDenyAllSuggestions = () => {},
+  onApproveAllSuggestions = () => {},
   notesOpen = false,
   onToggleNotesOpen = () => {},
   deleteConfirming = false,
@@ -906,6 +921,7 @@ export function EventDetailView({
   onDeleteNote?: (noteIds: string[]) => void
   onDenySuggestion?: (person: PersonRef) => void
   onDenyAllSuggestions?: (people: PersonRef[]) => void
+  onApproveAllSuggestions?: (people: PersonRef[]) => void
   notesOpen?: boolean
   onToggleNotesOpen?: () => void
   deleteConfirming?: boolean
@@ -1213,9 +1229,14 @@ export function EventDetailView({
           <div style={styles.suggestionHeaderRow}>
             <h2 style={{ ...styles.subheading, margin: 0 }}>Were they at this one too?</h2>
             {suggestedFromSiblings.length > 1 && (
-              <button onClick={() => onDenyAllSuggestions(suggestedFromSiblings)} style={styles.removeAllButton}>
-                × Remove all suggestions
-              </button>
+              <div style={styles.suggestionActionRow}>
+                <button onClick={() => onApproveAllSuggestions(suggestedFromSiblings)} style={styles.addAllButton}>
+                  ✓ Add all suggestions
+                </button>
+                <button onClick={() => onDenyAllSuggestions(suggestedFromSiblings)} style={styles.removeAllButton}>
+                  × Remove all suggestions
+                </button>
+              </div>
             )}
           </div>
           <p style={styles.chatHint}>
@@ -1239,12 +1260,20 @@ export function EventDetailView({
           <div style={styles.suggestionHeaderRow}>
             <h2 style={{ ...styles.subheading, margin: 0 }}>Also from the associated group?</h2>
             {suggestedAttendees.size > 1 && (
-              <button
-                onClick={() => onDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
-                style={styles.removeAllButton}
-              >
-                × Remove all suggestions
-              </button>
+              <div style={styles.suggestionActionRow}>
+                <button
+                  onClick={() => onApproveAllSuggestions(Array.from(suggestedAttendees.values()))}
+                  style={styles.addAllButton}
+                >
+                  ✓ Add all suggestions
+                </button>
+                <button
+                  onClick={() => onDenyAllSuggestions(Array.from(suggestedAttendees.values()))}
+                  style={styles.removeAllButton}
+                >
+                  × Remove all suggestions
+                </button>
+              </div>
             )}
           </div>
           <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
@@ -1266,12 +1295,20 @@ export function EventDetailView({
           <div style={styles.suggestionHeaderRow}>
             <h2 style={{ ...styles.subheading, margin: 0 }}>Was their family there too?</h2>
             {suggestedFamily.size > 1 && (
-              <button
-                onClick={() => onDenyAllSuggestions(Array.from(suggestedFamily.values()))}
-                style={styles.removeAllButton}
-              >
-                × Remove all suggestions
-              </button>
+              <div style={styles.suggestionActionRow}>
+                <button
+                  onClick={() => onApproveAllSuggestions(Array.from(suggestedFamily.values()))}
+                  style={styles.addAllButton}
+                >
+                  ✓ Add all suggestions
+                </button>
+                <button
+                  onClick={() => onDenyAllSuggestions(Array.from(suggestedFamily.values()))}
+                  style={styles.removeAllButton}
+                >
+                  × Remove all suggestions
+                </button>
+              </div>
             )}
           </div>
           <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
@@ -2054,11 +2091,22 @@ const styles: { [key: string]: React.CSSProperties } = {
   suggestionHeaderRow: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: space.lg, flexWrap: 'wrap' },
   empty: { fontSize: fontSize.body, color: colors.textFaint, margin: '0 0 1rem 0' },
   addedLine: { fontSize: fontSize.body, color: colors.success, margin: 0 },
+  suggestionActionRow: { display: 'flex', gap: '0.9rem', flexWrap: 'wrap' },
   removeAllButton: {
     fontSize: fontSize.label,
     background: 'none',
     border: 'none',
     color: colors.danger,
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily,
+    whiteSpace: 'nowrap',
+  },
+  addAllButton: {
+    fontSize: fontSize.label,
+    background: 'none',
+    border: 'none',
+    color: colors.ink,
     cursor: 'pointer',
     padding: 0,
     fontFamily,

@@ -984,7 +984,7 @@ export function PersonDetailView({
               type="text"
               value={middleNameInput}
               onChange={(e) => onMiddleNameInputChange(e.target.value)}
-              placeholder="Middle name/nickname"
+              placeholder="Middle/nickname"
               style={styles.renameInput}
             />
             <input
@@ -1664,7 +1664,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.25rem 0.5rem',
     borderRadius: radius.md,
     border: border.default,
-    flex: '1 1 150px',
+    // Basis 0, not a fixed px basis: three 150px boxes can't fit a phone's content width, so the
+    // row wrapped to two lines and stopped reading as one name. At 0 they always share the row.
+    flex: '1 1 0',
+    minWidth: 0,
   },
   goesByRow: { display: 'flex', alignItems: 'center', gap: space.md, flexWrap: 'wrap' },
   goesByLabel: { fontSize: fontSize.body, color: colors.ink },

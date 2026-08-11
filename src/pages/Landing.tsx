@@ -146,6 +146,12 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
       <section id="how-it-works" style={styles.section}>
         <ul style={styles.featureList}>
           <li style={styles.featureItem}>
+            <strong>You don't start from scratch.</strong> Connect your calendar and Boomer
+            builds out the events you've already been to; pull in your phone contacts and it
+            starts filling in the people — then nudges you over time to add what it doesn't
+            know.
+          </li>
+          <li style={styles.featureItem}>
             <strong>Talk, or just hit record.</strong> No forms — Boomer's AI sorts out
             who's who.
           </li>
