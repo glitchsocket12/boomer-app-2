@@ -39,6 +39,27 @@ describe('sampleAcrossKinds', () => {
     const out = sampleAcrossKinds([[personGroup(1)], [eventGroup(1)]], 6)
     expect(out).toHaveLength(2)
   })
+
+  // Home now asks for the whole pool and caps the DISPLAY itself, so answering a card can refill
+  // from the rest with no refetch (item 58). An unbounded limit has to drain every pool and stop.
+  it('drains every pool without spinning when the limit is unbounded', () => {
+    const out = sampleAcrossKinds(
+      [[personGroup(1), personGroup(2), personGroup(3)], [eventGroup(1), eventGroup(2)]],
+      Infinity
+    )
+    expect(out).toHaveLength(5)
+    expect(new Set(out.map(suggestionKey)).size).toBe(5)
+  })
+
+  // The first batch off an unbounded call still has to be kind-varied, since that ordering is
+  // exactly what the founder sees before anything is answered.
+  it('still round-robins the front of an unbounded result', () => {
+    const out = sampleAcrossKinds(
+      [[personGroup(1), personGroup(2), personGroup(3)], [eventGroup(1), eventGroup(2)]],
+      Infinity
+    )
+    expect(out.slice(0, 2).map((s) => s.kind).sort()).toEqual(['event_group', 'person_group'])
+  })
 })
 
 describe('suggestionKey', () => {

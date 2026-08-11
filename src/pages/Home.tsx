@@ -21,6 +21,7 @@ import {
   acceptConnectionSuggestion,
   dismissConnectionSuggestion,
   suggestionKey,
+  SAMPLE_SIZE,
   type HomeSuggestion,
 } from '../lib/suggestConnections'
 import { dismissSuggestion } from '../lib/dismissedSuggestions'
@@ -230,6 +231,11 @@ export default function Home({
     setConnectionSuggestions((prev) => prev.filter((s) => suggestionKey(s) !== key))
   }
 
+  // State holds the whole ordered candidate pool; only a batch of it is ever on screen. Because
+  // runSuggestionAction filters the answered card out of state, the next one slides up on that
+  // same render — no reload, no refetch, which is the whole of item 58.
+  const visibleConnectionSuggestions = connectionSuggestions.slice(0, SAMPLE_SIZE)
+
   async function handleAcceptConnection(suggestion: HomeSuggestion) {
     await runSuggestionAction(suggestion, () => {
       switch (suggestion.kind) {
@@ -359,7 +365,7 @@ export default function Home({
       mentionedPeopleSuggestions={mentionedPeopleSuggestions}
       setMentionedPeopleSuggestions={setMentionedPeopleSuggestions}
       groupLabel={groupRoster.label}
-      connectionSuggestions={connectionSuggestions}
+      connectionSuggestions={visibleConnectionSuggestions}
       onAcceptConnection={handleAcceptConnection}
       onDismissConnection={handleDismissConnection}
       familyTagSuggestions={familyTagSuggestions}

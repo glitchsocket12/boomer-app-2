@@ -160,6 +160,7 @@ export default function PersonDetail({
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
   const [factsLoading, setFactsLoading] = useState(true)
+  const [selfId, setSelfId] = useState<string | null>(null)
   const [notesOpen, setNotesOpen] = useState(true)
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
@@ -182,6 +183,18 @@ export default function PersonDetail({
     loadGroupsList()
     loadGender()
   }, [personId])
+
+  // Fetched once, not per-profile, and in its own query rather than folded into loadData — same
+  // reasoning as EventDetail's identical lookup. Only used to word a Key Facts chip as "You"
+  // (item 33), so if it never resolves the page just keeps showing the founder's own name.
+  useEffect(() => {
+    supabase
+      .from('people')
+      .select('id')
+      .eq('is_self', true)
+      .maybeSingle()
+      .then(({ data }) => setSelfId(data?.id ?? null))
+  }, [])
 
   // How this person is related to you, in words. Deliberately NOT part of loadData's Promise.all:
   // it costs the same three queries the family tree already pays, and the profile shouldn't wait on
@@ -675,6 +688,7 @@ export default function PersonDetail({
       allGroupsList={allGroupsList}
       keyFacts={keyFacts}
       factsLoading={factsLoading}
+      selfId={selfId}
       onBack={onBack}
       backLabel={backLabel}
       onSelectPerson={onSelectPerson}
@@ -777,6 +791,7 @@ export function PersonDetailView({
   allGroupsList,
   keyFacts,
   factsLoading,
+  selfId = null,
   onBack,
   backLabel,
   onSelectPerson,
@@ -863,6 +878,7 @@ export function PersonDetailView({
   allGroupsList: GroupRef[]
   keyFacts: KeyFact[]
   factsLoading: boolean
+  selfId?: string | null
   onBack: () => void
   backLabel: string
   onSelectPerson: (person: { id: string; name: string }) => void
@@ -1114,7 +1130,7 @@ export function PersonDetailView({
           ) : (
             <ul style={styles.keyFactsList}>
               {keyFacts.map((f, i) => (
-                <KeyFactItem key={i} fact={f} onSelectPerson={onSelectPerson} />
+                <KeyFactItem key={i} fact={f} selfId={selfId} onSelectPerson={onSelectPerson} />
               ))}
             </ul>
           )}
@@ -1463,9 +1479,11 @@ function AffiliatedGroupChip({
 // since a fact can be derived from more than one note and "edit this bullet" was ambiguous there.
 function KeyFactItem({
   fact,
+  selfId = null,
   onSelectPerson,
 }: {
   fact: KeyFact
+  selfId?: string | null
   onSelectPerson: (person: { id: string; name: string }) => void
 }) {
   return (
@@ -1475,7 +1493,15 @@ function KeyFactItem({
           <span>{fact.relationshipLabel}</span>
           {fact.people.map((p, i) =>
             p.personId ? (
-              <PersonChip key={i} label={p.name} onClick={() => onSelectPerson({ id: p.personId!, name: p.name })} />
+              // The founder reads their own name here as a stranger's ("Married to Jake Volin" on
+              // their wife's profile) — say "You", matching the attendee/member chips on
+              // EventDetail and GroupDetail (item 33). The chip still navigates to their own
+              // profile; only the wording changes.
+              <PersonChip
+                key={i}
+                label={p.personId === selfId ? 'You' : p.name}
+                onClick={() => onSelectPerson({ id: p.personId!, name: p.name })}
+              />
             ) : (
               <span key={i}>{p.name}</span>
             )

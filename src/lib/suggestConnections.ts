@@ -33,7 +33,9 @@ export function suggestionKey(s: HomeSuggestion): string {
 
 // How many suggestions Home shows at once — a rotating sample (see the shuffle below), not a
 // fixed batch, since founders add people over time and the full candidate pool changes as they do.
-const SAMPLE_SIZE = 6
+// This is now a DISPLAY cap applied by Home, not a fetch cap: loadHomeSuggestions returns the whole
+// ordered pool so answering a card can refill from the rest with no extra query (item 58).
+export const SAMPLE_SIZE = 6
 
 // Generalizes GroupDetail.tsx's own per-group suggestion logic (event attendance on a
 // group-tagged moment, membership in a CONFIRMED associated group, or family — spouse of a
@@ -205,6 +207,11 @@ export function sampleAcrossKinds(pools: HomeSuggestion[][], limit = SAMPLE_SIZE
 // anywhere in here — so the whole thing is recomputed per Home visit rather than cached
 // (CLAUDE.md rule 3). The two newer types self-suppress when their dismissal table is missing, so
 // a pre-migration account quietly keeps the original person->group behaviour.
+//
+// Returns the ENTIRE pool in round-robin order, not just the first six (changed 2026-08-10, item
+// 58): every candidate was already computed in memory here and then thrown away, so handing the
+// whole ordered list back lets Home show six and slide the next one up as each is answered —
+// no refetch, no reload, and not one extra query over what this already did.
 export async function loadHomeSuggestions(): Promise<HomeSuggestion[]> {
   const dismissals = await loadDismissals()
   const [personGroup, relationshipGaps, eventGroups] = await Promise.all([
@@ -215,12 +222,15 @@ export async function loadHomeSuggestions(): Promise<HomeSuggestion[]> {
   // family_coparent and family_couple are split into separate pools on purpose: they come from one
   // source but read as different questions, and pooling them lets a big pile of co-parent gaps
   // crowd out everything else.
-  return sampleAcrossKinds([
-    personGroup,
-    relationshipGaps.filter((s) => s.kind === 'family_coparent'),
-    relationshipGaps.filter((s) => s.kind === 'family_couple'),
-    eventGroups,
-  ])
+  return sampleAcrossKinds(
+    [
+      personGroup,
+      relationshipGaps.filter((s) => s.kind === 'family_coparent'),
+      relationshipGaps.filter((s) => s.kind === 'family_couple'),
+      eventGroups,
+    ],
+    Infinity
+  )
 }
 
 // Mirrors GroupDetail.tsx's handleAddMember exactly (same upsert shape, same summary
