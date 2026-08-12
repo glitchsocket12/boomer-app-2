@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, space } from '../lib/theme'
 
 type PersonRef = { id: string; name: string }
@@ -31,9 +32,18 @@ export default function DueForUpdate({
   const [rows, setRows] = useState<Row[] | null>(null)
 
   useEffect(() => {
+    // Both reads are account-wide, so both are paged (lib/pagedSelect.ts). `notes` is the one that
+    // was actually biting: it passed 1000 rows (1456 on 2026-08-10) while this read was unpaged, so
+    // the newest ~450 notes were invisible here — and a person whose only recent note fell in that
+    // gap came out with `lastUpdate: null`, which the sort below floats to the TOP as "no updates
+    // yet". The page was nudging the founder to write about people they had just written about.
     Promise.all([
-      supabase.from('people').select('id, name, last_name').eq('is_self', false),
-      supabase.from('notes').select('person_id, created_at').not('person_id', 'is', null),
+      fetchAllRows((from, to) =>
+        supabase.from('people').select('id, name, last_name').eq('is_self', false).order('id').range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase.from('notes').select('person_id, created_at').not('person_id', 'is', null).order('id').range(from, to)
+      ),
     ]).then(([{ data: people }, { data: notes }]) => {
       const lastByPerson = new Map<string, string>()
       for (const n of notes ?? []) {
