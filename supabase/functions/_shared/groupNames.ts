@@ -45,10 +45,29 @@ export function buildGroupNameIndex(groups: GroupRow[]): GroupNameIndex {
   const idByBare: Record<string, string> = {}
   const bareCounts: Record<string, number> = {}
 
+  // Walks the WHOLE ancestor chain, matching groupDisplayName's `parentById` branch exactly —
+  // "Squadron / Alpha Flight / Pilots", not "Alpha Flight / Pilots". This copy qualified only one
+  // level until 2026-08-11, three months after the app copy started walking the full chain
+  // (2026-08-03, when subgroups became arbitrarily deep). Two "Pilots" under two different
+  // "Alpha Flight"s therefore produced the SAME key here, and idByQualified kept whichever was
+  // indexed last — reopening the exact wrong-subgroup tagging bug this file exists to close.
+  // src/lib/groupNamesParity.test.ts is the thing standing in the way of it drifting again.
+  //
+  // `seen` guards a corrupted A -> B -> A parent chain (the DB CHECK only rejects a group being its
+  // own DIRECT parent), and a missing ancestor truncates rather than dropping to a bare name —
+  // both for the same reasons spelled out in the app copy.
   function qualify(id: string): string {
-    const parentId = parentIdById[id]
-    const parentName = parentId ? bareById[parentId] : null
-    return parentName ? `${parentName}${GROUP_NAME_SEPARATOR}${bareById[id]}` : bareById[id]
+    const parts = [bareById[id]]
+    const seen = new Set<string>([id])
+    let currentId = parentIdById[id] ?? null
+    while (currentId && !seen.has(currentId)) {
+      seen.add(currentId)
+      const parentName = bareById[currentId]
+      if (!parentName) break
+      parts.unshift(parentName)
+      currentId = parentIdById[currentId] ?? null
+    }
+    return parts.join(GROUP_NAME_SEPARATOR)
   }
 
   function index(id: string) {
@@ -71,15 +90,27 @@ export function buildGroupNameIndex(groups: GroupRow[]): GroupNameIndex {
   return {
     nameById,
     resolve: (name) => lookup(name),
+    // Matches the LONGEST existing prefix, not the first separator. Now that names qualify through
+    // the full chain, a model copying the roster's format writes "Squadron / Alpha Flight / New
+    // Thing" — splitting at the first separator would read that as a group literally named
+    // "Alpha Flight / New Thing" sitting under Squadron, which is the same shape of bug as naming
+    // one "22 AS / Pilots".
     splitParent(name) {
       const trimmed = name.trim()
-      const at = trimmed.indexOf(GROUP_NAME_SEPARATOR)
-      if (at === -1) return { parentId: null, childName: trimmed }
-      const parentId = lookup(trimmed.slice(0, at))
-      const childName = trimmed.slice(at + GROUP_NAME_SEPARATOR.length).trim()
-      // Only a hierarchy if the prefix is a group that actually exists; otherwise the slash is
-      // just part of the name the user picked, so keep it verbatim.
-      return parentId && childName ? { parentId, childName } : { parentId: null, childName: trimmed }
+      const positions: number[] = []
+      for (let at = trimmed.indexOf(GROUP_NAME_SEPARATOR); at !== -1; at = trimmed.indexOf(GROUP_NAME_SEPARATOR, at + 1)) {
+        positions.push(at)
+      }
+      // Longest prefix first, so the deepest real parent wins.
+      for (let i = positions.length - 1; i >= 0; i--) {
+        const at = positions[i]
+        const parentId = lookup(trimmed.slice(0, at))
+        const childName = trimmed.slice(at + GROUP_NAME_SEPARATOR.length).trim()
+        if (parentId && childName) return { parentId, childName }
+      }
+      // No prefix names a group that actually exists, so the slash is just part of the name the
+      // user picked — keep it verbatim.
+      return { parentId: null, childName: trimmed }
     },
     add(group) {
       bareById[group.id] = group.name
