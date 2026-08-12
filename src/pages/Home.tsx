@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, type RefObject, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
+import { isSelf, personLabel } from '../lib/personLabel'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
@@ -651,7 +652,10 @@ export function HomeView({
                         )}
                         {s.kind === 'family_coparent' && (
                           <>
-                            Is{' '}
+                            {/* "Is you also a parent of…" is broken English, and the founder being
+                                the unrecorded parent is one of the likeliest versions of this
+                                question — so the verb agrees with who's being asked about. */}
+                            {isSelf(s.parentId, selfId) ? 'Are' : 'Is'}{' '}
                             <button
                               onClick={() => onSelectPerson({ id: s.parentId, name: s.parentName })}
                               style={styles.connectionLink}
@@ -675,16 +679,17 @@ export function HomeView({
                               onClick={() => onSelectPerson({ id: s.aId, name: s.aName })}
                               style={styles.connectionLink}
                             >
-                              {s.aName}
+                              {personLabel({ id: s.aId, name: s.aName }, selfId, { capitalize: false })}
                             </button>{' '}
                             and{' '}
                             <button
                               onClick={() => onSelectPerson({ id: s.bId, name: s.bName })}
                               style={styles.connectionLink}
                             >
-                              {s.bName}
+                              {personLabel({ id: s.bId, name: s.bName }, selfId, { capitalize: false })}
                             </button>{' '}
-                            married? They share a child ({s.childName}).
+                            married? {isSelf(s.aId, selfId) || isSelf(s.bId, selfId) ? 'You' : 'They'} share a child (
+                            {personLabel({ id: s.childId, name: s.childName }, selfId, { capitalize: false })}).
                           </>
                         )}
                         {s.kind === 'event_group' && (

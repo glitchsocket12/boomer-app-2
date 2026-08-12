@@ -24,6 +24,7 @@ import { calculateRelationship, describeKinPath } from '../lib/relationshipCalcu
 import { guessGenderFromName } from '../lib/nameGender'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
+import { personLabel } from '../lib/personLabel'
 
 export type Note = {
   id: string
@@ -1543,7 +1544,7 @@ function KeyFactItem({
               // profile; only the wording changes.
               <PersonChip
                 key={i}
-                label={p.personId === selfId ? 'You' : p.name}
+                label={personLabel({ id: p.personId, name: p.name }, selfId)}
                 onClick={() => onSelectPerson({ id: p.personId!, name: p.name })}
               />
             ) : (

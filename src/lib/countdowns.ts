@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { summarize } from './summarize'
+import { fullName } from './personLabel'
 
 // Countdowns (2026-08-06) — the Calendar page's "how long it's been / how long until" cards.
 //
@@ -359,10 +360,6 @@ export function unitsForCard(card: CountdownCard, now: Date): DisplayUnit[] {
   const bd =
     card.direction === 'down' ? breakdown(now, card.date) : breakdown(card.date, startOfDay(now))
   return displayUnits(bd, card.direction)
-}
-
-function fullName(p: { name: string; last_name: string | null }): string {
-  return p.last_name ? `${p.name} ${p.last_name}` : p.name
 }
 
 function momentTitle(m: CountdownMoment): string {

@@ -26,6 +26,7 @@ import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import { groupDisplayName } from '../lib/groupDisplayName'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
+import { fullName } from '../lib/personLabel'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 export type GroupRef = {
@@ -428,7 +429,9 @@ export default function EventDetail({
       .from('notes')
       .insert({ person_id: person.id, moment_id: eventId, content: ATTENDEE_PLACEHOLDER })
     if (error) {
-      setActionError(`Couldn't add ${person.name} to this event — please try again.`)
+      // Full name, matching the success line — a bare first name reads like a different person
+      // when two Joshes are on file.
+      setActionError(`Couldn't add ${fullName(person)} to this event — please try again.`)
       return false
     }
     await handleNoteSaved()
@@ -1879,7 +1882,7 @@ function AttendeeChip({
   onRemove?: () => void
 }) {
   const [hovered, setHovered] = useState(false)
-  const label = isSelf ? 'You' : `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+  const label = isSelf ? 'You' : fullName(person)
 
   return (
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>

@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { upsertRelationship, removeRelationship, getRelationshipsForPerson } from './relationshipsTable'
+import { fullName } from './personLabel'
 
 // Shared "+" write path for My Page's circle boxes and the family tree — writes through the
 // relationships table (2026-07-20 source of truth) AND the matching reciprocal note on both
@@ -321,7 +322,6 @@ export async function syncParentSpouse(
   const child = byId.get(childId)
   if (!spouse || !child) return null
 
-  const fullName = (p: { name: string; last_name: string | null }) => (p.last_name ? `${p.name} ${p.last_name}` : p.name)
   const autoLinked = !coParentNeedsConfirmation({
     hasOtherPartner: parentRel.partnerIds.length > 0,
     marriageEnded: await isMarriageEnded(parentId, spouseId),
@@ -433,7 +433,7 @@ export async function createAndLinkRelationship(
     .select()
     .single()
   if (!newPerson) return null
-  const fullName = lastName ? `${first} ${lastName}` : first
-  await linkRelationship(userId, category, subjectId, subjectName, newPerson.id, fullName, opts)
-  return { id: newPerson.id, name: fullName }
+  const joined = fullName({ name: first, last_name: lastName })
+  await linkRelationship(userId, category, subjectId, subjectName, newPerson.id, joined, opts)
+  return { id: newPerson.id, name: joined }
 }

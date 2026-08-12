@@ -36,6 +36,7 @@ import ManagePanel from '../components/ManagePanel'
 import FloatingActionBubble from '../components/FloatingActionBubble'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
+import { fullName } from '../lib/personLabel'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 export type GroupRef = { id: string; name: string }
@@ -2375,7 +2376,7 @@ function MemberChip({
   subgroupColors?: Record<string, string>
 }) {
   const [hovered, setHovered] = useState(false)
-  const label = isSelf ? 'You' : `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+  const label = isSelf ? 'You' : fullName(person)
   const inSubgroups = subgroups ?? []
   // Three dots is about where a pill stops reading as a name with a marker on it and starts
   // reading as a color bar, so the rest collapse into a count.

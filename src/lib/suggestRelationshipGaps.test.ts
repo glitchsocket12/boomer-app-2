@@ -143,6 +143,8 @@ describe('deriveRelationshipGaps — couple gaps', () => {
         aName: 'Ben Rivera',
         bId: 'mom',
         bName: 'Kate Rivera',
+        // The id rides along so Home can say "you" when the shared child is the account owner.
+        childId: 'kid',
         childName: 'Sophie Rivera',
       },
     ])
