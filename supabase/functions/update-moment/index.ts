@@ -13,6 +13,7 @@ import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
+import { mergeNicknames, parseNicknames, NICKNAME_PROMPT_CLAUSE, NICKNAME_JSON_FIELD } from "../_shared/nicknames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -99,6 +100,11 @@ serve(async (req) => {
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
     const nicknamesById: Record<string, string[]> = {}
+    // A mirror of the raw `nicknames` column, kept SEPARATE from nicknamesById above because that
+    // one folds in middle_name/goes_by_other for lookup. This is the base the nickname_updates
+    // merge below writes back — merging onto the folded list would copy someone's middle name into
+    // their nicknames column the first time an unrelated nickname was captured.
+    const rawNicknamesById: Record<string, string[]> = {}
     const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — otherwise two
     // different people sharing one would collide and whichever loaded last would win every
@@ -119,9 +125,11 @@ serve(async (req) => {
       idByName[fullName.toLowerCase()] = p.id
       lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
-      const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      const rawNicknames = parseNicknames(p.nicknames)
+      if (rawNicknames.length > 0) rawNicknamesById[p.id] = rawNicknames
+      const nicknames = [...rawNicknames]
       // A middle name/callsign the founder set on the profile resolves the same way a nickname
-      // does — read-only lookup here, so folding it straight into the same list is safe.
+      // does for LOOKUP — but it must never be written back, which is what rawNicknamesById is for.
       if (p.middle_name) nicknames.push(String(p.middle_name).trim())
       if (p.goes_by_other) nicknames.push(String(p.goes_by_other).trim())
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
@@ -169,10 +177,12 @@ Each call covers exactly one note the user just submitted — there's no back-an
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "needs_clarification": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${NICKNAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
-This is saved immediately after every single turn, so only include in "new_people"/"mentioned_names"/"additional_notes"/"moment_field_updates"/"add_groups" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
+This is saved immediately after every single turn, so only include in "new_people"/"mentioned_names"/"additional_notes"/"moment_field_updates"/"add_groups"/"nickname_updates" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
+
+${NICKNAME_PROMPT_CLAUSE}
 
 CRITICAL — NEVER create a profile for someone just because they came up in the story. Not everyone the user mentions is someone they want a contact for: a couple they got talking to, a waiter, a friend-of-a-friend. Creating profiles for those clutters their People list and their Dunbar count, and it is annoying to undo.
 - "new_people" is ONLY for someone the user EXPLICITLY asked you to add — "add Jim as a contact", "make a profile for Dave". If they didn't ask, it doesn't go here.
@@ -346,6 +356,19 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
           nameById[newPerson.id] = name.trim()
           peopleCreated.push(name.trim())
         }
+      }
+    }
+
+    // Applied after new_people so someone the user just asked to add can also be given a nickname
+    // in the same message. Merged onto rawNicknamesById, NOT nicknamesById — see its declaration.
+    for (const update of parsed.nickname_updates ?? []) {
+      const id = idByName[String(update?.person ?? "").trim().toLowerCase()]
+      if (!id) continue
+      const existing = rawNicknamesById[id] ?? []
+      const merged = mergeNicknames(existing, update.nicknames)
+      if (merged) {
+        await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
+        rawNicknamesById[id] = merged
       }
     }
 

@@ -16,6 +16,7 @@ import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { rollUpGroupMemberIds } from "../_shared/groupRollup.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
+import { mergeNicknames, parseNicknames } from "../_shared/nicknames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -151,7 +152,7 @@ serve(async (req) => {
       idByName[fullName.toLowerCase()] = p.id
       lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
-      const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      const nicknames = parseNicknames(p.nicknames)
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
       // A middle name/callsign the founder picked as this person's "goes by" name (or just kept
       // on file without making it the display name) resolves the same way a chat-derived
@@ -580,18 +581,12 @@ ${context || "(none recorded yet)"}`
 
     for (const update of parsed.nickname_updates ?? []) {
       const id = idByName[update.person?.trim().toLowerCase()]
-      const newNicknames = Array.isArray(update.nicknames) ? update.nicknames : []
-      if (!id || newNicknames.length === 0) continue
-      // Additive merge, same dedupe-by-lowercase behavior as add-fact's name_update handling —
-      // a nickname mentioned mid-conversation should land in the same searchable field a
-      // profile-page edit would, not just in the note text.
+      if (!id) continue
+      // Additive merge (see _shared/nicknames.ts) — a nickname mentioned mid-conversation should
+      // land in the same searchable field a profile-page edit would, not just in the note text.
       const existing = nicknamesById[id] ?? []
-      const merged = [...existing]
-      for (const nickname of newNicknames) {
-        const trimmed = String(nickname).trim()
-        if (trimmed && !merged.some((n) => n.toLowerCase() === trimmed.toLowerCase())) merged.push(trimmed)
-      }
-      if (merged.length > existing.length) {
+      const merged = mergeNicknames(existing, update.nicknames)
+      if (merged) {
         await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
         nicknamesById[id] = merged
       }

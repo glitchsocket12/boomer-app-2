@@ -9,6 +9,7 @@ import {
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
+import { mergeNicknames, parseNicknames, NICKNAME_PROMPT_CLAUSE, NICKNAME_JSON_FIELD } from "../_shared/nicknames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,6 +70,11 @@ serve(async (req) => {
     const idByName: Record<string, string> = {}
     const nameById: Record<string, string> = {}
     const nicknamesById: Record<string, string[]> = {}
+    // A mirror of the raw `nicknames` column, kept SEPARATE from nicknamesById above because that
+    // one folds in middle_name/goes_by_other for lookup. This is the base the nickname_updates
+    // merge below writes back — merging onto the folded list would copy someone's middle name into
+    // their nicknames column the first time an unrelated nickname was captured.
+    const rawNicknamesById: Record<string, string[]> = {}
     const lastNameById: Record<string, string | null> = {}
     const ambiguousKeys = new Set<string>()
     function claimKey(key: string, id: string) {
@@ -85,9 +91,11 @@ serve(async (req) => {
       idByName[name.toLowerCase()] = p.id
       lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
-      const nicknames = (p.nicknames ?? "").split(",").map((n: string) => n.trim()).filter(Boolean)
+      const rawNicknames = parseNicknames(p.nicknames)
+      if (rawNicknames.length > 0) rawNicknamesById[p.id] = rawNicknames
+      const nicknames = [...rawNicknames]
       // A middle name/callsign the founder set on the profile resolves the same way a nickname
-      // does — read-only lookup here, so folding it straight into the same list is safe.
+      // does for LOOKUP — but it must never be written back, which is what rawNicknamesById is for.
       if (p.middle_name) nicknames.push(String(p.middle_name).trim())
       if (p.goes_by_other) nicknames.push(String(p.goes_by_other).trim())
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
@@ -148,9 +156,11 @@ CRITICAL — never invent, assume, or add a concrete detail the user did not act
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "needs_clarification": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${NICKNAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
-This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.
+This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes"/"nickname_updates" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.
+
+${NICKNAME_PROMPT_CLAUSE}
 
 A PET IS NOT A PERSON. If the user mentions someone's animal, never put the animal's name in "add_people" — that would create a fake human profile in their People list and Dunbar count, and make it a member of this group. Record it as ordinary note text instead. Pets have their own place in the app, recorded from the Home chat or a profile's Pets section, not here.`
 
@@ -320,6 +330,19 @@ ${otherEvents || "(none)"}`
         })
         changed = true
         notesAdded++
+      }
+    }
+
+    // Applied after add_people so someone just added to the group can also be given a nickname in
+    // the same message. Merged onto rawNicknamesById, NOT nicknamesById — see its declaration.
+    for (const update of parsed.nickname_updates ?? []) {
+      const id = idByName[String(update?.person ?? "").trim().toLowerCase()]
+      if (!id) continue
+      const existing = rawNicknamesById[id] ?? []
+      const merged = mergeNicknames(existing, update.nicknames)
+      if (merged) {
+        await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
+        rawNicknamesById[id] = merged
       }
     }
 
