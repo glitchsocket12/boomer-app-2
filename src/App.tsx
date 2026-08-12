@@ -19,6 +19,7 @@ import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
 import ManageTags from './pages/ManageTags'
+import GenderFill from './pages/GenderFill'
 import ManageGroupTypes from './pages/ManageGroupTypes'
 import Circle from './pages/Circle'
 import SettingsPage from './pages/SettingsPage'
@@ -53,6 +54,7 @@ type Crumb =
   | { type: 'nudges'; id: string; label: string }
   | { type: 'manageTags'; id: string; label: string }
   | { type: 'manageGroupTypes'; id: string; label: string }
+  | { type: 'genderFill'; id: string; label: string }
   | { type: 'circle'; id: string; label: string }
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
   | { type: 'settings'; id: string; label: string }
@@ -77,6 +79,7 @@ const CRUMB_TYPES = [
   'nudges',
   'manageTags',
   'manageGroupTypes',
+  'genderFill',
   'circle',
   'familyTree',
   'settings',
@@ -94,7 +97,7 @@ const CRUMB_TYPES = [
 // Crumb types that are single fixed pages rather than records with a real id (their `id` is
 // just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
 // segment for these, not a `/type/id` pair.
-const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'manageGroupTypes', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
+const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'manageGroupTypes', 'genderFill', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
 
 const AUTH_VIEWS = new Set<AuthView>(['landing', 'login', 'signup', 'demo'])
 
@@ -555,6 +558,8 @@ export default function App() {
     content = <ManageTags onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'manageGroupTypes') {
     content = <ManageGroupTypes onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'genderFill') {
+    content = <GenderFill onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'circle') {
     content = (
       <Circle
@@ -663,6 +668,7 @@ export default function App() {
             onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
             onSelectPet={(p) => pushCrumb({ type: 'pet', id: p.id, label: p.name })}
+            onFillGender={() => pushCrumb({ type: 'genderFill', id: 'genderFill', label: 'Fill in Gender' })}
           />
         )}
         {view === 'events' && (

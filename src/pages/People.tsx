@@ -116,14 +116,17 @@ export default function People({
   onSelectGroup,
   onSelectEvent,
   onSelectPet,
+  onFillGender,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onSelectPet: (pet: { id: string; name: string }) => void
+  onFillGender: () => void
 }) {
   const [people, setPeople] = useState<Person[]>([])
   const [petRows, setPetRows] = useState<PetRow[]>([])
+  const [genderGaps, setGenderGaps] = useState(0)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -136,7 +139,20 @@ export default function People({
   useEffect(() => {
     loadPeople()
     loadPets()
+    loadGenderGaps()
   }, [])
+
+  // Head-only count, so a 700-person account costs one tiny request and never trips PostgREST's
+  // 1000-row cap. Its own query for the same reason loadPets has one: `gender` came in through a
+  // hand-run migration, and naming it in the main select would fail that whole query — blanking the
+  // People list — on any account where it hasn't been applied. A failure here just hides the link.
+  async function loadGenderGaps() {
+    const { count, error } = await supabase
+      .from('people')
+      .select('id', { count: 'exact', head: true })
+      .is('gender', null)
+    setGenderGaps(error ? 0 : count ?? 0)
+  }
 
   async function loadPeople() {
     setLoading(true)
@@ -211,6 +227,8 @@ export default function People({
       onSelectEvent={onSelectEvent}
       onSelectPet={onSelectPet}
       groupLabel={groupRoster.label}
+      genderGaps={genderGaps}
+      onFillGender={onFillGender}
     />
   )
 }
@@ -232,6 +250,8 @@ export function PeopleView({
   onSelectEvent,
   onSelectPet = () => {},
   groupLabel = (_id, fallbackName) => fallbackName,
+  genderGaps = 0,
+  onFillGender = () => {},
   readOnly = false,
 }: {
   peopleCount: number
@@ -249,6 +269,10 @@ export function PeopleView({
   onSelectPet?: (pet: { id: string; name: string }) => void
   // Qualifies a subgroup as "Parent / Child". Defaults to the bare name for the landing-page demo.
   groupLabel?: GroupLabelFn
+  // How many people have no gender recorded. Drives the "Fill in gender" link, which disappears
+  // once there's nothing left to fill — 0 for the demo, which has no such page.
+  genderGaps?: number
+  onFillGender?: () => void
   readOnly?: boolean
 }) {
   return (
@@ -263,6 +287,11 @@ export function PeopleView({
           </button>
         )}
       </div>
+      {!readOnly && genderGaps > 0 && (
+        <button type="button" onClick={onFillGender} style={styles.fillGenderLink}>
+          Fill in gender for {genderGaps} {genderGaps === 1 ? 'person' : 'people'} →
+        </button>
+      )}
       {addError && <p style={styles.addErrorText}>{addError}</p>}
 
       {peopleCount > 0 && (
@@ -437,6 +466,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   addErrorText: { color: colors.danger, fontSize: fontSize.body, marginBottom: space.xxl },
+  fillGenderLink: {
+    display: 'inline-block',
+    background: 'none',
+    border: 'none',
+    color: colors.ink,
+    fontSize: fontSize.body,
+    cursor: 'pointer',
+    padding: 0,
+    marginBottom: space.xl,
+    fontFamily,
+  },
   searchRow: { display: 'flex', gap: space.lg, alignItems: 'flex-start' },
   sortSelect: {
     flexShrink: 0,
