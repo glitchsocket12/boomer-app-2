@@ -46,10 +46,19 @@ export default function SettingsPage({
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailSuccess, setEmailSuccess] = useState<string | null>(null)
 
-  // Once a change is requested, we hold the pending address and ask for the code
-  // Supabase emails to it before the change actually takes effect.
+  // Once a change is requested, we hold the pending address and ask for the codes Supabase
+  // emails out before the change actually takes effect.
+  //
+  // TWO codes, not one (2026-08-11). The project has "Secure email change" switched on, which
+  // means Supabase mails a confirmation to the CURRENT address as well as the new one and only
+  // completes the change once BOTH are confirmed. Asking for one code let the page announce
+  // "Email updated." after verifying the new address alone, while the account still sat on the
+  // old address — a silent-success bug of exactly the kind §12 guards against. The setting is
+  // deliberately on: it's what stops someone who got into a session from changing the email and
+  // locking the founder out of their own account.
   const [pendingEmail, setPendingEmail] = useState<string | null>(null)
-  const [verifyCode, setVerifyCode] = useState('')
+  const [currentCode, setCurrentCode] = useState('')
+  const [newCode, setNewCode] = useState('')
   const [verifyingEmail, setVerifyingEmail] = useState(false)
   const [resendingEmail, setResendingEmail] = useState(false)
 
@@ -108,26 +117,57 @@ export default function SettingsPage({
     }
     setPendingEmail(trimmed)
     setNewEmail('')
-    setVerifyCode('')
+    setCurrentCode('')
+    setNewCode('')
   }
 
   async function handleVerifyEmailCode(e: FormEvent) {
     e.preventDefault()
-    if (!pendingEmail || !verifyCode.trim()) return
+    const oldToken = currentCode.trim()
+    const newToken = newCode.trim()
+    const previousEmail = currentEmail
+    if (!pendingEmail || !previousEmail || !oldToken || !newToken) return
     setVerifyingEmail(true)
     setEmailError(null)
-    const { error } = await supabase.auth.verifyOtp({
-      email: pendingEmail,
-      token: verifyCode.trim(),
+
+    // Each code is verified against the address it was mailed to. Neither one alone completes
+    // the change, and Supabase accepts them in either order — but a wrong code has to be
+    // reported against the box it came from, or there's no way to know which one to retype.
+    const current = await supabase.auth.verifyOtp({
+      email: previousEmail,
+      token: oldToken,
       type: 'email_change',
     })
+    if (current.error) {
+      setVerifyingEmail(false)
+      setEmailError(`The code sent to ${previousEmail} didn't work — check it and try again.`)
+      return
+    }
+    const incoming = await supabase.auth.verifyOtp({
+      email: pendingEmail,
+      token: newToken,
+      type: 'email_change',
+    })
+    if (incoming.error) {
+      setVerifyingEmail(false)
+      setEmailError(`The code sent to ${pendingEmail} didn't work — check it and try again.`)
+      return
+    }
+
+    // Never announce success off the absence of an error. Both calls can come back clean while
+    // the account still sits on the old address, which is the entire bug this rewrite exists to
+    // fix — so the claim is made only after reading the address back and seeing it changed.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
     setVerifyingEmail(false)
-    if (error) {
-      setEmailError("That code didn't work — check it and try again.")
+    if (user?.email?.toLowerCase() !== pendingEmail.toLowerCase()) {
+      setEmailError("Both codes were accepted, but the address hasn't changed yet — try again in a moment.")
       return
     }
     setPendingEmail(null)
-    setVerifyCode('')
+    setCurrentCode('')
+    setNewCode('')
     await loadCurrentUser()
     setEmailSuccess('Email updated.')
   }
@@ -142,12 +182,13 @@ export default function SettingsPage({
       setEmailError("Couldn't resend the code — please try again.")
       return
     }
-    setEmailSuccess('Sent a new code.')
+    setEmailSuccess('Sent new codes.')
   }
 
   function handleCancelEmailChange() {
     setPendingEmail(null)
-    setVerifyCode('')
+    setCurrentCode('')
+    setNewCode('')
     setEmailError(null)
     setEmailSuccess(null)
   }
@@ -242,18 +283,43 @@ export default function SettingsPage({
         {currentEmail && <p style={styles.body}>Current: {currentEmail}</p>}
         {pendingEmail ? (
           <>
-            <p style={styles.body}>We sent a code to {pendingEmail}. Enter it below to confirm the change.</p>
-            <form onSubmit={handleVerifyEmailCode} style={styles.form}>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={verifyCode}
-                onChange={(e) => setVerifyCode(e.target.value)}
-                placeholder="6-digit code…"
-                style={styles.input}
-                disabled={verifyingEmail}
-              />
-              <button type="submit" style={styles.actionButtonPrimary} disabled={verifyingEmail || !verifyCode.trim()}>
+            {/* Both codes are required — see the pendingEmail state comment. Saying so up front
+                matters: two separate 6-digit emails land at once, and without this line the
+                second one reads like a duplicate of the first. */}
+            <p style={styles.body}>
+              We sent a 6-digit code to <strong>both</strong> {currentEmail} and {pendingEmail}. Enter both to
+              confirm the change — it only takes effect once each address has been verified.
+            </p>
+            <form onSubmit={handleVerifyEmailCode} style={styles.verifyForm}>
+              <label style={styles.verifyLabel}>
+                Code sent to {currentEmail}
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={currentCode}
+                  onChange={(e) => setCurrentCode(e.target.value)}
+                  placeholder="6-digit code…"
+                  style={styles.input}
+                  disabled={verifyingEmail}
+                />
+              </label>
+              <label style={styles.verifyLabel}>
+                Code sent to {pendingEmail}
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={newCode}
+                  onChange={(e) => setNewCode(e.target.value)}
+                  placeholder="6-digit code…"
+                  style={styles.input}
+                  disabled={verifyingEmail}
+                />
+              </label>
+              <button
+                type="submit"
+                style={styles.actionButtonPrimary}
+                disabled={verifyingEmail || !currentCode.trim() || !newCode.trim()}
+              >
                 {verifyingEmail ? '…' : 'Confirm'}
               </button>
             </form>
@@ -264,7 +330,7 @@ export default function SettingsPage({
                 style={styles.linkRow}
                 disabled={resendingEmail}
               >
-                {resendingEmail ? 'Resending…' : 'Resend code'}
+                {resendingEmail ? 'Resending…' : 'Resend codes'}
               </button>
               <button type="button" onClick={handleCancelEmailChange} style={styles.linkRow}>
                 Cancel
@@ -423,6 +489,18 @@ const styles: { [key: string]: React.CSSProperties } = {
   sectionHeading: { fontSize: fontSize.lead, color: colors.ink, margin: '0 0 0.5rem' },
   body: { fontSize: fontSize.body, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 0.75rem' },
   form: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
+  // Stacked rather than the row `form` uses — two labelled code boxes side by side on a phone
+  // would put each address label on its own wrapped line, away from its input.
+  verifyForm: { display: 'flex', flexDirection: 'column', gap: '0.6rem', alignItems: 'flex-start' },
+  verifyLabel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.25rem',
+    fontSize: fontSize.label,
+    color: colors.textFaint,
+    width: '100%',
+    minWidth: 0,
+  },
   formColumn: { display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '320px' },
   input: {
     flex: 1,
