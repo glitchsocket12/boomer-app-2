@@ -62,6 +62,11 @@ serve(async (req) => {
       )
     }
 
+    // Captured once here because the `if (!user)` narrowing above is lost inside the nested
+    // function declarations further down (findOrCreateGroupId/findOrCreateTagId), which read it
+    // long after this point. A plain id is also all they ever wanted from `user`.
+    const userId = user.id
+
     // Explicit .order() on every query below is load-bearing, not cosmetic: Postgres doesn't
     // guarantee row order without one, so the exact same data can come back reshuffled between
     // calls — which reshuffles this text and breaks the prompt-cache prefix match on every turn
@@ -704,7 +709,7 @@ ${context || "(none recorded yet)"}`
       const { parentId, childName } = groupIndex.splitParent(name)
       const { data: newGroup } = await supabaseClient
         .from("groups")
-        .insert({ user_id: user.id, name: childName, parent_group_id: parentId })
+        .insert({ user_id: userId, name: childName, parent_group_id: parentId })
         .select()
         .single()
       if (newGroup) {
@@ -723,7 +728,7 @@ ${context || "(none recorded yet)"}`
       if (idByTagName[key]) return idByTagName[key]
       const { data: newTag, error } = await supabaseClient
         .from("tags")
-        .insert({ user_id: user.id, name })
+        .insert({ user_id: userId, name })
         .select()
         .single()
       if (newTag) {
@@ -839,12 +844,15 @@ ${context || "(none recorded yet)"}`
           .select()
           .single()
         if (newMoment) {
-          momentId = newMoment.id
+          // Through a local const so the non-null type survives into the Set.add below —
+          // assigning to the outer `momentId` (declared string | null) doesn't narrow it.
+          const newMomentId: string = newMoment.id
+          momentId = newMomentId
           // Summary regeneration is kicked off once, after the loop below, for every moment in
           // momentIdsNeedingResummary — covers both a brand-new moment (added here) and an existing
           // one that just gained a note (added further down), so a background call is never fired
           // twice for the same moment in one turn.
-          if (rawDescription.trim()) momentIdsNeedingResummary.add(momentId)
+          if (rawDescription.trim()) momentIdsNeedingResummary.add(newMomentId)
         }
       }
 

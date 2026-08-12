@@ -41,13 +41,19 @@ serve(async (req) => {
     // Members = explicit person_groups roster ONLY. Attending an event tagged to this group
     // doesn't make someone a member (the same event can be tagged to multiple groups), so
     // event attendees are intentionally not folded into this set.
+    // The `as unknown as` casts below are the standing PostgREST workaround, not sloppiness: a
+    // many-to-one embed comes back as a single object at runtime, but the generated types describe
+    // it as an array. See PROJECT_CONTEXT §12 ("Nested-join TS types lie about cardinality — trust
+    // the schema"). Invisible until `deno check` was wired up 2026-08-11; the runtime behaviour
+    // here was always correct.
     const memberNames = new Set<string>()
     for (const pg of group.person_groups ?? []) {
-      if (pg.people) memberNames.add(fullName(pg.people))
+      const person = pg.people as unknown as { name: string; last_name: string | null } | null
+      if (person) memberNames.add(fullName(person))
     }
 
     const events = (group.moment_groups ?? [])
-      .map((mg) => mg.moments)
+      .map((mg) => mg.moments as unknown as { occasion: string | null; raw_description: string } | null)
       .filter((m): m is { occasion: string | null; raw_description: string } => m !== null)
       .map((m) => m.occasion || m.raw_description)
 

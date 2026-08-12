@@ -76,7 +76,7 @@ serve(async (req) => {
         const userInfo = await userInfoRes.json()
         googleEmail = userInfo.email ?? null
       }
-    } catch (_err) {
+    } catch {
       // Non-fatal — the connection still works without a display email.
     }
 

@@ -1,0 +1,46 @@
+# Reports, never blocks. Vercel deploys straight off a push to `main` through its own git
+# integration and does not consult GitHub Actions, so a red X here tells the founder something
+# broke — it does not hold the deploy back. That was a deliberate call (2026-08-11): a false alarm
+# must never be able to strand a real fix, given there's no staging step and no one on hand to
+# override it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Deno comes from the official action rather than the `deno` npm package: npm's install-script
+      # gate can skip that package's postinstall (it does locally on Windows), which leaves the
+      # binary missing and this step failing for a reason that has nothing to do with the code.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Lint
+        run: npm run lint
+
+      # Typechecks the ~7,200 lines of Edge Function code, which nothing checked at all before
+      # 2026-08-11 — `tsconfig.app.json` only includes `src`, and these run on Deno, not Vite.
+      - name: Typecheck Edge Functions
+        run: npm run check:functions
+
+      # `npm run build` is `tsc -b && vite build`, so this covers the frontend typecheck too.
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test

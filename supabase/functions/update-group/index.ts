@@ -99,19 +99,23 @@ serve(async (req) => {
     // doesn't make someone a member (the same event can be tagged to multiple groups), so
     // event attendees are intentionally not folded into this set — matches the system prompt
     // below, which already tells the AI membership is independent of tagged events.
+    // `as unknown as` here is the standing PostgREST workaround, not sloppiness: a many-to-one
+    // embed is a single object at runtime while the generated types call it an array. See
+    // PROJECT_CONTEXT §12 ("Nested-join TS types lie about cardinality — trust the schema").
     const currentMemberIds = new Set<string>()
     const currentMembers = new Set<string>()
     for (const pg of group?.person_groups ?? []) {
-      if (pg.people) {
+      const person = pg.people as unknown as { name: string; last_name: string | null } | null
+      if (person) {
         currentMemberIds.add(pg.person_id)
-        currentMembers.add(fullName(pg.people))
+        currentMembers.add(fullName(person))
       }
     }
 
     const taggedMomentIds = new Set((group?.moment_groups ?? []).map((mg) => mg.moment_id).filter(Boolean))
 
     const taggedEvents = (group?.moment_groups ?? [])
-      .map((mg) => mg.moments)
+      .map((mg) => mg.moments as unknown as { id: string; occasion: string | null; raw_description: string } | null)
       .filter((m): m is { id: string; occasion: string | null; raw_description: string } => m !== null)
       .map((m) => `[MOMENT_ID: ${m.id}] ${m.occasion || m.raw_description}`)
       .join("\n")

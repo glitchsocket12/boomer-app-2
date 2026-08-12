@@ -39,7 +39,10 @@ serve(async (req) => {
     const extension = extensionForMimeType(mimeType ?? "audio/webm")
 
     const form = new FormData()
-    form.append("file", new Blob([audioBytes], { type: mimeType ?? "audio/webm" }), `recording.${extension}`)
+    // `as BlobPart`: TS's Uint8Array is generic over its backing buffer, and the union it infers
+    // includes SharedArrayBuffer, which BlobPart excludes. base64ToBytes only ever returns a plain
+    // ArrayBuffer-backed array, so this is a type-level narrowing, not a runtime change.
+    form.append("file", new Blob([audioBytes as BlobPart], { type: mimeType ?? "audio/webm" }), `recording.${extension}`)
     form.append("model", "whisper-1")
 
     const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
