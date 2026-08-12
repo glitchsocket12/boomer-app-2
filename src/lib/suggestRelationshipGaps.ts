@@ -28,7 +28,10 @@ export type CoupleGap = {
   bId: string
   bName: string
   // The child they share — this is the whole reason the question is being asked, so the card can
-  // say why rather than presenting a bare "are these two a couple?" out of nowhere.
+  // say why rather than presenting a bare "are these two a couple?" out of nowhere. The id comes
+  // along so the card can say "you" when the shared child is the account owner, which is exactly
+  // the shape this question takes when the founder's own parents were never linked as a couple.
+  childId: string
   childName: string
 }
 export type RelationshipGapSuggestion = CoParentGap | CoupleGap
@@ -91,7 +94,15 @@ export function deriveRelationshipGaps(g: Graph): RelationshipGapSuggestion[] {
         const key = `family_couple:${a}:${b}`
         if (seen.has(key)) continue
         seen.add(key)
-        out.push({ kind: 'family_couple', aId: a, aName: name(a), bId: b, bName: name(b), childName: name(childId) })
+        out.push({
+          kind: 'family_couple',
+          aId: a,
+          aName: name(a),
+          bId: b,
+          bName: name(b),
+          childId,
+          childName: name(childId),
+        })
       }
     }
   }

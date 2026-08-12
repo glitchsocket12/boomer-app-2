@@ -100,8 +100,21 @@ export default function Home({
   const [connectionSuggestions, setConnectionSuggestions] = useState<HomeSuggestion[]>([])
   const [familyTagSuggestions, setFamilyTagSuggestions] = useState<FamilyTagSuggestion[]>([])
   const [suggestionActionError, setSuggestionActionError] = useState<string | null>(null)
+  const [selfId, setSelfId] = useState<string | null>(null)
   const groupRoster = useGroupRoster()
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Account-wide, fetched once, in its own query — lets the leaderboard and the suggestion cards
+  // say "you" instead of the founder's own name (same pattern as EventDetail/GroupDetail's selfId
+  // for chips). Isolated so a slow or missing self person only costs the wording, never the page.
+  useEffect(() => {
+    supabase
+      .from('people')
+      .select('id')
+      .eq('is_self', true)
+      .maybeSingle()
+      .then(({ data }) => setSelfId(data?.id ?? null))
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -380,6 +393,7 @@ export default function Home({
       onAcceptFamilyTag={handleAcceptFamilyTag}
       onDismissFamilyTag={handleDismissFamilyTag}
       suggestionActionError={suggestionActionError}
+      selfId={selfId}
       onSelectPerson={onSelectPerson}
       onSelectEvent={onSelectEvent}
       onSelectGroup={onSelectGroup}
@@ -434,6 +448,9 @@ export function HomeView({
   onAcceptFamilyTag,
   onDismissFamilyTag,
   suggestionActionError = null,
+  // Null in the demo, which has no account and therefore no self person — everyone there is
+  // rendered by name, which is correct for a stranger browsing someone else's sample data.
+  selfId = null,
   onSelectPerson,
   onSelectEvent,
   onSelectGroup,
@@ -479,6 +496,7 @@ export function HomeView({
   onAcceptFamilyTag?: (suggestion: FamilyTagSuggestion) => void
   onDismissFamilyTag?: (suggestion: FamilyTagSuggestion) => void
   suggestionActionError?: string | null
+  selfId?: string | null
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
   onSelectGroup: (group: GroupRef) => void
@@ -596,8 +614,10 @@ export function HomeView({
                       style={styles.leaderboardRow}
                     >
                       <span style={styles.leaderboardRank}>{i + 1}</span>
+                      {/* Initials stay keyed off the real name — the avatar in the top bar shows
+                          the founder's own initials too, so "JV · You" reads consistently. */}
                       <span style={styles.leaderboardAvatar}>{initials(entry.name)}</span>
-                      <span style={styles.leaderboardName}>{entry.name}</span>
+                      <span style={styles.leaderboardName}>{personLabel(entry, selfId)}</span>
                       <span style={styles.leaderboardCount}>{entry.count} update{entry.count === 1 ? '' : 's'}</span>
                     </button>
                   ))
@@ -620,8 +640,7 @@ export function HomeView({
                           <>
                             Add{' '}
                             <button onClick={() => onSelectPerson(s.person)} style={styles.connectionLink}>
-                              {s.person.name}
-                              {s.person.last_name ? ` ${s.person.last_name}` : ''}
+                              {personLabel(s.person, selfId, { capitalize: false })}
                             </button>{' '}
                             to{' '}
                             <button onClick={() => onSelectGroup(s.group)} style={styles.connectionLink}>
@@ -637,14 +656,14 @@ export function HomeView({
                               onClick={() => onSelectPerson({ id: s.parentId, name: s.parentName })}
                               style={styles.connectionLink}
                             >
-                              {s.parentName}
+                              {personLabel({ id: s.parentId, name: s.parentName }, selfId, { capitalize: false })}
                             </button>{' '}
                             also a parent of{' '}
                             <button
                               onClick={() => onSelectPerson({ id: s.childId, name: s.childName })}
                               style={styles.connectionLink}
                             >
-                              {s.childName}
+                              {personLabel({ id: s.childId, name: s.childName }, selfId, { capitalize: false })}
                             </button>
                             ?
                           </>

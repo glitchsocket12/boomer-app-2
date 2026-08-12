@@ -1298,3 +1298,18 @@ The twin-drift lesson has now cost twice. Both copies exist only because Deno ca
 **Two sessions in one repo.** Halfway through, `git status` went from clean to holding another Claude session's work — the gender-fill page, and item 91, in four of the files this plan targeted. Rather than guess, the founder was asked and chose "work around it": commit by explicit path, never `-A` while someone else's work is in the tree, and drop any stage the other session was already covering (item 91 Tier 1 went to them). The one file both sessions edited, `GroupDetail.tsx`, ended up carrying both changes into their commit, which was fine — but the near-miss is the point. **Re-check `git status` mid-session, not just at the start.**
 
 CI now runs lint → Edge Function typecheck → build → tests on every push, deliberately **reporting rather than blocking**: Vercel deploys off git independently of Actions, and with no staging step and nobody on hand to override a false alarm, a red X that could strand a real fix would be worse than no check at all.
+
+### Postscript: switching off the auth gate on five functions, for a few minutes, by accident
+
+Deploying item 94's fix, the command went out as `npx supabase functions deploy <fn> --no-verify-jwt`. There was no reason for that flag. It disables the **platform's** JWT gate — the thing that rejects an unauthenticated request before it ever reaches your code.
+
+Two things made it worse than a typo:
+
+1. **A plain redeploy doesn't undo it.** The setting persists server-side per function. Deploying again with the flag omitted left it off, which is genuinely surprising and cost a round of confusion.
+2. **The documented health check hid it.** §2's token-free check ("does it answer, or is it Supabase's NOT_FOUND?") passed the whole time — because the functions *did* answer. They answered with their own `not_authenticated` 401 instead of the platform's `UNAUTHORIZED_NO_AUTH_HEADER`. A check that only asks "did something reply" can't tell those apart.
+
+Caught by noticing that `summarize-group` — untouched all session — replied `UNAUTHORIZED_NO_AUTH_HEADER` while all five freshly-deployed ones replied with app-level JSON. Fixed with `PATCH /v1/projects/{ref}/functions/{slug}` `{"verify_jwt": true}`, then verified two ways: every one of the five now answers `UNAUTHORIZED_NO_AUTH_HEADER`, and `GET /v1/projects/{ref}/functions` reports `verify_jwt: true` across all fifteen.
+
+**Actual exposure: none.** All five call `auth.getUser()` and 401 on their own — defence in depth doing its job. The only one that returned a body, `suggest-prompts`, returns hardcoded `FALLBACK_SUGGESTIONS` when there's no user, before any Anthropic call, so neither user data nor API spend was reachable.
+
+Three things worth keeping. **Never pass a flag you didn't need** — this one was pure noise in the command and it changed a security setting. **Distinguish the two 401s**: the platform gate and an app-level auth check look identical to a smoke test that only greps for "not 404". And **`GET /v1/projects/{ref}/functions` audits `verify_jwt` across the whole project in one read** — worth running after any deploy session, not just a suspicious one.
