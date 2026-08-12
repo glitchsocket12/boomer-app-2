@@ -68,7 +68,7 @@ describe('suggestionKey', () => {
       suggestionKey(personGroup(1)),
       suggestionKey(eventGroup(1)),
       suggestionKey({ kind: 'family_coparent', parentId: 'a', parentName: 'A', childId: 'b', childName: 'B' }),
-      suggestionKey({ kind: 'family_couple', aId: 'a', aName: 'A', bId: 'b', bName: 'B', childName: 'C' }),
+      suggestionKey({ kind: 'family_couple', aId: 'a', aName: 'A', bId: 'b', bName: 'B', childId: 'c', childName: 'C' }),
     ]
     expect(new Set(keys).size).toBe(4)
     expect(suggestionKey(personGroup(1))).toBe(suggestionKey(personGroup(1)))
