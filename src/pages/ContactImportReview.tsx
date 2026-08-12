@@ -419,6 +419,7 @@ function CandidateCard({
   const [savedLabel, setSavedLabel] = useState<string | null>(null)
   const [savedPersonId, setSavedPersonId] = useState<string | null>(null)
   const [undoInfo, setUndoInfo] = useState<UndoInfo | null>(null)
+  const [undoError, setUndoError] = useState<string | null>(null)
 
   // Prefilled from the parsed vCard data but editable — this review pass is effectively the only
   // chance to fix a name before it becomes a real profile, since nobody comes back later to a
@@ -677,31 +678,61 @@ function CandidateCard({
   async function handleUndo() {
     if (!undoInfo) return
     setSaving(true)
+    setUndoError(null)
+
+    // Every step reports (2026-08-11, §12's silent-write rule). Undo is the one control here with
+    // no second chance: the confirmation card is in-memory only, so navigating away drops it
+    // forever (see PROJECT_CONTEXT §10 on Tim Rose — a wrong accept that couldn't be taken back).
+    // An undo that silently half-ran and then cleared the card was therefore unrecoverable, and
+    // the last write below is the one that actually returns the card to the queue.
+    function bail(message: string) {
+      setUndoError(message)
+      setSaving(false)
+    }
 
     if (undoInfo.noteIds.length > 0) {
-      await supabase.from('notes').delete().in('id', undoInfo.noteIds)
+      const res = await supabase.from('notes').delete().in('id', undoInfo.noteIds)
+      if (res.error) return bail("Couldn't undo that — the notes are still saved. Please try again.")
     }
     if (undoInfo.groupIds.length > 0) {
-      await supabase.from('person_groups').delete().eq('person_id', undoInfo.personId).in('group_id', undoInfo.groupIds)
+      const res = await supabase
+        .from('person_groups')
+        .delete()
+        .eq('person_id', undoInfo.personId)
+        .in('group_id', undoInfo.groupIds)
+      if (res.error) return bail("Couldn't undo the group tags. Please try again.")
     }
     for (const r of undoInfo.reminders) {
-      if (r.before) {
-        await supabase.from('reminders').update({ month: r.before.month, day: r.before.day, year: r.before.year }).eq('id', r.before.id)
-      } else {
-        await supabase.from('reminders').delete().eq('person_id', undoInfo.personId).eq('label', r.label)
-      }
+      const res = r.before
+        ? await supabase
+            .from('reminders')
+            .update({ month: r.before.month, day: r.before.day, year: r.before.year })
+            .eq('id', r.before.id)
+        : await supabase.from('reminders').delete().eq('person_id', undoInfo.personId).eq('label', r.label)
+      if (res.error) return bail("Couldn't put the birthday back. Please try again.")
     }
 
-    if (undoInfo.kind === 'new') {
-      await supabase.from('people').delete().eq('id', undoInfo.personId)
-    } else {
-      await supabase.from('people').update(undoInfo.before).eq('id', undoInfo.personId)
+    const personRes =
+      undoInfo.kind === 'new'
+        ? await supabase.from('people').delete().eq('id', undoInfo.personId)
+        : await supabase.from('people').update(undoInfo.before).eq('id', undoInfo.personId)
+    if (personRes.error) {
+      return bail(
+        undoInfo.kind === 'new'
+          ? "Couldn't remove the profile that was just created. Please try again."
+          : "Couldn't restore the previous contact details. Please try again."
+      )
     }
 
-    await supabase
+    // Last and most important: without this the candidate stays 'accepted' and never comes back
+    // to the queue, so the founder can't retry the decision at all.
+    const candidateRes = await supabase
       .from('contact_import_candidates')
       .update({ status: 'selected', reviewed_at: null, matched_person_id: candidate.matched_person_id })
       .eq('id', candidate.id)
+    if (candidateRes.error) {
+      return bail("Undid the changes, but couldn't put this contact back in the queue. Please reload and try again.")
+    }
 
     setLinkedPersonId(candidate.matched_person_id)
     setPickerOpen(candidate.match_confidence !== 'high')
@@ -728,6 +759,7 @@ function CandidateCard({
             {saving ? '…' : 'Undo'}
           </button>
         </p>
+        {undoError && <p style={styles.undoErrorText}>{undoError}</p>}
         {savedPersonId && (
           <button
             type="button"
@@ -1033,6 +1065,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   confirmText: { color: colors.success, fontSize: fontSize.bodyLg, margin: '0 0 0.6rem' },
+  undoErrorText: { color: colors.danger, fontSize: fontSize.label, margin: '0 0 0.6rem' },
   viewProfileButton: {
     fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',

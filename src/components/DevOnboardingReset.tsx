@@ -12,6 +12,7 @@ export default function DevOnboardingReset() {
   const [open, setOpen] = useState(false)
   const [confirmText, setConfirmText] = useState('')
   const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -24,9 +25,20 @@ export default function DevOnboardingReset() {
 
   if (!isTestAccount || !userId) return null
 
+  // resetOnboardingData throws on the first delete that fails, deliberately, so it never clears
+  // onboarding_complete over a half-wiped account. Catching it here is what turns that into a
+  // visible message — without this the promise rejected unhandled, the reload never fired, and the
+  // button just sat on "…" looking like the wipe was still running.
   async function handleReset() {
     setResetting(true)
-    await resetOnboardingData(userId!)
+    setResetError(null)
+    try {
+      await resetOnboardingData(userId!)
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : 'Reset failed — please try again.')
+      setResetting(false)
+      return
+    }
     window.location.reload()
   }
 
@@ -61,6 +73,7 @@ export default function DevOnboardingReset() {
               Cancel
             </button>
           </div>
+          {resetError && <p style={styles.resetError}>{resetError}</p>}
         </div>
       )}
     </div>
@@ -87,6 +100,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   warning: { fontSize: '0.82rem', color: neutral.redMuted, lineHeight: 1.4, margin: '0 0 0.75rem' },
   row: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
+  resetError: { fontSize: fontSize.label, color: colors.danger, lineHeight: 1.4, margin: '0.75rem 0 0' },
   input: {
     flex: 1,
     minWidth: '140px',

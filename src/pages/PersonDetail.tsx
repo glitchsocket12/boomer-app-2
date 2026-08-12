@@ -637,33 +637,51 @@ export default function PersonDetail({
       return
     }
 
-    await supabase.from('notes').update({ person_id: survivorId }).eq('person_id', duplicateId)
+    // Every step below is checked, and any failure bails BEFORE the delete at the end (2026-08-11,
+    // §12's silent-write rule). This isn't tidiness: the last act of a merge is deleting the
+    // duplicate, and notes cascade on that delete. So if the re-point at the top had failed while
+    // the rest carried on — which is exactly what happened before, invisibly — the delete
+    // destroyed every note that hadn't moved. Bailing leaves a partly-merged pair, which is
+    // untidy but fully recoverable by merging again; the delete is not.
+    //
+    // There's no transaction available from the browser client, so "stop at the first failure and
+    // never reach the destructive step" is the strongest guarantee this path can offer.
+    function fail() {
+      setActionError('Something went wrong merging these profiles — nothing was deleted. Please try again.')
+      setActionBusy(false)
+    }
+
+    const notesRes = await supabase.from('notes').update({ person_id: survivorId }).eq('person_id', duplicateId)
+    if (notesRes.error) return fail()
 
     const survivorLabels = new Set((survivorRemindersRes.data ?? []).map((r) => r.label))
     for (const r of dupRemindersRes.data ?? []) {
-      if (survivorLabels.has(r.label)) {
-        await supabase.from('reminders').delete().eq('id', r.id)
-      } else {
-        await supabase.from('reminders').update({ person_id: survivorId }).eq('id', r.id)
-      }
+      const res = survivorLabels.has(r.label)
+        ? await supabase.from('reminders').delete().eq('id', r.id)
+        : await supabase.from('reminders').update({ person_id: survivorId }).eq('id', r.id)
+      if (res.error) return fail()
     }
 
     for (const g of dupGroupsRes.data ?? []) {
-      await supabase
+      const res = await supabase
         .from('person_groups')
         .upsert({ person_id: survivorId, group_id: g.group_id }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+      if (res.error) return fail()
     }
-    await supabase.from('person_groups').delete().eq('person_id', duplicateId)
+    const dropGroupsRes = await supabase.from('person_groups').delete().eq('person_id', duplicateId)
+    if (dropGroupsRes.error) return fail()
 
     // Pets follow the same union-then-detach rule as groups. Without this the duplicate's pets
     // would vanish with the record (person_pets cascades on delete) — and since a pet can be on
     // several profiles, a plain re-point would collide where the survivor already has it.
     for (const p of dupPetsRes.data ?? []) {
-      await supabase
+      const res = await supabase
         .from('person_pets')
         .upsert({ person_id: survivorId, pet_id: p.pet_id }, { onConflict: 'person_id,pet_id', ignoreDuplicates: true })
+      if (res.error) return fail()
     }
-    await supabase.from('person_pets').delete().eq('person_id', duplicateId)
+    const dropPetsRes = await supabase.from('person_pets').delete().eq('person_id', duplicateId)
+    if (dropPetsRes.error) return fail()
 
     const dup = dupPersonRes.data
     const dupNames = [
@@ -678,11 +696,21 @@ export default function PersonDetail({
       if (!mergedNicknames.some((m: string) => m.toLowerCase() === n.toLowerCase())) mergedNicknames.push(n)
     }
 
-    await supabase
+    const nicknamesRes = await supabase
       .from('people')
       .update({ nicknames: mergedNicknames.join(', ') || null, key_facts: null })
       .eq('id', survivorId)
-    await supabase.from('people').delete().eq('id', duplicateId)
+    if (nicknamesRes.error) return fail()
+
+    // The point of no return — everything the duplicate owned has already moved and been verified.
+    const deleteRes = await supabase.from('people').delete().eq('id', duplicateId)
+    if (deleteRes.error) {
+      // Everything moved but the shell survived: harmless, and re-merging clears it. Say so rather
+      // than reporting a failure that would send the founder looking for lost data.
+      setActionError("Everything moved across, but the duplicate profile couldn't be removed — try merging once more.")
+      setActionBusy(false)
+      return
+    }
 
     setMergeOpen(false)
     setMergeCandidate(null)

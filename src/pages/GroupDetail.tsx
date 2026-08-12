@@ -959,33 +959,53 @@ export default function GroupDetail({
         .or(`group_id_a.eq.${duplicateId},group_id_b.eq.${duplicateId}`),
     ])
 
+    // Checked step by step, bailing before the delete below (2026-08-11, §12's silent-write rule).
+    // Same reasoning as PersonDetail's handleMerge: deleting the duplicate cascades, so a move
+    // that silently failed while the rest carried on used to take real rows with it. A half-merged
+    // pair is recoverable by merging again; a cascade over data that never moved is not.
+    function fail() {
+      setActionError('Something went wrong merging these groups — nothing was deleted. Please try again.')
+      setActionBusy(false)
+    }
+
+    if (dupMembersRes.error || dupMomentsRes.error || dupAssociationsRes.error) return fail()
+
     for (const m of dupMembersRes.data ?? []) {
-      await supabase
+      const res = await supabase
         .from('person_groups')
         .upsert({ person_id: m.person_id, group_id: survivorId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+      if (res.error) return fail()
     }
-    await supabase.from('person_groups').delete().eq('group_id', duplicateId)
+    if ((await supabase.from('person_groups').delete().eq('group_id', duplicateId)).error) return fail()
 
     for (const m of dupMomentsRes.data ?? []) {
-      await supabase
+      const res = await supabase
         .from('moment_groups')
         .upsert({ moment_id: m.moment_id, group_id: survivorId }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+      if (res.error) return fail()
     }
-    await supabase.from('moment_groups').delete().eq('group_id', duplicateId)
+    if ((await supabase.from('moment_groups').delete().eq('group_id', duplicateId)).error) return fail()
 
     for (const a of dupAssociationsRes.data ?? []) {
       const otherId = a.group_id_a === duplicateId ? a.group_id_b : a.group_id_a
       if (otherId !== survivorId) {
         const [x, y] = [survivorId, otherId].sort()
-        await supabase
+        const res = await supabase
           .from('group_associations')
           .upsert({ group_id_a: x, group_id_b: y }, { onConflict: 'group_id_a,group_id_b', ignoreDuplicates: true })
+        if (res.error) return fail()
       }
     }
-    await supabase.from('group_associations').delete().or(`group_id_a.eq.${duplicateId},group_id_b.eq.${duplicateId}`)
+    const dropAssocRes = await supabase
+      .from('group_associations')
+      .delete()
+      .or(`group_id_a.eq.${duplicateId},group_id_b.eq.${duplicateId}`)
+    if (dropAssocRes.error) return fail()
 
-    await supabase.from('notes').update({ group_id: survivorId }).eq('group_id', duplicateId)
-    await supabase.from('notes').update({ source_group_id: survivorId }).eq('source_group_id', duplicateId)
+    if ((await supabase.from('notes').update({ group_id: survivorId }).eq('group_id', duplicateId)).error) return fail()
+    if ((await supabase.from('notes').update({ source_group_id: survivorId }).eq('source_group_id', duplicateId)).error) {
+      return fail()
+    }
 
     // Reparent the duplicate's own subgroups onto the survivor, so mission/class-year subgroups
     // of a merged-away group aren't silently orphaned to root. The `.neq('id', survivorId)` guard

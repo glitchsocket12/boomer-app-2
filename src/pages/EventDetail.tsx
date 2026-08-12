@@ -734,28 +734,44 @@ export default function EventDetail({
     const survivorId = mergeCandidate.id
     const duplicateId = eventId
 
-    const { error: notesError } = await supabase.from('notes').update({ moment_id: survivorId }).eq('moment_id', duplicateId)
-    if (notesError) {
-      setActionError('Something went wrong merging these events — please try again.')
+    // Checked step by step, bailing before the delete below (2026-08-11, §12's silent-write rule).
+    // The notes move was already checked; everything between it and the delete was not, so a
+    // failed group move or sub-event reparent still reached `moments.delete` and cascaded. Same
+    // reasoning as PersonDetail/GroupDetail's merges: a half-merged pair can be merged again, a
+    // cascade over rows that never moved cannot be undone.
+    function fail() {
+      setActionError('Something went wrong merging these events — nothing was deleted. Please try again.')
       setActionBusy(false)
-      return
     }
 
-    const { data: dupGroups } = await supabase.from('moment_groups').select('group_id').eq('moment_id', duplicateId)
+    const { error: notesError } = await supabase.from('notes').update({ moment_id: survivorId }).eq('moment_id', duplicateId)
+    if (notesError) return fail()
+
+    const { data: dupGroups, error: dupGroupsError } = await supabase
+      .from('moment_groups')
+      .select('group_id')
+      .eq('moment_id', duplicateId)
+    if (dupGroupsError) return fail()
     for (const g of dupGroups ?? []) {
-      await supabase
+      const res = await supabase
         .from('moment_groups')
         .upsert({ moment_id: survivorId, group_id: g.group_id }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+      if (res.error) return fail()
     }
-    await supabase.from('moment_groups').delete().eq('moment_id', duplicateId)
+    if ((await supabase.from('moment_groups').delete().eq('moment_id', duplicateId)).error) return fail()
 
     // Reparent the duplicate's own sub-events onto the survivor, so a merged-away parent event's
     // sub-events aren't silently orphaned to root. Same reasoning/guard as GroupDetail.tsx's
     // subgroup reparenting on merge. Fails open if parent_moment_id doesn't exist yet (migration
-    // not run) — nothing to reparent in that case anyway.
+    // not run) — nothing to reparent in that case anyway, so this one error is NOT fatal.
     await supabase.from('moments').update({ parent_moment_id: survivorId }).eq('parent_moment_id', duplicateId).neq('id', survivorId)
 
-    await supabase.from('moments').delete().eq('id', duplicateId)
+    const deleteRes = await supabase.from('moments').delete().eq('id', duplicateId)
+    if (deleteRes.error) {
+      setActionError("Everything moved across, but the duplicate event couldn't be removed — try merging once more.")
+      setActionBusy(false)
+      return
+    }
     await supabase.from('moments').update({ summary: null }).eq('id', survivorId)
 
     setMergeOpen(false)

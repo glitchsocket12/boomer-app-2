@@ -22,34 +22,51 @@ export async function resetOnboardingData(userId: string) {
   const momentIds = (moments ?? []).map((m) => m.id)
   const groupIds = (groups ?? []).map((g) => g.id)
 
+  // Every delete is checked (2026-08-11, §12's silent-write rule). Dependents are removed before
+  // their parent rows deliberately, so a failure partway used to leave orphans behind AND still
+  // clear onboarding_complete at the end — reporting a clean slate over a half-wiped account, and
+  // the next onboarding run would start on top of the leftovers. Throwing stops before the flag
+  // is cleared; the caller (DevOnboardingReset.tsx) surfaces it.
+  async function run(label: string, op: PromiseLike<{ error: { message: string } | null }>) {
+    const { error } = await op
+    if (error) throw new Error(`Reset failed while clearing ${label}: ${error.message}`)
+  }
+
   if (personIds.length > 0) {
-    await supabase.from('notes').delete().in('person_id', personIds)
-    await supabase.from('reminders').delete().in('person_id', personIds)
-    await supabase.from('person_groups').delete().in('person_id', personIds)
-    await supabase
-      .from('relationships')
-      .delete()
-      .or(`person_a_id.in.(${personIds.join(',')}),person_b_id.in.(${personIds.join(',')})`)
+    await run('notes', supabase.from('notes').delete().in('person_id', personIds))
+    await run('reminders', supabase.from('reminders').delete().in('person_id', personIds))
+    await run('group memberships', supabase.from('person_groups').delete().in('person_id', personIds))
+    await run(
+      'relationships',
+      supabase
+        .from('relationships')
+        .delete()
+        .or(`person_a_id.in.(${personIds.join(',')}),person_b_id.in.(${personIds.join(',')})`)
+    )
   }
   if (momentIds.length > 0) {
-    await supabase.from('notes').delete().in('moment_id', momentIds)
-    await supabase.from('moment_groups').delete().in('moment_id', momentIds)
+    await run('event notes', supabase.from('notes').delete().in('moment_id', momentIds))
+    await run('event group tags', supabase.from('moment_groups').delete().in('moment_id', momentIds))
   }
   if (groupIds.length > 0) {
-    await supabase.from('notes').delete().in('group_id', groupIds)
-    await supabase.from('person_groups').delete().in('group_id', groupIds)
-    await supabase.from('moment_groups').delete().in('group_id', groupIds)
-    await supabase
-      .from('group_associations')
-      .delete()
-      .or(`group_id_a.in.(${groupIds.join(',')}),group_id_b.in.(${groupIds.join(',')})`)
+    await run('group notes', supabase.from('notes').delete().in('group_id', groupIds))
+    await run('group rosters', supabase.from('person_groups').delete().in('group_id', groupIds))
+    await run('group event tags', supabase.from('moment_groups').delete().in('group_id', groupIds))
+    await run(
+      'group associations',
+      supabase
+        .from('group_associations')
+        .delete()
+        .or(`group_id_a.in.(${groupIds.join(',')}),group_id_b.in.(${groupIds.join(',')})`)
+    )
   }
-  await supabase.from('search_log').delete().eq('user_id', userId)
-  await supabase.from('home_suggestions').delete().eq('user_id', userId)
+  await run('search history', supabase.from('search_log').delete().eq('user_id', userId))
+  await run('home suggestions', supabase.from('home_suggestions').delete().eq('user_id', userId))
 
-  await supabase.from('moments').delete().eq('user_id', userId)
-  await supabase.from('groups').delete().eq('user_id', userId)
-  await supabase.from('people').delete().eq('user_id', userId)
+  await run('events', supabase.from('moments').delete().eq('user_id', userId))
+  await run('groups', supabase.from('groups').delete().eq('user_id', userId))
+  await run('people', supabase.from('people').delete().eq('user_id', userId))
 
-  await supabase.auth.updateUser({ data: { onboarding_complete: false } })
+  const { error: flagError } = await supabase.auth.updateUser({ data: { onboarding_complete: false } })
+  if (flagError) throw new Error(`Everything was cleared, but the onboarding flag didn't reset: ${flagError.message}`)
 }
