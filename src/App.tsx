@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { HomeIcon, PeopleIcon, EventsIcon, CalendarIcon, GroupsIcon } from './components/NavIcons'
 import { supabase } from './lib/supabase'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
@@ -709,12 +710,12 @@ export default function App() {
     )
   }
 
-  const TABS: { tab: Tab; label: string }[] = [
-    { tab: 'home', label: 'Home' },
-    { tab: 'people', label: 'People' },
-    { tab: 'events', label: 'Events' },
-    { tab: 'calendar', label: 'Calendar' },
-    { tab: 'groups', label: 'Groups' },
+  const TABS: { tab: Tab; label: string; Icon: (props: { size?: number }) => ReactElement }[] = [
+    { tab: 'home', label: 'Home', Icon: HomeIcon },
+    { tab: 'people', label: 'People', Icon: PeopleIcon },
+    { tab: 'events', label: 'Events', Icon: EventsIcon },
+    { tab: 'calendar', label: 'Calendar', Icon: CalendarIcon },
+    { tab: 'groups', label: 'Groups', Icon: GroupsIcon },
   ]
 
   return (
@@ -727,8 +728,10 @@ export default function App() {
               key={t.tab}
               onClick={() => goToTab(t.tab)}
               style={view === t.tab ? navStyles.linkActive : navStyles.link}
+              aria-current={view === t.tab ? 'page' : undefined}
             >
-              {t.label}
+              <t.Icon />
+              <span style={navStyles.linkLabel}>{t.label}</span>
             </button>
           ))}
         </div>
@@ -775,38 +778,74 @@ export default function App() {
 }
 
 const navStyles: { [key: string]: React.CSSProperties } = {
+  // 2026-08-11: the five word-tabs measured 421px on a 375px phone, so Groups and the avatar hung
+  // off the edge and the whole page scrolled sideways. Each tab is now an icon with its label
+  // beneath, which fits with room to spare. `minWidth: 0` on the bar and the tab row is what
+  // actually prevents the overflow — a flex row's default min-width is its content, so without it
+  // the tabs push the bar wider than the screen instead of sharing the space they have.
   bar: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0.75rem 1.5rem',
+    gap: space.sm,
+    padding: '0.5rem 1rem',
     borderBottom: border.light,
     backgroundColor: colors.surface,
     fontFamily,
+    minWidth: 0,
   },
-  left: { display: 'flex', alignItems: 'center', gap: space.xs },
-  wordmark: { fontSize: fontSize.lead, fontWeight: 'bold', color: colors.ink, marginRight: space.lg },
+  left: { display: 'flex', alignItems: 'center', gap: '2px', flex: '1 1 auto', minWidth: 0 },
+  wordmark: {
+    fontSize: fontSize.lead,
+    fontWeight: 'bold',
+    color: colors.ink,
+    marginRight: space.sm,
+    whiteSpace: 'nowrap',
+    flex: 'none',
+  },
   link: {
     background: 'none',
     border: 'none',
     color: colors.textMuted,
-    fontSize: fontSize.body,
     fontFamily,
-    padding: '0.4rem 0.6rem',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '2px',
+    // 44px is the minimum comfortable touch target; letting them share the row from a 0 basis is
+    // what keeps five tabs inside a phone without any of them being individually pinned to a width.
+    flex: '1 1 0',
+    // Share the row on a phone, but stop stretching once there's room — five 120px icon buttons
+    // spanning a desktop bar reads as a toolbar, not a nav.
+    maxWidth: '76px',
+    minWidth: 0,
+    minHeight: '44px',
+    padding: '0.3rem 0.15rem',
     borderRadius: radius.sm,
     cursor: 'pointer',
   },
   linkActive: {
     background: 'none',
     border: 'none',
-    color: colors.ink,
+    color: colors.primary,
     fontWeight: 'bold',
-    fontSize: fontSize.body,
     fontFamily,
-    padding: '0.4rem 0.6rem',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '2px',
+    flex: '1 1 0',
+    // Share the row on a phone, but stop stretching once there's room — five 120px icon buttons
+    // spanning a desktop bar reads as a toolbar, not a nav.
+    maxWidth: '76px',
+    minWidth: 0,
+    minHeight: '44px',
+    padding: '0.3rem 0.15rem',
     borderRadius: radius.sm,
     cursor: 'pointer',
   },
+  // Small enough that "Calendar" — the longest label — still fits its share of a 375px row.
+  linkLabel: { fontSize: '0.68rem', lineHeight: 1.1, whiteSpace: 'nowrap' },
   avatar: {
     width: '34px',
     height: '34px',
