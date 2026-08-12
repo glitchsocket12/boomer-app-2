@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, space } from '../lib/theme'
 
 type TagRow = { id: string; name: string; usageCount: number }
@@ -30,7 +31,9 @@ export default function ManageTags({
   }, [])
 
   async function loadTags() {
-    const { data } = await supabase.from('tags').select('id, name, moment_tags(moment_id)')
+    const { data } = await fetchAllRows((from, to) =>
+      supabase.from('tags').select('id, name, moment_tags(moment_id)').order('id').range(from, to)
+    )
     const rows: TagRow[] = ((data as any[]) ?? [])
       .map((t) => ({ id: t.id, name: t.name, usageCount: (t.moment_tags ?? []).length }))
       .sort((a, b) => a.name.localeCompare(b.name))

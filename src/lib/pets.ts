@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 
 // Pets are their own records joined to one or more people via person_pets (2026-08-01), so the
 // family dog is edited once and shows on both spouses' profiles. This module is the single write
@@ -95,7 +96,9 @@ export async function loadPetOwners(petId: string): Promise<PetOwner[]> {
 // Every pet's owners in one round trip, keyed by pet id — the People list needs this for all pets
 // at once and must not fire a query per pet.
 export async function loadOwnersByPetId(): Promise<Record<string, PetOwner[]>> {
-  const { data } = await supabase.from('person_pets').select('pet_id, people(id, name, last_name)')
+  const { data } = await fetchAllRows((from, to) =>
+    supabase.from('person_pets').select('pet_id, people(id, name, last_name)').order('pet_id').order('person_id').range(from, to)
+  )
   const byPet: Record<string, PetOwner[]> = {}
   for (const row of (data ?? []) as any[]) {
     if (!row.people) continue

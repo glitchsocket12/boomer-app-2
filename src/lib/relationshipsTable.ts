@@ -168,10 +168,19 @@ export async function getRelationshipsMap(personIds?: string[]): Promise<Map<str
 
   for (let i = 0; i < personIds.length; i += ID_BATCH_SIZE) {
     const idList = personIds.slice(i, i + ID_BATCH_SIZE).join(',')
-    const { data } = await supabase
-      .from('relationships')
-      .select('person_a_id, person_b_id, kind')
-      .or(`person_a_id.in.(${idList}),person_b_id.in.(${idList})`)
+    // Paged too, not just the whole-table branch above: a batch is 50 people, and 50 people in a
+    // dense family group averaging ~20 links each already reaches the 1000-row cap. Truncation
+    // here is invisible — the tree just quietly stops drawing some wires.
+    const { data } = await fetchAllRows((from, to) =>
+      supabase
+        .from('relationships')
+        .select('person_a_id, person_b_id, kind')
+        .or(`person_a_id.in.(${idList}),person_b_id.in.(${idList})`)
+        .order('person_a_id')
+        .order('person_b_id')
+        .order('kind')
+        .range(from, to)
+    )
     absorb(data as RelationshipRow[] | null)
   }
   return result

@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import {
   loadFamilyGraph,
   buildFamilyTreeFromGraph,
@@ -383,7 +384,7 @@ export default function FamilyTree({
     // loadFamilyGraph internally; the only change is that the graph is now kept afterwards.
     const [{ data: { user } }, { data: everyone }, g] = await Promise.all([
       supabase.auth.getUser(),
-      supabase.from('people').select('id, name, last_name'),
+      fetchAllRows((from, to) => supabase.from('people').select('id, name, last_name').order('id').range(from, to)),
       loadFamilyGraph(),
     ])
     const tree = memberIds && memberIds.length > 0 ? buildDescendantTreeFromGraph(memberIds, g) : buildFamilyTreeFromGraph(personId, g)

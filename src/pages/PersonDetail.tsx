@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { EventChip, PersonChip } from '../components/Chips'
 import VoiceInputButton from '../components/VoiceInputButton'
@@ -234,7 +235,9 @@ export default function PersonDetail({
   // Full group roster for the manual "tag a group" search box below — separate from `groups`
   // (this person's actual memberships), same split EventDetail.tsx uses for its own group tagger.
   async function loadGroupsList() {
-    const { data } = await supabase.from('groups').select('id, name, parent_group_id').order('name')
+    const { data } = await fetchAllRows((from, to) =>
+      supabase.from('groups').select('id, name, parent_group_id').order('name').order('id').range(from, to)
+    )
     setAllGroupsList((data as GroupRef[]) ?? [])
   }
 
@@ -279,12 +282,19 @@ export default function PersonDetail({
     }
     if (!sourceRawName) return
 
-    const { data: candidates } = await supabase
-      .from('people')
-      .select('name, last_name')
-      .neq('id', personId)
-      .not('last_name', 'is', null)
-    const match = (candidates ?? []).find((p) => {
+    // Paged: this is the last-name suggestion, and it decides by finding EXACTLY ONE match across
+    // everyone on file. A truncated candidate list turns "no match, stay quiet" into the wrong
+    // answer silently — and worse, could make an ambiguous name look unique.
+    const { data: candidates } = await fetchAllRows((from, to) =>
+      supabase
+        .from('people')
+        .select('name, last_name')
+        .neq('id', personId)
+        .not('last_name', 'is', null)
+        .order('id')
+        .range(from, to)
+    )
+    const match = candidates.find((p) => {
       const full = `${p.name} ${p.last_name}`.trim()
       return full.toLowerCase() === sourceRawName!.toLowerCase() || p.name.toLowerCase() === sourceRawName!.toLowerCase()
     })
@@ -525,8 +535,12 @@ export default function PersonDetail({
     const {
       data: { user },
     } = await supabase.auth.getUser()
-    const { data: existingGroups } = await supabase.from('groups').select('id, name')
-    const match = (existingGroups ?? []).find((g) => g.name.toLowerCase() === groupName.toLowerCase())
+    // Paged: this is find-or-CREATE. Missing an existing group here doesn't just fail to find it,
+    // it silently creates a duplicate group with the same name.
+    const { data: existingGroups } = await fetchAllRows((from, to) =>
+      supabase.from('groups').select('id, name').order('id').range(from, to)
+    )
+    const match = existingGroups.find((g) => g.name.toLowerCase() === groupName.toLowerCase())
 
     let groupId = match?.id ?? null
     if (!groupId) {
@@ -585,7 +599,9 @@ export default function PersonDetail({
     setMergeCandidate(null)
     setMergeSearch('')
     if (otherPeople.length === 0) {
-      const { data } = await supabase.from('people').select('id, name, last_name').neq('id', personId).order('name')
+      const { data } = await fetchAllRows((from, to) =>
+        supabase.from('people').select('id, name, last_name').neq('id', personId).order('name').order('id').range(from, to)
+      )
       setOtherPeople((data as OtherPerson[]) ?? [])
     }
   }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
 const DUNBAR_LIMIT = 150
@@ -20,15 +21,22 @@ export default function DunbarDetail({ onBack, backLabel }: { onBack: () => void
   const [people, setPeople] = useState<{ id: string; name: string }[]>([])
 
   useEffect(() => {
-    supabase
-      .from('people')
-      .select('id, name, created_at')
-      .eq('is_self', false)
-      .order('created_at', { ascending: false })
-      .then(({ data }) => {
-        setPeople(data ?? [])
-        setTotalPeople(data?.length ?? 0)
-      })
+    // Paged: this page's whole job is counting how many people are on file against Dunbar's
+    // tiers, so a silent stop at 1000 would understate the total AND drop names out of the tier
+    // lists — wrong in exactly the way nobody would question. The account was at 724 people on
+    // 2026-08-11 and climbing.
+    fetchAllRows((from, to) =>
+      supabase
+        .from('people')
+        .select('id, name, created_at')
+        .eq('is_self', false)
+        .order('created_at', { ascending: false })
+        .order('id')
+        .range(from, to)
+    ).then(({ data }) => {
+      setPeople(data)
+      setTotalPeople(data.length)
+    })
   }, [])
 
   return (

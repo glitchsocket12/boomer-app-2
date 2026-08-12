@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
 import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { formatDateRange } from '../lib/dates'
@@ -65,8 +66,10 @@ export default function PhotoImportReview({
   }, [])
 
   async function loadMoments() {
-    const { data } = await supabase.from('moments').select('id, occasion, event_date, event_end_date')
-    setMoments(data ?? [])
+    const { data } = await fetchAllRows((from, to) =>
+      supabase.from('moments').select('id, occasion, event_date, event_end_date').order('id').range(from, to)
+    )
+    setMoments(data)
   }
 
   async function loadClusters() {
@@ -81,13 +84,19 @@ export default function PhotoImportReview({
       return
     }
 
-    const { data: photoRows } = await supabase
-      .from('photos')
-      .select('id, storage_path, photo_cluster_id')
-      .in(
-        'photo_cluster_id',
-        rows.map((r) => r.id)
-      )
+    // Paged: a photo import is the one place row counts arrive in bulk — a single Google Photos
+    // pick can bring in hundreds, so a handful of pending clusters clears 1000 photos easily.
+    const { data: photoRows } = await fetchAllRows((from, to) =>
+      supabase
+        .from('photos')
+        .select('id, storage_path, photo_cluster_id')
+        .in(
+          'photo_cluster_id',
+          rows.map((r) => r.id)
+        )
+        .order('id')
+        .range(from, to)
+    )
     const paths = (photoRows ?? []).map((p) => p.storage_path)
     let urlByPath = new Map<string, string>()
     if (paths.length > 0) {

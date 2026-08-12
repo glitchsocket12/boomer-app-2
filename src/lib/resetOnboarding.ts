@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 
 // Only ever runs for this one disposable test account (src/components/DevOnboardingReset.tsx
 // checks the same constant before even rendering the control) — lets onboarding be re-tested
@@ -9,10 +10,13 @@ export const ONBOARDING_RESET_TEST_EMAIL = 'jake.volin+onboardtest@gmail.com'
 // the onboarding_complete flag, so the next load routes back into Onboarding.tsx from a blank
 // slate. Dependents deleted before their parent row, same ordering PersonDetail.tsx's delete uses.
 export async function resetOnboardingData(userId: string) {
+  // Paged, and here truncation would be worse than a wrong answer: a reset that only sees the
+  // first 1000 people leaves the rest behind and the account never actually returns to a blank
+  // slate, which is the one thing this function promises.
   const [{ data: people }, { data: moments }, { data: groups }] = await Promise.all([
-    supabase.from('people').select('id'),
-    supabase.from('moments').select('id'),
-    supabase.from('groups').select('id'),
+    fetchAllRows((from, to) => supabase.from('people').select('id').order('id').range(from, to)),
+    fetchAllRows((from, to) => supabase.from('moments').select('id').order('id').range(from, to)),
+    fetchAllRows((from, to) => supabase.from('groups').select('id').order('id').range(from, to)),
   ])
   const personIds = (people ?? []).map((p) => p.id)
   const momentIds = (moments ?? []).map((m) => m.id)

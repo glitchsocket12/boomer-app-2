@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { formatEventWhen, nextOccurrenceDate } from '../lib/dates'
 import CountdownsSection from '../components/CountdownsSection'
@@ -93,11 +94,21 @@ export default function Calendar({
   async function load() {
     setLoading(true)
     const [momentsRes, peopleRes] = await Promise.all([
-      supabase
-        .from('moments')
-        .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at, moment_tags(tags(id, name))')
-        .not('event_date', 'is', null),
-      supabase.from('people').select('id, name, last_name, deceased_date, reminders(id, label, month, day, year)'),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('moments')
+          .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at, moment_tags(tags(id, name))')
+          .not('event_date', 'is', null)
+          .order('id')
+          .range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('people')
+          .select('id, name, last_name, deceased_date, reminders(id, label, month, day, year)')
+          .order('id')
+          .range(from, to)
+      ),
     ])
     setMoments((momentsRes.data as unknown as MomentRow[]) ?? [])
     setPeople((peopleRes.data as unknown as PersonRow[]) ?? [])

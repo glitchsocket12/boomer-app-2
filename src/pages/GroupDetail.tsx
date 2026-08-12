@@ -241,11 +241,9 @@ export default function GroupDetail({
   // between groups. Only needed to attach a name to a family-suggestion candidate below (see
   // memberIdsKey), same "small, one account's own data" reasoning as EventDetail.tsx's allPeople.
   useEffect(() => {
-    supabase
-      .from('people')
-      .select('id, name, last_name')
-      .order('name')
-      .then(({ data }) => setAllPeople((data as PersonRef[]) ?? []))
+    fetchAllRows((from, to) =>
+      supabase.from('people').select('id, name, last_name').order('name').order('id').range(from, to)
+    ).then(({ data }) => setAllPeople(data as PersonRef[]))
   }, [])
 
   // Same idea as EventDetail.tsx's attendeeIdsKey: only this group's own explicit members' family
@@ -491,11 +489,16 @@ export default function GroupDetail({
       setMemberSharedGroups([])
       return
     }
-    const { data } = await supabase
-      .from('person_groups')
-      .select('group_id, groups(id, name)')
-      .in('person_id', memberIds)
-      .neq('group_id', groupId)
+    const { data } = await fetchAllRows((from, to) =>
+      supabase
+        .from('person_groups')
+        .select('group_id, groups(id, name)')
+        .in('person_id', memberIds)
+        .neq('group_id', groupId)
+        .order('person_id')
+        .order('group_id')
+        .range(from, to)
+    )
 
     const byId = new Map<string, GroupRef>()
     for (const row of (data as unknown as { group_id: string; groups: GroupRef | null }[]) ?? []) {
@@ -533,10 +536,14 @@ export default function GroupDetail({
   // associated with "Air Force" surfaces the Academy's members as suggested Air Force members.
   // Symmetric, same as the association itself: it runs whichever group's page you're viewing.
   async function loadAssociatedGroupMembers(associatedGroupIds: string[]) {
-    const { data } = await supabase
-      .from('person_groups')
-      .select('people(id, name, last_name)')
-      .in('group_id', associatedGroupIds)
+    const { data } = await fetchAllRows((from, to) =>
+      supabase
+        .from('person_groups')
+        .select('people(id, name, last_name)')
+        .in('group_id', associatedGroupIds)
+        .order('person_id')
+        .range(from, to)
+    )
 
     const byId = new Map<string, PersonRef>()
     for (const row of (data as unknown as { people: PersonRef | null }[]) ?? []) {
@@ -579,9 +586,11 @@ export default function GroupDetail({
   async function openGroupPicker() {
     setGroupPickerSearch('')
     setLoadingPickableGroups(true)
-    const { data } = await supabase.from('groups').select('id, name').neq('id', groupId).order('name')
+    const { data } = await fetchAllRows((from, to) =>
+      supabase.from('groups').select('id, name').neq('id', groupId).order('name').order('id').range(from, to)
+    )
     const hierarchyIds = new Set([parentGroup?.id, ...subgroups.map((sg) => sg.id)].filter((id): id is string => !!id))
-    setPickableGroups(((data as GroupRef[]) ?? []).filter((g) => !hierarchyIds.has(g.id)))
+    setPickableGroups((data as GroupRef[]).filter((g) => !hierarchyIds.has(g.id)))
     setLoadingPickableGroups(false)
   }
 
@@ -819,12 +828,16 @@ export default function GroupDetail({
       return
     }
 
-    const { data } = await supabase
-      .from('moments')
-      .select(
-        'id, occasion, location, when_text, event_date, raw_description, summary, created_at, notes(people(id, name, last_name)), moment_groups(group_id, groups(id, name))'
-      )
-      .in('id', momentIds)
+    const { data } = await fetchAllRows((from, to) =>
+      supabase
+        .from('moments')
+        .select(
+          'id, occasion, location, when_text, event_date, raw_description, summary, created_at, notes(people(id, name, last_name)), moment_groups(group_id, groups(id, name))'
+        )
+        .in('id', momentIds)
+        .order('id')
+        .range(from, to)
+    )
 
     const sorted = ((data as unknown as Moment[]) ?? []).sort(
       (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
@@ -875,8 +888,10 @@ export default function GroupDetail({
     setMergeCandidate(null)
     setMergeSearch('')
     if (otherGroups.length === 0) {
-      const { data } = await supabase.from('groups').select('id, name').neq('id', groupId)
-      setOtherGroups((data as GroupRef[]) ?? [])
+      const { data } = await fetchAllRows((from, to) =>
+        supabase.from('groups').select('id, name').neq('id', groupId).order('id').range(from, to)
+      )
+      setOtherGroups(data as GroupRef[])
     }
   }
 

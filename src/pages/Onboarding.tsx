@@ -9,6 +9,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { buildFamilyTree } from '../lib/familyTree'
 import type { GroupType } from '../lib/groupTypes'
 import FamilyTree from './FamilyTree'
@@ -86,8 +87,10 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   async function refreshAllPeople() {
-    const { data } = await supabase.from('people').select('id, name, last_name')
-    setAllPeople((data ?? []).map((p) => ({ id: p.id, label: p.last_name ? `${p.name} ${p.last_name}` : p.name })))
+    const { data } = await fetchAllRows((from, to) =>
+      supabase.from('people').select('id, name, last_name').order('id').range(from, to)
+    )
+    setAllPeople(data.map((p) => ({ id: p.id, label: p.last_name ? `${p.name} ${p.last_name}` : p.name })))
   }
 
   // Covers accounts that predate the signup metadata flow, or the rare timing miss — onboarding

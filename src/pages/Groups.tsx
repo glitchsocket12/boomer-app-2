@@ -13,6 +13,7 @@ import {
   type DragOverEvent,
 } from '@dnd-kit/core'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { PersonChip, EventChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
@@ -197,9 +198,13 @@ export default function Groups({
     // Falls open to the narrower select if parent_group_id doesn't exist yet (migration not run,
     // see PROJECT_CONTEXT.md §10) rather than erroring out to an empty page; without the column
     // nothing has a parent, so the tree below degrades to the flat list this page used to be.
-    let { data, error } = await supabase.from('groups').select(`${baseSelect}, parent_group_id`).order('name')
+    let { data, error } = await fetchAllRows((from, to) =>
+      supabase.from('groups').select(`${baseSelect}, parent_group_id`).order('name').order('id').range(from, to)
+    )
     if (error) {
-      const fallback = await supabase.from('groups').select(baseSelect).order('name')
+      const fallback = await fetchAllRows((from, to) =>
+        supabase.from('groups').select(baseSelect).order('name').order('id').range(from, to)
+      )
       data = fallback.data as typeof data
     }
 

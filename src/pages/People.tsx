@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { daysUntilNextOccurrence } from '../lib/dates'
 import { GroupChip, EventChip, PersonChip } from '../components/Chips'
@@ -156,13 +157,21 @@ export default function People({
 
   async function loadPeople() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('people')
-      .select(
-        'id, name, last_name, nicknames, middle_name, goes_by_other, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
-      )
-      .eq('is_self', false)
-      .order('name')
+    // Paged: this is THE roster page, and the account was at 724 people on 2026-08-11 — close
+    // enough to PostgREST's silent 1000-row cap that the list would have started losing its tail
+    // with no error and no gap to notice. Secondary .order('id') because names are not unique, and
+    // a non-unique sort key lets rows shuffle between pages.
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('people')
+        .select(
+          'id, name, last_name, nicknames, middle_name, goes_by_other, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
+        )
+        .eq('is_self', false)
+        .order('name')
+        .order('id')
+        .range(from, to)
+    )
 
     if (!error && data) {
       setPeople(data as unknown as Person[])

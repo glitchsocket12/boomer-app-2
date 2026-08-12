@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 
 export type FamilyTagSuggestion = { id: string; name: string }
 
@@ -20,9 +21,13 @@ export function looksLikeFamilyGroupName(name: string): boolean {
 // group_type_suggestion_dismissed column — before the founder runs the matching migration —
 // only degrades this one feature instead of 400ing every shared groups query on the page.
 export async function loadFamilyTagSuggestions(): Promise<FamilyTagSuggestion[]> {
-  const { data, error } = await supabase
-    .from('groups')
-    .select('id, name, group_type, group_type_suggestion_dismissed')
+  const { data, error } = await fetchAllRows((from, to) =>
+    supabase
+      .from('groups')
+      .select('id, name, group_type, group_type_suggestion_dismissed')
+      .order('id')
+      .range(from, to)
+  )
   if (error || !data) return []
   return (data as { id: string; name: string; group_type: string | null; group_type_suggestion_dismissed: boolean | null }[])
     .filter((g) => !g.group_type && !g.group_type_suggestion_dismissed && looksLikeFamilyGroupName(g.name))

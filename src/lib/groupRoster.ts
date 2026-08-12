@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 import { groupDisplayName } from './groupDisplayName'
 
 // Companion to groupDisplayName.ts. That helper needs the group's own parent_group_id plus a map
@@ -24,7 +25,9 @@ export function useGroupRoster(): {
       // Fails open: if this errors (including parent_group_id not existing yet — same migration
       // guard as Groups.tsx's loadGroups and GroupDetail.tsx's loadParent), rows stay empty and
       // every label() below falls back to the bare name, i.e. exactly today's behavior.
-      const { data, error } = await supabase.from('groups').select('id, name, parent_group_id')
+      const { data, error } = await fetchAllRows((from, to) =>
+        supabase.from('groups').select('id, name, parent_group_id').order('id').range(from, to)
+      )
       if (cancelled || error) return
       setRows((data as RosterRow[]) ?? [])
     })()

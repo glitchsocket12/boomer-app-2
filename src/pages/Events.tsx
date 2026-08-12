@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { eventSortDate, formatEventWhen, formatFullDate } from '../lib/dates'
 import { createEventShell } from '../lib/moments'
@@ -229,11 +230,15 @@ export default function Events({
   // full outage instead of a degraded one. Fails open to "no sub-events" (same reasoning as
   // GroupDetail.tsx's loadSubgroups) so a not-yet-run migration doesn't break this list.
   async function loadChildEvents() {
-    const { data, error } = await supabase
-      .from('moments')
-      .select('id, occasion, event_date, event_end_date, created_at, parent_moment_id, notes(people(id, name, last_name))')
-      .not('parent_moment_id', 'is', null)
-      .order('event_date', { ascending: true, nullsFirst: false })
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('moments')
+        .select('id, occasion, event_date, event_end_date, created_at, parent_moment_id, notes(people(id, name, last_name))')
+        .not('parent_moment_id', 'is', null)
+        .order('event_date', { ascending: true, nullsFirst: false })
+        .order('id')
+        .range(from, to)
+    )
     if (error || !data) {
       setChildrenByParentId(new Map())
       return
@@ -249,11 +254,15 @@ export default function Events({
 
   async function loadMoments() {
     setLoading(true)
-    const { data } = await supabase
-      .from('moments')
-      .select(
-        'id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name)), moment_tags(tags(id, name))'
-      )
+    const { data } = await fetchAllRows((from, to) =>
+      supabase
+        .from('moments')
+        .select(
+          'id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at, notes(people(id, name, last_name)), moment_groups(groups(id, name)), moment_tags(tags(id, name))'
+        )
+        .order('id')
+        .range(from, to)
+    )
 
     const sorted = ((data as unknown as Moment[]) ?? []).sort(
       (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()

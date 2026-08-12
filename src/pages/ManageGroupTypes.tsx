@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { DEFAULT_GROUP_TYPES } from '../lib/groupTypes'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, space } from '../lib/theme'
 
@@ -36,7 +37,7 @@ export default function ManageGroupTypes({
   async function loadTypes() {
     const [{ data, error }, { data: groupRows }] = await Promise.all([
       supabase.from('group_types').select('id, name'),
-      supabase.from('groups').select('group_type'),
+      fetchAllRows((from, to) => supabase.from('groups').select('group_type').order('id').range(from, to)),
     ])
 
     // Only happens if the group_types migration hasn't been run (PROJECT_CONTEXT.md §10). The

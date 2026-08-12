@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { colors, fontSize, radius } from '../lib/theme'
 
 const PLACEHOLDER_COLORS = ['#DCE8DE', '#F6E8C8', '#E8D9D0', '#D9E2EC', '#EBDCEB', '#E4E9D6']
@@ -134,12 +135,16 @@ export default function PhotoGallery({
 
       // Ordered by when the photo was taken: once a gallery merges several moments (a parent's
       // sub-events, or a person's whole history) the default arbitrary order interleaves days.
-      const { data, error } = await supabase
-        .from('photos')
-        .select('id, storage_path')
-        .in('moment_id', momentIds)
-        .order('taken_at', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: true })
+      const { data, error } = await fetchAllRows((from, to) =>
+        supabase
+          .from('photos')
+          .select('id, storage_path')
+          .in('moment_id', momentIds)
+          .order('taken_at', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: true })
+          .order('id')
+          .range(from, to)
+      )
       if (cancelled) return
       if (error || !data || data.length === 0) {
         setPhotos([])

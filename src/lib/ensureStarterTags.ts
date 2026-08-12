@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagedSelect'
 
 const STARTER_TAGS = [
   'Milestone',
@@ -23,7 +24,9 @@ const STARTER_TAGS = [
 export async function ensureStarterTags(userId: string, metadata: { tags_seeded?: boolean }) {
   if (metadata.tags_seeded) return
 
-  const { data: existing, error: fetchError } = await supabase.from('tags').select('name')
+  const { data: existing, error: fetchError } = await fetchAllRows((from, to) =>
+    supabase.from('tags').select('name').order('id').range(from, to)
+  )
   if (fetchError) {
     console.error('ensureStarterTags: failed to check existing tags', fetchError)
     return

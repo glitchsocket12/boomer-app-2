@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { formatDateRange } from '../lib/dates'
 import { findOrCreateTagId, type TagRef } from '../lib/tags'
@@ -179,14 +180,25 @@ export default function ImportReview({
         )
         .eq('status', 'pending')
         .order('event_date', { ascending: false, nullsFirst: false }),
-      supabase
-        .from('moments')
-        .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at')
-        .order('event_date', { ascending: false, nullsFirst: false }),
-      supabase.from('tags').select('id, name').order('name'),
-      supabase.from('groups').select('id, name, parent_group_id, person_groups(people(id, name, last_name))').order('name'),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('moments')
+          .select('id, occasion, location, when_text, event_date, event_end_date, raw_description, created_at')
+          .order('event_date', { ascending: false, nullsFirst: false })
+          .order('id')
+          .range(from, to)
+      ),
+      fetchAllRows((from, to) => supabase.from('tags').select('id, name').order('name').order('id').range(from, to)),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('groups')
+          .select('id, name, parent_group_id, person_groups(people(id, name, last_name))')
+          .order('name')
+          .order('id')
+          .range(from, to)
+      ),
       supabase.from('calendar_sources').select('id, label'),
-      supabase.from('people').select('id, name, last_name'),
+      fetchAllRows((from, to) => supabase.from('people').select('id, name, last_name').order('id').range(from, to)),
       // Whole-account fetch (not scoped per candidate) — this page shows many cards at once and
       // each one's included-attendees set changes reactively as the reviewer checks boxes, so one
       // shared table-wide map (same "one full-table fetch" pattern as familyTree.ts) avoids a
@@ -200,7 +212,9 @@ export default function ImportReview({
       // as EventDetail.tsx). Isolated from the moments query above on purpose, same fail-open
       // reasoning as Events.tsx's loadChildEvents: if parent_moment_id isn't migrated yet this
       // degrades to "nothing is a sub-event" instead of breaking the whole review page.
-      supabase.from('moments').select('id').not('parent_moment_id', 'is', null),
+      fetchAllRows((from, to) =>
+        supabase.from('moments').select('id').not('parent_moment_id', 'is', null).order('id').range(from, to)
+      ),
     ])
     setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])

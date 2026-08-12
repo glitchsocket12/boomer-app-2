@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { getRelationshipsForPerson } from '../lib/relationshipsTable'
 import { linkRelationship, createAndLinkRelationship, type CircleCategory } from '../lib/writeRelationship'
 import RelationshipAddPicker from '../components/RelationshipAddPicker'
@@ -71,7 +72,7 @@ export default function Circle({
 
     const [{ data: self }, { data: everyone }] = await Promise.all([
       supabase.from('people').select('id, name, last_name').eq('is_self', true).maybeSingle(),
-      supabase.from('people').select('id, name, last_name'),
+      fetchAllRows((from, to) => supabase.from('people').select('id, name, last_name').order('id').range(from, to)),
     ])
     setAllPeople((everyone as AllPerson[]) ?? [])
 

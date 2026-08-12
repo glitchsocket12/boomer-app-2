@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import NoteWithDetection from '../components/NoteWithDetection'
 import EditButton from '../components/EditButton'
 import RefreshButton from '../components/RefreshButton'
@@ -227,9 +228,13 @@ export default function EventDetail({
   // already used for the merge-event picker below.
   async function loadPickerLists() {
     const [peopleRes, groupsRes, tagsRes] = await Promise.all([
-      supabase.from('people').select('id, name, last_name').order('name'),
-      supabase.from('groups').select('id, name, parent_group_id').order('name'),
-      supabase.from('tags').select('id, name').order('name'),
+      fetchAllRows((from, to) =>
+        supabase.from('people').select('id, name, last_name').order('name').order('id').range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase.from('groups').select('id, name, parent_group_id').order('name').order('id').range(from, to)
+      ),
+      fetchAllRows((from, to) => supabase.from('tags').select('id, name').order('name').order('id').range(from, to)),
     ])
     setAllPeople((peopleRes.data as PersonRef[]) ?? [])
     setAllGroupsList((groupsRes.data as GroupRef[]) ?? [])
@@ -707,7 +712,9 @@ export default function EventDetail({
     setMergeCandidate(null)
     setMergeSearch('')
     if (otherEvents.length === 0) {
-      const { data } = await supabase.from('moments').select('id, occasion, raw_description').neq('id', eventId)
+      const { data } = await fetchAllRows((from, to) =>
+        supabase.from('moments').select('id, occasion, raw_description').neq('id', eventId).order('id').range(from, to)
+      )
       setOtherEvents((data as OtherEvent[]) ?? [])
     }
   }

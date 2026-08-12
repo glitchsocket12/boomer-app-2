@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { upsertRelationship, type RelationshipKind } from '../lib/relationshipsTable'
 import { syncFamilyClique, syncSpouseParenthood, invalidateKeyFacts } from '../lib/writeRelationship'
 import { border, colors, fontSize, radius, space } from '../lib/theme'
@@ -116,8 +117,10 @@ async function linkCoSiblings(s: NewPersonSuggestion, resolvedId: string, resolv
     let peerFullName = peer.name
     if (!peerId) {
       const [firstName] = peer.name.trim().split(/\s+/)
-      const { data: candidates } = await supabase.from('people').select('id, name, last_name').ilike('name', firstName)
-      const exact = (candidates ?? []).filter((c) => {
+      const { data: candidates } = await fetchAllRows((from, to) =>
+        supabase.from('people').select('id, name, last_name').ilike('name', firstName).order('id').range(from, to)
+      )
+      const exact = candidates.filter((c) => {
         const full = c.last_name ? `${c.name} ${c.last_name}` : c.name
         return full.toLowerCase() === peer.name.trim().toLowerCase()
       })

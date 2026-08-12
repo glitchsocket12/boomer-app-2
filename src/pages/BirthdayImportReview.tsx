@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import SearchBox from '../components/SearchBox'
 import ReviewNoteField from '../components/ReviewNoteField'
 import MatchCallout from '../components/MatchCallout'
@@ -53,8 +54,12 @@ export default function BirthdayImportReview({ onBack, backLabel }: { onBack: ()
         .select('id, full_name, birthday_month, birthday_day, birthday_year, matched_person_id, match_confidence')
         .eq('status', 'pending')
         .order('full_name'),
-      supabase.from('people').select('id, name, last_name').order('name'),
-      supabase.from('reminders').select('person_id, month, day, year').eq('label', 'Birthday'),
+      fetchAllRows((from, to) =>
+        supabase.from('people').select('id, name, last_name').order('name').order('id').range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase.from('reminders').select('person_id, month, day, year').eq('label', 'Birthday').order('id').range(from, to)
+      ),
     ])
     setCandidates((candidatesRes.data as Candidate[]) ?? [])
     setAllPeople((peopleRes.data as PersonRef[]) ?? [])

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { nameMatchStrength, personNameKeys } from '../lib/nameMatchStrength'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
@@ -236,8 +237,17 @@ export default function ContactImportReview({
 
   async function loadRoster(): Promise<Map<string, PersonRef>> {
     const [peopleRes, groupsRes] = await Promise.all([
-      supabase.from('people').select('id, name, last_name, nicknames, middle_name, goes_by_other').order('name'),
-      supabase.from('groups').select('id, name, parent_group_id').order('name'),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('people')
+          .select('id, name, last_name, nicknames, middle_name, goes_by_other')
+          .order('name')
+          .order('id')
+          .range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase.from('groups').select('id, name, parent_group_id').order('name').order('id').range(from, to)
+      ),
     ])
     const people = (peopleRes.data as PersonRef[]) ?? []
     setAllPeople(people)

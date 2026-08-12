@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type RefObject, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 import VoiceInputButton from '../components/VoiceInputButton'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
@@ -192,11 +193,18 @@ export default function Home({
       .gte('created_at', startOfMonth)
       .then(({ count }) => setRecallAssists(count ?? 0))
 
-    supabase
-      .from('notes')
-      .select('person_id, people(id, name, last_name)')
-      .not('person_id', 'is', null)
-      .gte('created_at', startOfMonth)
+    // Paged even though it's month-scoped: notes is the biggest table on the account (1,502 rows
+    // on 2026-08-11) and a heavy month of importing could clear 1000 on its own, at which point
+    // this leaderboard would just silently rank the wrong people.
+    fetchAllRows((from, to) =>
+      supabase
+        .from('notes')
+        .select('person_id, people(id, name, last_name)')
+        .not('person_id', 'is', null)
+        .gte('created_at', startOfMonth)
+        .order('id')
+        .range(from, to)
+    )
       .then(({ data }) => {
         const counts = new Map<string, LeaderboardEntry>()
         for (const row of (data as unknown as { person_id: string; people: { id: string; name: string; last_name: string | null } | null }[]) ?? []) {
