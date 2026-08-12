@@ -16,22 +16,57 @@ export type SubgroupLike = {
 }
 
 /**
- * subgroupId -> color, assigned by POSITION in the array passed in (which GroupDetail loads
- * already sorted by name), cycling once past the end of the palette.
+ * subgroupId -> color.
  *
- * Position rather than a hash of the id: a hash is stable forever but collides freely, and two
- * subgroups sharing a color is the one failure that makes this feature actively misleading.
- * Position can't collide until there are more than 8 subgroups, and the tradeoff — adding a
- * subgroup shifts the colors of the ones sorting after it — is survivable because the tiles sit
- * directly above the member list acting as a live legend. Nothing is persisted, so a shift is
- * cosmetic, never wrong.
+ * Anything in `pinned` (a `groups.color_index` the founder chose by tapping a tile's swatch) wins
+ * outright. Everything else is assigned by POSITION in the array passed in (which GroupDetail loads
+ * already sorted by name), skipping colors a pin already took so an automatic color can never
+ * collide with a deliberate one — two subgroups sharing a color is the single failure that makes
+ * this feature actively misleading, and a pin the palette then duplicated would be worse than no
+ * pinning at all. Only once every palette entry is spoken for does it cycle and allow repeats.
+ *
+ * Position rather than a hash of the id: a hash is stable forever but collides freely. The tradeoff
+ * — adding a subgroup shifts the colors of the unpinned ones sorting after it — is survivable
+ * because the tiles sit directly above the member list acting as a live legend, and pinning is now
+ * the escape hatch for anyone that shift actually bothers.
  */
-export function subgroupColorMap(subgroups: SubgroupLike[]): Record<string, string> {
+export function subgroupColorMap(
+  subgroups: SubgroupLike[],
+  pinned: Record<string, number> = {}
+): Record<string, string> {
   const map: Record<string, string> = {}
-  subgroups.forEach((sg, i) => {
-    map[sg.id] = subgroupPalette[i % subgroupPalette.length]
-  })
+  const taken = new Set<number>()
+
+  for (const sg of subgroups) {
+    const index = pinned[sg.id]
+    if (index === undefined || index === null) continue
+    // Modulo so a stored index still resolves if the palette is ever shortened, rather than
+    // handing back `undefined` and dropping the dot entirely.
+    const slot = ((index % subgroupPalette.length) + subgroupPalette.length) % subgroupPalette.length
+    map[sg.id] = subgroupPalette[slot]
+    taken.add(slot)
+  }
+
+  let next = 0
+  for (const sg of subgroups) {
+    if (map[sg.id]) continue
+    // Once every color is pinned there is nothing left to skip to, so stop skipping — otherwise
+    // this loop would never terminate.
+    if (taken.size < subgroupPalette.length) {
+      while (taken.has(next % subgroupPalette.length)) next++
+    }
+    const slot = next % subgroupPalette.length
+    map[sg.id] = subgroupPalette[slot]
+    taken.add(slot)
+    next++
+  }
+
   return map
+}
+
+/** The palette index a color came from — what a tap on a swatch stores in `groups.color_index`. */
+export function paletteIndexOf(color: string): number {
+  return subgroupPalette.indexOf(color as (typeof subgroupPalette)[number])
 }
 
 /**

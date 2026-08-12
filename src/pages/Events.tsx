@@ -157,7 +157,12 @@ export function filterMoments(
 
     if (personFilter !== 'all' && !attendees.has(personFilter)) return false
 
-    if (groupFilter !== 'all' && !groups.some((g) => g.id === groupFilter)) return false
+    // "No group yet" is the manual counterpart to Home's event-tagging suggestion card, which only
+    // offers events where EVERY attendee shares a group. Everything it can't reach — one-attendee
+    // events, mixed crowds, the old moments that predate group tagging existing at all — is only
+    // findable by listing the untagged ones, which is what this does.
+    if (groupFilter === 'none' && groups.length > 0) return false
+    if (groupFilter !== 'all' && groupFilter !== 'none' && !groups.some((g) => g.id === groupFilter)) return false
 
     if (subgroupFilter !== 'all' && !groups.some((g) => g.id === subgroupFilter)) return false
 
@@ -203,6 +208,7 @@ export default function Events({
   onSelectGroup,
   onSelectEvent,
   onManageTags,
+  onManageLocations,
 }: {
   // Lifted up into App.tsx (alongside groupsSearch/groupsTypeFilter) so filters survive
   // navigating into an event and back, instead of resetting the way page-local state would.
@@ -212,6 +218,7 @@ export default function Events({
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onManageTags: () => void
+  onManageLocations: () => void
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
@@ -311,6 +318,7 @@ export default function Events({
       creating={creating}
       createError={createError}
       onManageTags={onManageTags}
+      onManageLocations={onManageLocations}
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
@@ -377,6 +385,7 @@ export function EventsView({
   creating,
   createError,
   onManageTags,
+  onManageLocations,
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
@@ -393,6 +402,9 @@ export function EventsView({
   creating: boolean
   createError: string | null
   onManageTags: () => void
+  // Optional so the read-only landing-page demo (DemoEvents.tsx) doesn't have to pass a no-op for
+  // a link it never renders.
+  onManageLocations?: () => void
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
@@ -461,9 +473,15 @@ export function EventsView({
   }
   if (filters.groupFilter !== 'all') {
     const group = filterOptions.groups.find((g) => g.id === filters.groupFilter)
+    const label =
+      filters.groupFilter === 'none'
+        ? 'Group: none yet'
+        : group
+          ? `Group: ${groupLabel(group.id, group.name)}`
+          : 'Group: (removed)'
     activeFilterChips.push({
       key: 'group',
-      label: group ? `Group: ${groupLabel(group.id, group.name)}` : 'Group: (removed)',
+      label,
       onRemove: () => patchFilters({ groupFilter: 'all' }),
     })
   }
@@ -501,9 +519,14 @@ export function EventsView({
         )}
       </div>
       {!readOnly && (
-        <button type="button" onClick={onManageTags} style={styles.manageTagsLink}>
-          Manage tags →
-        </button>
+        <div style={styles.manageLinkRow}>
+          <button type="button" onClick={onManageTags} style={styles.manageTagsLink}>
+            Manage tags →
+          </button>
+          <button type="button" onClick={onManageLocations} style={styles.manageTagsLink}>
+            Manage locations →
+          </button>
+        </div>
       )}
       {createError && <p style={styles.addErrorText}>{createError}</p>}
 
@@ -633,6 +656,7 @@ export function EventsView({
               aria-label="Filter by group"
             >
               <option value="all">All groups</option>
+              <option value="none">No group yet</option>
               {filterOptions.groups.map((g) => (
                 <option key={g.id} value={g.id}>
                   {groupLabel(g.id, g.name)}
@@ -790,6 +814,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   addErrorText: { color: colors.danger, fontSize: fontSize.body, marginBottom: space.xl },
+  // Wraps rather than pushing the page sideways on a phone — the nav-overflow lesson (§10).
+  manageLinkRow: { display: 'flex', gap: space.xl, flexWrap: 'wrap' },
   manageTagsLink: {
     display: 'inline-block',
     background: 'none',

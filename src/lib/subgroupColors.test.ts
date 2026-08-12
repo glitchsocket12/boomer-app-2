@@ -30,6 +30,48 @@ describe('subgroupColorMap', () => {
   it('returns an empty map for a group with no subgroups', () => {
     expect(subgroupColorMap([])).toEqual({})
   })
+
+  it('honours a pinned color index over the position it would have got', () => {
+    const map = subgroupColorMap(subgroups, { cousins: 4 })
+    expect(map.cousins).toBe(subgroupPalette[4])
+  })
+
+  it('routes the automatic colors around a pin so they never collide', () => {
+    // Without the skip, "aunts" at position 1 would land on palette[1] — the very color pinned.
+    const map = subgroupColorMap(subgroups, { aunts: 1 })
+    expect(map.aunts).toBe(subgroupPalette[1])
+    expect(map.cousins).toBe(subgroupPalette[0])
+
+    const pinnedFirst = subgroupColorMap(subgroups, { aunts: 0 })
+    expect(pinnedFirst.aunts).toBe(subgroupPalette[0])
+    expect(pinnedFirst.cousins).toBe(subgroupPalette[1])
+  })
+
+  it('wraps an out-of-range or negative stored index back into the palette', () => {
+    expect(subgroupColorMap(subgroups, { cousins: subgroupPalette.length })).toMatchObject({
+      cousins: subgroupPalette[0],
+    })
+    expect(subgroupColorMap(subgroups, { cousins: -1 })).toMatchObject({
+      cousins: subgroupPalette[subgroupPalette.length - 1],
+    })
+  })
+
+  it('still terminates and colors everyone when every palette entry is pinned', () => {
+    const many = Array.from({ length: subgroupPalette.length + 2 }, (_, i) => sg(`g${i}`, `G${i}`, []))
+    const pinned: Record<string, number> = {}
+    subgroupPalette.forEach((_, i) => {
+      pinned[`g${i}`] = i
+    })
+    const map = subgroupColorMap(many, pinned)
+    expect(Object.keys(map)).toHaveLength(many.length)
+    expect(Object.values(map).every(Boolean)).toBe(true)
+  })
+
+  it('ignores a pin for a subgroup that is not on this page', () => {
+    const map = subgroupColorMap(subgroups, { somewhereElse: 3 })
+    expect(map.cousins).toBe(subgroupPalette[0])
+    expect(map.aunts).toBe(subgroupPalette[1])
+  })
 })
 
 describe('subgroupsByPerson', () => {

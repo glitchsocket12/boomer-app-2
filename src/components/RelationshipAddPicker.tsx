@@ -15,18 +15,27 @@ export default function RelationshipAddPicker({
   onSelectExisting,
   onCreateNew,
   placeholder = 'Search or type a name…',
+  emptyLabel,
 }: {
   people: PersonOption[]
   excludeIds?: string[]
   onSelectExisting: (person: PersonOption) => void
   onCreateNew: (name: string) => void
   placeholder?: string
+  // Spelled-out invitation ("Add a spouse") for callers whose slot is currently EMPTY — a bare "+"
+  // beside a name reads fine, but a bare "+" alone in an empty box doesn't say what it would add.
+  // Optional so the family tree's per-tier "+" is untouched.
+  emptyLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
 
   if (!open) {
-    return (
+    return emptyLabel ? (
+      <button type="button" onClick={() => setOpen(true)} style={styles.emptyButton}>
+        + {emptyLabel}
+      </button>
+    ) : (
       <button type="button" onClick={() => setOpen(true)} style={styles.plusButton} aria-label="Add person">
         +
       </button>
@@ -102,6 +111,24 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontSize: fontSize.body,
     lineHeight: 1,
+    fontFamily,
+  },
+  emptyButton: {
+    // 44px min height is the touch-target floor the nav fix settled on (PROJECT_CONTEXT §10) —
+    // this is the only control in an otherwise empty box, so it has to be comfortably tappable.
+    minHeight: '44px',
+    // A 100% BASIS rather than `width: 100%`: this is a flex item in a wrapping row, so stating the
+    // basis is what makes it claim the whole row at any box width instead of depending on shrink
+    // behaviour.
+    flex: '1 1 100%',
+    textAlign: 'left',
+    borderRadius: radius.md,
+    border: `1px dashed ${neutral.grey300}`,
+    color: colors.textFaintest,
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.6rem',
     fontFamily,
   },
   picker: {

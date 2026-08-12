@@ -22,11 +22,16 @@ type ReminderRef = { label: string; month: number; day: number }
 type AllPerson = { id: string; name: string; last_name: string | null }
 type CircleIds = { spouse: string[]; kids: string[]; parents: string[]; siblings: string[] }
 
-const CIRCLE_BOXES: { category: CircleCategory; title: string }[] = [
-  { category: 'spouse', title: 'Spouse' },
-  { category: 'kids', title: 'Kids' },
-  { category: 'parents', title: 'Parents' },
-  { category: 'siblings', title: 'Siblings' },
+// Backlog item 32(a), settled: an empty category stays VISIBLE and reads as an invitation, rather
+// than hiding until something fills it. Hiding would make the four boxes appear one at a time in a
+// shifting layout, and the whole point of this page is to prompt the links that aren't recorded
+// yet — a box you can't see can't ask for anything. `addLabel` is what makes the empty state an
+// actual invitation instead of a bare "+".
+const CIRCLE_BOXES: { category: CircleCategory; title: string; addLabel: string }[] = [
+  { category: 'spouse', title: 'Spouse', addLabel: 'Add a spouse' },
+  { category: 'kids', title: 'Kids', addLabel: 'Add a child' },
+  { category: 'parents', title: 'Parents', addLabel: 'Add a parent' },
+  { category: 'siblings', title: 'Siblings', addLabel: 'Add a sibling' },
 ]
 
 const MONTH_NAMES = [
@@ -231,6 +236,7 @@ export default function Circle({
                 excludeIds={[selfPerson.id, ...circleIds[box.category]]}
                 onSelectExisting={(p) => handleSelectExisting(box.category, p)}
                 onCreateNew={(name) => handleCreateNew(box.category, name)}
+                emptyLabel={circleIds[box.category].length === 0 ? box.addLabel : undefined}
               />
             </div>
           </div>

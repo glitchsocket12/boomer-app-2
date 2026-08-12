@@ -8,11 +8,34 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const LINKED_CATEGORIES = new Set(["spouse", "siblings", "parents", "kids"])
+// The five relationship categories here mirror the closed enum every capture path already shares
+// (`spouse | partner | parent | child | sibling`, _shared/relationships.ts) — "partner" was the one
+// missing, and its absence was doing real damage: a dating pair recorded in the relationships table
+// got folded in under "spouse" and rendered "Married to <name>" on the profile. Same bug class the
+// family tree hit in 2026-08-01 (Gus Reynolds / Sarah), from the other side.
+//
+// The three group categories deliberately keep their PLURAL spelling rather than matching the
+// enum's singular. They're the stored shape of every cached `people.key_facts` row and the key
+// `_shared/relationships.ts`'s KEY_FACTS_CATEGORY looks them up by, so renaming them would need an
+// AI regeneration sweep across every profile to buy nothing a reader would ever see.
+const LINKED_CATEGORIES = new Set(["spouse", "partner", "siblings", "parents", "kids"])
+
+// spouse/partner render a lead-in phrase the model can word for itself ("Engaged to", "Dating");
+// the group categories always use their fixed label.
+const LABELLED_CATEGORIES = new Set(["spouse", "partner"])
 const DEFAULT_LABELS: Record<string, string> = {
+  spouse: "Married to",
+  partner: "In a relationship with",
   siblings: "Siblings:",
   parents: "Parents:",
   kids: "Children:",
+}
+// Used only when the relationship is stated with no name at all ("she's married") — the label has
+// to stand alone as a whole sentence. Mirrors `unlinkRelationship`'s note phrasing in
+// src/lib/writeRelationship.ts, so the chip and the note it came from read the same way.
+const NAMELESS_LABELS: Record<string, string> = {
+  spouse: "Married.",
+  partner: "In a relationship.",
 }
 
 serve(async (req) => {
@@ -109,7 +132,8 @@ serve(async (req) => {
         system: [{ type: "text", text: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events.
 
 Only extract facts that are EXPLICITLY stated in the notes. Never infer, guess, or pad with generic filler. Focus specifically on these categories:
-- "spouse": their spouse or partner
+- "spouse": who they are married to (or engaged to)
+- "partner": who they are dating / romantically involved with but NOT married to — use this, not "spouse", for a boyfriend/girlfriend/partner
 - "siblings": their brothers/sisters, by name if given
 - "parents": their mother/father, by name if given
 - "kids": their children, by name if given
@@ -122,7 +146,7 @@ Do not use one-off event/gathering details (who attended a party, what was serve
 Respond with ONLY a JSON object in this exact shape:
 {"facts": [
   {"category": "location" | "education" | "other", "text": "short factual bullet, under 15 words, third person"},
-  {"category": "spouse", "relationship_label": "a short lead-in phrase describing the relationship as stated, e.g. \\"Married to\\", \\"Engaged to\\", \\"Partner of\\" — or, if no name is given at all, a complete standalone phrase like \\"Married.\\"", "person_names": ["exactly as given — 0 or 1 names"]},
+  {"category": "spouse" | "partner", "relationship_label": "a short lead-in phrase describing the relationship as stated, e.g. \\"Married to\\", \\"Engaged to\\", \\"Dating\\" — or, if no name is given at all, a complete standalone phrase like \\"Married.\\"", "person_names": ["exactly as given — 0 or 1 names"]},
   {"category": "siblings" | "parents" | "kids", "person_names": ["exactly as given, one per person"], "text": "a fallback bullet ONLY when NO names at all are given, e.g. \\"Has two kids.\\" — omit/null when person_names has anything in it"}
 ]}
 Names must NEVER appear inside "relationship_label" or "text" — the app renders each name separately as a clickable link when possible, so repeating a name in those fields would show it twice.
@@ -205,11 +229,12 @@ If nothing qualifies, respond {"facts": []}.`, cache_control: { type: "ephemeral
         return isConfident ? { name: nameById[id], personId: id } : { name: n }
       })
 
-      if (f.category === "spouse") {
-        // The model doesn't always fill in relationship_label even when told to — fall back to
-        // "Married to" (the overwhelmingly common case) rather than ever rendering a bare name
-        // with no lead-in text.
-        const relationshipLabel = f.relationship_label?.trim() || (people.length ? "Married to" : "Married.")
+      if (LABELLED_CATEGORIES.has(f.category)) {
+        // The model doesn't always fill in relationship_label even when told to — fall back to the
+        // category's own default rather than ever rendering a bare name with no lead-in text.
+        const relationshipLabel =
+          f.relationship_label?.trim() ||
+          (people.length ? DEFAULT_LABELS[f.category] : NAMELESS_LABELS[f.category])
         return { category: f.category, relationshipLabel, people }
       }
 
@@ -229,7 +254,10 @@ If nothing qualifies, respond {"facts": []}.`, cache_control: { type: "ephemeral
     // AI-extracted fact, just fills in any linked person the table already confidently knows about.
     const relTable = await getRelationshipsForPerson(supabaseClient, personId)
     const RELATIONSHIP_CATEGORY_IDS: Record<string, string[]> = {
-      spouse: [...relTable.spouseIds, ...relTable.partnerIds],
+      // Kept apart on purpose. Merging partnerIds into spouse here is what made a dating pair read
+      // "Married to <name>" — the table already distinguishes the two kinds, so the chip should too.
+      spouse: relTable.spouseIds,
+      partner: relTable.partnerIds,
       siblings: relTable.siblingIds,
       parents: relTable.parentIds,
       kids: relTable.childIds,
@@ -239,7 +267,7 @@ If nothing qualifies, respond {"facts": []}.`, cache_control: { type: "ephemeral
       if (extraIds.length === 0) continue
       let fact = facts.find((f: any) => f.category === category) as any
       if (!fact) {
-        fact = { category, relationshipLabel: category === "spouse" ? "Married to" : DEFAULT_LABELS[category], people: [] }
+        fact = { category, relationshipLabel: DEFAULT_LABELS[category], people: [] }
         facts.push(fact)
       }
       const existingIds = new Set((fact.people ?? []).map((p: any) => p.personId).filter(Boolean))

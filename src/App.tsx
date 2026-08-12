@@ -20,6 +20,7 @@ import PersonDetail from './pages/PersonDetail'
 import DunbarDetail from './pages/DunbarDetail'
 import DueForUpdate from './pages/DueForUpdate'
 import ManageTags from './pages/ManageTags'
+import ManageLocations from './pages/ManageLocations'
 import GenderFill from './pages/GenderFill'
 import ManageGroupTypes from './pages/ManageGroupTypes'
 import Circle from './pages/Circle'
@@ -54,6 +55,7 @@ type Crumb =
   | { type: 'dunbar'; id: string; label: string }
   | { type: 'nudges'; id: string; label: string }
   | { type: 'manageTags'; id: string; label: string }
+  | { type: 'manageLocations'; id: string; label: string }
   | { type: 'manageGroupTypes'; id: string; label: string }
   | { type: 'genderFill'; id: string; label: string }
   | { type: 'circle'; id: string; label: string }
@@ -79,6 +81,7 @@ const CRUMB_TYPES = [
   'dunbar',
   'nudges',
   'manageTags',
+  'manageLocations',
   'manageGroupTypes',
   'genderFill',
   'circle',
@@ -98,7 +101,7 @@ const CRUMB_TYPES = [
 // Crumb types that are single fixed pages rather than records with a real id (their `id` is
 // just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
 // segment for these, not a `/type/id` pair.
-const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'manageGroupTypes', 'genderFill', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
+const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'manageLocations', 'manageGroupTypes', 'genderFill', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
 
 const AUTH_VIEWS = new Set<AuthView>(['landing', 'login', 'signup', 'demo'])
 
@@ -557,6 +560,8 @@ export default function App() {
     )
   } else if (current?.type === 'manageTags') {
     content = <ManageTags onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'manageLocations') {
+    content = <ManageLocations onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'manageGroupTypes') {
     content = <ManageGroupTypes onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'genderFill') {
@@ -680,6 +685,9 @@ export default function App() {
             onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
             onManageTags={() => pushCrumb({ type: 'manageTags', id: 'manageTags', label: 'Manage Tags' })}
+            onManageLocations={() =>
+              pushCrumb({ type: 'manageLocations', id: 'manageLocations', label: 'Manage Locations' })
+            }
           />
         )}
         {view === 'calendar' && (

@@ -60,7 +60,7 @@ export function computeFullName(person: PersonRow): string {
 type LinkedPerson = { name: string; personId?: string }
 
 export type KeyFact = {
-  category: 'spouse' | 'siblings' | 'parents' | 'kids' | 'location' | 'education' | 'other'
+  category: 'spouse' | 'partner' | 'siblings' | 'parents' | 'kids' | 'location' | 'education' | 'other'
   text?: string
   relationshipLabel?: string
   people?: LinkedPerson[]
@@ -74,8 +74,11 @@ type OtherPerson = { id: string; name: string; last_name: string | null }
 const KEY_FACT_CATEGORY_ORDER: Partial<Record<KeyFact['category'], number>> = {
   parents: 0,
   spouse: 1,
-  siblings: 2,
-  kids: 3,
+  // Sits beside spouse rather than after the kids: it answers the same question, and only one of
+  // the two is ever on a profile in practice.
+  partner: 2,
+  siblings: 3,
+  kids: 4,
 }
 export function sortKeyFacts(facts: KeyFact[]): KeyFact[] {
   return facts
@@ -108,11 +111,17 @@ const RELATIONSHIP_NOTE_PATTERNS: RegExp[] = [
   /^In a relationship with (.+)\.$/i,
 ]
 
-const NUDGE_CATEGORIES: { category: 'spouse' | 'kids' | 'location' | 'education'; question: (name: string) => string }[] = [
-  { category: 'spouse', question: (name) => `Is ${name} married? If so, what's their spouse's name?` },
-  { category: 'kids', question: (name) => `Does ${name} have kids? What are their names?` },
-  { category: 'location', question: (name) => `Where does ${name} live?` },
-  { category: 'education', question: (name) => `Where did ${name} go to school?` },
+// `satisfiedBy` is every category that answers the question, not just the one it's named for —
+// "Is X married?" is a silly thing to keep asking about someone already recorded as dating.
+const NUDGE_CATEGORIES: {
+  category: 'spouse' | 'kids' | 'location' | 'education'
+  satisfiedBy: KeyFact['category'][]
+  question: (name: string) => string
+}[] = [
+  { category: 'spouse', satisfiedBy: ['spouse', 'partner'], question: (name) => `Is ${name} married? If so, what's their spouse's name?` },
+  { category: 'kids', satisfiedBy: ['kids'], question: (name) => `Does ${name} have kids? What are their names?` },
+  { category: 'location', satisfiedBy: ['location'], question: (name) => `Where does ${name} live?` },
+  { category: 'education', satisfiedBy: ['education'], question: (name) => `Where did ${name} go to school?` },
 ]
 
 export default function PersonDetail({
@@ -1023,7 +1032,7 @@ export function PersonDetailView({
   const [kinPathOpen, setKinPathOpen] = useState(false)
 
   const fullName = person ? computeFullName(person) : personName
-  const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => f.category === c.category))
+  const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => c.satisfiedBy.includes(f.category)))
   const showNudge = !readOnly && (notes.length === 0 || missingFactCategories.length > 0)
 
   return (

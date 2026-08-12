@@ -35,12 +35,17 @@ import UndoBanner from '../components/UndoBanner'
 import ManagePanel from '../components/ManagePanel'
 import FloatingActionBubble from '../components/FloatingActionBubble'
 import { IS_TOUCH } from '../lib/touch'
-import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
+import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space, subgroupPalette } from '../lib/theme'
 import { fullName } from '../lib/personLabel'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 export type GroupRef = { id: string; name: string }
 export type SubgroupRef = GroupRef & { group_type: string | null; person_groups: { people: PersonRef | null }[] }
+
+// Latched once `groups.color_index` reports 42703, so the pre-migration probe costs one failed
+// request per session rather than one per group page opened. Module-level (not state) precisely
+// because it must outlive this page unmounting, which it does on every navigation.
+let colorPinsUnsupported = false
 export type GroupNote = { id: string; content: string; created_at: string }
 
 export type Moment = {
@@ -153,6 +158,11 @@ export default function GroupDetail({
   const [parentGroup, setParentGroup] = useState<GroupRef | null>(null)
   const [parentMembers, setParentMembers] = useState<PersonRef[]>([])
   const [subgroups, setSubgroups] = useState<SubgroupRef[]>([])
+  // subgroupId -> pinned palette index (`groups.color_index`, item 82's manual-override half).
+  // Loaded by its OWN query, never folded into the subgroups select — pre-migration that select
+  // would 42703 and take the whole subgroup grid down with it, the isolation pattern item 57 set.
+  // `null` means the column isn't there yet, which is what hides the swatch control.
+  const [subgroupColorPins, setSubgroupColorPins] = useState<Record<string, number> | null>(null)
   // Everyone in a subgroup below this one, at ANY depth — `subgroups` above only holds the direct
   // children's rosters, and a crew under a flight under a squadron still belongs to the squadron.
   const [descendantMembers, setDescendantMembers] = useState<PersonRef[]>([])
@@ -378,7 +388,51 @@ export default function GroupDetail({
       .eq('parent_group_id', groupId)
       .order('name')
     setSubgroups(error ? [] : (data as unknown as SubgroupRef[]) ?? [])
+    loadSubgroupColorPins()
     loadParent()
+  }
+
+  // Isolated on purpose — see the subgroupColorPins declaration. A missing column (pre-migration)
+  // leaves pins at null, which means "auto-colour everything, hide the swatch", not a broken page.
+  async function loadSubgroupColorPins() {
+    // Asking again after the column has already said it doesn't exist just spends a round-trip and
+    // logs another 400 in the console on every group you open. One answer per session is enough;
+    // running the migration takes effect on the next reload, same as any other schema change.
+    if (colorPinsUnsupported) {
+      setSubgroupColorPins(null)
+      return
+    }
+    const { data, error } = await supabase
+      .from('groups')
+      .select('id, color_index')
+      .eq('parent_group_id', groupId)
+    if (error) {
+      // 42703 is the pre-migration case; anything else is transient and shouldn't latch.
+      if (error.code === '42703') colorPinsUnsupported = true
+      setSubgroupColorPins(null)
+      return
+    }
+    const pins: Record<string, number> = {}
+    for (const row of (data as { id: string; color_index: number | null }[] | null) ?? []) {
+      if (row.color_index !== null && row.color_index !== undefined) pins[row.id] = row.color_index
+    }
+    setSubgroupColorPins(pins)
+  }
+
+  async function handleRecolorSubgroup(subgroupId: string, colorIndex: number | null): Promise<boolean> {
+    const { error } = await supabase.from('groups').update({ color_index: colorIndex }).eq('id', subgroupId)
+    if (error) {
+      setSubgroupError("Couldn't save that colour — please try again.")
+      return false
+    }
+    setSubgroupError(null)
+    setSubgroupColorPins((prev) => {
+      const next = { ...(prev ?? {}) }
+      if (colorIndex === null) delete next[subgroupId]
+      else next[subgroupId] = colorIndex
+      return next
+    })
+    return true
   }
 
   // The rollup half of subgroup membership (founder, 2026-08-10): anyone in a subgroup is in this
@@ -1167,6 +1221,8 @@ export default function GroupDetail({
       suggestedFamilyMembers={suggestedFamilyMembers}
       parentGroup={parentGroup}
       subgroups={subgroups}
+      subgroupColorPins={subgroupColorPins}
+      onRecolorSubgroup={handleRecolorSubgroup}
       addingSubgroup={addingSubgroup}
       subgroupError={subgroupError}
       onAddSubgroup={handleAddSubgroup}
@@ -1296,6 +1352,8 @@ export function GroupDetailView({
   suggestedFamilyMembers = [],
   parentGroup = null,
   subgroups = [],
+  subgroupColorPins = null,
+  onRecolorSubgroup,
   addingSubgroup = false,
   subgroupError = null,
   onAddSubgroup = () => {},
@@ -1398,6 +1456,10 @@ export function GroupDetailView({
   suggestedFamilyMembers?: PersonRef[]
   parentGroup?: GroupRef | null
   subgroups?: SubgroupRef[]
+  // Pinned swatch colours, or null when `groups.color_index` isn't migrated yet — which is also
+  // what hides the recolour control, since there'd be nowhere to save a choice.
+  subgroupColorPins?: Record<string, number> | null
+  onRecolorSubgroup?: (subgroupId: string, colorIndex: number | null) => Promise<boolean>
   addingSubgroup?: boolean
   subgroupError?: string | null
   onAddSubgroup?: () => void
@@ -1541,7 +1603,10 @@ export function GroupDetailView({
   // counts -- no extra query. The tiles carry the color as a left rule and the parent-level member
   // chips repeat it as a dot, so "which subgroup is she in?" is answerable without opening any of
   // them, and "no dot at all" answers "nobody's sorted her yet."
-  const subgroupColors = useMemo(() => subgroupColorMap(subgroups), [subgroups])
+  const subgroupColors = useMemo(
+    () => subgroupColorMap(subgroups, subgroupColorPins ?? {}),
+    [subgroups, subgroupColorPins]
+  )
   const memberSubgroups = useMemo(() => subgroupsByPerson(subgroups), [subgroups])
   // A rolled-up member is by definition in a subgroup somewhere, so they're never "unassigned" —
   // even when the subgroup they're in is a grandchild, too deep to have a colour dot of its own
@@ -1908,8 +1973,12 @@ export function GroupDetailView({
               key={sg.id}
               subgroup={sg}
               color={subgroupColors[sg.id]}
+              isPinned={subgroupColorPins?.[sg.id] !== undefined}
               isDragActive={activeId !== null}
               onSelectGroup={onSelectGroup}
+              // Hidden in the demo, and hidden until the migration runs — with no column to write
+              // to, offering the choice would just fail on tap.
+              onRecolor={!readOnly && subgroupColorPins !== null ? onRecolorSubgroup : undefined}
             />
           ))}
         </div>
@@ -2468,19 +2537,42 @@ function MemberChip({
 function SubgroupTile({
   subgroup,
   color,
+  isPinned = false,
   isDragActive,
   onSelectGroup,
+  onRecolor,
 }: {
   subgroup: SubgroupRef
   // This subgroup's assigned color, repeated as a dot on every parent-level member chip that
   // belongs to it — which makes this tile grid the legend for the member list above.
   color?: string
+  // Whether that color was chosen by hand rather than assigned by position. Only affects whether
+  // "Back to automatic" is offered — the tile itself looks the same either way, because from the
+  // reader's side a color is a color.
+  isPinned?: boolean
   isDragActive: boolean
   onSelectGroup: (group: GroupRef) => void
+  // Absent in the demo and before `groups.color_index` is migrated, which is what hides the swatch.
+  onRecolor?: (subgroupId: string, colorIndex: number | null) => Promise<boolean>
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: subgroup.id })
+  const [picking, setPicking] = useState(false)
+  const [saving, setSaving] = useState(false)
   const memberCount = (subgroup.person_groups ?? []).filter((pg) => pg.people).length
-  return (
+
+  async function choose(colorIndex: number | null) {
+    if (!onRecolor) return
+    setSaving(true)
+    const ok = await onRecolor(subgroup.id, colorIndex)
+    setSaving(false)
+    // Left open on failure so the error banner above isn't hidden behind a popover that closed as
+    // if the tap had worked.
+    if (ok) setPicking(false)
+  }
+
+  // The swatch has to sit OUTSIDE the tile — the tile is itself a <button> that navigates, and a
+  // button inside a button is invalid markup that browsers resolve inconsistently.
+  const tile = (
     <button
       ref={setNodeRef}
       key={subgroup.id}
@@ -2511,6 +2603,54 @@ function SubgroupTile({
         {subgroup.group_type ? ` · ${subgroup.group_type}` : ''}
       </span>
     </button>
+  )
+
+  if (!onRecolor) return tile
+
+  return (
+    <div style={styles.subgroupTileWrap}>
+      {tile}
+      <button
+        type="button"
+        onClick={() => setPicking((open) => !open)}
+        style={styles.subgroupSwatchButton}
+        aria-label={`Change the colour for ${subgroup.name}`}
+        aria-expanded={picking}
+      >
+        <span style={{ ...styles.subgroupSwatchDot, backgroundColor: color ?? colors.textFaintest }} />
+      </button>
+      {picking && (
+        <div style={styles.palettePopover} role="group" aria-label={`Colour for ${subgroup.name}`}>
+          <div style={styles.paletteRow}>
+            {subgroupPalette.map((paletteColor, i) => (
+              <button
+                key={paletteColor}
+                type="button"
+                onClick={() => choose(i)}
+                disabled={saving}
+                aria-label={`Colour ${i + 1}`}
+                aria-pressed={color === paletteColor}
+                style={{
+                  ...styles.paletteOption,
+                  backgroundColor: paletteColor,
+                  ...(color === paletteColor ? styles.paletteOptionSelected : {}),
+                }}
+              />
+            ))}
+          </div>
+          <div style={styles.paletteFooter}>
+            {isPinned && (
+              <button type="button" onClick={() => choose(null)} disabled={saving} style={styles.paletteAutoButton}>
+                Back to automatic
+              </button>
+            )}
+            <button type="button" onClick={() => setPicking(false)} disabled={saving} style={styles.paletteAutoButton}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2752,6 +2892,70 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.75rem 0.9rem',
     cursor: 'pointer',
     fontFamily,
+    // The wrapper below is now the grid item, so the tile has to fill it rather than shrink to
+    // its own content — otherwise recolourable tiles would be narrower than plain ones.
+    width: '100%',
+    height: '100%',
+    boxSizing: 'border-box',
+  },
+  subgroupTileWrap: { position: 'relative' },
+  subgroupSwatchButton: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    // Full 44px touch target while the visible dot stays small — the padding does the work, the
+    // same trick the nav tabs use to hit the minimum without looking chunky.
+    width: '44px',
+    height: '44px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  subgroupSwatchDot: {
+    display: 'inline-block',
+    width: '12px',
+    height: '12px',
+    borderRadius: radius.circle,
+    border: `1px solid ${neutral.grey200}`,
+  },
+  palettePopover: {
+    position: 'absolute',
+    top: '40px',
+    right: 0,
+    zIndex: 20,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: radius.md,
+    border: border.light,
+    backgroundColor: colors.surface,
+    boxShadow: shadow.modal,
+  },
+  paletteRow: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: space.sm },
+  paletteOption: {
+    width: '32px',
+    height: '32px',
+    borderRadius: radius.circle,
+    border: `2px solid transparent`,
+    cursor: 'pointer',
+    padding: 0,
+  },
+  paletteOptionSelected: { border: `2px solid ${colors.inkPlain}`, outline: `2px solid ${colors.surface}` },
+  paletteFooter: { display: 'flex', gap: space.md, justifyContent: 'flex-end', flexWrap: 'wrap' },
+  paletteAutoButton: {
+    fontSize: fontSize.small,
+    color: colors.textBody,
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: '0.25rem 0',
+    fontFamily,
+    whiteSpace: 'nowrap',
   },
   subgroupTileName: { fontSize: fontSize.base, color: colors.ink, display: 'flex', alignItems: 'center', gap: space.sm },
   subgroupTileMeta: { fontSize: fontSize.small, color: colors.textFaint },

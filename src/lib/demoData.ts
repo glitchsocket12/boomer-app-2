@@ -71,7 +71,7 @@ export const DEMO_TAGS: DemoTag[] = [
 export type DemoReminder = { personId: string; label: 'Birthday' | 'Anniversary'; month: number; day: number }
 
 export type DemoKeyFact = {
-  category: 'spouse' | 'siblings' | 'parents' | 'kids' | 'location' | 'education' | 'other'
+  category: 'spouse' | 'partner' | 'siblings' | 'parents' | 'kids' | 'location' | 'education' | 'other'
   text?: string
   relationshipLabel?: string
   people?: { name: string; personId?: string }[]
