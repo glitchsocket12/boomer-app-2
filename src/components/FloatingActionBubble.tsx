@@ -51,11 +51,19 @@ export default function FloatingActionBubble({
   label,
   primaryBody,
   actions,
+  error = null,
 }: {
   /** Accessible name for the closed bubble, e.g. "Add to this event". */
   label: string
   primaryBody?: React.ReactNode
   actions: BubbleAction[]
+  /**
+   * Failure message for a write started from in here (2026-08-11, item 91). Shown at whichever
+   * level is open, because the write that failed was started from one of them and the page's own
+   * error banner lives inside ManagePanel — which isn't open while you're adding someone, so
+   * until now a failed add had nowhere at all to report itself.
+   */
+  error?: string | null
 }) {
   const [open, setOpen] = useState(false)
   const [activeKey, setActiveKey] = useState<string | null>(null)
@@ -137,6 +145,12 @@ export default function FloatingActionBubble({
             ×
           </button>
         </div>
+
+        {error && (
+          <p style={styles.errorBanner} role="alert">
+            {error}
+          </p>
+        )}
 
         {active ? (
           typeof active.body === 'function'
@@ -221,6 +235,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     outline: 'none',
   },
   headerRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
+  errorBanner: { margin: 0, fontSize: fontSize.body, color: colors.danger },
   panelLabel: { fontSize: fontSize.label, fontWeight: 'bold', color: colors.ink },
   backButton: {
     background: 'none',

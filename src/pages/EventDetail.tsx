@@ -413,9 +413,21 @@ export default function EventDetail({
     }
   }
 
-  async function handleAddAttendee(person: PersonRef) {
-    await supabase.from('notes').insert({ person_id: person.id, moment_id: eventId, content: ATTENDEE_PLACEHOLDER })
+  // Every write below returns whether it actually landed (2026-08-11, item 91). Before this they
+  // all discarded the { error } Supabase hands back, so a rejected insert still drew "✓ Added X"
+  // and a chip that only disappeared on the next reload — and since the action bubble became the
+  // only way to add anything here (item 90), that confirmation line is the app's main feedback.
+  async function handleAddAttendee(person: PersonRef): Promise<boolean> {
+    setActionError(null)
+    const { error } = await supabase
+      .from('notes')
+      .insert({ person_id: person.id, moment_id: eventId, content: ATTENDEE_PLACEHOLDER })
+    if (error) {
+      setActionError(`Couldn't add ${person.name} to this event — please try again.`)
+      return false
+    }
     await handleNoteSaved()
+    return true
   }
 
   // Confirm a whole suggestion box at once — the counterpart to handleDenyAllSuggestions, and
@@ -425,9 +437,14 @@ export default function EventDetail({
   // person for what the user experiences as a single click (CLAUDE.md rule 3).
   async function handleApproveAllSuggestions(people: PersonRef[]) {
     if (people.length === 0) return
-    await supabase
+    setActionError(null)
+    const { error } = await supabase
       .from('notes')
       .insert(people.map((p) => ({ person_id: p.id, moment_id: eventId, content: ATTENDEE_PLACEHOLDER })))
+    if (error) {
+      setActionError("Couldn't add those people to this event — please try again.")
+      return
+    }
     await handleNoteSaved()
   }
 
@@ -435,9 +452,9 @@ export default function EventDetail({
   // name the same way every other create-a-person path in the app does (first word is `name`, the
   // rest is `last_name`), so someone added here is indistinguishable from one added via import,
   // the chat box, or a group's member list.
-  async function handleCreateAndAddAttendee(rawName: string) {
+  async function handleCreateAndAddAttendee(rawName: string): Promise<boolean> {
     const typed = rawName.trim()
-    if (!typed) return
+    if (!typed) return false
     setActionError(null)
     const {
       data: { user },
@@ -450,53 +467,79 @@ export default function EventDetail({
       .single()
     if (error || !newPerson) {
       setActionError("Couldn't add that person — please try again.")
-      return
+      return false
     }
     // Keep the local roster in sync so the new name is immediately searchable in this same picker
     // (and matches the suggestion lookups) without a full page reload.
     setAllPeople((prev) => [...prev, newPerson as PersonRef])
-    await handleAddAttendee(newPerson as PersonRef)
+    return handleAddAttendee(newPerson as PersonRef)
   }
 
-  async function handleTagGroup(groupId: string) {
-    await supabase
+  async function handleTagGroup(groupId: string): Promise<boolean> {
+    setActionError(null)
+    const { error } = await supabase
       .from('moment_groups')
       .upsert({ moment_id: eventId, group_id: groupId }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+    if (error) {
+      setActionError("Couldn't associate that group — please try again.")
+      return false
+    }
     await loadMoment(true)
+    return true
   }
 
   // "Untagging" is pure detachment from moment_groups, not deletion — same non-destructive
   // reasoning as handleRemoveAttendee above. The group itself and its own roster are untouched.
   async function handleUntagGroup(groupId: string) {
-    await supabase.from('moment_groups').delete().eq('moment_id', eventId).eq('group_id', groupId)
+    setActionError(null)
+    const { error } = await supabase.from('moment_groups').delete().eq('moment_id', eventId).eq('group_id', groupId)
+    if (error) {
+      setActionError("Couldn't remove that group — please try again.")
+      return
+    }
     await loadMoment(true)
   }
 
-  async function handleTagMoment(tagId: string) {
-    await supabase
+  async function handleTagMoment(tagId: string): Promise<boolean> {
+    setActionError(null)
+    const { error } = await supabase
       .from('moment_tags')
       .upsert({ moment_id: eventId, tag_id: tagId }, { onConflict: 'moment_id,tag_id', ignoreDuplicates: true })
+    if (error) {
+      setActionError("Couldn't add that tag — please try again.")
+      return false
+    }
     await loadMoment(true)
+    return true
   }
 
   // Reuse an existing tag (case-insensitive, matching the DB's own case-insensitive unique
   // index) instead of creating a near-duplicate. If two rapid creates of the same brand-new name
   // race each other, the unique index rejects the loser's insert — look the winner up by name
   // rather than surfacing an error for what the user experiences as one successful action.
-  async function handleCreateAndTagMoment(name: string) {
+  async function handleCreateAndTagMoment(name: string): Promise<boolean> {
+    setActionError(null)
     const {
       data: { user },
     } = await supabase.auth.getUser()
     const tag = await findOrCreateTagId(supabase, user?.id, allTagsList, name)
-    if (!tag) return
+    if (!tag) {
+      setActionError(`Couldn't create the tag "${name}" — please try again.`)
+      return false
+    }
     setAllTagsList((prev) => (prev.some((t) => t.id === tag.id) ? prev : [...prev, tag]))
-    await handleTagMoment(tag.id)
+    return handleTagMoment(tag.id)
   }
 
   // Untagging is pure detachment from moment_tags, not deletion — the tag itself stays on file
   // for reuse on other events, same non-destructive reasoning as handleUntagGroup above.
   async function handleUntagMoment(tagId: string) {
-    await supabase.from('moment_tags').delete().eq('moment_id', eventId).eq('tag_id', tagId)
+    setActionError(null)
+    const { error } = await supabase.from('moment_tags').delete().eq('moment_id', eventId).eq('tag_id', tagId)
+    if (error) {
+      setActionError("Couldn't remove that tag — please try again.")
+      return
+    }
     await loadMoment(true)
   }
 
@@ -528,7 +571,16 @@ export default function EventDetail({
   // null, the same "standalone fact" state notes.moment_id already supports) instead of deleting
   // them. Any real content they wrote stays fully intact on the person's own profile.
   async function handleRemoveAttendee(person: PersonRef) {
-    await supabase.from('notes').update({ moment_id: null }).eq('person_id', person.id).eq('moment_id', eventId)
+    setActionError(null)
+    const { error } = await supabase
+      .from('notes')
+      .update({ moment_id: null })
+      .eq('person_id', person.id)
+      .eq('moment_id', eventId)
+    if (error) {
+      setActionError(`Couldn't remove ${person.name} from this event — please try again.`)
+      return
+    }
     await handleNoteSaved()
   }
 
@@ -553,11 +605,19 @@ export default function EventDetail({
 
   // Denying a suggestion just means "stop suggesting them for this event" — remembered on the
   // moment itself, same reasoning/pattern as groups.dismissed_person_ids on GroupDetail.tsx.
+  // Local state is only kept if the write came back clean — the same failure this pattern caused
+  // in item 80, where an optimistic update hid a rejected write and the dismissed suggestion just
+  // came back on the next visit with no error anywhere.
   async function handleDenySuggestion(person: PersonRef) {
     if (!moment) return
-    const updated = [...(moment.dismissed_person_ids ?? []), person.id]
+    const previous = moment.dismissed_person_ids ?? []
+    const updated = [...previous, person.id]
     setMoment({ ...moment, dismissed_person_ids: updated })
-    await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
+    const { error } = await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
+    if (error) {
+      setMoment((prev) => (prev ? { ...prev, dismissed_person_ids: previous } : prev))
+      setActionError("Couldn't dismiss that suggestion — please try again.")
+    }
   }
 
   // Same as handleDenySuggestion, but for every currently-shown suggestion at once — clicking
@@ -567,9 +627,14 @@ export default function EventDetail({
   // suggestion chip itself.
   async function handleDenyAllSuggestions(people: PersonRef[]) {
     if (!moment) return
-    const updated = [...new Set([...(moment.dismissed_person_ids ?? []), ...people.map((p) => p.id)])]
+    const previous = moment.dismissed_person_ids ?? []
+    const updated = [...new Set([...previous, ...people.map((p) => p.id)])]
     setMoment({ ...moment, dismissed_person_ids: updated })
-    await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
+    const { error } = await supabase.from('moments').update({ dismissed_person_ids: updated }).eq('id', eventId)
+    if (error) {
+      setMoment((prev) => (prev ? { ...prev, dismissed_person_ids: previous } : prev))
+      setActionError("Couldn't dismiss those suggestions — please try again.")
+    }
   }
 
   function startEditingBasics() {
@@ -747,6 +812,7 @@ export default function EventDetail({
       photosError={photosError}
       photosRefreshKey={photosRefreshKey}
       onAddPhotos={handleAddPhotos}
+      onClearActionError={() => setActionError(null)}
       onTagGroup={handleTagGroup}
       onUntagGroup={handleUntagGroup}
       onTagMoment={handleTagMoment}
@@ -842,13 +908,14 @@ export function EventDetailView({
   photosError = null,
   photosRefreshKey = 0,
   onAddPhotos = () => {},
-  onTagGroup = () => {},
+  onClearActionError = () => {},
+  onTagGroup = async () => false,
   onUntagGroup = () => {},
-  onTagMoment = () => {},
-  onCreateAndTagMoment = () => {},
+  onTagMoment = async () => false,
+  onCreateAndTagMoment = async () => false,
   onUntagMoment = () => {},
-  onAddAttendee = () => {},
-  onCreateAndAddAttendee = () => {},
+  onAddAttendee = async () => false,
+  onCreateAndAddAttendee = async () => false,
   onRemoveAttendee = () => {},
   onEditNote = () => {},
   onDeleteNote = () => {},
@@ -926,13 +993,17 @@ export function EventDetailView({
   photosError?: string | null
   photosRefreshKey?: number
   onAddPhotos?: () => void
-  onTagGroup?: (groupId: string) => void
+  // The five "add something" handlers resolve to whether the write actually landed, so the
+  // picker can hold back its "✓ Added X." until it's true (item 91). The remove/untag ones stay
+  // void — they're driven by a chip that disappears on the reload, not by a confirmation line.
+  onClearActionError?: () => void
+  onTagGroup?: (groupId: string) => Promise<boolean>
   onUntagGroup?: (groupId: string) => void
-  onTagMoment?: (tagId: string) => void
-  onCreateAndTagMoment?: (name: string) => void
+  onTagMoment?: (tagId: string) => Promise<boolean>
+  onCreateAndTagMoment?: (name: string) => Promise<boolean>
   onUntagMoment?: (tagId: string) => void
-  onAddAttendee?: (person: PersonRef) => void
-  onCreateAndAddAttendee?: (name: string) => void
+  onAddAttendee?: (person: PersonRef) => Promise<boolean>
+  onCreateAndAddAttendee?: (name: string) => Promise<boolean>
   onRemoveAttendee?: (person: PersonRef) => void
   onEditNote?: (noteIds: string[], newContent: string) => void
   onDeleteNote?: (noteIds: string[]) => void
@@ -963,6 +1034,13 @@ export function EventDetailView({
   // isn't reliable confirmation that an add worked. Each picker echoes its last add underneath
   // itself instead; picking a different action clears it.
   const [justAdded, setJustAdded] = useState<string | null>(null)
+
+  // Opening any picker wipes both the last confirmation and the last failure, so neither one
+  // haunts the next action you take.
+  function onOpenPicker() {
+    setJustAdded(null)
+    onClearActionError()
+  }
   // Save sits right next to the mic in the description editor, so it has to be held shut while a
   // recording is still being transcribed — otherwise saving mid-transcription silently drops
   // whatever was just said. See VoiceInputButton's onBusyChange.
@@ -1456,6 +1534,9 @@ export function EventDetailView({
       {!readOnly && (
         <FloatingActionBubble
           label="Add to this event"
+          // A write started from in here has nowhere else to report a failure — the page's own
+          // banner is inside ManagePanel, which isn't open while you're adding someone (item 91).
+          error={actionError}
           // The note box (and its mic) sits on the first screen rather than behind a row of its
           // own: voice is the main way this app gets used, so it stays exactly as reachable as it
           // was when this bubble did nothing else.
@@ -1465,7 +1546,7 @@ export function EventDetailView({
               key: 'people',
               icon: '👥',
               label: 'Add people who were there',
-              onSelect: () => setJustAdded(null),
+              onSelect: () => onOpenPicker(),
               body: (
                 <>
                   <SearchAddPicker
@@ -1473,19 +1554,20 @@ export function EventDetailView({
                       .filter((p) => !attendees.has(p.id))
                       .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
                     placeholder="Search people to tag, or type a new name…"
-                    onSelect={(item) => {
+                    // Every one of these awaits the write and only confirms on a true result:
+                    // before item 91 the "✓ Added" line fired on the same tick as the insert, so
+                    // it appeared whether or not anything was actually saved.
+                    onSelect={async (item) => {
                       const person = allPeople.find((p) => p.id === item.id)
-                      if (person) {
-                        onAddAttendee(person)
-                        setJustAdded(`${person.name}${person.last_name ? ` ${person.last_name}` : ''}`)
-                      }
+                      if (!person) return
+                      const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
+                      if (await onAddAttendee(person)) setJustAdded(label)
                     }}
                     // Someone who was there but isn't on file yet gets created and tagged in one
                     // step — otherwise you'd have to leave the event, add them on the People page,
                     // and come back.
-                    onCreateNew={(name) => {
-                      onCreateAndAddAttendee(name)
-                      setJustAdded(name)
+                    onCreateNew={async (name) => {
+                      if (await onCreateAndAddAttendee(name)) setJustAdded(name)
                     }}
                     createLabel={(name) => `+ Add "${name}" as a new person`}
                   />
@@ -1497,7 +1579,7 @@ export function EventDetailView({
               key: 'tag',
               icon: '🏷️',
               label: 'Add a tag',
-              onSelect: () => setJustAdded(null),
+              onSelect: () => onOpenPicker(),
               body: (
                 <>
                   <SearchAddPicker
@@ -1506,13 +1588,11 @@ export function EventDetailView({
                       .sort((a, b) => a.name.localeCompare(b.name))
                       .map((t) => ({ id: t.id, label: t.name }))}
                     placeholder="Tag this event (e.g. milestone, vacation)…"
-                    onSelect={(item) => {
-                      onTagMoment(item.id)
-                      setJustAdded(item.label)
+                    onSelect={async (item) => {
+                      if (await onTagMoment(item.id)) setJustAdded(item.label)
                     }}
-                    onCreateNew={(name) => {
-                      onCreateAndTagMoment(name)
-                      setJustAdded(name)
+                    onCreateNew={async (name) => {
+                      if (await onCreateAndTagMoment(name)) setJustAdded(name)
                     }}
                     createLabel={(q) => `+ Add "${q}" as a new tag`}
                     emptyText="No tags match."
@@ -1526,7 +1606,7 @@ export function EventDetailView({
               key: 'group',
               icon: '👨‍👩‍👧',
               label: 'Associate a group',
-              onSelect: () => setJustAdded(null),
+              onSelect: () => onOpenPicker(),
               body: (
                 <>
                   <SearchAddPicker
@@ -1534,9 +1614,8 @@ export function EventDetailView({
                       .filter((g) => !groups.some((tagged) => tagged.id === g.id))
                       .map((g) => ({ id: g.id, label: groupDisplayName(g, groupNameById, groupParentById) }))}
                     placeholder="Tag this event to a group…"
-                    onSelect={(item) => {
-                      onTagGroup(item.id)
-                      setJustAdded(item.label)
+                    onSelect={async (item) => {
+                      if (await onTagGroup(item.id)) setJustAdded(item.label)
                     }}
                     emptyText="No groups match."
                   />

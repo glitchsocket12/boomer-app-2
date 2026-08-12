@@ -12,6 +12,7 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { eventSortDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
@@ -72,10 +73,6 @@ const MEMBER_SUGGESTION_LIMIT = 20
 // Module-level so the demo (which passes no rolled-up ids) gets the same Set identity on every
 // render rather than a fresh empty one each time.
 const EMPTY_ID_SET: Set<string> = new Set()
-// PostgREST's own default response cap — matching it exactly is what makes "a short page means
-// the last page" a safe stopping rule in loadDescendantMembers.
-const PAGE_SIZE = 1000
-
 export default function GroupDetail({
   groupId,
   groupName,
@@ -402,22 +399,26 @@ export default function GroupDetail({
     // subtree can pass that on its own (the account was at 1183 person_groups rows the day this
     // was written) — an unpaged query would just stop returning members partway down the roster
     // with no error to notice.
-    const byId = new Map<string, PersonRef>()
-    for (let from = 0; ; from += PAGE_SIZE) {
-      const { data, error } = await supabase
+    //
+    // This was hand-rolled and shipped WITHOUT an .order() (fixed 2026-08-11), which is the worse
+    // half of the same bug: with no stable sort Postgres may order rows differently per page, so a
+    // member could land in two pages or in neither. The dedupe by id below hid the duplicates and
+    // silently ate the omissions. fetchAllRows exists precisely so this can't be got wrong twice.
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
         .from('person_groups')
         .select('people(id, name, last_name)')
         .in('group_id', ids)
-        .range(from, from + PAGE_SIZE - 1)
-      if (error) {
-        setDescendantMembers([])
-        return
-      }
-      const rows = (data as unknown as { people: PersonRef | null }[]) ?? []
-      for (const row of rows) {
-        if (row.people) byId.set(row.people.id, row.people)
-      }
-      if (rows.length < PAGE_SIZE) break
+        .order('person_id')
+        .range(from, to)
+    )
+    if (error) {
+      setDescendantMembers([])
+      return
+    }
+    const byId = new Map<string, PersonRef>()
+    for (const row of data as unknown as { people: PersonRef | null }[]) {
+      if (row.people) byId.set(row.people.id, row.people)
     }
     setDescendantMembers([...byId.values()])
   }
@@ -544,17 +545,28 @@ export default function GroupDetail({
     setAssociatedGroupMembers([...byId.values()])
   }
 
-  async function handleApproveGroupSuggestion(group: GroupRef) {
+  async function handleApproveGroupSuggestion(group: GroupRef): Promise<boolean> {
+    setActionError(null)
     const [a, b] = [groupId, group.id].sort()
-    await supabase
+    const { error } = await supabase
       .from('group_associations')
       .upsert({ group_id_a: a, group_id_b: b }, { onConflict: 'group_id_a,group_id_b', ignoreDuplicates: true })
+    if (error) {
+      setActionError(`Couldn't associate ${group.name} — please try again.`)
+      return false
+    }
     loadAssociatedGroups()
+    return true
   }
 
   async function handleRemoveAssociatedGroup(group: GroupRef) {
+    setActionError(null)
     const [a, b] = [groupId, group.id].sort()
-    await supabase.from('group_associations').delete().eq('group_id_a', a).eq('group_id_b', b)
+    const { error } = await supabase.from('group_associations').delete().eq('group_id_a', a).eq('group_id_b', b)
+    if (error) {
+      setActionError(`Couldn't remove ${group.name} — please try again.`)
+      return
+    }
     loadAssociatedGroups()
   }
 
@@ -576,15 +588,25 @@ export default function GroupDetail({
   // Same "stop suggesting this, but don't touch anything already confirmed" reasoning as
   // handleDenySuggestion above, just for groups instead of people.
   async function handleDenyGroupSuggestion(group: GroupRef) {
-    const updated = [...dismissedGroupIds, group.id]
+    const previous = dismissedGroupIds
+    const updated = [...previous, group.id]
     setDismissedGroupIds(updated)
-    await supabase.from('groups').update({ dismissed_group_ids: updated }).eq('id', groupId)
+    const { error } = await supabase.from('groups').update({ dismissed_group_ids: updated }).eq('id', groupId)
+    if (error) {
+      setDismissedGroupIds(previous)
+      setActionError("Couldn't dismiss that suggestion — please try again.")
+    }
   }
 
   async function handleDenyAllGroupSuggestions(groups: GroupRef[]) {
-    const updated = [...new Set([...dismissedGroupIds, ...groups.map((g) => g.id)])]
+    const previous = dismissedGroupIds
+    const updated = [...new Set([...previous, ...groups.map((g) => g.id)])]
     setDismissedGroupIds(updated)
-    await supabase.from('groups').update({ dismissed_group_ids: updated }).eq('id', groupId)
+    const { error } = await supabase.from('groups').update({ dismissed_group_ids: updated }).eq('id', groupId)
+    if (error) {
+      setDismissedGroupIds(previous)
+      setActionError("Couldn't dismiss those suggestions — please try again.")
+    }
   }
 
   // Membership changed — the cached AI summary is now stale (same reasoning `update-group`
@@ -594,10 +616,18 @@ export default function GroupDetail({
     loadSummary()
   }
 
+  // Every write below returns/reports whether it actually landed (2026-08-11, item 91). Before
+  // this they all discarded the { error } Supabase hands back, so a rejected write still drew the
+  // "Added X to this group." banner and a chip that only vanished on the next reload.
   async function handleAddMember(person: PersonRef) {
-    await supabase
+    setActionError(null)
+    const { error } = await supabase
       .from('person_groups')
       .upsert({ person_id: person.id, group_id: groupId }, { onConflict: 'person_id,group_id', ignoreDuplicates: true })
+    if (error) {
+      setActionError(`Couldn't add ${personLabel(person)} to this group — please try again.`)
+      return
+    }
     setLastAdd({ personId: person.id, label: personLabel(person), createdPerson: false })
     loadMembers()
     invalidateSummary()
@@ -610,6 +640,7 @@ export default function GroupDetail({
   async function handleCreateAndAddMember(rawName: string) {
     const typed = rawName.trim()
     if (!typed) return
+    setActionError(null)
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -623,11 +654,20 @@ export default function GroupDetail({
       setActionError("Couldn't add that person — please try again.")
       return
     }
-    await supabase.from('person_groups').insert({ person_id: newPerson.id, group_id: groupId })
+    // The profile exists at this point either way, so it goes into the local roster regardless —
+    // what a failed membership write costs is the group link, and the undo banner must not claim
+    // one was made.
+    setAllPeople((prev) => [...prev, newPerson as PersonRef])
+    const { error: linkError } = await supabase
+      .from('person_groups')
+      .insert({ person_id: newPerson.id, group_id: groupId })
+    if (linkError) {
+      setActionError(`Added ${typed} to your people, but couldn't add them to this group — please try again.`)
+      return
+    }
     // createdPerson: true is what lets undo clean up the profile as well as the membership —
     // without it a mistyped name would leave a stray person behind on the People page.
     setLastAdd({ personId: newPerson.id, label: typed, createdPerson: true })
-    setAllPeople((prev) => [...prev, newPerson as PersonRef])
     loadMembers()
     invalidateSummary()
   }
@@ -639,7 +679,18 @@ export default function GroupDetail({
   async function handleUndoAdd() {
     if (!lastAdd) return
     setUndoBusy(true)
-    await supabase.from('person_groups').delete().eq('person_id', lastAdd.personId).eq('group_id', groupId)
+    setActionError(null)
+    const { error } = await supabase
+      .from('person_groups')
+      .delete()
+      .eq('person_id', lastAdd.personId)
+      .eq('group_id', groupId)
+    if (error) {
+      setUndoBusy(false)
+      // Banner deliberately left up: the add is still real, so Undo is still the right button.
+      setActionError(`Couldn't undo adding ${lastAdd.label} — please try again.`)
+      return
+    }
     if (lastAdd.createdPerson) {
       await supabase.from('people').delete().eq('id', lastAdd.personId)
       setAllPeople((prev) => prev.filter((p) => p.id !== lastAdd.personId))
@@ -654,12 +705,17 @@ export default function GroupDetail({
   // every currently-visible suggestion chip rather than one round trip per person.
   async function handleApproveAllSuggestions(people: PersonRef[]) {
     if (people.length === 0) return
-    await supabase
+    setActionError(null)
+    const { error } = await supabase
       .from('person_groups')
       .upsert(
         people.map((p) => ({ person_id: p.id, group_id: groupId })),
         { onConflict: 'person_id,group_id', ignoreDuplicates: true }
       )
+    if (error) {
+      setActionError("Couldn't add those people to this group — please try again.")
+      return
+    }
     loadMembers()
     invalidateSummary()
   }
@@ -674,12 +730,19 @@ export default function GroupDetail({
   // page's own groupId (the parent) and would refresh/overwrite the wrong group.
   async function handleDropAddToSubgroup(targetGroupId: string, people: PersonRef[]) {
     if (people.length === 0) return
-    await supabase
+    setActionError(null)
+    const { error } = await supabase
       .from('person_groups')
       .upsert(
         people.map((p) => ({ person_id: p.id, group_id: targetGroupId })),
         { onConflict: 'person_id,group_id', ignoreDuplicates: true }
       )
+    if (error) {
+      // Worth an explicit message even though nothing on screen claimed success: a drag that
+      // silently does nothing reads as the drop target not accepting the drop.
+      setActionError("Couldn't move those people into that subgroup — please try again.")
+      return
+    }
     loadSubgroups() // refreshes subgroup tile member counts -- NOT loadMembers(), which only
                      // refetches this page's own (parent) roster and would be a no-op here
     // ...but the rollup DOES read the subgroup rosters, so it has to refetch: dropping someone
@@ -693,7 +756,16 @@ export default function GroupDetail({
   }
 
   async function handleRemoveMember(person: PersonRef) {
-    await supabase.from('person_groups').delete().eq('person_id', person.id).eq('group_id', groupId)
+    setActionError(null)
+    const { error } = await supabase
+      .from('person_groups')
+      .delete()
+      .eq('person_id', person.id)
+      .eq('group_id', groupId)
+    if (error) {
+      setActionError(`Couldn't remove ${personLabel(person)} from this group — please try again.`)
+      return
+    }
     loadMembers()
     invalidateSummary()
   }
@@ -701,10 +773,18 @@ export default function GroupDetail({
   // "Denying" a suggested person just means "stop suggesting them for this group" — it's
   // remembered on the group itself (not undoable from the UI), separate from actual membership,
   // since this person was never a person_groups row to begin with.
+  // Local state is only kept if the write came back clean — the same failure this pattern caused
+  // in item 80, where an optimistic update hid a rejected write and the dismissed suggestion just
+  // came back on the next visit with no error anywhere.
   async function handleDenySuggestion(person: PersonRef) {
-    const updated = [...dismissedPersonIds, person.id]
+    const previous = dismissedPersonIds
+    const updated = [...previous, person.id]
     setDismissedPersonIds(updated)
-    await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
+    const { error } = await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
+    if (error) {
+      setDismissedPersonIds(previous)
+      setActionError("Couldn't dismiss that suggestion — please try again.")
+    }
   }
 
   // Same as handleDenySuggestion, but for every currently-shown suggestion at once — clicking
@@ -713,9 +793,14 @@ export default function GroupDetail({
   // (that writes directly to person_groups, independent of dismissed_person_ids) — this list
   // only ever suppresses the suggestion chip itself.
   async function handleDenyAllSuggestions(people: PersonRef[]) {
-    const updated = [...new Set([...dismissedPersonIds, ...people.map((p) => p.id)])]
+    const previous = dismissedPersonIds
+    const updated = [...new Set([...previous, ...people.map((p) => p.id)])]
     setDismissedPersonIds(updated)
-    await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
+    const { error } = await supabase.from('groups').update({ dismissed_person_ids: updated }).eq('id', groupId)
+    if (error) {
+      setDismissedPersonIds(previous)
+      setActionError("Couldn't dismiss those suggestions — please try again.")
+    }
   }
 
   async function loadMoments(silent = false) {
@@ -1129,6 +1214,7 @@ export default function GroupDetail({
       onMoveToTopLevel={handleMoveToTopLevel}
       actionBusy={actionBusy}
       actionError={actionError}
+      onClearActionError={() => setActionError(null)}
       noteBox={
         <NoteWithDetection
           subjectType="group"
@@ -1251,6 +1337,7 @@ export function GroupDetailView({
   onConfirmMerge = () => {},
   actionBusy = false,
   actionError = null,
+  onClearActionError = () => {},
   noteBox,
 }: {
   groupId: string
@@ -1354,6 +1441,8 @@ export function GroupDetailView({
   onMoveToTopLevel?: () => void
   actionBusy?: boolean
   actionError?: string | null
+  // Wipes a stale failure when a picker is opened, so it can't haunt the next action.
+  onClearActionError?: () => void
   noteBox?: ReactNode
 }) {
   const [memberSearch, setMemberSearch] = useState('')
@@ -1862,6 +1951,9 @@ export function GroupDetailView({
       {!readOnly && (
         <FloatingActionBubble
           label="Add to this group"
+          // A write started from in here has nowhere else to report a failure — the page's own
+          // banner is inside ManagePanel, which isn't open while you're adding someone (item 91).
+          error={actionError}
           // Note box first, mic and all — same reasoning as the event page: voice is the primary
           // way this gets used, so it doesn't go behind a row of its own.
           primaryBody={noteBox}
@@ -1870,6 +1962,7 @@ export function GroupDetailView({
               key: 'members',
               icon: '👥',
               label: 'Add people to this group',
+              onSelect: onClearActionError,
               body: (
                 <>
                   <SearchAddPicker
@@ -1906,7 +1999,10 @@ export function GroupDetailView({
               icon: '👨‍👩‍👧',
               label: 'Associate a group',
               // Lazily loads every other group the first time it's opened.
-              onSelect: onToggleGroupPicker,
+              onSelect: () => {
+                onClearActionError()
+                onToggleGroupPicker()
+              },
               body: (
                 <>
                   <SearchBox
