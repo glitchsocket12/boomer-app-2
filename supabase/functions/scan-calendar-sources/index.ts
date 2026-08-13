@@ -41,6 +41,15 @@ Don't guess at dates — the exact start/end date is already known from the cale
 Respond with ONLY a JSON array, one object per input event in the same order, in this exact shape and nothing else — no preamble, no markdown fences:
 [{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"], "mentioned_family_names": ["Surname"]}]`
 
+// An event Claude judged not worth suggesting. Recorded so the next run's `seenUids` covers it and
+// it is never sent to the API again — see SkippedCandidate's use below for why this exists.
+type SkippedCandidate = {
+  user_id: string
+  calendar_source_id: string
+  ical_uid: string
+  status: "skipped"
+}
+
 type Candidate = {
   user_id: string
   calendar_source_id: string
@@ -229,7 +238,16 @@ async function scanUser(
   accountEmail: string | null
 ): Promise<{ sourcesScanned: number; candidatesAdded: number; birthdayCandidatesAdded: number }> {
   const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes, existingBirthdayRes] = await Promise.all([
-    supabase.from("calendar_sources").select("id, ical_url, label, source_type").eq("user_id", userId),
+    // Least-recently-synced first (never-synced sorts first of all). The batch budget below is
+    // per-invocation and shared across sources, so an unordered list let whichever source happened
+    // to come back first spend it every single run — the founder's third calendar had never once
+    // been reached, and so had never even reported that its URL was broken. Oldest-first makes the
+    // budget rotate: whoever missed out last time goes first next time.
+    supabase
+      .from("calendar_sources")
+      .select("id, ical_url, label, source_type")
+      .eq("user_id", userId)
+      .order("last_synced_at", { ascending: true, nullsFirst: true }),
     // Paged: 700 people on the founder's account already, and attendee matching silently getting
     // worse for everyone past the 1000th person is exactly the failure this sweep was chasing.
     fetchAllRows((from, to) =>
@@ -525,11 +543,27 @@ async function scanUser(
       const batchResultSets = await Promise.all(batchChunks.map((batch) => callExtraction(batch, tagGuidance, userTimeZone)))
 
       const rows: Candidate[] = []
+      const skippedRows: SkippedCandidate[] = []
       for (let bi = 0; bi < batchChunks.length; bi++) {
         const batch = batchChunks[bi]
         const results = batchResultSets[bi]
         for (const r of results) {
-          if (!r.include) continue
+          const skippedEvent = batch[r.index]
+          if (!r.include) {
+            // Record the "no" so this event lands in seenUids and is never sent to the API again.
+            // Deliberately driven off the AI's OWN returned results, never off the input batch: when
+            // callExtraction fails it returns [], and treating that silence as "skip everything"
+            // would permanently bury a whole batch of real events behind a failed API call.
+            if (skippedEvent) {
+              skippedRows.push({
+                user_id: userId,
+                calendar_source_id: source.id,
+                ical_uid: skippedEvent.uid,
+                status: "skipped",
+              })
+            }
+            continue
+          }
           const event = batch[r.index]
           if (!event) continue
 
@@ -644,6 +678,24 @@ async function scanUser(
           .upsert(rows, { onConflict: "user_id,ical_uid", ignoreDuplicates: true })
         if (!error) candidatesAdded += rows.length
         else console.error("Failed to upsert candidates", error.message)
+      }
+
+      // Written in its OWN statement, after the real candidates and never batched with them: the
+      // 'skipped' status needs the 2026-08-12 migration, and code always ships before the founder
+      // runs the SQL. Sharing one upsert would mean a missing constraint value rejects the genuine
+      // suggestions too. Failing here just restores the old (wasteful) behaviour for one more run.
+      if (skippedRows.length > 0) {
+        const { error } = await supabase
+          .from("moment_import_candidates")
+          .upsert(skippedRows, { onConflict: "user_id,ical_uid", ignoreDuplicates: true })
+        if (error) console.error("Failed to record skipped events (migration not applied yet?)", error.message)
+        else {
+          // Every uid recorded here is one the next run won't pay to re-judge — the whole point of
+          // the pass. Keeping them out of the local set too means a second source in this same run
+          // doesn't re-send a uid this one just retired.
+          for (const s of skippedRows) seenUids.add(s.ical_uid)
+          console.log(`Recorded ${skippedRows.length} skipped event(s) for user ${userId}, source ${source.id}`)
+        }
       }
 
       // Only mark this source fully synced (and clear the timestamp's staleness) once every

@@ -1313,3 +1313,63 @@ Caught by noticing that `summarize-group` — untouched all session — replied 
 **Actual exposure: none.** All five call `auth.getUser()` and 401 on their own — defence in depth doing its job. The only one that returned a body, `suggest-prompts`, returns hardcoded `FALLBACK_SUGGESTIONS` when there's no user, before any Anthropic call, so neither user data nor API spend was reachable.
 
 Three things worth keeping. **Never pass a flag you didn't need** — this one was pure noise in the command and it changed a security setting. **Distinguish the two 401s**: the platform gate and an app-level auth check look identical to a smoke test that only greps for "not 404". And **`GET /v1/projects/{ref}/functions` audits `verify_jwt` across the whole project in one read** — worth running after any deploy session, not just a suspicious one.
+
+## 2026-08-12 — "Calendars are not syncing": a dead API key, and the loop that had been paying to re-read the same haircuts
+
+The founder reported that clicking "Sync now" on Calendar settings did nothing. Two separate causes,
+one hiding the other.
+
+**What the data said first.** `calendar_sources` showed "Jake and Ceeb calendar" synced minutes ago
+but "Jake Personal" frozen at Aug 4 — nine days stale. Neither had a `last_sync_error`. So the sync
+was running, reaching at least one source, and reporting success while one calendar quietly never
+advanced. Both calendars had stopped producing new `moment_import_candidates` rows entirely: newest
+Jul 27 and Aug 4 respectively.
+
+**The second bug, found before the first.** Running the repo's own `parseIcs` over both real feeds
+with the function's own filters (cancelled / 3-year cutoff / already-seen) reproduced the arithmetic
+exactly: 140 unseen events on one calendar, 182 on the other, **322 per run against a hard cap of 8
+batches × 30 = 240**. The first source spent 5 of the 8 batches, leaving 3 for a source that needed
+7 — so `fullyProcessed` was false for "Jake Personal" every single run, and its `last_synced_at` was
+never stamped. Forever.
+
+Why 322 events stayed permanently "unseen" is the actual defect: `scan-calendar-sources` only ever
+wrote a row when the AI said an event WAS worth suggesting. When the AI said skip — and the re-sent
+list was exactly what you'd expect it to skip, `AMD` ×58, `Doc Appt`, `Haircut`, `Lawn Aeration`,
+`Dog Grooming`, `Let maple out!!!` — that decision was discarded. The event stayed out of
+`seenUids`, came back next run, and got paid for again. Every manual click and every nightly cron.
+
+**The first bug, found by not trusting the fix.** After deploying, the verification sync finished in
+**four seconds** and wrote zero rows. Far too fast for seven Claude calls. The function logs — pulled
+immediately, since retention is minutes — said it plainly, eight times:
+`Anthropic extraction call failed 401 {"type":"authentication_error","message":"API key is invalid."}`.
+The project's `ANTHROPIC_API_KEY` had hit its scheduled expiry date that same day (already logged in
+§10 from an earlier session, cause confirmed by Anthropic's own expiry email). A Home chat message
+seconds later returned the same 401, confirming the blast radius is all ten Anthropic-calling
+functions, not just this one.
+
+So the honest ordering: **the founder's symptom is the expired key.** The starvation bug is real,
+independently reproduced, and would still have hidden one calendar's progress once the key came
+back — but it is not what they were looking at today.
+
+**The fix that shipped anyway.** Three parts, all in `scan-calendar-sources` v25:
+1. A `'skipped'` status (migration `2026-08-12-calendar-skipped-status.sql`, applied) recording the
+   AI's "no" so it is asked exactly once. Deliberately a distinct value from `'rejected'`, which is
+   the founder's own decision and shouldn't be conflated with a machine filter — same name and idea
+   `contact_import_candidates` already uses.
+2. Sources ordered **least-recently-synced first** (`nullsFirst`). The batch budget is per-invocation
+   and shared, so an unordered list let whichever source came back first spend it every run.
+3. The skip rows written in **their own upsert**, after the real candidates. Code always ships before
+   the founder runs the SQL, and sharing one statement would have let a missing constraint value
+   reject the genuine suggestions too. Failing there just restores the old behaviour for one run.
+
+**What is and isn't verified.** The ordering half is confirmed live: "Jake Personal" went first and
+its timestamp moved Aug 4 → Aug 12 in the UI. The skip-recording half **could not be exercised** —
+with the key dead the API returns nothing to record, so zero skip rows exist. Its row shape was
+proved separately (insert with only the four no-default columns + rollback, leaving no trace). This
+is written down rather than glossed because "deployed" and "working" are not the same claim.
+
+**Two lessons worth keeping.** A guard that decides whether work is finished (`fullyProcessed`) must
+not be computed from how much work was *attempted* when the work itself can fail silently — eight
+failed batches and eight successful ones were indistinguishable to it. And a four-second success is
+a result worth disbelieving: the fix looked like it worked, and the timestamp really did move, but
+only because every expensive call inside it had failed too fast to matter.
