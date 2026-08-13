@@ -71,6 +71,8 @@ export default function Home({
   onOpenBirthdayReview,
   onOpenContactImportReview,
   onOpenContactSelection,
+  askOnMount,
+  onAskConsumed,
 }: {
   onSelectPerson: (person: PersonRef) => void
   onSelectEvent: (event: EventRef) => void
@@ -82,6 +84,11 @@ export default function Home({
   onOpenBirthdayReview: () => void
   onOpenContactImportReview: () => void
   onOpenContactSelection: () => void
+  // A question typed into global search whose plain word-match found nothing useful, handed off to
+  // the chat (backlog item 14 → 30). The panel does no AI work of its own; this is the one path
+  // where a search costs an API call, and it takes a deliberate tap to get here.
+  askOnMount?: string | null
+  onAskConsumed?: () => void
 }) {
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -310,6 +317,23 @@ export default function Home({
     }
     setFamilyTagSuggestions((prev) => prev.filter((s) => s !== suggestion))
   }
+
+  // A question handed over from global search. Keyed on the prop rather than on mount because
+  // goToTab('home') from an already-Home page does NOT remount this component, so a mount-only
+  // effect would silently drop every ask after the first.
+  //
+  // The ref is load-bearing, not defensive: StrictMode double-invokes effects in dev, and
+  // sendMessage's own `if (sending) return` can't catch that — the second run happens before the
+  // state update from the first has flushed. Without this, every handoff would bill two converse
+  // calls (CLAUDE.md rule 3).
+  const askedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!askOnMount || askedRef.current === askOnMount) return
+    askedRef.current = askOnMount
+    sendMessage(askOnMount)
+    onAskConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askOnMount])
 
   function handleSend() {
     if (!input.trim() || sending) return

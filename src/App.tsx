@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { HomeIcon, PeopleIcon, EventsIcon, CalendarIcon, GroupsIcon } from './components/NavIcons'
+import { HomeIcon, PeopleIcon, EventsIcon, CalendarIcon, GroupsIcon, SearchIcon } from './components/NavIcons'
 import { supabase } from './lib/supabase'
+import GlobalSearch from './components/GlobalSearch'
+import { cachedSearchCorpus, clearSearchCorpus, isSearchCorpusStale, loadSearchCorpus } from './lib/searchCorpus'
+import type { SearchDoc, SearchTarget } from './lib/globalSearch'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import DemoShell from './pages/demo/DemoShell'
@@ -213,6 +216,15 @@ export default function App() {
   // on a direct tab click (goToTab) so only that back-arrow round trip restores scroll, not every
   // way of landing on the Groups tab.
   const groupsScrollRef = useRef<number | null>(null)
+  // Global search (backlog item 14). The corpus lives in lib/searchCorpus.ts' module cache; this is
+  // just the copy the panel renders, so opening the panel never waits on a round trip once a
+  // session has loaded it once.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchDocs, setSearchDocs] = useState<SearchDoc[] | null>(null)
+  const [searchLoading, setSearchLoading] = useState(false)
+  // A question typed into search and handed off to Home chat. Held here rather than passed through
+  // a crumb because it's a one-shot instruction, not a place you can navigate back to.
+  const [pendingAsk, setPendingAsk] = useState<string | null>(null)
   // Guards against re-pushing a history entry for a state change that itself came FROM a
   // popstate (browser Back/Forward) — otherwise every Back press would immediately push a
   // matching Forward entry right back on top of it.
@@ -317,6 +329,11 @@ export default function App() {
         setGroupsSearch('')
         setGroupsTypeFilter('all')
         groupsScrollRef.current = null
+        // One account's memories must never be searchable from the next one's session on a shared
+        // device — this cache holds names and note text, not just ids.
+        clearSearchCorpus()
+        setSearchDocs(null)
+        setSearchOpen(false)
         sessionStorage.removeItem(NAV_STORAGE_KEY)
         // Replace (not push) so Back doesn't return to the authenticated trail post-logout.
         skipNextHistoryPush.current = true
@@ -327,6 +344,28 @@ export default function App() {
 
     return () => listener.subscription.unsubscribe()
   }, [])
+
+  // The app's first keyboard shortcut. `/` is the one people reach for, Cmd/Ctrl-K the one they
+  // bring from other tools.
+  useEffect(() => {
+    if (!session) return
+    function onKeyDown(e: KeyboardEvent) {
+      const cmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'
+      if (!cmdK && e.key !== '/') return
+      // Bare `/` is a real character. Without this guard, typing a date or a URL into any note box
+      // in the app would yank focus out of it and open search instead. Cmd-K isn't ambiguous, so
+      // it works from anywhere. Same activeElement check FloatingActionBubble uses for Escape.
+      if (!cmdK) {
+        const el = document.activeElement
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el as HTMLElement | null)?.isContentEditable) return
+      }
+      e.preventDefault()
+      openSearch()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
 
   // Isolated from the main session effect above on purpose — same "don't take the whole shell
   // down over one field" reasoning as PersonDetail.tsx's gender/contact-info queries (see
@@ -394,6 +433,61 @@ export default function App() {
     groupsScrollRef.current = null
     setView(tab)
     setNavStack([])
+  }
+
+  /**
+   * Stale-while-revalidate: hand over whatever is already cached so the panel renders instantly,
+   * and re-read in the background. That's what makes "add a person, search for them straight away"
+   * work without an invalidate() call at every write site in the app.
+   *
+   * `always` is the difference between opening the panel and merely hovering the button. Opening
+   * revalidates unconditionally — a 30-second grace period sounds harmless until someone adds a
+   * person and searches for them twenty seconds later, which is exactly the case this cache exists
+   * to get right. Hovering respects the floor, so sweeping the mouse across the nav can't spam the
+   * network. Concurrent calls collapse onto one request inside loadSearchCorpus.
+   *
+   * If the full re-read ever turns out to be slow on a real phone, the cheap fix is a head-only
+   * count check per table before committing to it — not a longer grace period.
+   */
+  function refreshSearchCorpus(always: boolean) {
+    const cached = cachedSearchCorpus()
+    if (cached) setSearchDocs(cached)
+    if (!always && !isSearchCorpusStale()) return
+    setSearchLoading(true)
+    loadSearchCorpus()
+      .then(({ docs, error }) => {
+        if (error) console.error('Search corpus load failed', error)
+        setSearchDocs(docs)
+      })
+      .finally(() => setSearchLoading(false))
+  }
+
+  function openSearch() {
+    setSearchOpen(true)
+    refreshSearchCorpus(true)
+  }
+
+  function handleSearchSelect(target: SearchTarget) {
+    switch (target.kind) {
+      case 'person':
+        return pushCrumb({ type: 'person', id: target.id, label: target.label })
+      case 'pet':
+        return pushCrumb({ type: 'pet', id: target.id, label: target.label })
+      case 'event':
+        return pushCrumb({ type: 'event', id: target.id, label: target.label })
+      case 'group':
+        return pushCrumb({ type: 'group', id: target.id, label: target.label })
+      // A tag isn't a page of its own — it's a filter on the Events list, which is where someone
+      // searching for one actually wants to end up. tagFilter matches on the tag's NAME.
+      case 'tag':
+        setEventsFilters({ ...DEFAULT_EVENT_FILTERS, tagFilter: target.label })
+        return goToTab('events')
+    }
+  }
+
+  function handleAsk(question: string) {
+    setPendingAsk(question)
+    goToTab('home')
   }
 
   function pushCrumb(crumb: Crumb) {
@@ -666,6 +760,8 @@ export default function App() {
             onOpenBirthdayReview={() => pushCrumb({ type: 'birthdayReview', id: 'birthdayReview', label: 'Review birthdays' })}
             onOpenContactImportReview={() => pushCrumb({ type: 'contactImportReview', id: 'contactImportReview', label: 'Review contacts' })}
             onOpenContactSelection={() => pushCrumb({ type: 'contactSelection', id: 'contactSelection', label: 'Choose contacts' })}
+            askOnMount={pendingAsk}
+            onAskConsumed={() => setPendingAsk(null)}
           />
         )}
         {view === 'people' && (
@@ -730,7 +826,11 @@ export default function App() {
     <div>
       <div style={navStyles.bar}>
         <div style={navStyles.left}>
-          <span style={navStyles.wordmark}>Boomer</span>
+          {/* className carries the phone breakpoint (see index.css) — the search button below
+              needs the room this takes up. */}
+          <span className="nav-wordmark" style={navStyles.wordmark}>
+            Boomer
+          </span>
           {TABS.map((t) => (
             <button
               key={t.tab}
@@ -743,16 +843,40 @@ export default function App() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={() => setAccountMenuOpen(true)}
-          style={navStyles.avatar}
-          title={accountLabel?.name ?? 'Account'}
-          aria-label="Account menu"
-        >
-          {accountLabel?.initials ?? '·'}
-        </button>
+        <div style={navStyles.right}>
+          <button
+            type="button"
+            onClick={openSearch}
+            // Warms the corpus before the panel is even open, so on desktop the first search of a
+            // session usually renders instantly instead of on a spinner.
+            onPointerEnter={() => refreshSearchCorpus(false)}
+            onFocus={() => refreshSearchCorpus(false)}
+            style={navStyles.searchButton}
+            title="Search everything"
+            aria-label="Search everything"
+          >
+            <SearchIcon />
+          </button>
+          <button
+            type="button"
+            onClick={() => setAccountMenuOpen(true)}
+            style={navStyles.avatar}
+            title={accountLabel?.name ?? 'Account'}
+            aria-label="Account menu"
+          >
+            {accountLabel?.initials ?? '·'}
+          </button>
+        </div>
       </div>
+
+      <GlobalSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        docs={searchDocs}
+        loading={searchLoading}
+        onSelect={handleSearchSelect}
+        onAsk={handleAsk}
+      />
 
       <ChoiceSheet
         open={accountMenuOpen}
@@ -854,6 +978,25 @@ const navStyles: { [key: string]: React.CSSProperties } = {
   },
   // Small enough that "Calendar" — the longest label — still fits its share of a 375px row.
   linkLabel: { fontSize: '0.68rem', lineHeight: 1.1, whiteSpace: 'nowrap' },
+  // 2026-08-12: search and account share the right end of the bar. `flex: none` matters — without
+  // it this cluster is shrinkable and the two 34px buttons squash before the tabs do.
+  right: { display: 'flex', alignItems: 'center', gap: space.sm, flex: 'none' },
+  // Same 34px footprint as the avatar so the pair reads as one cluster, but outlined rather than
+  // filled: the solid blue circle should keep meaning "your account" and nothing else.
+  searchButton: {
+    width: '34px',
+    height: '34px',
+    borderRadius: radius.circle,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textMuted,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
+    flex: 'none',
+  },
   avatar: {
     width: '34px',
     height: '34px',

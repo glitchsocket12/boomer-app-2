@@ -13,6 +13,21 @@ body {
    redesign — see PWA.md.
    --------------------------------------------------------------------------- */
 
+/* The nav bar is a fixed budget: at 375px the five tabs, the wordmark and the avatar already used
+   all of it (see App.tsx navStyles.bar — the whole row was re-measured on 2026-08-11 after it
+   overflowed). Adding the search button costs ~40px, which the tabs cannot give up without
+   dropping under the 44px touch target and clipping "Calendar". Hiding the wordmark frees ~73px
+   against that ~40px, so the tabs actually end up wider than before. The founder chose this
+   tradeoff over a second full-width search row (2026-08-12).
+
+   Done in CSS rather than a JS width listener so there's no resize handler and no flash of the
+   wrong layout on load. navStyles.wordmark sets no `display`, so this rule wins uncontested. */
+@media (max-width: 480px) {
+  .nav-wordmark {
+    display: none;
+  }
+}
+
 @media (hover: none) {
   /* iOS Safari zooms the whole page in whenever you focus a text field whose
      font is under 16px, and does not zoom back out afterwards. Seven inputs

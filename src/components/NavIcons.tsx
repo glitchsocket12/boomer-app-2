@@ -1,4 +1,4 @@
-// The five nav tab icons, hand-written as inline SVG.
+// The five nav tab icons plus the search glyph, hand-written as inline SVG.
 //
 // Deliberately NOT an icon library: this repo runs on 3 dependencies (see SECURITY.md) and five
 // glyphs don't justify a fourth, plus a library's tree-shaking would still ship more than this.
@@ -63,6 +63,16 @@ export function EventsIcon({ size = 21 }: IconProps) {
       <rect x="3.2" y="5.2" width="17.6" height="14.1" rx="2.4" />
       <circle cx="8.6" cy="10.1" r="1.6" />
       <path d="M3.6 16.4 8.5 12l4.2 3.7 3-2.6 4.7 4.1" />
+    </svg>
+  )
+}
+
+/** A magnifier. Not a tab — the global search button that sits beside the account avatar. */
+export function SearchIcon({ size = 19 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="M15.3 15.3 20.5 20.5" />
     </svg>
   )
 }

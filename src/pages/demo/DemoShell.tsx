@@ -9,7 +9,11 @@ import DemoGroupDetail from './DemoGroupDetail'
 import DemoEvents from './DemoEvents'
 import DemoEventDetail from './DemoEventDetail'
 import DemoFamilyTree from './DemoFamilyTree'
-import { border, colors, fontFamily, fontSize, radius } from '../../lib/theme'
+import GlobalSearch from '../../components/GlobalSearch'
+import { SearchIcon } from '../../components/NavIcons'
+import { DEMO_SEARCH_DOCS } from '../../lib/demoSearchCorpus'
+import type { SearchTarget } from '../../lib/globalSearch'
+import { border, colors, fontFamily, fontSize, radius, space } from '../../lib/theme'
 
 type Tab = 'home' | 'people' | 'events' | 'groups'
 type Crumb =
@@ -28,6 +32,7 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
   const [introSeen, setIntroSeen] = useState(false)
   const [view, setView] = useState<Tab>('home')
   const [navStack, setNavStack] = useState<Crumb[]>([])
+  const [searchOpen, setSearchOpen] = useState(false)
 
   if (!introSeen) {
     return <DemoIntro onFinish={() => setIntroSeen(true)} />
@@ -45,6 +50,20 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
   }
   function jumpTo(index: number) {
     setNavStack((s) => s.slice(0, index + 1))
+  }
+
+  function handleSearchSelect(target: SearchTarget) {
+    // The demo's Crumb union has no pet or tag member, and demoSearchCorpus never emits those
+    // kinds — the default is unreachable, and exists so adding a kind later fails loudly in tsc
+    // rather than silently doing nothing on click.
+    switch (target.kind) {
+      case 'person':
+      case 'group':
+      case 'event':
+        return pushCrumb({ type: target.kind, id: target.id, label: target.label })
+      default:
+        return
+    }
   }
 
   const current = navStack[navStack.length - 1] ?? null
@@ -158,10 +177,29 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
           <button onClick={() => goToTab('events')} style={styles.navButton}>Events</button>
           <button onClick={() => goToTab('groups')} style={styles.navButton}>Groups</button>
         </div>
-        <div>
+        <div style={styles.navRight}>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            style={styles.searchButton}
+            title="Search everything"
+            aria-label="Search everything"
+          >
+            <SearchIcon />
+          </button>
           <button onClick={onExit} style={styles.exitButton}>Exit demo</button>
         </div>
       </div>
+
+      {/* No onAsk: the demo has no chat to hand a question to. The corpus is a module constant, so
+          `loading` is permanently false and there is nothing to fetch. */}
+      <GlobalSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        docs={DEMO_SEARCH_DOCS}
+        loading={false}
+        onSelect={handleSearchSelect}
+      />
 
       {breadcrumbItems && <Breadcrumb items={breadcrumbItems} />}
 
@@ -210,6 +248,21 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.base,
     cursor: 'pointer',
     fontFamily,
+  },
+  navRight: { display: 'flex', alignItems: 'center', gap: space.md },
+  searchButton: {
+    width: '34px',
+    height: '34px',
+    borderRadius: radius.circle,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textMuted,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
+    flex: 'none',
   },
   exitButton: {
     background: 'none',

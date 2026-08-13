@@ -12,6 +12,8 @@ export default function SearchBox({
   onBlur,
   onKeyDown,
   ariaProps,
+  inputRef,
+  style,
 }: {
   value: string
   onChange: (value: string) => void
@@ -22,9 +24,16 @@ export default function SearchBox({
   // own it without every plain filter box growing keyboard logic it has no list to drive.
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
   ariaProps?: React.AriaAttributes & { role?: string }
+  // For the one caller that has to focus the field itself (GlobalSearch, on open) rather than
+  // waiting for a tap.
+  inputRef?: React.Ref<HTMLInputElement>
+  // Merged over the defaults. Exists because the marginBottom below is right for a filter box at
+  // the top of a list page and dead space inside a panel — everything else stays shared.
+  style?: React.CSSProperties
 }) {
   return (
     <input
+      ref={inputRef}
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
@@ -32,7 +41,7 @@ export default function SearchBox({
       onBlur={onBlur}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
-      style={styles.input}
+      style={style ? { ...styles.input, ...style } : styles.input}
       {...ariaProps}
     />
   )
