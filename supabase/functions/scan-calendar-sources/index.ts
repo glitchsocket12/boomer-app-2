@@ -22,9 +22,9 @@ const MAX_BATCHES_PER_RUN = 8
 
 // Stable, zero-interpolation instructions — identical every batch, every user, every run. Its
 // own cache_control breakpoint per CLAUDE.md's caching rules.
-const stableInstructions = `You are screening raw calendar entries for an app that helps someone keep track of the people and moments in their life. You'll be given a JSON array of calendar events. For EACH one, decide whether it's worth suggesting as something to save, and extract a clean summary.
+const stableInstructions = `You are preparing raw calendar entries for review in an app that helps someone keep track of the people and moments in their life. You'll be given a JSON array of calendar events. For EACH one, extract a clean summary.
 
-Favor real gatherings, trips, celebrations, and milestones involving other people. Skip generic solo logistics (a dentist appointment, a flight with no other detail, a work meeting, a reminder) UNLESS it clearly matches one of the founder's preferred categories given separately below — when in doubt on a borderline case, lean toward including it, since a human reviews every suggestion before anything is saved.
+You are NOT deciding what is worth keeping — that is the person's own call, and they review every entry themselves (founder directive, 2026-08-12). Summarize every event you're given, including ordinary solo logistics like an appointment, an errand, a flight, or a work meeting. Never omit an event because it looks unimportant, and never fold several entries into one. Return exactly one object per input event.
 
 Don't guess at dates — the exact start/end date is already known from the calendar itself and is filled in separately; just focus on occasion, location, notes, and the tag/group suggestions below.
 
@@ -39,16 +39,7 @@ Don't guess at dates — the exact start/end date is already known from the cale
 "mentioned_family_names": surnames referenced as a family/household unit, distinct from "mentioned_people" above (e.g. "Meal train for the Mojica family" → ["Mojica"]; "Dinner with the Andersons" → ["Anderson"], singular form). Only when the text clearly frames it as a family/household ("the X family", "the Xs", "X family reunion") — not just any capitalized word or business name that happens to look like a surname (e.g. "Mojica's Bakery" is a place, not a family reference). Empty array if none.
 
 Respond with ONLY a JSON array, one object per input event in the same order, in this exact shape and nothing else — no preamble, no markdown fences:
-[{"index": 0, "include": true, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"], "mentioned_family_names": ["Surname"]}]`
-
-// An event Claude judged not worth suggesting. Recorded so the next run's `seenUids` covers it and
-// it is never sent to the API again — see SkippedCandidate's use below for why this exists.
-type SkippedCandidate = {
-  user_id: string
-  calendar_source_id: string
-  ical_uid: string
-  status: "skipped"
-}
+[{"index": 0, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"], "mentioned_family_names": ["Surname"]}]`
 
 type Candidate = {
   user_id: string
@@ -74,7 +65,6 @@ async function callExtraction(
 ): Promise<
   {
     index: number
-    include: boolean
     occasion: string
     location: string | null
     notes: string
@@ -435,8 +425,8 @@ async function scanUser(
 
   const tagGuidance =
     (tagNames.length > 0
-      ? `The founder is especially interested in events that look like: ${tagNames.join(", ")}. Lean toward including anything that clearly matches one of these; skip generic logistics that don't. Here is the founder's existing tag roster, for "suggested_tags" — reuse one of these by name where it fits: ${tagNames.join(", ")}.`
-      : `The founder hasn't set any specific categories yet, so use your general judgement about what's worth remembering (gatherings, trips, celebrations, milestones). The founder has no tags on file yet, so "suggested_tags" can propose new short tag names where they clearly fit.`) +
+      ? `Here is the founder's existing tag roster, for "suggested_tags" — reuse one of these by name where it fits: ${tagNames.join(", ")}. An event that matches none of them is still summarized and returned as normal, just with an empty "suggested_tags"; the roster shapes the tag, never whether the event is included.`
+      : `The founder has no tags on file yet, so "suggested_tags" can propose new short tag names where they clearly fit, and an empty array is fine.`) +
     ` Here are the founder's existing recurring groups, for "suggested_group" — reuse one of these by EXACT name only if this event is clearly part of it, never invent a new one: ${groupNames.join(", ") || "(none yet)"}.`
 
   const cutoff = new Date()
@@ -543,27 +533,15 @@ async function scanUser(
       const batchResultSets = await Promise.all(batchChunks.map((batch) => callExtraction(batch, tagGuidance, userTimeZone)))
 
       const rows: Candidate[] = []
-      const skippedRows: SkippedCandidate[] = []
       for (let bi = 0; bi < batchChunks.length; bi++) {
         const batch = batchChunks[bi]
         const results = batchResultSets[bi]
         for (const r of results) {
-          const skippedEvent = batch[r.index]
-          if (!r.include) {
-            // Record the "no" so this event lands in seenUids and is never sent to the API again.
-            // Deliberately driven off the AI's OWN returned results, never off the input batch: when
-            // callExtraction fails it returns [], and treating that silence as "skip everything"
-            // would permanently bury a whole batch of real events behind a failed API call.
-            if (skippedEvent) {
-              skippedRows.push({
-                user_id: userId,
-                calendar_source_id: source.id,
-                ical_uid: skippedEvent.uid,
-                status: "skipped",
-              })
-            }
-            continue
-          }
+          // Every event the AI returns an extraction for becomes a pending suggestion — the model
+          // no longer decides what is "worth" keeping (founder directive, 2026-08-12: "just simply
+          // sync all new events, and let the person decide themselves"). It was rejecting ~88% of
+          // what it saw. An event the AI returned NO result for (a failed or partial API response)
+          // deliberately gets no row, so it is retried on the next run rather than silently lost.
           const event = batch[r.index]
           if (!event) continue
 
@@ -680,23 +658,10 @@ async function scanUser(
         else console.error("Failed to upsert candidates", error.message)
       }
 
-      // Written in its OWN statement, after the real candidates and never batched with them: the
-      // 'skipped' status needs the 2026-08-12 migration, and code always ships before the founder
-      // runs the SQL. Sharing one upsert would mean a missing constraint value rejects the genuine
-      // suggestions too. Failing here just restores the old (wasteful) behaviour for one more run.
-      if (skippedRows.length > 0) {
-        const { error } = await supabase
-          .from("moment_import_candidates")
-          .upsert(skippedRows, { onConflict: "user_id,ical_uid", ignoreDuplicates: true })
-        if (error) console.error("Failed to record skipped events (migration not applied yet?)", error.message)
-        else {
-          // Every uid recorded here is one the next run won't pay to re-judge — the whole point of
-          // the pass. Keeping them out of the local set too means a second source in this same run
-          // doesn't re-send a uid this one just retired.
-          for (const s of skippedRows) seenUids.add(s.ical_uid)
-          console.log(`Recorded ${skippedRows.length} skipped event(s) for user ${userId}, source ${source.id}`)
-        }
-      }
+      // Nothing is auto-skipped any more, so the re-judging loop this used to guard against is gone
+      // by construction: every event now becomes a row on the run it is first seen, which is exactly
+      // what keeps it out of the next run's candidate list.
+      for (const r of rows) seenUids.add(r.ical_uid)
 
       // Only mark this source fully synced (and clear the timestamp's staleness) once every
       // candidate batch for it actually ran — an incomplete pass (hit MAX_BATCHES_PER_RUN)

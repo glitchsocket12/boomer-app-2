@@ -1373,3 +1373,45 @@ not be computed from how much work was *attempted* when the work itself can fail
 failed batches and eight successful ones were indistinguishable to it. And a four-second success is
 a result worth disbelieving: the fix looked like it worked, and the timestamp really did move, but
 only because every expensive call inside it had failed too fast to matter.
+
+## 2026-08-12, same evening — the founder deletes the filter, and a tombstone turns into 202 blank cards
+
+Follow-up to the entry above, which should be read first. Two things happened after the API key was
+replaced: the fix in that entry was verified, and then most of it was thrown away — correctly.
+
+**The verification, and the number that ended the design.** With a working key, one "Sync now"
+recorded **202 auto-skipped events against 28 let through**. The filter was rejecting 88% of what it
+saw. Shown that ratio, the founder's call was immediate and right: *"It's probably too sensitive if
+its not letting everything through. I think it should just simply sync all new events, and let the
+person decide themselves whether or not they want to accept/reject it."*
+
+**Why that is a better fix than the one it replaced.** The re-judging bug existed only because a
+"no" produced no row. Remove the "no" and every event gets a row on the run it is first seen — so it
+enters `seenUids` and can never be re-sent. The whole `'skipped'` mechanism became unnecessary the
+moment the filter did. The AI call stays, but now only to extract the title, location, notes, tags,
+groups and people; it no longer returns an `include` verdict, and the "skip generic solo logistics"
+framing came out of both the system prompt and the tag guidance.
+
+**The mistake, made and caught within four minutes.** Releasing the 202 already-buried events looked
+like a one-line `update ... set status='pending'`. It ran, and it was wrong. A skip row was never a
+suppressed candidate — it was a **tombstone**, carrying `user_id`, `calendar_source_id`, `ical_uid`
+and nothing else, because recording the "no" was all it had ever needed to do. Flipping it to
+'pending' therefore produced 202 review cards with a date and nothing else: no title, no location,
+no notes, no tags. And permanently, because the row's own uid is exactly what keeps that event out
+of `seenUids` — the scan would never have looked at it again.
+
+What surfaced it was not the update; it was distrusting the next result. A count of new rows came
+back `298 total, 96 with a title`, and the missing 202 matched the tombstone count exactly. The
+function's own log line — `Repaired 114 stale candidate date(s)` — confirmed the shape: the
+date-repair pass had dutifully filled in dates on rows that had nothing else to fill.
+
+The fix is `delete`, not `update`. Deleting a tombstone makes the event unseen again, so the next
+sync rediscovers it and writes a real extraction. Re-verified after: **661 candidates across both
+calendars, zero with a null title**, and ordinary entries the old filter would have eaten now sitting
+in the queue for the founder to judge — "A scheduled visit to the orthodontist.", "Flight to
+Denver", "Dinner reservation at Bonefish Grill".
+
+**Lessons.** A row that exists only to be *remembered* is not the same object as a row that exists
+to be *shown*, even when they share a table and a status column — converting one into the other is a
+data migration, not a status change. And the general form of the previous entry's lesson held again:
+the tell was a count that was 202 short, noticed only because the number was checked at all.
