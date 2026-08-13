@@ -176,8 +176,9 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
           <button onClick={() => goToTab('people')} style={styles.navButton}>People</button>
           <button onClick={() => goToTab('events')} style={styles.navButton}>Events</button>
           <button onClick={() => goToTab('groups')} style={styles.navButton}>Groups</button>
-        </div>
-        <div style={styles.navRight}>
+          {/* With the tabs, not next to "Exit demo" — mirrors the real nav, where sitting beside
+              the account avatar made it easy to hit the wrong thing (founder report 2026-08-12).
+              Here the neighbour would have been the button that ENDS the demo. */}
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
@@ -185,8 +186,11 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
             title="Search everything"
             aria-label="Search everything"
           >
-            <SearchIcon />
+            <SearchIcon size={17} />
+            <span>Search</span>
           </button>
+        </div>
+        <div>
           <button onClick={onExit} style={styles.exitButton}>Exit demo</button>
         </div>
       </div>
@@ -249,20 +253,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
-  navRight: { display: 'flex', alignItems: 'center', gap: space.md },
+  // Matches navButton's plain-text look so it reads as part of the same row, with the glyph in
+  // front to say it opens a search rather than another page.
   searchButton: {
-    width: '34px',
-    height: '34px',
-    borderRadius: radius.circle,
-    border: border.default,
-    backgroundColor: colors.surface,
-    color: colors.textMuted,
-    cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: space.xs,
+    marginRight: space.md,
+    background: 'none',
+    border: 'none',
+    color: colors.ink,
+    fontSize: fontSize.base,
+    cursor: 'pointer',
+    fontFamily,
     padding: 0,
-    flex: 'none',
   },
   exitButton: {
     background: 'none',

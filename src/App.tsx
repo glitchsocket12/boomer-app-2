@@ -842,8 +842,10 @@ export default function App() {
               <span style={navStyles.linkLabel}>{t.label}</span>
             </button>
           ))}
-        </div>
-        <div style={navStyles.right}>
+          {/* Sits with the tabs rather than beside the avatar (founder report 2026-08-12: as a bare
+              circle next to the initials it was too easy to open the account menu by mistake — the
+              two were ~6px apart). Shaped like a tab, so it's a ~47px target instead of 34px, and
+              never takes the active style: it opens a panel, it isn't a place you can be. */}
           <button
             type="button"
             onClick={openSearch}
@@ -851,22 +853,23 @@ export default function App() {
             // session usually renders instantly instead of on a spinner.
             onPointerEnter={() => refreshSearchCorpus(false)}
             onFocus={() => refreshSearchCorpus(false)}
-            style={navStyles.searchButton}
+            style={navStyles.link}
             title="Search everything"
             aria-label="Search everything"
           >
-            <SearchIcon />
-          </button>
-          <button
-            type="button"
-            onClick={() => setAccountMenuOpen(true)}
-            style={navStyles.avatar}
-            title={accountLabel?.name ?? 'Account'}
-            aria-label="Account menu"
-          >
-            {accountLabel?.initials ?? '·'}
+            <SearchIcon size={21} />
+            <span style={navStyles.linkLabel}>Search</span>
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => setAccountMenuOpen(true)}
+          style={navStyles.avatar}
+          title={accountLabel?.name ?? 'Account'}
+          aria-label="Account menu"
+        >
+          {accountLabel?.initials ?? '·'}
+        </button>
       </div>
 
       <GlobalSearch
@@ -919,7 +922,10 @@ const navStyles: { [key: string]: React.CSSProperties } = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: space.sm,
+    // Deliberately wide (2026-08-12). At the old space.sm the nav's last control sat ~6px from the
+    // account avatar, and reaching for it opened the account menu instead. This is the dead space
+    // that stops that; it costs the tabs ~4px each, which they can afford.
+    gap: space.xl,
     padding: '0.5rem 1rem',
     borderBottom: border.light,
     backgroundColor: colors.surface,
@@ -978,25 +984,6 @@ const navStyles: { [key: string]: React.CSSProperties } = {
   },
   // Small enough that "Calendar" — the longest label — still fits its share of a 375px row.
   linkLabel: { fontSize: '0.68rem', lineHeight: 1.1, whiteSpace: 'nowrap' },
-  // 2026-08-12: search and account share the right end of the bar. `flex: none` matters — without
-  // it this cluster is shrinkable and the two 34px buttons squash before the tabs do.
-  right: { display: 'flex', alignItems: 'center', gap: space.sm, flex: 'none' },
-  // Same 34px footprint as the avatar so the pair reads as one cluster, but outlined rather than
-  // filled: the solid blue circle should keep meaning "your account" and nothing else.
-  searchButton: {
-    width: '34px',
-    height: '34px',
-    borderRadius: radius.circle,
-    border: border.default,
-    backgroundColor: colors.surface,
-    color: colors.textMuted,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 0,
-    flex: 'none',
-  },
   avatar: {
     width: '34px',
     height: '34px',
@@ -1013,5 +1000,8 @@ const navStyles: { [key: string]: React.CSSProperties } = {
     justifyContent: 'center',
     letterSpacing: '-0.02em',
     boxShadow: shadow.button,
+    // Now a direct child of the bar (it used to sit inside a wrapper that carried this). Without
+    // it the circle squashes into an oval before the tabs give up any width.
+    flex: 'none',
   },
 }
