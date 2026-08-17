@@ -807,6 +807,7 @@ export default function App() {
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
             onSelectPet={(p) => pushCrumb({ type: 'pet', id: p.id, label: p.name })}
             onFillGender={() => pushCrumb({ type: 'genderFill', id: 'genderFill', label: 'Fill in Gender' })}
+            onImportContacts={() => pushCrumb({ type: 'contactsImport', id: 'contactsImport', label: 'Import contacts' })}
           />
         )}
         {view === 'events' && (

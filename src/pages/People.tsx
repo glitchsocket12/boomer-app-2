@@ -118,12 +118,14 @@ export default function People({
   onSelectEvent,
   onSelectPet,
   onFillGender,
+  onImportContacts,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onSelectPet: (pet: { id: string; name: string }) => void
   onFillGender: () => void
+  onImportContacts: () => void
 }) {
   const [people, setPeople] = useState<Person[]>([])
   const [petRows, setPetRows] = useState<PetRow[]>([])
@@ -238,6 +240,7 @@ export default function People({
       groupLabel={groupRoster.label}
       genderGaps={genderGaps}
       onFillGender={onFillGender}
+      onImportContacts={onImportContacts}
     />
   )
 }
@@ -261,6 +264,7 @@ export function PeopleView({
   groupLabel = (_id, fallbackName) => fallbackName,
   genderGaps = 0,
   onFillGender = () => {},
+  onImportContacts,
   readOnly = false,
 }: {
   peopleCount: number
@@ -282,6 +286,9 @@ export function PeopleView({
   // once there's nothing left to fill — 0 for the demo, which has no such page.
   genderGaps?: number
   onFillGender?: () => void
+  // Optional so the read-only landing-page demo doesn't have to pass a no-op for a button it
+  // never renders.
+  onImportContacts?: () => void
   readOnly?: boolean
 }) {
   return (
@@ -291,9 +298,16 @@ export function PeopleView({
           People{peopleCount > 0 && <span style={styles.count}> ({peopleCount})</span>}
         </h1>
         {!readOnly && (
-          <button type="button" onClick={onAddPerson} style={styles.addButton} disabled={adding}>
-            {adding ? '…' : '+ Add Person'}
-          </button>
+          <div style={styles.headingActions}>
+            {/* Matches Events' "Import Events" — not its own flow, just a shortcut to the
+                vCard upload page, which is where contact importing already lives. */}
+            <button type="button" onClick={onImportContacts} style={styles.importButton}>
+              Import Contacts
+            </button>
+            <button type="button" onClick={onAddPerson} style={styles.addButton} disabled={adding}>
+              {adding ? '…' : '+ Add Person'}
+            </button>
+          </div>
         )}
       </div>
       {!readOnly && genderGaps > 0 && (
@@ -463,6 +477,8 @@ const styles: { [key: string]: React.CSSProperties } = {
   headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.xl, marginBottom: space.xl, flexWrap: 'wrap' },
   heading: { fontSize: fontSize.h1, color: colors.ink, margin: 0 },
   count: { fontSize: '1.2rem', color: colors.textFaint, fontWeight: 'normal' },
+  // Wraps so the two buttons stack instead of squeezing the heading on a phone (§10).
+  headingActions: { display: 'flex', alignItems: 'center', gap: space.md, flexWrap: 'wrap' },
   addButton: {
     fontSize: fontSize.base,
     padding: '0.6rem 1.1rem',
@@ -470,6 +486,18 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     backgroundColor: colors.primary,
     color: colors.surface,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    fontFamily,
+  },
+  // Outlined, not filled — importing is the secondary path next to "+ Add Person".
+  importButton: {
+    fontSize: fontSize.base,
+    padding: '0.6rem 1.1rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: 'transparent',
+    color: colors.ink,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     fontFamily,
