@@ -117,17 +117,51 @@ const MAX_GENDER_PROBES = 20
 // because the name alone no longer decides how wide a tile has to be.
 type SecondLines = Map<string, string>
 
+// Tile widths are decided during layout, before any <text> exists to inspect, so the name's
+// on-screen width is MEASURED against the same font the tile renders in rather than estimated at a
+// flat 8px a character. The estimate is what kept putting names under the corner gender dot: it
+// undercounts wide letters and never counted the ' †'/' ›' suffixes at all, so the padding constant
+// got nudged up (40 -> 48) and was still 1.1px short on "Emma Lerma ›" (measured on the founder's
+// tree, 2026-08-17). Measuring ends that cycle instead of re-tuning it. Safe with this app's font
+// stack because it's all system fonts (lib/theme.ts) — nothing loads late and re-measures wider.
+const NAME_FONT_PX = 14
+const SECOND_LINE_FONT_PX = 9
+// boxWidth doesn't know whether a given tile will render deceased (' †') or clickable (' ›'), so
+// every name budgets for both. Over-budgeting costs a few px of tile width; under-budgeting is the
+// bug being fixed.
+const NAME_SUFFIXES = ' † ›'
+// The gender dot sits at (right edge - 12) with r 3.5, so it occupies the last 15.5px. The name is
+// center-anchored, so whatever the name needs on the right it also takes on the left — hence the
+// doubling — plus a few px so the chevron doesn't merely touch the dot.
+const NAME_SIDE_PADDING = 2 * (12 + 3.5 + 4)
+
+let measureCtx: CanvasRenderingContext2D | null | undefined
+const textWidths = new Map<string, number>()
+
+function textWidth(text: string, px: number): number {
+  const key = `${px}:${text}`
+  const cached = textWidths.get(key)
+  if (cached !== undefined) return cached
+  if (measureCtx === undefined) measureCtx = document.createElement('canvas').getContext('2d')
+  let width: number
+  if (measureCtx) {
+    measureCtx.font = `${px}px ${fontFamily}`
+    width = measureCtx.measureText(text).width
+  } else {
+    // No canvas context available — fall back to the old per-character estimate rather than
+    // collapsing every tile to the minimum width.
+    width = text.length * px * 0.58
+  }
+  textWidths.set(key, width)
+  return width
+}
+
 function boxWidth(name: string, secondLine = '') {
-  // The 48 is side padding: the name is center-anchored, and the corner gender dot lives in the
-  // right margin, so it has to be wide enough that a name filling its box can't run under the dot.
-  // It also absorbs the ' †' and ' ›' suffixes, which this formula has never counted — measured on
-  // the demo tree, 40 left only 1.3px between the chevron and the dot on the worst tile.
-  const nameW = name.length * 8 + 48
-  // The second line renders at fontSize 9 — roughly 5px a character.
-  const labelW = secondLine ? secondLine.length * 5 + 16 : 0
-  // Ceiling raised 180 -> 190 alongside the padding above: a long name pinned at the old ceiling
-  // couldn't take the extra padding, so it was the one case still crowding the dot.
-  return Math.max(80, Math.min(190, Math.max(nameW, labelW)))
+  const nameW = textWidth(name + NAME_SUFFIXES, NAME_FONT_PX) + NAME_SIDE_PADDING
+  const labelW = secondLine ? textWidth(secondLine, SECOND_LINE_FONT_PX) + 16 : 0
+  // Ceiling raised 190 -> 210: measuring is honest about how wide the longest real names are, and
+  // a name clamped below what it actually needs is a name overflowing its tile into the dot again.
+  return Math.max(80, Math.min(210, Math.max(nameW, labelW)))
 }
 
 type Placed = { person: TreePerson; x: number; w: number }
