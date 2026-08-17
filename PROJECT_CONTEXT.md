@@ -1504,6 +1504,19 @@ Full story: PROJECT_HISTORY.md.
                                 candidates query is also paged now (lib/pagedSelect.ts); it was the
                                 last unpaged account-wide browser read and would have silently
                                 capped at 1000 pending events.
+                                (2026-08-17) Every disposition lands the same way: the card collapses
+                                to its confirmation and a `useLayoutEffect` on `savedResult` parks
+                                that collapsed card 12px (`CONFIRM_SCROLL_MARGIN`) below the top of
+                                the screen (`window.scrollTo`, smooth), so the next event sits right
+                                underneath it. Previously accept left the confirmation just off the
+                                top of the screen (the card shrank ~695px→109px under a fixed scroll
+                                position) and reject clamped the page to the very top. Reject now
+                                shows a confirmation too — `Rejected — {event}` with Undo (flips
+                                `status` back to `pending`, `reviewed_at` null) + Done, instead of
+                                the row silently vanishing; nothing else in the app resurfaces
+                                rejected candidates, so Undo is the only recovery from a mis-tap.
+                                Pressing Done needs no second scroll: the next card lands exactly
+                                where the confirmation was.
                                 `suggested_people`/`suggested_group_ids` now also draw
                                 on people/relationship data already on file, not just the calendar
                                 entry's own ICS attendee list or its title's explicit group name

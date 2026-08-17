@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
@@ -20,6 +20,10 @@ import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow
 // queue never shows the "Show more" button at all, small enough that a 1000-event queue opens
 // instantly.
 const CARD_BATCH_SIZE = 20
+
+// Breathing room left above a just-resolved card when it's parked at the top of the screen. Flush
+// against the very top edge reads as cut off.
+const CONFIRM_SCROLL_MARGIN = 12
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -414,8 +418,25 @@ function CandidateCard({
   const [mergeSearch, setMergeSearch] = useState('')
   const [acceptError, setAcceptError] = useState<string | null>(null)
   const [savedResult, setSavedResult] = useState<
-    { kind: 'created' | 'merged' | 'noted' | 'subevent'; momentId: string; label: string; parentLabel?: string } | null
+    | { kind: 'created' | 'merged' | 'noted' | 'subevent'; momentId: string; label: string; parentLabel?: string }
+    | { kind: 'rejected'; label: string }
+    | null
   >(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  // A resolved card collapses from a full editor down to a one-line confirmation, and everything
+  // below it slides up by however tall the card used to be — which leaves the reviewer looking at
+  // the wrong part of the page. Founder report 2026-08-17: accepting left the confirmation just
+  // off the top of the screen (you had to scroll up a little to see what you'd done), and
+  // rejecting threw you back to the top of the whole queue. Parking the collapsed card at the top
+  // of the screen ourselves makes every action land identically: you see what you just did, with
+  // the next event directly underneath it. Layout effect rather than a plain one so the scroll is
+  // already in flight on the frame that paints the collapsed card.
+  useLayoutEffect(() => {
+    if (!savedResult || !cardRef.current) return
+    const top = cardRef.current.getBoundingClientRect().top + window.scrollY - CONFIRM_SCROLL_MARGIN
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  }, [savedResult])
 
   const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
   // True while a possible duplicate is on screen and the reviewer hasn't answered it yet — drives
@@ -718,6 +739,9 @@ function CandidateCard({
     })
   }
 
+  // Collapses to a confirmation like every other action on this card instead of the row just
+  // vanishing — same reasoning as the accept/merge confirmations: the reviewer should be able to
+  // see what they just did before moving on.
   async function handleReject() {
     setSaving(true)
     await supabase
@@ -725,12 +749,25 @@ function CandidateCard({
       .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
       .eq('id', candidate.id)
     setSaving(false)
-    onResolved()
+    setSavedResult({ kind: 'rejected', label: summarize(occasion, candidate.raw_description ?? '') })
+  }
+
+  // Puts a mis-tapped rejection back in the queue. Nothing in the app resurfaces rejected
+  // candidates, so without this a slip is unrecoverable from the UI — and the row was only flipped
+  // to 'rejected', never deleted, so taking it back is just the flip in reverse.
+  async function handleUndoReject() {
+    setSaving(true)
+    await supabase
+      .from('moment_import_candidates')
+      .update({ status: 'pending', reviewed_at: null })
+      .eq('id', candidate.id)
+    setSaving(false)
+    setSavedResult(null)
   }
 
   if (savedResult) {
     return (
-      <div style={styles.card}>
+      <div ref={cardRef} style={styles.card}>
         <p style={styles.confirmText}>
           {savedResult.kind === 'created'
             ? `Added — ${savedResult.label}`
@@ -738,17 +775,25 @@ function CandidateCard({
               ? `Added as a sub-event of "${savedResult.parentLabel}" — ${savedResult.label}`
               : savedResult.kind === 'noted'
                 ? `Saved as a note on "${savedResult.label}"`
-                : `Merged into "${savedResult.label}"`}
+                : savedResult.kind === 'rejected'
+                  ? `Rejected — ${savedResult.label}`
+                  : `Merged into "${savedResult.label}"`}
         </p>
         <div style={styles.suggestButtonRow}>
-          <button
-            type="button"
-            onClick={() => onSelectEvent({ id: savedResult.momentId, summary: savedResult.label })}
-            style={styles.suggestYesButton}
-          >
-            Add more details →
-          </button>
-          <button type="button" onClick={onResolved} style={styles.suggestNoButton}>
+          {savedResult.kind === 'rejected' ? (
+            <button type="button" onClick={handleUndoReject} style={styles.suggestNoButton} disabled={saving}>
+              {saving ? '…' : 'Undo'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onSelectEvent({ id: savedResult.momentId, summary: savedResult.label })}
+              style={styles.suggestYesButton}
+            >
+              Add more details →
+            </button>
+          )}
+          <button type="button" onClick={onResolved} style={styles.suggestNoButton} disabled={saving}>
             Done
           </button>
         </div>
@@ -757,7 +802,7 @@ function CandidateCard({
   }
 
   return (
-    <div style={styles.card}>
+    <div ref={cardRef} style={styles.card}>
       {calendarSourceLabel && <span style={styles.sourceBadge}>{calendarSourceLabel}</span>}
       <div style={styles.fieldGroup}>
         <input value={occasion} onChange={(e) => setOccasion(e.target.value)} placeholder="Occasion" style={styles.input} disabled={saving} />
