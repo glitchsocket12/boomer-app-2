@@ -1415,3 +1415,36 @@ Denver", "Dinner reservation at Bonefish Grill".
 to be *shown*, even when they share a table and a status column — converting one into the other is a
 data migration, not a status change. And the general form of the previous entry's lesson held again:
 the tell was a count that was 202 short, noticed only because the number was checked at all.
+
+## 2026-08-17 — The review queue got slow because it drew all 376 cards, not because it fetched them
+
+Founder report: "boomer app is going really slow", narrowed to one screen — Review calendar events.
+Timing was the useful part of the diagnosis, because the intuitive culprit was wrong.
+
+The instinct on a slow page in this app is to suspect the reads: it's the codebase's own recurring
+bug (three 1000-row-cap entries above this one), and `load()` here does nine queries including a
+whole-account `relationships` map and every moment on file. The reads were not the problem. Rendering
+was. `candidates.map(...)` mounted a `CandidateCard` for **every** pending candidate, and a card is
+not a row — it holds ~25 pieces of state and, on mount, runs `findLikelyMatch` across every existing
+moment, rebuilds `groupNameById`/`groupParentById` from the whole group list, walks every group's
+membership for attendee suggestions, and runs `suggestFamilyMembers` over the entire relationships
+map. Per card. The page's cost was therefore candidates × account size, and the 2026-08-12 "sync
+every calendar event" directive is what pushed the first term from a handful to 376.
+
+Measured on the founder's real account (376 pending, 178 moments, 768 people, 68 groups), local dev
+server, desktop: **7,506ms to render all 376 cards; 942ms to render 20.** Fix is `CARD_BATCH_SIZE`
+= 20 with a "Show 20 more" button, and a count line so the true size of the queue is still visible.
+The queue is still fetched whole — paging the *fetch* would have fixed nothing and cost a round trip
+per batch.
+
+**The bug found on the way in.** The candidates query was the one account-wide browser read the
+2026-08-11 sweep missed, so it was still unpaged and silently capped at 1000. At 376 pending it had
+not bitten yet, but the queue only grows between reviews: at 1001 the reviewer would have cleared it
+to "Nothing left to review" with events still waiting, and nothing anywhere would have said so. Now
+paged, with `.order('id')` as the stable tiebreaker.
+
+**Lesson.** "The page is slow" pointed at the network and it was the DOM. The two are told apart by
+one measurement, and the measurement was cheap — a MutationObserver around the click, thirty seconds
+of work, versus a day of optimizing queries that were already fast enough. Also: a sweep is only as
+good as its inventory. The 2026-08-11 pass swept browser reads and still left one, because the file
+it lived in was not on the list anyone was reading from.
