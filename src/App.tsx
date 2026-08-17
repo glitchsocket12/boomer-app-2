@@ -784,6 +784,9 @@ export default function App() {
             onManageLocations={() =>
               pushCrumb({ type: 'manageLocations', id: 'manageLocations', label: 'Manage Locations' })
             }
+            onImportEvents={() =>
+              pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })
+            }
           />
         )}
         {view === 'calendar' && (

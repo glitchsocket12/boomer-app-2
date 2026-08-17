@@ -34,7 +34,7 @@ export type TreePerson = {
   side?: TreeSide
   deceased?: boolean
   // 'male' | 'female' | 'non-binary' | 'other', or undefined if never set on the profile — drives
-  // the small gender icon on each tile (item 44). Fetched via its own query in loadGraph, not
+  // the small gender dot on each tile (item 44). Fetched via its own query in loadGraph, not
   // bundled into the main people select — see the "isolate a new column" gotcha in
   // project_boomer_infra.md: PostgREST 400s the WHOLE select if `gender` doesn't exist yet on a
   // given database, which would otherwise blank out the entire tree until the migration runs.

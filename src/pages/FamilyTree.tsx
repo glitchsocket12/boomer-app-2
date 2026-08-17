@@ -51,12 +51,19 @@ const TRASH_ICON = (
   </svg>
 )
 
-// Item 44 — only male/female get a glyph (the traditional family-tree square/circle convention);
-// non-binary/other are left unmarked rather than guessing at a symbol without founder sign-off.
-function genderGlyph(gender: string | null | undefined): string {
-  if (gender === 'male') return '♂ '
-  if (gender === 'female') return '♀ '
-  return ''
+// Item 44 — gender reads as a small dot in the tile's top-right corner rather than a ♂/♀ glyph in
+// front of the name (founder call 2026-08-17: the glyph competed with the name it was annotating).
+// Still only male/female get a mark; non-binary/other stay unmarked rather than guessing at a color
+// without founder sign-off. Deliberately close to — but not the same as — the SIDE_COLORS blue and
+// rose below: those color a whole tile's border and fill, this only ever colors a 7px dot, so the
+// two readings stay separable. The legend names both.
+const GENDER_DOT: Record<string, string> = { male: '#4A7BA7', female: '#B06A82' }
+// A deceased tile mutes its fill, border and text (see the tile render), so the dot mutes with them
+// instead of being the one saturated thing left on an otherwise grey tile.
+const GENDER_DOT_DECEASED = '#B5B5B5'
+function genderDotColor(gender: string | null | undefined, deceased?: boolean): string | null {
+  if (gender !== 'male' && gender !== 'female') return null
+  return deceased ? GENDER_DOT_DECEASED : GENDER_DOT[gender]
 }
 
 const COLORS: Record<TreePerson['kind'], { border: string; fill: string; text: string }> = {
@@ -111,10 +118,16 @@ const MAX_GENDER_PROBES = 20
 type SecondLines = Map<string, string>
 
 function boxWidth(name: string, secondLine = '') {
-  const nameW = name.length * 8 + 28
+  // The 48 is side padding: the name is center-anchored, and the corner gender dot lives in the
+  // right margin, so it has to be wide enough that a name filling its box can't run under the dot.
+  // It also absorbs the ' †' and ' ›' suffixes, which this formula has never counted — measured on
+  // the demo tree, 40 left only 1.3px between the chevron and the dot on the worst tile.
+  const nameW = name.length * 8 + 48
   // The second line renders at fontSize 9 — roughly 5px a character.
   const labelW = secondLine ? secondLine.length * 5 + 16 : 0
-  return Math.max(80, Math.min(180, Math.max(nameW, labelW)))
+  // Ceiling raised 180 -> 190 alongside the padding above: a long name pinned at the old ceiling
+  // couldn't take the extra padding, so it was the one case still crowding the dot.
+  return Math.max(80, Math.min(190, Math.max(nameW, labelW)))
 }
 
 type Placed = { person: TreePerson; x: number; w: number }
@@ -557,7 +570,7 @@ export default function FamilyTree({
 
   // Answering "son-in-law or daughter-in-law?" writes the ordinary gender field — the same one
   // PersonDetail's dropdown sets — and then reloads the graph, which re-words every label that was
-  // sitting on a genderless fallback because of it (and turns on that person's ♂/♀ tile glyph).
+  // sitting on a genderless fallback because of it (and turns on that person's gender dot).
   async function setPersonGender(id: string, gender: 'male' | 'female') {
     if (!data) return
     setSavingGenderId(id)
@@ -712,15 +725,16 @@ export function FamilyTreeView({
   // that starts on a tile would otherwise fire its click. Bail if the pointer travelled.
   const pressOrigin = useRef<{ x: number; y: number } | null>(null)
 
-  const allShownIds = tiers.flatMap((t) =>
+  const allShownPeople = tiers.flatMap((t) =>
     t.branches.flatMap((b) => [
-      b.union.a.id,
-      ...b.union.spouses.map((s) => s.id),
-      ...b.leftExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
-      ...b.rightExtended.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
-      ...b.siblings.flatMap((u) => [u.a.id, ...u.spouses.map((s) => s.id)]),
+      b.union.a,
+      ...b.union.spouses,
+      ...b.leftExtended.flatMap((u) => [u.a, ...u.spouses]),
+      ...b.rightExtended.flatMap((u) => [u.a, ...u.spouses]),
+      ...b.siblings.flatMap((u) => [u.a, ...u.spouses]),
     ])
   )
+  const allShownIds = allShownPeople.map((p) => p.id)
 
   // Who the kinship labels are measured FROM. In ego mode that's the person the tree is centered
   // on. In descendants mode the "root" is whichever founder buildDescendantTreeFromGraph happened
@@ -994,8 +1008,15 @@ export function FamilyTreeView({
   // one-parent person only has one side to name, a group's descendants-mode tree has neither
   // purple nor sides at all).
   let legendText: string
+  // Named right after the side colors below, deliberately: the sides are ALSO blue and rose, so the
+  // dot has to be told apart from them in the same breath or the two readings blur together.
+  const genderLegend = allShownPeople.some((p) => p.gender === 'male' || p.gender === 'female')
+    ? "A small dot in the top corner of a name is that person's gender — blue for male, rose for female. "
+    : ''
   if (mode === 'descendants') {
-    legendText = 'Everyone shown is a blood relative or spouse in this family line. Tap any name to open their profile or build a full family tree centered on them.'
+    legendText =
+      'Everyone shown is a blood relative or spouse in this family line. ' +
+      `${genderLegend}Tap any name to open their profile or build a full family tree centered on them.`
   } else {
     const [sideAParent, sideBParent] = data.rootDirect.parents
     const sideLegend =
@@ -1010,7 +1031,8 @@ export function FamilyTreeView({
         : ''
     legendText =
       `Purple = the person this tree is centered on. Green = their parents, spouse, siblings, and kids — a direct relationship on file. ${sideLegend}` +
-      `Gray = family further out that isn't tied to one side (like great-grandchildren). ${stepLegend}Tap any name to open their profile or re-center the tree on them.`
+      `Gray = family further out that isn't tied to one side (like great-grandchildren). ${genderLegend}${stepLegend}` +
+      'Tap any name to open their profile or re-center the tree on them.'
   }
 
   return (
@@ -1147,6 +1169,7 @@ export function FamilyTreeView({
                 const fill = p.person.deceased ? neutral.offWhite : c.fill
                 const border = p.person.deceased ? '#AAAAAA' : c.border
                 const textColor = p.person.deceased ? '#888888' : c.text
+                const dot = genderDotColor(p.person.gender, p.person.deceased)
                 return (
                   <g
                     key={p.person.id}
@@ -1170,6 +1193,7 @@ export function FamilyTreeView({
                     style={{ cursor: clickable || onSelectPerson ? 'pointer' : 'default' }}
                   >
                     <rect x={x} y={y} width={p.w} height={BOX_H} rx={6} fill={fill} stroke={border} strokeWidth={1} />
+                    {dot && <circle cx={x + p.w - 12} cy={y + 12} r={3.5} fill={dot} />}
                     <text
                       x={x + p.w / 2}
                       y={secondLines.get(p.person.id) ? y + 21 : y + 27}
@@ -1178,7 +1202,6 @@ export function FamilyTreeView({
                       fontFamily={fontFamily}
                       fill={textColor}
                     >
-                      {genderGlyph(p.person.gender)}
                       {p.person.name}
                       {p.person.deceased ? ' †' : ''}
                       {clickable ? ' ›' : ''}

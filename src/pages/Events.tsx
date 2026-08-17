@@ -209,6 +209,7 @@ export default function Events({
   onSelectEvent,
   onManageTags,
   onManageLocations,
+  onImportEvents,
 }: {
   // Lifted up into App.tsx (alongside groupsSearch/groupsTypeFilter) so filters survive
   // navigating into an event and back, instead of resetting the way page-local state would.
@@ -219,6 +220,7 @@ export default function Events({
   onSelectEvent: (event: { id: string; summary: string }) => void
   onManageTags: () => void
   onManageLocations: () => void
+  onImportEvents: () => void
 }) {
   const [moments, setMoments] = useState<Moment[]>([])
   const [loading, setLoading] = useState(true)
@@ -319,6 +321,7 @@ export default function Events({
       createError={createError}
       onManageTags={onManageTags}
       onManageLocations={onManageLocations}
+      onImportEvents={onImportEvents}
       onSelectPerson={onSelectPerson}
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
@@ -386,6 +389,7 @@ export function EventsView({
   createError,
   onManageTags,
   onManageLocations,
+  onImportEvents,
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
@@ -405,6 +409,7 @@ export function EventsView({
   // Optional so the read-only landing-page demo (DemoEvents.tsx) doesn't have to pass a no-op for
   // a link it never renders.
   onManageLocations?: () => void
+  onImportEvents?: () => void
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
@@ -513,9 +518,16 @@ export function EventsView({
       <div style={styles.headingRow}>
         <h1 style={styles.heading}>Events</h1>
         {!readOnly && (
-          <button type="button" onClick={onAddEvent} style={styles.addButton} disabled={creating}>
-            {creating ? '…' : '+ Add Event'}
-          </button>
+          <div style={styles.headingActions}>
+            {/* Not its own import flow — calendar events already come in through the calendar
+                sources / review-queue pipeline, so this is just a shortcut to where you add one. */}
+            <button type="button" onClick={onImportEvents} style={styles.importButton}>
+              Import Events
+            </button>
+            <button type="button" onClick={onAddEvent} style={styles.addButton} disabled={creating}>
+              {creating ? '…' : '+ Add Event'}
+            </button>
+          </div>
         )}
       </div>
       {!readOnly && (
@@ -802,6 +814,8 @@ const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '2rem 1.5rem', fontFamily },
   headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.xl, marginBottom: space.xl, flexWrap: 'wrap' },
   heading: { fontSize: fontSize.h1, color: colors.ink, margin: 0 },
+  // Wraps so the two buttons stack instead of squeezing the heading on a phone (§10).
+  headingActions: { display: 'flex', alignItems: 'center', gap: space.md, flexWrap: 'wrap' },
   addButton: {
     fontSize: fontSize.base,
     padding: '0.6rem 1.1rem',
@@ -809,6 +823,18 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: 'none',
     backgroundColor: colors.primary,
     color: colors.onFill,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    fontFamily,
+  },
+  // Outlined, not filled — importing is the secondary path next to "+ Add Event".
+  importButton: {
+    fontSize: fontSize.base,
+    padding: '0.6rem 1.1rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: 'transparent',
+    color: colors.ink,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     fontFamily,

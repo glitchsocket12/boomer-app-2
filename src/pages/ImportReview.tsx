@@ -16,6 +16,11 @@ import { fetchMomentParentIds } from '../lib/moments'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
+// How many candidate cards render at a time (see visibleCount below). Big enough that a normal
+// queue never shows the "Show more" button at all, small enough that a 1000-event queue opens
+// instantly.
+const CARD_BATCH_SIZE = 20
+
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
   id: string
@@ -170,6 +175,12 @@ export default function ImportReview({
   // "Parent / Child" wherever one is picked (see momentDisplayName.ts).
   const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
+  // How many cards are actually mounted. A CandidateCard is expensive: it scans every existing
+  // moment looking for a likely duplicate, and rebuilds the group roster maps and the family/group
+  // attendee suggestions from the whole account. That cost is per card, so rendering the entire
+  // queue at once is what made this page crawl once the calendar sync started importing every
+  // event (founder report 2026-08-17). Reviewers work top-down anyway — the rest load on demand.
+  const [visibleCount, setVisibleCount] = useState(CARD_BATCH_SIZE)
 
   useEffect(() => {
     load()
@@ -178,13 +189,21 @@ export default function ImportReview({
   async function load() {
     setLoading(true)
     const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes, parentIds] = await Promise.all([
-      supabase
-        .from('moment_import_candidates')
-        .select(
-          'id, calendar_source_id, occasion, location, when_text, event_date, event_end_date, raw_description, suggested_people, suggested_tags, suggested_group_ids'
-        )
-        .eq('status', 'pending')
-        .order('event_date', { ascending: false, nullsFirst: false }),
+      // Paged (lib/pagedSelect.ts). Since the 2026-08-12 "sync every calendar event" change this
+      // queue is the biggest table on the account, so an unpaged read here silently stopped at
+      // PostgREST's 1000-row cap — the reviewer would clear the queue to empty and the events past
+      // #1000 would just never appear. `.order('id')` is the stable tiebreaker paging requires.
+      fetchAllRows((from, to) =>
+        supabase
+          .from('moment_import_candidates')
+          .select(
+            'id, calendar_source_id, occasion, location, when_text, event_date, event_end_date, raw_description, suggested_people, suggested_tags, suggested_group_ids'
+          )
+          .eq('status', 'pending')
+          .order('event_date', { ascending: false, nullsFirst: false })
+          .order('id')
+          .range(from, to)
+      ),
       fetchAllRows((from, to) =>
         supabase
           .from('moments')
@@ -283,26 +302,45 @@ export default function ImportReview({
       ) : candidates.length === 0 ? (
         <p style={styles.body}>Nothing left to review.</p>
       ) : (
-        candidates.map((c) => (
-          <CandidateCard
-            key={c.id}
-            candidate={c}
-            existingMoments={existingMoments}
-            recentLocations={recentLocations}
-            allTagsList={allTagsList}
-            allGroupsList={allGroupsList}
-            allPeopleList={allPeopleList}
-            relationshipsById={relationshipsById}
-            selfId={selfId}
-            momentParentById={momentParentById}
-            momentTitleById={momentTitleById}
-            calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
-            onTagCreated={handleTagCreated}
-            onMomentCreated={handleMomentCreated}
-            onSelectEvent={onSelectEvent}
-            onResolved={() => handleResolved(c.id)}
-          />
-        ))
+        <>
+          {candidates.length > CARD_BATCH_SIZE && (
+            <p style={styles.queueCount}>
+              {candidates.length.toLocaleString()} events to review — showing{' '}
+              {Math.min(visibleCount, candidates.length).toLocaleString()}. Accept or reject one and
+              the next takes its place.
+            </p>
+          )}
+          {candidates.slice(0, visibleCount).map((c) => (
+            <CandidateCard
+              key={c.id}
+              candidate={c}
+              existingMoments={existingMoments}
+              recentLocations={recentLocations}
+              allTagsList={allTagsList}
+              allGroupsList={allGroupsList}
+              allPeopleList={allPeopleList}
+              relationshipsById={relationshipsById}
+              selfId={selfId}
+              momentParentById={momentParentById}
+              momentTitleById={momentTitleById}
+              calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
+              onTagCreated={handleTagCreated}
+              onMomentCreated={handleMomentCreated}
+              onSelectEvent={onSelectEvent}
+              onResolved={() => handleResolved(c.id)}
+            />
+          ))}
+          {candidates.length > visibleCount && (
+            <button
+              type="button"
+              onClick={() => setVisibleCount((n) => n + CARD_BATCH_SIZE)}
+              style={styles.showMoreButton}
+            >
+              Show {Math.min(CARD_BATCH_SIZE, candidates.length - visibleCount).toLocaleString()} more
+              {' '}({(candidates.length - visibleCount).toLocaleString()} still to review)
+            </button>
+          )}
+        </>
       )}
     </div>
   )
@@ -1137,11 +1175,11 @@ function CandidateCard({
       ) : (
         <div style={{ marginBottom: '0.75rem' }}>
           <div style={styles.pickerToggleRow}>
-            <button type="button" onClick={() => setPickerMode((m) => (m === 'merge' ? null : 'merge'))} style={styles.linkButton} disabled={saving}>
-              {pickerMode === 'merge' ? 'Cancel merge search' : 'Merge with an existing event instead…'}
+            <button type="button" onClick={() => setPickerMode((m) => (m === 'merge' ? null : 'merge'))} style={styles.addButton} disabled={saving}>
+              {pickerMode === 'merge' ? 'Cancel merge' : 'Merge with an existing event'}
             </button>
-            <button type="button" onClick={() => setPickerMode((m) => (m === 'sub' ? null : 'sub'))} style={styles.linkButton} disabled={saving}>
-              {pickerMode === 'sub' ? 'Cancel sub-event search' : '+ Add as a sub-event of an existing event…'}
+            <button type="button" onClick={() => setPickerMode((m) => (m === 'sub' ? null : 'sub'))} style={styles.addButton} disabled={saving}>
+              {pickerMode === 'sub' ? 'Cancel sub-event' : '+ Add as a sub-event'}
             </button>
           </div>
           {pickerMode && (
@@ -1229,6 +1267,20 @@ const styles: { [key: string]: React.CSSProperties } = {
   heading: { fontSize: fontSize.h1, color: colors.ink, margin: '0 0 0.5rem' },
   intro: { fontSize: fontSize.bodyLg, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 1.25rem' },
   body: { fontSize: fontSize.body, color: colors.textMuted },
+  queueCount: { fontSize: fontSize.body, color: colors.textFaint, margin: '0 0 1rem' },
+  showMoreButton: {
+    display: 'block',
+    width: '100%',
+    fontSize: fontSize.bodyLg,
+    padding: '0.7rem 1rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
+    marginBottom: space.xl,
+  },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -1248,7 +1300,10 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   fieldGroup: { display: 'flex', flexDirection: 'column', gap: space.md, marginBottom: space.lg },
   notesInput: {
-    flex: 'none',
+    // Fills the row next to the mic (matching the other three review queues) rather than sitting
+    // at the textarea's default ~20-column width, which made it a tall narrow square.
+    flex: 1,
+    minWidth: 0,
     fontSize: fontSize.bodyLg,
     padding: '0.6rem 0.75rem',
     fontFamily,
@@ -1327,16 +1382,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.85rem 0.85rem 0.25rem',
     marginTop: space.md,
     marginBottom: space.lg,
-  },
-  linkButton: {
-    background: 'none',
-    border: 'none',
-    color: colors.ink,
-    fontSize: fontSize.label,
-    cursor: 'pointer',
-    padding: 0,
-    fontFamily,
-    textDecoration: 'underline',
   },
   mergeResultsList: { display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '220px', overflowY: 'auto' },
   mergeResultButton: {

@@ -1483,6 +1483,17 @@ Full story: PROJECT_HISTORY.md.
                                 a note, and "Accept as a new event" while a possible duplicate is
                                 still unanswered (derived `unresolvedMatch` drives both the box and
                                 the label so they can't drift).
+                                (2026-08-17) The two picker ENTRY POINTS above Accept/Reject are
+                                outline pill buttons matching "+ Add a tag"/"+ Add a group"
+                                (`styles.addButton`), not underlined links: "Merge with an existing
+                                event" / "+ Add as a sub-event", flipping to "Cancel merge" /
+                                "Cancel sub-event" while open. This does NOT contradict (c) above —
+                                that rule covers the confirmation banners' change-your-mind links,
+                                which stay links. Notes textarea: was passing `flex: 'none'` in
+                                `styles.notesInput`, overriding AutoGrowTextarea's `flex: 1`, so it
+                                collapsed to the textarea's default ~20-col width and grew tall
+                                instead; now `flex: 1` + `minWidth: 0` like the other three queues
+                                (750px of an 800px row, mic takes the rest).
                                 `suggested_people`/`suggested_group_ids` now also draw
                                 on people/relationship data already on file, not just the calendar
                                 entry's own ICS attendee list or its title's explicit group name
