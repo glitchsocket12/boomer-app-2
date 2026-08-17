@@ -59,9 +59,10 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
       </nav>
 
       <section style={{ ...styles.section, ...styles.hero }}>
-        <h1 style={styles.heroTitle}>Never go in cold again.</h1>
+        <h1 style={styles.heroTitle}>In Fight of Forgetfulness</h1>
         <p style={styles.heroSubtitle}>
-          Remember who matters to you — even if you accidentally forgot.
+          A life isn't a list of names. It's the people, the events, and the groups that
+          add up to a whole — Boomer helps you hold on to all of it.
         </p>
         <button onClick={() => onAuthClick('signup')} style={styles.heroButton}>
           Start remembering
@@ -96,6 +97,13 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
       )}
 
       <section id="what-is-boomer" style={styles.section}>
+        <p style={styles.body}>
+          This isn't really about remembering <em>who</em> someone is. It's about
+          everything that makes a life whole — the people in it, the events you shared
+          with them, and the groups that tie them together. A name on its own is trivia.
+          A name plus the dinner you sat through, the group you both belong to, and what
+          was going on in their life that year — that's a relationship.
+        </p>
         <p style={styles.body}>
           Think about the car ride home from a dinner party — recapping with your spouse who
           you saw, what you learned, who's expecting a baby. That's Boomer, built into an
@@ -144,6 +152,12 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
       </section>
 
       <section id="how-it-works" style={styles.section}>
+        <p style={styles.body}>
+          Boomer is scaffolding for your memory. The technology does the tedious part —
+          pulling in your calendar and your contacts, sorting out who's who, quietly
+          keeping it all in order — so the whole of your life stays within reach instead
+          of just the last few weeks of it.
+        </p>
         <ul style={styles.featureList}>
           <li style={styles.featureItem}>
             <strong>You don't start from scratch.</strong> Connect your calendar and Boomer
@@ -185,7 +199,8 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         <p style={styles.body}>
           For people who care enough to want to remember — big extended families, friends
           you see twice a year, anyone who's frozen mid-conversation trying to recall a name
-          or how two people are related.
+          or how two people are related, and anyone who doesn't want the last twenty years
+          of their life to blur into "we've been meaning to catch up."
         </p>
         <button onClick={() => onAuthClick('demo')} style={styles.inlineDemoLink}>
           Sound like you? Take a look around. →

@@ -467,6 +467,14 @@ src/
 │   │                            correction — "Landing page" (this file) vs. "Home" (the
 │   │                            logged-in dashboard) is the disambiguating terminology
 │   │                            going forward.
+│   │                            Current hero copy (2026-08-16, founder wording): headline
+│   │                            "In Fight of Forgetfulness" (replaced "Never go in cold
+│   │                            again"), sub "A life isn't a list of names…". Positioning
+│   │                            per founder: it's not about *who* — it's the people,
+│   │                            events and groups that make a life whole, with the tech
+│   │                            as scaffolding for remembering all of it. That framing
+│   │                            leads the What-is-Boomer and How-it-works sections; keep
+│   │                            new landing copy consistent with it.
 │   ├── Login.tsx              — combined sign up / log in. Takes `initialSignUp` (which
 │   │                            tile/button was clicked sets the starting mode) and
 │   │                            `onBack` (returns to Landing) props, both
