@@ -11,6 +11,8 @@ import SearchBox from '../components/SearchBox'
 import ReviewNoteField from '../components/ReviewNoteField'
 import AddressSuggestInput from '../components/AddressSuggestInput'
 import { groupDisplayName } from '../lib/groupDisplayName'
+import { momentDisplayName, momentPickerLabel, momentTitle } from '../lib/momentDisplayName'
+import { fetchMomentParentIds } from '../lib/moments'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
@@ -163,7 +165,10 @@ export default function ImportReview({
   const [allPeopleList, setAllPeopleList] = useState<PersonRef[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
   const [selfId, setSelfId] = useState<string | null>(null)
-  const [childMomentIds, setChildMomentIds] = useState<Set<string>>(new Set())
+  // { childId => parentId } for every sub-event on file. Two jobs: keeping events that are already
+  // sub-events out of the "add as a sub-event of…" picker, and qualifying event labels as
+  // "Parent / Child" wherever one is picked (see momentDisplayName.ts).
+  const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -172,7 +177,7 @@ export default function ImportReview({
 
   async function load() {
     setLoading(true)
-    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes, childIdsRes] = await Promise.all([
+    const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes, parentIds] = await Promise.all([
       supabase
         .from('moment_import_candidates')
         .select(
@@ -207,14 +212,11 @@ export default function ImportReview({
       // Self's spouse is always worth suggesting below, even on a candidate with nobody added yet
       // (founder feedback 2026-07-26, mirrors EventDetail.tsx's own selfId seeding).
       supabase.from('people').select('id').eq('is_self', true).maybeSingle(),
-      // Which moments are already sub-events of something else — used only to keep them out of
-      // the "add as a sub-event of…" parent picker, since the app nests one level deep (same rule
-      // as EventDetail.tsx). Isolated from the moments query above on purpose, same fail-open
-      // reasoning as Events.tsx's loadChildEvents: if parent_moment_id isn't migrated yet this
-      // degrades to "nothing is a sub-event" instead of breaking the whole review page.
-      fetchAllRows((from, to) =>
-        supabase.from('moments').select('id').not('parent_moment_id', 'is', null).order('id').range(from, to)
-      ),
+      // Which moments are already sub-events, and of what — keeps them out of the "add as a
+      // sub-event of…" parent picker (the app nests one level deep, same rule as EventDetail.tsx)
+      // and qualifies the labels in both pickers below. Isolated from the moments query above and
+      // fail-open; see fetchMomentParentIds.
+      fetchMomentParentIds(),
     ])
     setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
@@ -224,7 +226,7 @@ export default function ImportReview({
     setAllPeopleList((peopleRes.data as PersonRef[]) ?? [])
     setRelationshipsById(relationshipsMap)
     setSelfId(selfRes.data?.id ?? null)
-    setChildMomentIds(childIdsRes.error ? new Set() : new Set(((childIdsRes.data as { id: string }[] | null) ?? []).map((r) => r.id)))
+    setMomentParentById(parentIds)
     setLoading(false)
   }
 
@@ -242,6 +244,13 @@ export default function ImportReview({
   function handleMomentCreated(moment: ExistingMoment) {
     setExistingMoments((prev) => (prev.some((m) => m.id === moment.id) ? prev : [moment, ...prev]))
   }
+
+  // Each event's own unqualified title, built once here rather than per card: every card's merge
+  // and sub-event pickers list the same events, and the labels resolve a parent id to a name.
+  const momentTitleById = useMemo(
+    () => new Map(existingMoments.map((m) => [m.id, momentTitle(m)])),
+    [existingMoments]
+  )
 
   // Feeds AddressSuggestInput's "you've typed this before" suggestions — deduped case-insensitively,
   // most-recent first, from data already loaded above (no extra query).
@@ -285,7 +294,8 @@ export default function ImportReview({
             allPeopleList={allPeopleList}
             relationshipsById={relationshipsById}
             selfId={selfId}
-            childMomentIds={childMomentIds}
+            momentParentById={momentParentById}
+            momentTitleById={momentTitleById}
             calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
             onTagCreated={handleTagCreated}
             onMomentCreated={handleMomentCreated}
@@ -307,7 +317,8 @@ function CandidateCard({
   allPeopleList,
   relationshipsById,
   selfId,
-  childMomentIds,
+  momentParentById,
+  momentTitleById,
   calendarSourceLabel,
   onTagCreated,
   onMomentCreated,
@@ -322,7 +333,8 @@ function CandidateCard({
   allPeopleList: PersonRef[]
   relationshipsById: Map<string, PersonRelationships>
   selfId: string | null
-  childMomentIds: Set<string>
+  momentParentById: Map<string, string>
+  momentTitleById: Map<string, string>
   calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
   onMomentCreated: (moment: ExistingMoment) => void
@@ -354,6 +366,12 @@ function CandidateCard({
   // Set when the reviewer chooses to file this candidate *under* an existing event rather than
   // merging into it or creating a standalone one. Mutually exclusive with mergeTarget.
   const [subEventParent, setSubEventParent] = useState<ExistingMoment | null>(null)
+  // Set when the reviewer chooses to file this candidate as a plain note on an existing event.
+  // Mutually exclusive with mergeTarget/subEventParent. Deliberately a pending choice like the
+  // other two rather than firing on click: every option in this card now works the same way —
+  // the gold box picks what happens, the blue button at the bottom is the only thing that writes.
+  // It also means the note can still be edited in "Your notes" after the option is chosen.
+  const [noteTarget, setNoteTarget] = useState<ExistingMoment | null>(null)
   const [pickerMode, setPickerMode] = useState<'merge' | 'sub' | null>(null)
   const [mergeSearch, setMergeSearch] = useState('')
   const [acceptError, setAcceptError] = useState<string | null>(null)
@@ -362,6 +380,9 @@ function CandidateCard({
   >(null)
 
   const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
+  // True while a possible duplicate is on screen and the reviewer hasn't answered it yet — drives
+  // both the gold box and the wording of the blue button, so the two can't drift apart.
+  const unresolvedMatch = Boolean(likelyMatch) && !dismissedMatch && !mergeTarget && !subEventParent && !noteTarget
 
   // Built from the full roster so a subgroup's parent name resolves even if the parent isn't
   // itself suggested/tagged on this candidate.
@@ -561,7 +582,7 @@ function CandidateCard({
       kind: subEventParent ? 'subevent' : 'created',
       momentId: newMoment.id,
       label: summarize(occasion, candidate.raw_description ?? ''),
-      parentLabel: subEventParent ? summarize(subEventParent.occasion, subEventParent.raw_description) : undefined,
+      parentLabel: subEventParent ? momentDisplayName(subEventParent, momentTitleById, momentParentById) : undefined,
     })
   }
 
@@ -612,7 +633,18 @@ function CandidateCard({
     setSavedResult({
       kind: 'merged',
       momentId: freshTarget.id,
-      label: summarize(fieldsToFill.occasion ?? freshTarget.occasion, freshTarget.raw_description || candidate.raw_description || ''),
+      // Qualified: merging into a sub-event should confirm which one, the same way the picker
+      // named it. momentDisplayName takes the title from this row (which may have just been
+      // filled in above) and only uses the maps to resolve the parent chain.
+      label: momentDisplayName(
+        {
+          id: freshTarget.id,
+          occasion: fieldsToFill.occasion ?? freshTarget.occasion,
+          raw_description: freshTarget.raw_description || candidate.raw_description || '',
+        },
+        momentTitleById,
+        momentParentById
+      ),
     })
   }
 
@@ -644,7 +676,7 @@ function CandidateCard({
     setSavedResult({
       kind: 'noted',
       momentId: target.id,
-      label: summarize(target.occasion, target.raw_description),
+      label: momentDisplayName(target, momentTitleById, momentParentById),
     })
   }
 
@@ -985,11 +1017,15 @@ function CandidateCard({
         />
       )}
 
-      {!dismissedMatch && likelyMatch && !mergeTarget && !subEventParent && (
+      {unresolvedMatch && likelyMatch && (
         <div style={styles.suggestBanner}>
-          <span>This might already be on file as "{summarize(likelyMatch.occasion, likelyMatch.raw_description)}".</span>
+          <span>This might already be on file as "{momentDisplayName(likelyMatch, momentTitleById, momentParentById)}".</span>
+          {/* Four genuinely open options — deliberately all the same weight, and none of them saves
+              anything on click. "Merge into it" used to be the filled blue button here, which read
+              as the recommended answer and got picked before the choice had actually been made.
+              Every option just decides what the blue button at the bottom will do. */}
           <div style={styles.suggestButtonRow}>
-            <button type="button" onClick={() => setMergeTarget(likelyMatch)} style={styles.suggestYesButton} disabled={saving}>
+            <button type="button" onClick={() => setMergeTarget(likelyMatch)} style={styles.suggestNoButton} disabled={saving}>
               Merge into it
             </button>
             {/* Third option between "same event" and "just a note": this really happened *during*
@@ -997,7 +1033,7 @@ function CandidateCard({
             <button type="button" onClick={() => setSubEventParent(likelyMatch)} style={styles.suggestNoButton} disabled={saving}>
               + Add as a sub-event
             </button>
-            <button type="button" onClick={() => handleSaveAsNote(likelyMatch)} style={styles.suggestNoButton} disabled={saving}>
+            <button type="button" onClick={() => setNoteTarget(likelyMatch)} style={styles.suggestNoButton} disabled={saving}>
               Save as a note instead
             </button>
             <button type="button" onClick={() => setDismissedMatch(true)} style={styles.suggestNoButton} disabled={saving}>
@@ -1007,48 +1043,93 @@ function CandidateCard({
         </div>
       )}
 
+      {/* These banners confirm a choice that's already been made — they are not the place to make
+          it. The button that actually saves is the blue one at the bottom of the card, so the
+          change-your-mind actions in here are plain text links, never bordered buttons: as buttons
+          they read as "the box's two choices" and got clicked instead of the blue one. */}
       {mergeTarget ? (
         <div style={styles.suggestBanner}>
-          <span>Will merge into "{summarize(mergeTarget.occasion, mergeTarget.raw_description)}" instead of creating a new event.</span>
-          <div style={styles.suggestButtonRow}>
+          <span>Will merge into "{momentDisplayName(mergeTarget, momentTitleById, momentParentById)}" instead of creating a new event.</span>
+          <span style={styles.bannerHint}>Press "Merge" below to save it.</span>
+          <div style={styles.bannerLinkRow}>
+            <span>Not what you want?</span>
             <button
               type="button"
               onClick={() => {
                 setSubEventParent(mergeTarget)
                 setMergeTarget(null)
               }}
-              style={styles.suggestNoButton}
+              style={styles.bannerLink}
               disabled={saving}
             >
-              + Add as a sub-event instead
+              Add as a sub-event instead
             </button>
-            <button type="button" onClick={() => handleSaveAsNote(mergeTarget)} style={styles.suggestNoButton} disabled={saving}>
+            <span aria-hidden="true">·</span>
+            <button
+              type="button"
+              onClick={() => {
+                setNoteTarget(mergeTarget)
+                setMergeTarget(null)
+              }}
+              style={styles.bannerLink}
+              disabled={saving}
+            >
               Save as a note instead
             </button>
-            <button type="button" onClick={() => setMergeTarget(null)} style={styles.suggestNoButton} disabled={saving}>
+            <span aria-hidden="true">·</span>
+            <button type="button" onClick={() => setMergeTarget(null)} style={styles.bannerLink} disabled={saving}>
               Cancel merge
+            </button>
+          </div>
+        </div>
+      ) : noteTarget ? (
+        <div style={styles.suggestBanner}>
+          <span>
+            Will be saved as a note on "{momentDisplayName(noteTarget, momentTitleById, momentParentById)}" — no new event, just a line added to
+            that one.
+          </span>
+          <span style={styles.bannerHint}>Press "Save as a note" below to save it. You can still edit the wording in "Your notes" above.</span>
+          <div style={styles.bannerLinkRow}>
+            <span>Not what you want?</span>
+            <button
+              type="button"
+              onClick={() => {
+                setMergeTarget(noteTarget)
+                setNoteTarget(null)
+              }}
+              style={styles.bannerLink}
+              disabled={saving}
+            >
+              Merge into it instead
+            </button>
+            <span aria-hidden="true">·</span>
+            <button type="button" onClick={() => setNoteTarget(null)} style={styles.bannerLink} disabled={saving}>
+              Cancel
             </button>
           </div>
         </div>
       ) : subEventParent ? (
         <div style={styles.suggestBanner}>
           <span>
-            Will be added as a sub-event of "{summarize(subEventParent.occasion, subEventParent.raw_description)}" — its own event, nested under
-            that one.
+            Will be added as a sub-event of "{momentDisplayName(subEventParent, momentTitleById, momentParentById)}" — its own event, nested
+            under that one.
           </span>
-          <div style={styles.suggestButtonRow}>
+          <span style={styles.bannerHint}>Press "Add as sub-event" below to save it.</span>
+          <div style={styles.bannerLinkRow}>
+            <span>Not what you want?</span>
             <button
               type="button"
               onClick={() => {
                 setMergeTarget(subEventParent)
                 setSubEventParent(null)
               }}
-              style={styles.suggestNoButton}
+              style={styles.bannerLink}
               disabled={saving}
             >
               Merge into it instead
             </button>
-            <button type="button" onClick={() => setSubEventParent(null)} style={styles.suggestNoButton} disabled={saving}>
+            <span aria-hidden="true">·</span>
+            <button type="button" onClick={() => setSubEventParent(null)} style={styles.bannerLink} disabled={saving}>
               Cancel
             </button>
           </div>
@@ -1074,10 +1155,13 @@ function CandidateCard({
                 {existingMoments
                   // Sub-events nest one level only (same rule as EventDetail.tsx), so an event
                   // that's already someone's sub-event can't itself be a parent.
-                  .filter((m) => (pickerMode === 'sub' ? !childMomentIds.has(m.id) : true))
-                  .filter((m) => summarize(m.occasion, m.raw_description).toLowerCase().includes(mergeSearch.trim().toLowerCase()))
+                  .filter((m) => (pickerMode === 'sub' ? !momentParentById.has(m.id) : true))
+                  // Searched on the full "Parent / Child — date" label, not the bare title, so
+                  // typing a trip's name finds the days underneath it.
+                  .map((m) => ({ moment: m, label: momentPickerLabel(m, momentTitleById, momentParentById) }))
+                  .filter(({ label }) => label.toLowerCase().includes(mergeSearch.trim().toLowerCase()))
                   .slice(0, 8)
-                  .map((m) => (
+                  .map(({ moment: m, label }) => (
                     <button
                       key={m.id}
                       type="button"
@@ -1088,7 +1172,7 @@ function CandidateCard({
                       }}
                       style={styles.mergeResultButton}
                     >
-                      {summarize(m.occasion, m.raw_description)}
+                      {label}
                     </button>
                   ))}
               </div>
@@ -1099,9 +1183,29 @@ function CandidateCard({
 
       {acceptError && <p style={styles.errorBanner}>{acceptError}</p>}
 
+      {/* The one and only control that writes anything. Its label always names the outcome the
+          gold box above has been set to — including the unresolved case: while a possible duplicate
+          is still on screen and nothing has been chosen, this says "Accept as a new event" rather
+          than a bare "Accept", because pressing it there creates the very duplicate being warned
+          about. */}
       <div style={styles.suggestButtonRow}>
-        <button type="button" onClick={mergeTarget ? handleAcceptAsMerge : handleAccept} style={styles.suggestYesButton} disabled={saving || transcribing}>
-          {saving ? '…' : mergeTarget ? 'Merge' : subEventParent ? 'Add as sub-event' : 'Accept'}
+        <button
+          type="button"
+          onClick={mergeTarget ? handleAcceptAsMerge : noteTarget ? () => handleSaveAsNote(noteTarget) : handleAccept}
+          style={styles.suggestYesButton}
+          disabled={saving || transcribing}
+        >
+          {saving
+            ? '…'
+            : mergeTarget
+              ? 'Merge'
+              : noteTarget
+                ? 'Save as a note'
+                : subEventParent
+                  ? 'Add as sub-event'
+                  : unresolvedMatch
+                    ? 'Accept as a new event'
+                    : 'Accept'}
         </button>
         <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
           Reject
@@ -1259,6 +1363,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: '0.9rem',
   },
   suggestButtonRow: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
+  bannerHint: { fontSize: fontSize.label, color: colors.suggest },
+  bannerLinkRow: { display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: fontSize.label, color: colors.suggest },
+  bannerLink: {
+    background: 'none',
+    border: 'none',
+    // Vertical padding only — keeps the plain-link look while leaving a tappable target on a phone.
+    padding: '0.2rem 0',
+    fontSize: fontSize.label,
+    color: colors.suggestDeep,
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    fontFamily,
+  },
   suggestYesButton: {
     fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',
