@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState, type ReactElement } from 'react'
 import { HomeIcon, PeopleIcon, EventsIcon, CalendarIcon, GroupsIcon, SearchIcon } from './components/NavIcons'
 import { supabase } from './lib/supabase'
 import GlobalSearch from './components/GlobalSearch'
@@ -6,44 +6,65 @@ import { cachedSearchCorpus, clearSearchCorpus, isSearchCorpusStale, loadSearchC
 import type { SearchDoc, SearchTarget } from './lib/globalSearch'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
-import DemoShell from './pages/demo/DemoShell'
 import { ensureSelfPersonFromSignupMetadata } from './lib/ensureSelfFromSignup'
 import { ensureStarterTags } from './lib/ensureStarterTags'
 import { ensureUserTimeZone } from './lib/ensureUserTimeZone'
-import Onboarding from './pages/Onboarding'
-import Home from './pages/Home'
-import People from './pages/People'
-import Events, { DEFAULT_EVENT_FILTERS, type EventFilters } from './pages/Events'
-import Calendar from './pages/Calendar'
-import Groups from './pages/Groups'
-import GroupDetail from './pages/GroupDetail'
-import PetDetail from './pages/PetDetail'
-import EventDetail from './pages/EventDetail'
-import PersonDetail from './pages/PersonDetail'
-import DunbarDetail from './pages/DunbarDetail'
-import DueForUpdate from './pages/DueForUpdate'
-import ManageTags from './pages/ManageTags'
-import ManageLocations from './pages/ManageLocations'
-import GenderFill from './pages/GenderFill'
-import ManageGroupTypes from './pages/ManageGroupTypes'
-import Circle from './pages/Circle'
-import SettingsPage from './pages/SettingsPage'
-import CalendarSettings from './pages/CalendarSettings'
-import PhotoImportReview from './pages/PhotoImportReview'
-import GooglePhotosOAuthCallback from './pages/GooglePhotosOAuthCallback'
-import ImportReview from './pages/ImportReview'
-import BirthdayImportReview from './pages/BirthdayImportReview'
-import ContactsImport from './pages/ContactsImport'
-import ContactSelection from './pages/ContactSelection'
-import ContactImportReview from './pages/ContactImportReview'
-import About from './pages/About'
-import Privacy from './pages/Privacy'
-import FamilyTree from './pages/FamilyTree'
+import { DEFAULT_EVENT_FILTERS, type EventFilters } from './lib/eventFilters'
 import ErrorBoundary from './components/ErrorBoundary'
 import Breadcrumb from './components/Breadcrumb'
 import FeedbackWidget from './components/FeedbackWidget'
 import ChoiceSheet from './components/ChoiceSheet'
 import { border, colors, fontFamily, fontSize, radius, shadow, space } from './lib/theme'
+
+// --- Code splitting ------------------------------------------------------------------------------
+//
+// Every page used to be a static import, so the whole app — all 41 screens, the demo's fixture data,
+// the family-tree renderer — shipped as ONE 1.12MB JavaScript file that a phone had to download and
+// parse before it could paint anything (founder report 2026-08-17). Each page is now its own chunk,
+// fetched the first time it's actually opened.
+//
+// Landing and Login stay STATIC on purpose: they're the logged-out first paint, so lazy-loading them
+// would just add a round trip to the exact moment being optimized. Home is lazy but prefetched as
+// soon as the app knows there's a session (see the prefetch effect below), so it overlaps with the
+// auth round trip rather than queueing behind it.
+//
+// Chunks are content-hashed and immutable, so this costs a fetch only on a cold cache, and a page
+// the founder never opens is never downloaded at all.
+const DemoShell = lazy(() => import('./pages/demo/DemoShell'))
+const Onboarding = lazy(() => import('./pages/Onboarding'))
+const Home = lazy(() => import('./pages/Home'))
+const People = lazy(() => import('./pages/People'))
+const Events = lazy(() => import('./pages/Events'))
+const Calendar = lazy(() => import('./pages/Calendar'))
+const Groups = lazy(() => import('./pages/Groups'))
+const GroupDetail = lazy(() => import('./pages/GroupDetail'))
+const PetDetail = lazy(() => import('./pages/PetDetail'))
+const EventDetail = lazy(() => import('./pages/EventDetail'))
+const PersonDetail = lazy(() => import('./pages/PersonDetail'))
+const DunbarDetail = lazy(() => import('./pages/DunbarDetail'))
+const DueForUpdate = lazy(() => import('./pages/DueForUpdate'))
+const ManageTags = lazy(() => import('./pages/ManageTags'))
+const ManageLocations = lazy(() => import('./pages/ManageLocations'))
+const GenderFill = lazy(() => import('./pages/GenderFill'))
+const ManageGroupTypes = lazy(() => import('./pages/ManageGroupTypes'))
+const Circle = lazy(() => import('./pages/Circle'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const CalendarSettings = lazy(() => import('./pages/CalendarSettings'))
+const PhotoImportReview = lazy(() => import('./pages/PhotoImportReview'))
+const GooglePhotosOAuthCallback = lazy(() => import('./pages/GooglePhotosOAuthCallback'))
+const ImportReview = lazy(() => import('./pages/ImportReview'))
+const BirthdayImportReview = lazy(() => import('./pages/BirthdayImportReview'))
+const ContactsImport = lazy(() => import('./pages/ContactsImport'))
+const ContactSelection = lazy(() => import('./pages/ContactSelection'))
+const ContactImportReview = lazy(() => import('./pages/ContactImportReview'))
+const About = lazy(() => import('./pages/About'))
+const Privacy = lazy(() => import('./pages/Privacy'))
+const FamilyTree = lazy(() => import('./pages/FamilyTree'))
+
+// Shown while a lazily-loaded page's chunk is in flight. Deliberately the exact "Loading…" the app
+// already shows while resolving the session, so a cold-cache page open reads as the same kind of
+// wait the app has always had rather than a new kind of flash.
+const pageFallback = <p style={{ textAlign: 'center', marginTop: '4rem' }}>Loading…</p>
 
 type Tab = 'home' | 'people' | 'events' | 'calendar' | 'groups'
 type AuthView = 'landing' | 'login' | 'signup' | 'demo'
@@ -302,6 +323,13 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // Start pulling Home's chunk NOW, before the session round trip below has answered. A returning
+    // founder lands on Home essentially every time, so this overlaps the download with the auth
+    // wait instead of starting it once the shell is already on screen. `import()` de-dupes, so the
+    // real render below reuses this exact request rather than issuing a second one; a logged-out
+    // visitor wastes one background fetch, which is why only Home gets this and not every page.
+    import('./pages/Home')
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setCheckingSession(false)
@@ -540,7 +568,7 @@ export default function App() {
   // GooglePhotosOAuthCallback.tsx for why a plain reload-to-"/" on success is enough to land the
   // user back where they started).
   if (window.location.pathname === '/oauth/google-photos/callback') {
-    return <GooglePhotosOAuthCallback />
+    return <Suspense fallback={pageFallback}>{<GooglePhotosOAuthCallback />}</Suspense>
   }
 
   if (!session) {
@@ -548,7 +576,11 @@ export default function App() {
       return <Landing onAuthClick={(mode) => setAuthView(mode)} />
     }
     if (authView === 'demo') {
-      return <DemoShell onExit={() => setAuthView('landing')} onSignUp={() => setAuthView('signup')} />
+      return (
+        <Suspense fallback={pageFallback}>
+          <DemoShell onExit={() => setAuthView('landing')} onSignUp={() => setAuthView('signup')} />
+        </Suspense>
+      )
     }
     return (
       <Login
@@ -563,7 +595,11 @@ export default function App() {
     return <p style={{ textAlign: 'center', marginTop: '4rem' }}>Loading…</p>
   }
   if (onboardingPending) {
-    return <Onboarding onComplete={() => setOnboardingPending(false)} />
+    return (
+      <Suspense fallback={pageFallback}>
+        <Onboarding onComplete={() => setOnboardingPending(false)} />
+      </Suspense>
+    )
   }
 
   const current = navStack[navStack.length - 1] ?? null
@@ -908,7 +944,12 @@ export default function App() {
 
       {breadcrumbItems && <Breadcrumb items={breadcrumbItems} />}
 
-      <ErrorBoundary key={current ? `${current.type}-${current.id}` : view}>{content}</ErrorBoundary>
+      {/* ErrorBoundary OUTSIDE Suspense on purpose: a chunk that fails to download (offline, a
+          deploy that rotated the hashed filenames mid-session) rejects the lazy import, and that
+          rejection has to land on the boundary rather than leaving the fallback spinning forever. */}
+      <ErrorBoundary key={current ? `${current.type}-${current.id}` : view}>
+        <Suspense fallback={pageFallback}>{content}</Suspense>
+      </ErrorBoundary>
 
       <FeedbackWidget pageLabel={feedbackPageLabel} />
     </div>

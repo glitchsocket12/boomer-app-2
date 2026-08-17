@@ -44,29 +44,13 @@ export type DecoratedMoment = {
   tags: { id: string; name: string }[]
 }
 
-export type DateFilterPreset = 'all' | 'thisYear' | 'lastYear' | 'last30' | 'custom'
-export type DateFilter = { preset: DateFilterPreset; customStart: string | null; customEnd: string | null }
-export const DEFAULT_DATE_FILTER: DateFilter = { preset: 'all', customStart: null, customEnd: null }
-
-export type EventFilters = {
-  search: string
-  tagFilter: string
-  personFilter: string
-  groupFilter: string
-  subgroupFilter: string
-  locationFilter: string
-  dateFilter: DateFilter
-}
-
-export const DEFAULT_EVENT_FILTERS: EventFilters = {
-  search: '',
-  tagFilter: 'all',
-  personFilter: 'all',
-  groupFilter: 'all',
-  subgroupFilter: 'all',
-  locationFilter: 'all',
-  dateFilter: DEFAULT_DATE_FILTER,
-}
+// Moved to lib/eventFilters.ts so App.tsx can hold this page's filter state without eagerly
+// importing the page itself (Events is lazy-loaded — see App.tsx). Re-exported from here so the
+// demo pages and eventsFilter.test.ts can go on importing them from this module.
+import type { DateFilterPreset, DateFilter, EventFilters } from '../lib/eventFilters'
+import { DEFAULT_DATE_FILTER } from '../lib/eventFilters'
+export type { DateFilterPreset, DateFilter, EventFilters } from '../lib/eventFilters'
+export { DEFAULT_DATE_FILTER, DEFAULT_EVENT_FILTERS } from '../lib/eventFilters'
 
 // How many of the (non-search) filter dimensions are currently narrowing the list — drives the
 // "Filters · N" badge and whether "Clear all" is enabled.
