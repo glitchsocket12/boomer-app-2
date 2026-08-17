@@ -61,3 +61,38 @@ describe('describeRelationship', () => {
     expect(describeRelationship(g, 'andi', 'andy')).toBe('spouse')
   })
 })
+
+// The founder's 2026-08-16 note: the tree shouldn't say "spouse" about someone whose name plainly
+// reads female. The real loadFamilyGraph fills genderById in from first names where the column is
+// blank, so these words appear without anyone having filled in a form.
+describe('describeRelationship — gendered wording', () => {
+  const gendered = (over: Record<string, string>): Graph => ({
+    ...buildGraph(),
+    genderById: new Map(Object.entries(over)),
+  })
+
+  it('names each relationship by gender when it knows one', () => {
+    const g = gendered({ andy: 'male', andi: 'female', michael: 'male', stepkid: 'female', kid1: 'male' })
+    expect(describeRelationship(g, 'kid1', 'andy')).toBe('father')
+    expect(describeRelationship(g, 'kid1', 'andi')).toBe('mother')
+    expect(describeRelationship(g, 'kid1', 'michael')).toBe('stepfather')
+    expect(describeRelationship(g, 'kid1', 'stepkid')).toBe('stepsister')
+    expect(describeRelationship(g, 'andi', 'michael')).toBe('husband')
+    expect(describeRelationship(g, 'michael', 'andi')).toBe('wife')
+    expect(describeRelationship(g, 'andi', 'kid1')).toBe('son')
+  })
+
+  it('words each person from THEIR own gender, not the subject\'s', () => {
+    // The word describes toId. Asking the same question from both ends must not hand back the same
+    // noun just because the pair is the same pair.
+    const g = gendered({ andi: 'female', michael: 'male' })
+    expect(describeRelationship(g, 'andi', 'michael')).toBe('husband')
+    expect(describeRelationship(g, 'michael', 'andi')).toBe('wife')
+  })
+
+  it('falls back to the neutral word when gender is unknown or has no gendered noun', () => {
+    const g = gendered({ michael: 'non-binary' })
+    expect(describeRelationship(g, 'kid1', 'michael')).toBe('step-parent')
+    expect(describeRelationship(g, 'kid1', 'andy')).toBe('parent') // nothing on file at all
+  })
+})

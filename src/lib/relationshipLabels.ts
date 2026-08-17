@@ -72,18 +72,38 @@ export function relationOf(g: LabelGraph, fromId: string, toId: string): Relatio
   return 'unknown'
 }
 
-const LABEL: Record<Relation, string> = {
-  self: 'self',
-  parent: 'parent',
-  child: 'child',
-  sibling: 'sibling',
-  'half-sibling': 'half-sibling',
-  'step-parent': 'step-parent',
-  'step-sibling': 'step-sibling',
-  spouse: 'spouse',
-  unknown: 'unknown',
+// Male, female, and the word to fall back on when gender isn't known. The gendered spellings match
+// relationshipCalculator.ts's exactly ('stepfather', not 'step-father') so the same person can't be
+// labelled two different ways depending on which screen is asking.
+const LABEL: Record<Relation, [male: string, female: string, neutral: string]> = {
+  self: ['self', 'self', 'self'],
+  parent: ['father', 'mother', 'parent'],
+  child: ['son', 'daughter', 'child'],
+  sibling: ['brother', 'sister', 'sibling'],
+  'half-sibling': ['half-brother', 'half-sister', 'half-sibling'],
+  'step-parent': ['stepfather', 'stepmother', 'step-parent'],
+  'step-sibling': ['stepbrother', 'stepsister', 'step-sibling'],
+  spouse: ['husband', 'wife', 'spouse'],
+  unknown: ['unknown', 'unknown', 'unknown'],
 }
 
-export function describeRelationship(g: LabelGraph, fromId: string, toId: string): string {
-  return LABEL[relationOf(g, fromId, toId)]
+// Adds the gender map relationOf has no use for. Optional, so a caller with a graph that predates
+// gender (or a hand-built test graph) still type-checks and just gets the neutral words.
+type WordingGraph = LabelGraph & { genderById?: Map<string, string> }
+
+/**
+ * The relationship of toId TO fromId as a word to show someone — gendered whenever toId's gender is
+ * known, neutral when it isn't (founder, 2026-08-16: don't say "spouse" about a Margaret).
+ *
+ * Callers pass a graph from loadFamilyGraph, whose genderById is already filled from first names
+ * where the column is blank, so this reads "husband" without anyone having filled in a form.
+ * 'non-binary' and 'other' deliberately land on the neutral word rather than being forced into one
+ * of the two gendered ones.
+ */
+export function describeRelationship(g: WordingGraph, fromId: string, toId: string): string {
+  const [male, female, neutral] = LABEL[relationOf(g, fromId, toId)]
+  const gender = g.genderById?.get(toId)
+  if (gender === 'male') return male
+  if (gender === 'female') return female
+  return neutral
 }

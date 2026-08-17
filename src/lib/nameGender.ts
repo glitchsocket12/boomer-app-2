@@ -128,6 +128,11 @@ const AMBIGUOUS = new Set([
   'skylar', 'skyler', 'sloan', 'stevie', 'sydney', 'taylor', 'terry', 'tracey', 'tracy', 'val',
 ])
 
+// Exported for supabase/functions/_shared/nameGender.test.ts, which asserts these are identical to
+// the edge-function mirror's copies. Nothing else should read them — callers want the guess, not the
+// lists behind it.
+export const _SETS = { MALE, FEMALE, AMBIGUOUS }
+
 // Accents dropped so "José" matches "jose"; anything that isn't a letter, hyphen or apostrophe is
 // stripped so a stray initial ("J.") or a quoted nickname doesn't defeat the lookup.
 function normalize(raw: string): string {

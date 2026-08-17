@@ -20,6 +20,11 @@ export type CoParentGap = {
   parentName: string
   childId: string
   childName: string
+  // "mother" / "father" / "parent" — the word for what this person would BE to the child, so the
+  // card can ask "also Sophie's mother?" instead of "also a parent of Sophie" (founder, 2026-08-16).
+  // Decided here rather than on the card because this is where the graph — and therefore the gender,
+  // already filled in from first names by loadFamilyGraph — is in hand.
+  parentNoun: string
 }
 export type CoupleGap = {
   kind: 'family_couple'
@@ -42,6 +47,12 @@ export function deriveRelationshipGaps(g: Graph): RelationshipGapSuggestion[] {
   const out: RelationshipGapSuggestion[] = []
   const seen = new Set<string>()
   const name = (id: string) => g.nameById.get(id) ?? 'Unknown'
+  // 'non-binary' and 'other' fall through to "parent" on purpose — they're real answers with no
+  // gendered word to pick, which is not the same as not knowing.
+  const parentNoun = (id: string) => {
+    const gender = g.genderById?.get(id)
+    return gender === 'male' ? 'father' : gender === 'female' ? 'mother' : 'parent'
+  }
 
   // "Your spouse isn't recorded as a parent of your child." syncSpouseParenthood writes this
   // automatically for a straightforward first marriage, but skips it whenever either side has
@@ -78,6 +89,7 @@ export function deriveRelationshipGaps(g: Graph): RelationshipGapSuggestion[] {
           parentName: name(spouseId),
           childId,
           childName: name(childId),
+          parentNoun: parentNoun(spouseId),
         })
       }
     }

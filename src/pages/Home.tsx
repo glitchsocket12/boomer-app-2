@@ -686,14 +686,24 @@ export function HomeView({
                             >
                               {personLabel({ id: s.parentId, name: s.parentName }, selfId, { capitalize: false })}
                             </button>{' '}
-                            also a parent of{' '}
-                            <button
-                              onClick={() => onSelectPerson({ id: s.childId, name: s.childName })}
-                              style={styles.connectionLink}
-                            >
-                              {personLabel({ id: s.childId, name: s.childName }, selfId, { capitalize: false })}
-                            </button>
-                            ?
+                            {/* "also Sophie's mother?" rather than "also a parent of Sophie" — the
+                                possessive is what lets the gendered word in (see parentNoun), and
+                                the child being the founder themselves turns it into "your". */}
+                            also{' '}
+                            {isSelf(s.childId, selfId) ? (
+                              'your'
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => onSelectPerson({ id: s.childId, name: s.childName })}
+                                  style={styles.connectionLink}
+                                >
+                                  {personLabel({ id: s.childId, name: s.childName }, selfId, { capitalize: false })}
+                                </button>
+                                ’s
+                              </>
+                            )}{' '}
+                            {s.parentNoun}?
                           </>
                         )}
                         {s.kind === 'family_couple' && (

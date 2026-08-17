@@ -17,6 +17,7 @@ import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { rollUpGroupMemberIds } from "../_shared/groupRollup.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { mergeNicknames, parseNicknames } from "../_shared/nicknames.ts"
+import { effectiveGender } from "../_shared/nameGender.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -88,6 +89,7 @@ serve(async (req) => {
       { data: tags },
       { data: pets },
       { data: personPets },
+      { data: genderRows },
     ] = await Promise.all([
       // Paged for the same reason person_groups is (see fetchAllPersonGroups): 700 people already,
       // and the 1000th person onward would just stop existing as far as the model is concerned.
@@ -116,6 +118,14 @@ serve(async (req) => {
         .select("id, name, species, breed, birth_date, adopted_date, deceased_date, notes, attributes")
         .order("id"),
       supabaseClient.from("person_pets").select("person_id, pet_id").order("person_id").order("pet_id"),
+      // Its own query, deliberately not a column on the people select above — same reasoning as
+      // pets/person_pets two comments up, and the same split familyTree.ts makes in the browser: if
+      // `gender` doesn't exist yet (migration not run), this call alone comes back empty and the
+      // model just falls back to first-name guesses, instead of the whole roster — and with it this
+      // function — going down.
+      fetchAllRows((from, to) =>
+        supabaseClient.from("people").select("id, gender").order("id").range(from, to)
+      ),
     ])
 
     const nameById: Record<string, string> = {}
@@ -145,11 +155,35 @@ serve(async (req) => {
     // asks a follow-up that assumes he's alive — the same care the pets roster already takes with
     // its "PASSED AWAY" marker.
     const deceasedIds = new Set<string>()
+    // What's actually recorded in the gender column, before first-name guesses fill the gaps below.
+    const recordedGender: Record<string, string> = {}
+    for (const g of genderRows ?? []) {
+      if (g.gender) recordedGender[g.id] = g.gender
+    }
+    // The gender the model should USE for each person — recorded if there is one, otherwise what
+    // the first name reads as (founder, 2026-08-16). This is the same fill the browser already does
+    // when it builds the family graph, which is why the family TREE could say "husband"/"stepmother"
+    // while the chat could only ever say "spouse"/"parent" and ask which it was. Only male/female
+    // land here: 'non-binary' and 'other' are real answers but have no gendered kinship noun to
+    // pick, so they're left out and the model keeps using the neutral word for those people.
+    const genderById: Record<string, "male" | "female"> = {}
+    for (const p of people ?? []) {
+      const g = effectiveGender(recordedGender[p.id], p.name)
+      if (g === "male" || g === "female") genderById[p.id] = g
+    }
     for (const p of people ?? []) {
       const fullName = p.last_name ? `${p.name} ${p.last_name}` : p.name
       nameById[p.id] = fullName
       if (p.deceased_date) deceasedIds.add(p.id)
       idByName[fullName.toLowerCase()] = p.id
+      // The name AS THE ROSTER PRINTS IT, gender marking and all, resolves to the same person. The
+      // prompt tells the model never to write "(f)" back, but it's told to copy names from the
+      // roster character for character, and those two rules point opposite ways — if it ever obeys
+      // the wrong one, "Linda Whitfield (f)" must find Linda rather than fall through to the
+      // create-a-new-person path and quietly split her into two. Costs one map entry per person.
+      if (genderById[p.id]) {
+        idByName[`${fullName.toLowerCase()} (${genderById[p.id] === "male" ? "m" : "f"})`] = p.id
+      }
       lastNameById[p.id] = p.last_name ?? null
       claimKey(p.name.toLowerCase(), p.id)
       const nicknames = parseNicknames(p.nicknames)
@@ -275,10 +309,19 @@ serve(async (req) => {
       })
       .join("\n")
 
+    // Gender rides HERE, on the one list that names every person exactly once, rather than on the
+    // family roster or the kin buckets below — those repeat a name every time they mention them, so
+    // tagging them would cost several times as much for the same fact. "(f)"/"(m)" over a spelled-out
+    // word for the same reason: this whole tier sits in an hour-long prompt cache, and the legend in
+    // the stable system prompt explains the two letters once, for free (CLAUDE.md rule 3).
     const peopleRoster = (people ?? [])
       .map((p: any) => {
         const altNames = altNamesById[p.id]
-        return altNames ? `${nameById[p.id]} (also goes by: ${altNames.join(", ")})` : nameById[p.id]
+        const g = genderById[p.id]
+        const marks = [g ? (g === "male" ? "m" : "f") : null, altNames ? `also goes by: ${altNames.join(", ")}` : null]
+          .filter(Boolean)
+          .join(", ")
+        return marks ? `${nameById[p.id]} (${marks})` : nameById[p.id]
       })
       .join(", ")
 
@@ -363,6 +406,12 @@ CRITICAL — never invent, assume, or add a concrete detail the user did not act
 IMPORTANT — a "notes" entry only belongs to a specific attendee when THEY are the one who did, said, or experienced the thing described — not merely because the sentence names them or is ABOUT them. E.g. if the user says "we found out the baby is going to be a girl," that's a general event-level detail ("person": null), never a note on the baby's own profile — the baby didn't discover or announce anything, they're just the topic of a fact the user is reporting. Likewise "my mom found out Steve got the job" is Mom's note (she's the one who found out), not Steve's, even though Steve is named. Ask yourself "did this person themselves do/say/experience this?" before attaching a note to them; if the answer is no, it's a general note instead.
 
 IMPORTANT: "relevant_people" must list EVERY person mentioned by name anywhere in your "reply" text, not just the main subject of the question — if your reply mentions 5 people by name, relevant_people should have all 5.
+
+IMPORTANT — gendered family words: in the roster of everyone recorded, a person's name may be followed by "(m)" or "(f)". That is their gender. It is NOT part of their name — never write "(m)" or "(f)" in your reply, in a note, or anywhere else; it is there only so you can pick the right word.
+
+Use it: always reach for the specific gendered word for a family relationship rather than the neutral one — "his mother" not "his parent", "her sister" not "her sibling", "her husband" not "her spouse", and likewise father/son/daughter/brother/grandmother/grandfather/aunt/uncle/niece/nephew/mother-in-law/stepfather and so on. Use the matching pronouns (he/him, she/her) too. Combine the marking with the family tree below to work the word out: if Ellen (f) is recorded as a parent of Tom, she is Tom's MOTHER — say that, and never ask the user whether she is his mother or his father. Never ask what someone's gender is, and never ask any question this marking has already answered.
+
+A name with no "(m)" or "(f)" is someone whose gender genuinely isn't known — for those, and only those, use the neutral word ("parent", "sibling", "spouse", "child") and the neutral pronoun (they/them), and do not guess from the name yourself.
 
 IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", "relevant_people", "notes", etc.), copy their spelling EXACTLY as it appears in the roster provided in this prompt, character for character — same capitalization, same spelling. Never respell, "correct," or reformat a name from the roster, even if it looks unusual. This is what makes their name in your reply clickable — a respelled name breaks that link.
 

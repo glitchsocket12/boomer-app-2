@@ -46,8 +46,48 @@ describe('deriveRelationshipGaps — co-parent gaps', () => {
       emptyGraph({ nameById: names, parentsOf, childrenOf: withChildren(parentsOf), spousesOf: couple('mom', 'dad') })
     )
     expect(gaps).toEqual([
-      { kind: 'family_coparent', parentId: 'dad', parentName: 'Ben Rivera', childId: 'kid', childName: 'Sophie Rivera' },
+      {
+        kind: 'family_coparent',
+        parentId: 'dad',
+        parentName: 'Ben Rivera',
+        childId: 'kid',
+        childName: 'Sophie Rivera',
+        // No genderById on a hand-built graph, so the card falls back to the neutral word. The real
+        // loadFamilyGraph fills gender in from first names — see the two cases below.
+        parentNoun: 'parent',
+      },
     ])
+  })
+
+  // The founder's 2026-08-16 report: being asked "is this his mother?" about someone whose name
+  // plainly reads female. The question itself is still worth asking (a spouse of a parent can be a
+  // step-parent), but it has no business using the vague word when the gender is right there.
+  it('asks with the gendered word when the would-be parent has a gender', () => {
+    const parentsOf = new Map([['kid', ['dad']]])
+    const gaps = deriveRelationshipGaps(
+      emptyGraph({
+        nameById: names,
+        parentsOf,
+        childrenOf: withChildren(parentsOf),
+        spousesOf: couple('mom', 'dad'),
+        genderById: new Map([['mom', 'female']]),
+      })
+    )
+    expect(gaps.map((g) => g.kind === 'family_coparent' && g.parentNoun)).toEqual(['mother'])
+  })
+
+  it('keeps the neutral word for a gender with no gendered noun', () => {
+    const parentsOf = new Map([['kid', ['dad']]])
+    const gaps = deriveRelationshipGaps(
+      emptyGraph({
+        nameById: names,
+        parentsOf,
+        childrenOf: withChildren(parentsOf),
+        spousesOf: couple('mom', 'dad'),
+        genderById: new Map([['mom', 'non-binary']]),
+      })
+    )
+    expect(gaps.map((g) => g.kind === 'family_coparent' && g.parentNoun)).toEqual(['parent'])
   })
 
   it('stays quiet when both parents are already on file', () => {
