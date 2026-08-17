@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
@@ -6,6 +6,7 @@ import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { formatDateRange } from '../lib/dates'
 import { fetchMomentParentIds } from '../lib/moments'
 import { qualifiedName } from '../lib/qualifiedName'
+import { scrollCardToTop } from '../lib/resolvedCardScroll'
 import SearchAddPicker from '../components/SearchAddPicker'
 import ReviewNoteField from '../components/ReviewNoteField'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius } from '../lib/theme'
@@ -21,6 +22,10 @@ type ClusterView = {
   matchedMomentId: string | null
   photos: ClusterPhoto[]
 }
+
+// What a resolved cluster's card collapses down to. Accept carries where the photos went so the
+// confirmation can link to it; reject carries nothing but the fact of it.
+type ClusterResolution = { kind: 'accepted'; momentId: string; label: string } | { kind: 'rejected' }
 
 // This event's own name, before any parent event is prefixed onto it (see momentItems below).
 function momentLabel(m: MomentOption): string {
@@ -55,9 +60,22 @@ export default function PhotoImportReview({
   const [noteByCluster, setNoteByCluster] = useState<Record<string, string>>({})
   const [transcribingId, setTranscribingId] = useState<string | null>(null)
   const [resolvingId, setResolvingId] = useState<string | null>(null)
-  const [justAdded, setJustAdded] = useState<{ id: string; label: string } | null>(null)
+  // Accepted/rejected clusters stay in the list as a collapsed confirmation until "Done", rather
+  // than the card vanishing out from under the reviewer.
+  const [resolved, setResolved] = useState<Record<string, ClusterResolution>>({})
 
   const importHandle = useRef<{ cancel: () => void } | null>(null)
+  // These cards are rendered inline rather than as a component, so the shared useResolvedCardScroll
+  // hook doesn't fit — same job, driven off a ref map plus the id a resolve is waiting to scroll to.
+  const cardRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
+  const pendingScrollId = useRef<string | null>(null)
+
+  useLayoutEffect(() => {
+    const id = pendingScrollId.current
+    if (!id) return
+    pendingScrollId.current = null
+    scrollCardToTop(cardRefs.current.get(id) ?? null)
+  }, [resolved])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -172,7 +190,6 @@ export default function PhotoImportReview({
 
   async function handleAccept(cluster: ClusterView) {
     setResolvingId(cluster.id)
-    setJustAdded(null)
     let momentId = selectedMomentId[cluster.id] ?? null
     let label = momentId ? momentItemsLabel(momentId) : null
 
@@ -217,19 +234,43 @@ export default function PhotoImportReview({
 
     await supabase.from('photo_clusters').update({ status: 'accepted', reviewed_at: new Date().toISOString() }).eq('id', cluster.id)
     setResolvingId(null)
-    setJustAdded({ id: momentId!, label: label ?? 'that event' })
-    setClusters((prev) => (prev ?? []).filter((c) => c.id !== cluster.id))
+    pendingScrollId.current = cluster.id
+    setResolved((prev) => ({ ...prev, [cluster.id]: { kind: 'accepted', momentId: momentId!, label: label ?? 'that event' } }))
   }
 
   function momentItemsLabel(id: string): string {
     return momentItems.find((m) => m.id === id)?.label ?? 'that event'
   }
 
+  // Collapses to a confirmation like accept does instead of the card just vanishing, so the
+  // reviewer can see what they did — and take it back, since nothing else in the app resurfaces a
+  // rejected cluster.
   async function handleReject(cluster: ClusterView) {
     setResolvingId(cluster.id)
     await supabase.from('photo_clusters').update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', cluster.id)
     setResolvingId(null)
-    setClusters((prev) => (prev ?? []).filter((c) => c.id !== cluster.id))
+    pendingScrollId.current = cluster.id
+    setResolved((prev) => ({ ...prev, [cluster.id]: { kind: 'rejected' } }))
+  }
+
+  // Rejecting moves no photos and creates no event — only the cluster's own status changes — so
+  // taking it back is just the flip in reverse.
+  async function handleUndoReject(cluster: ClusterView) {
+    setResolvingId(cluster.id)
+    await supabase.from('photo_clusters').update({ status: 'pending', reviewed_at: null }).eq('id', cluster.id)
+    setResolvingId(null)
+    setResolved((prev) => {
+      const next = { ...prev }
+      delete next[cluster.id]
+      return next
+    })
+  }
+
+  // "Done" on a confirmation: the card leaves the list, and the next one slides up into the space
+  // it was occupying at the top of the screen.
+  function handleDismiss(clusterId: string) {
+    cardRefs.current.delete(clusterId)
+    setClusters((prev) => (prev ?? []).filter((c) => c.id !== clusterId))
   }
 
   // Sub-events are prefixed with the event they sit under, matching the subgroup pickers — picking
@@ -274,14 +315,6 @@ export default function PhotoImportReview({
 
       <section style={styles.section}>
         <h2 style={styles.sectionHeading}>Ready to review</h2>
-        {justAdded && (
-          <p style={styles.successText}>
-            Added to {justAdded.label} —{' '}
-            <button onClick={() => onSelectEvent({ id: justAdded.id, summary: justAdded.label })} style={styles.inlineLink}>
-              View event →
-            </button>
-          </p>
-        )}
         {clusters === null ? (
           <p style={styles.body}>Loading…</p>
         ) : clusters.length === 0 ? (
@@ -291,8 +324,58 @@ export default function PhotoImportReview({
             {clusters.map((cluster) => {
               const dateLabel = cluster.dateRangeStart ? formatDateRange(cluster.dateRangeStart, cluster.dateRangeEnd) : 'Undated photos'
               const isNew = !selectedMomentId[cluster.id]
+              const photoCount = `${cluster.photos.length} photo${cluster.photos.length === 1 ? '' : 's'}`
+              const done = resolved[cluster.id]
+              if (done) {
+                return (
+                  <div
+                    key={cluster.id}
+                    ref={(el) => {
+                      cardRefs.current.set(cluster.id, el)
+                    }}
+                    style={styles.clusterCard}
+                  >
+                    <p style={done.kind === 'accepted' ? styles.confirmText : styles.rejectedText}>
+                      {done.kind === 'accepted'
+                        ? `Added ${photoCount} to ${done.label}`
+                        : `Not added — ${dateLabel} · ${photoCount}`}
+                    </p>
+                    <div style={styles.clusterActions}>
+                      {done.kind === 'accepted' ? (
+                        <button
+                          onClick={() => onSelectEvent({ id: done.momentId, summary: done.label })}
+                          style={styles.secondaryButton}
+                        >
+                          View event →
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleUndoReject(cluster)}
+                          style={styles.secondaryButton}
+                          disabled={resolvingId === cluster.id}
+                        >
+                          {resolvingId === cluster.id ? '…' : 'Undo'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDismiss(cluster.id)}
+                        style={styles.secondaryButton}
+                        disabled={resolvingId === cluster.id}
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                )
+              }
               return (
-                <div key={cluster.id} style={styles.clusterCard}>
+                <div
+                  key={cluster.id}
+                  ref={(el) => {
+                    cardRefs.current.set(cluster.id, el)
+                  }}
+                  style={styles.clusterCard}
+                >
                   <div style={styles.thumbRow}>
                     {cluster.photos.slice(0, 6).map((p) =>
                       p.url ? (
@@ -303,7 +386,7 @@ export default function PhotoImportReview({
                     )}
                     {cluster.photos.length > 6 && <div style={styles.thumbMore}>+{cluster.photos.length - 6}</div>}
                   </div>
-                  <p style={styles.clusterDate}>{dateLabel} · {cluster.photos.length} photo{cluster.photos.length === 1 ? '' : 's'}</p>
+                  <p style={styles.clusterDate}>{dateLabel} · {photoCount}</p>
                   <p style={styles.clusterChoice}>
                     {isNew ? 'Will create a new event' : `Will add to: ${momentItems.find((m) => m.id === selectedMomentId[cluster.id])?.label ?? 'that event'}`}
                   </p>
@@ -394,6 +477,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
+  secondaryButton: {
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.85rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  confirmText: { color: colors.success, fontSize: fontSize.bodyLg, margin: '0 0 0.6rem' },
+  // Skipping isn't a success, so it doesn't get the green — but it isn't an error either.
+  rejectedText: { color: colors.textMuted, fontSize: fontSize.bodyLg, margin: '0 0 0.6rem' },
   clusterList: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   clusterCard: { border: `1px solid ${colors.divider}`, borderRadius: radius.lg, padding: '0.85rem' },
   thumbRow: { display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' },

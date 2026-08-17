@@ -8,6 +8,7 @@ import SearchAddPicker from '../components/SearchAddPicker'
 import MatchCallout from '../components/MatchCallout'
 import ReviewNoteField from '../components/ReviewNoteField'
 import { groupDisplayName } from '../lib/groupDisplayName'
+import { useResolvedCardScroll } from '../lib/resolvedCardScroll'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
 type LabeledValue = { label: string; value: string }
@@ -309,20 +310,23 @@ export default function ContactImportReview({
     setAllGroups((prev) => [...prev, group].sort((a, b) => a.name.localeCompare(b.name)))
   }
 
-  // Reject removes the card outright (nothing to confirm), so it refetches the whole page —
-  // pulling in the next candidate from the total set rather than the page slowly shrinking.
-  async function handleRejected() {
-    await loadPage()
-  }
-
-  // Accept leaves its card in place showing a quiet "Saved contact info for X" confirmation
-  // (see CandidateCard's savedLabel), so this only refreshes the total count for the footer —
-  // a full reload would yank the confirmation off-screen before it's seen.
-  async function handleAccepted() {
+  // Accept and reject both leave their card in place showing a confirmation (see CandidateCard's
+  // savedLabel/rejected), so resolving one only refreshes the total count for the footer — a full
+  // reload would yank the confirmation off-screen before it's seen. Reject used to refetch the
+  // whole page here, which is exactly what it can't do now that it has something to confirm.
+  async function refreshTotal() {
     const { count } = await applyMatchFilter(
       supabase.from('contact_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'selected')
     )
     setTotalSelected(count ?? 0)
+  }
+
+  // "Done" on a confirmation: the card leaves the list, and the next one slides up into the space
+  // it was occupying at the top of the screen. The page doesn't backfill from the next page —
+  // pagination is by position, and pulling a replacement in would shuffle the cards underneath the
+  // reviewer mid-scroll.
+  function handleDismissed(id: string) {
+    setCandidates((prev) => prev.filter((c) => c.id !== id))
   }
 
   const totalPages = Math.max(1, Math.ceil(totalSelected / PAGE_SIZE))
@@ -371,8 +375,8 @@ export default function ContactImportReview({
             allPeople={allPeople}
             allGroups={allGroups}
             onGroupCreated={handleGroupCreated}
-            onAccepted={handleAccepted}
-            onRejected={handleRejected}
+            onResolved={refreshTotal}
+            onDismissed={() => handleDismissed(c.id)}
             onSelectPerson={onSelectPerson}
           />
         ))
@@ -400,16 +404,16 @@ function CandidateCard({
   allPeople,
   allGroups,
   onGroupCreated,
-  onAccepted,
-  onRejected,
+  onResolved,
+  onDismissed,
   onSelectPerson,
 }: {
   candidate: Candidate
   allPeople: PersonRef[]
   allGroups: GroupRef[]
   onGroupCreated: (group: GroupRef) => void
-  onAccepted: () => void
-  onRejected: () => void
+  onResolved: () => void
+  onDismissed: () => void
   onSelectPerson: (id: string, name: string) => void
 }) {
   const [linkedPersonId, setLinkedPersonId] = useState<string | null>(candidate.matched_person_id)
@@ -420,6 +424,10 @@ function CandidateCard({
   const [savedPersonId, setSavedPersonId] = useState<string | null>(null)
   const [undoInfo, setUndoInfo] = useState<UndoInfo | null>(null)
   const [undoError, setUndoError] = useState<string | null>(null)
+  const [rejected, setRejected] = useState(false)
+  // Parks the collapsed confirmation at the top of the screen, so accept and reject both leave you
+  // looking at what you just did with the next contact underneath it — see lib/resolvedCardScroll.
+  const cardRef = useResolvedCardScroll(savedLabel !== null || rejected)
 
   // Prefilled from the parsed vCard data but editable — this review pass is effectively the only
   // chance to fix a name before it becomes a real profile, since nobody comes back later to a
@@ -660,14 +668,37 @@ function CandidateCard({
     setUndoInfo(undo)
     setSavedLabel(linkedPerson ? personLabel(linkedPerson) : candidate.full_name)
     setSavedPersonId(personId)
-    onAccepted()
+    onResolved()
   }
 
+  // Collapses to a confirmation like accept does instead of the row just vanishing, so the
+  // reviewer can see what they did — and take it back, since nothing else in the app resurfaces a
+  // rejected candidate.
   async function handleReject() {
     setSaving(true)
     await markReviewed('rejected', linkedPersonId)
     setSaving(false)
-    onRejected()
+    setRejected(true)
+    onResolved()
+  }
+
+  // Puts a mis-tapped rejection back in the queue. Rejecting writes nothing but the candidate's own
+  // status, so unlike handleUndo below there's nothing to unpick — just the flip back to
+  // 'selected' (this queue's pending state) and the match markReviewed overwrote.
+  async function handleUndoReject() {
+    setSaving(true)
+    setUndoError(null)
+    const { error } = await supabase
+      .from('contact_import_candidates')
+      .update({ status: 'selected', reviewed_at: null, matched_person_id: candidate.matched_person_id })
+      .eq('id', candidate.id)
+    setSaving(false)
+    if (error) {
+      setUndoError("Couldn't put this contact back in the queue. Please reload and try again.")
+      return
+    }
+    setRejected(false)
+    onResolved()
   }
 
   // Reverses exactly what handleAccept did, using the snapshot captured at accept time — deletes
@@ -747,12 +778,12 @@ function CandidateCard({
     setSavedLabel(null)
     setSavedPersonId(null)
     setSaving(false)
-    onAccepted()
+    onResolved()
   }
 
   if (savedLabel) {
     return (
-      <div style={styles.card}>
+      <div ref={cardRef} style={styles.card}>
         <p style={styles.confirmText}>
           Saved contact info for {savedLabel}.{' '}
           <button type="button" onClick={handleUndo} disabled={saving} style={styles.linkButton}>
@@ -760,15 +791,37 @@ function CandidateCard({
           </button>
         </p>
         {undoError && <p style={styles.undoErrorText}>{undoError}</p>}
-        {savedPersonId && (
-          <button
-            type="button"
-            onClick={() => onSelectPerson(savedPersonId, savedLabel)}
-            style={styles.viewProfileButton}
-          >
-            View profile →
+        <div style={styles.confirmButtonRow}>
+          {savedPersonId && (
+            <button
+              type="button"
+              onClick={() => onSelectPerson(savedPersonId, savedLabel)}
+              style={styles.viewProfileButton}
+            >
+              View profile →
+            </button>
+          )}
+          <button type="button" onClick={onDismissed} disabled={saving} style={styles.secondaryButton}>
+            Done
           </button>
-        )}
+        </div>
+      </div>
+    )
+  }
+
+  if (rejected) {
+    return (
+      <div ref={cardRef} style={styles.card}>
+        <p style={styles.rejectedText}>Rejected — {candidate.full_name}</p>
+        {undoError && <p style={styles.undoErrorText}>{undoError}</p>}
+        <div style={styles.confirmButtonRow}>
+          <button type="button" onClick={handleUndoReject} disabled={saving} style={styles.secondaryButton}>
+            {saving ? '…' : 'Undo'}
+          </button>
+          <button type="button" onClick={onDismissed} disabled={saving} style={styles.secondaryButton}>
+            Done
+          </button>
+        </div>
       </div>
     )
   }
@@ -1065,7 +1118,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   confirmText: { color: colors.success, fontSize: fontSize.bodyLg, margin: '0 0 0.6rem' },
+  // Rejecting isn't a success, so it doesn't get the green — but it isn't an error either.
+  rejectedText: { color: colors.textMuted, fontSize: fontSize.bodyLg, margin: '0 0 0.6rem' },
   undoErrorText: { color: colors.danger, fontSize: fontSize.label, margin: '0 0 0.6rem' },
+  confirmButtonRow: { display: 'flex', gap: '0.6rem', flexWrap: 'wrap' },
+  secondaryButton: {
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.85rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
+  },
   viewProfileButton: {
     fontSize: fontSize.label,
     padding: '0.4rem 0.85rem',

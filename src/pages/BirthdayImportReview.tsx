@@ -4,6 +4,7 @@ import { fetchAllRows } from '../lib/pagedSelect'
 import SearchBox from '../components/SearchBox'
 import ReviewNoteField from '../components/ReviewNoteField'
 import MatchCallout from '../components/MatchCallout'
+import { useResolvedCardScroll } from '../lib/resolvedCardScroll'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
 type Candidate = {
@@ -115,7 +116,10 @@ function CandidateCard({
   const [pickerOpen, setPickerOpen] = useState(candidate.match_confidence !== 'high')
   const [search, setSearch] = useState('')
   const [saving, setSaving] = useState(false)
-  const [savedLabel, setSavedLabel] = useState<string | null>(null)
+  const [savedResult, setSavedResult] = useState<{ kind: 'accepted' | 'rejected'; label: string } | null>(null)
+  // Parks the collapsed confirmation at the top of the screen, so accept and reject both leave you
+  // looking at what you just did with the next birthday underneath it — see lib/resolvedCardScroll.
+  const cardRef = useResolvedCardScroll(savedResult !== null)
   // These cards are the thinnest of the four queues — a name and a date — so the free-text box
   // carries the most weight here. See components/ReviewNoteField.tsx.
   const [noteText, setNoteText] = useState('')
@@ -197,20 +201,52 @@ function CandidateCard({
 
     await markReviewed('accepted')
     setSaving(false)
-    setSavedLabel(linkedPerson ? personLabel(linkedPerson) : candidate.full_name ?? 'this person')
+    setSavedResult({
+      kind: 'accepted',
+      label: linkedPerson ? personLabel(linkedPerson) : candidate.full_name ?? 'this person',
+    })
   }
 
+  // Collapses to a confirmation like accept does instead of the row just vanishing, so the
+  // reviewer can see what they did — and take it back, since nothing else in the app resurfaces a
+  // rejected candidate.
   async function handleReject() {
     setSaving(true)
     await markReviewed('rejected')
     setSaving(false)
-    onResolved()
+    setSavedResult({ kind: 'rejected', label: candidate.full_name ?? 'this birthday' })
   }
 
-  if (savedLabel) {
+  // Puts a mis-tapped rejection back in the queue. The row was only flipped to 'rejected', never
+  // deleted, so this is the flip in reverse — including the match markReviewed overwrote.
+  async function handleUndoReject() {
+    setSaving(true)
+    await supabase
+      .from('birthday_import_candidates')
+      .update({ status: 'pending', reviewed_at: null, matched_person_id: candidate.matched_person_id })
+      .eq('id', candidate.id)
+    setSaving(false)
+    setSavedResult(null)
+  }
+
+  if (savedResult) {
     return (
-      <div style={styles.card}>
-        <p style={styles.confirmText}>Added birthday for {savedLabel} — {dateLabel}</p>
+      <div ref={cardRef} style={styles.card}>
+        <p style={savedResult.kind === 'accepted' ? styles.confirmText : styles.rejectedText}>
+          {savedResult.kind === 'accepted'
+            ? `Added birthday for ${savedResult.label} — ${dateLabel}`
+            : `Rejected — ${savedResult.label}`}
+        </p>
+        <div style={styles.confirmButtonRow}>
+          {savedResult.kind === 'rejected' && (
+            <button type="button" onClick={handleUndoReject} disabled={saving} style={styles.secondaryButton}>
+              {saving ? '…' : 'Undo'}
+            </button>
+          )}
+          <button type="button" onClick={onResolved} disabled={saving} style={styles.secondaryButton}>
+            Done
+          </button>
+        </div>
       </div>
     )
   }
@@ -242,7 +278,7 @@ function CandidateCard({
   )
 
   return (
-    <div style={styles.card}>
+    <div ref={cardRef} style={styles.card}>
       <p style={styles.cardTitle}>{candidate.full_name ?? 'Unknown name'}</p>
       <p style={styles.dateText}>
         {dateLabel}
@@ -374,5 +410,18 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
-  confirmText: { color: colors.success, fontSize: fontSize.bodyLg, margin: 0 },
+  confirmText: { color: colors.success, fontSize: fontSize.bodyLg, margin: '0 0 0.6rem' },
+  // Rejecting isn't a success, so it doesn't get the green — but it isn't an error either.
+  rejectedText: { color: colors.textMuted, fontSize: fontSize.bodyLg, margin: '0 0 0.6rem' },
+  confirmButtonRow: { display: 'flex', gap: '0.6rem', flexWrap: 'wrap' },
+  secondaryButton: {
+    fontSize: fontSize.body,
+    padding: '0.5rem 1rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
+  },
 }

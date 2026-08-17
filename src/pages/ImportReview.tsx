@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
@@ -14,16 +14,13 @@ import { groupDisplayName } from '../lib/groupDisplayName'
 import { momentDisplayName, momentPickerLabel, momentTitle } from '../lib/momentDisplayName'
 import { fetchMomentParentIds } from '../lib/moments'
 import { IS_TOUCH } from '../lib/touch'
+import { useResolvedCardScroll } from '../lib/resolvedCardScroll'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
 // How many candidate cards render at a time (see visibleCount below). Big enough that a normal
 // queue never shows the "Show more" button at all, small enough that a 1000-event queue opens
 // instantly.
 const CARD_BATCH_SIZE = 20
-
-// Breathing room left above a just-resolved card when it's parked at the top of the screen. Flush
-// against the very top edge reads as cut off.
-const CONFIRM_SCROLL_MARGIN = 12
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -422,21 +419,7 @@ function CandidateCard({
     | { kind: 'rejected'; label: string }
     | null
   >(null)
-  const cardRef = useRef<HTMLDivElement>(null)
-
-  // A resolved card collapses from a full editor down to a one-line confirmation, and everything
-  // below it slides up by however tall the card used to be — which leaves the reviewer looking at
-  // the wrong part of the page. Founder report 2026-08-17: accepting left the confirmation just
-  // off the top of the screen (you had to scroll up a little to see what you'd done), and
-  // rejecting threw you back to the top of the whole queue. Parking the collapsed card at the top
-  // of the screen ourselves makes every action land identically: you see what you just did, with
-  // the next event directly underneath it. Layout effect rather than a plain one so the scroll is
-  // already in flight on the frame that paints the collapsed card.
-  useLayoutEffect(() => {
-    if (!savedResult || !cardRef.current) return
-    const top = cardRef.current.getBoundingClientRect().top + window.scrollY - CONFIRM_SCROLL_MARGIN
-    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
-  }, [savedResult])
+  const cardRef = useResolvedCardScroll(savedResult !== null)
 
   const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
   // True while a possible duplicate is on screen and the reviewer hasn't answered it yet — drives
