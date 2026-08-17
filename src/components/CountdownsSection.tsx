@@ -6,6 +6,7 @@ import {
   cardIdentity,
   dismissCountdown,
   loadCountdowns,
+  momentCardTitle,
   pinMoment,
   saveCountdownSettings,
   startOfDay,
@@ -21,7 +22,7 @@ import {
 } from '../lib/countdowns'
 import { createEventShell } from '../lib/moments'
 import { formatFullDate } from '../lib/dates'
-import { summarize } from '../lib/summarize'
+import { qualifiedName } from '../lib/qualifiedName'
 import ChoiceSheet from './ChoiceSheet'
 import SearchAddPicker from './SearchAddPicker'
 import { border, colors, fontFamily, fontSize, radius, space } from '../lib/theme'
@@ -57,11 +58,14 @@ const REPEAT_CHOICES: { value: RepeatRule | null; label: string }[] = [
 
 export default function CountdownsSection({
   moments,
+  momentParentById = new Map(),
   people,
   onSelectEvent,
   onSelectPerson,
 }: {
   moments: CountdownMoment[]
+  /** { childId => parentId } from Calendar's load — qualifies sub-events in the picker below. */
+  momentParentById?: Map<string, string>
   people: CountdownPerson[]
   onSelectEvent: (event: { id: string; summary: string }) => void
   onSelectPerson: (person: { id: string; name: string }) => void
@@ -287,11 +291,15 @@ export default function CountdownsSection({
   // Hidden rows are deliberately NOT excluded: a milestone that was dismissed should still be
   // findable in the picker, where adding it back un-hides that same row.
   const pinnedMomentIds = new Set(rows.filter((r) => r.moment_id && !r.hidden).map((r) => r.moment_id))
+  // Sub-events are prefixed with the event they sit under, same as the subgroup pickers. A parent
+  // with no date of its own isn't in `moments` at all (Calendar only loads dated events), in which
+  // case the label falls back to the bare title rather than a broken one.
+  const momentTitleById = new Map(moments.map((m) => [m.id, momentCardTitle(m)]))
   const pickerItems = moments
     .filter((m) => !pinnedMomentIds.has(m.id))
     .map((m) => ({
       id: m.id,
-      label: `${m.occasion || summarize(m.occasion, m.raw_description) || 'Untitled moment'} — ${formatFullDate(m)}`,
+      label: `${qualifiedName(m.id, momentCardTitle(m), momentParentById.get(m.id) ?? null, momentTitleById, momentParentById)} — ${formatFullDate(m)}`,
     }))
     .sort((a, b) => a.label.localeCompare(b.label))
 

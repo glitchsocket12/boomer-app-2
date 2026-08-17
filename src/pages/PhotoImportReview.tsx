@@ -4,6 +4,8 @@ import { fetchAllRows } from '../lib/pagedSelect'
 import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
 import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { formatDateRange } from '../lib/dates'
+import { fetchMomentParentIds } from '../lib/moments'
+import { qualifiedName } from '../lib/qualifiedName'
 import SearchAddPicker from '../components/SearchAddPicker'
 import ReviewNoteField from '../components/ReviewNoteField'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius } from '../lib/theme'
@@ -20,6 +22,7 @@ type ClusterView = {
   photos: ClusterPhoto[]
 }
 
+// This event's own name, before any parent event is prefixed onto it (see momentItems below).
 function momentLabel(m: MomentOption): string {
   return m.occasion || (m.event_date ? formatDateRange(m.event_date, m.event_end_date) : 'Untitled event')
 }
@@ -43,6 +46,8 @@ export default function PhotoImportReview({
 
   const [clusters, setClusters] = useState<ClusterView[] | null>(null)
   const [moments, setMoments] = useState<MomentOption[]>([])
+  // { childId => parentId } — a sub-event's own name ("Day 2") identifies nothing on its own.
+  const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [selectedMomentId, setSelectedMomentId] = useState<Record<string, string | null>>({})
   const [titleByCluster, setTitleByCluster] = useState<Record<string, string>>({})
   // Mirrors titleByCluster: what the founder types or dictates about a batch of photos, saved as
@@ -66,10 +71,16 @@ export default function PhotoImportReview({
   }, [])
 
   async function loadMoments() {
-    const { data } = await fetchAllRows((from, to) =>
-      supabase.from('moments').select('id, occasion, event_date, event_end_date').order('id').range(from, to)
-    )
+    // The parent map is its own fail-open query rather than a column here — see
+    // fetchMomentParentIds. It qualifies the picker's rows as "Trip / Day 2".
+    const [{ data }, parentIds] = await Promise.all([
+      fetchAllRows<MomentOption>((from, to) =>
+        supabase.from('moments').select('id, occasion, event_date, event_end_date').order('id').range(from, to)
+      ),
+      fetchMomentParentIds(),
+    ])
     setMoments(data)
+    setMomentParentById(parentIds)
   }
 
   async function loadClusters() {
@@ -221,8 +232,14 @@ export default function PhotoImportReview({
     setClusters((prev) => (prev ?? []).filter((c) => c.id !== cluster.id))
   }
 
+  // Sub-events are prefixed with the event they sit under, matching the subgroup pickers — picking
+  // "Day 2" out of a list of days from four different trips is otherwise a guess.
+  const momentTitleById = new Map(moments.map((m) => [m.id, momentLabel(m)]))
   const momentItems = moments
-    .map((m) => ({ id: m.id, label: momentLabel(m) }))
+    .map((m) => ({
+      id: m.id,
+      label: qualifiedName(m.id, momentLabel(m), momentParentById.get(m.id) ?? null, momentTitleById, momentParentById),
+    }))
     .sort((a, b) => a.label.localeCompare(b.label))
 
   return (

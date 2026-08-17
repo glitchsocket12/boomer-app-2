@@ -1,5 +1,9 @@
+import { qualifiedName } from './qualifiedName'
+
 // Disambiguates same-named subgroups under different parents (e.g. two units that each have a
 // "Pilots" subgroup) by prefixing the parent chain wherever a group is picked or displayed.
+// The events side of the app does the same thing with sub-events — see momentDisplayName.ts, which
+// shares this file's chain walk (qualifiedName.ts) so the two never drift apart on screen.
 export type GroupWithParent = { id: string; name: string; parent_group_id?: string | null }
 
 // Subgroups nest arbitrarily deep (2026-08-03), so the label is the full ancestor chain —
@@ -17,22 +21,9 @@ export function groupDisplayName(
     return parentName ? `${parentName} / ${group.name}` : group.name
   }
 
-  const parts = [group.name]
-  // Guards a cycle in the data. The DB CHECK only rejects a group being its OWN direct parent, so
-  // a corrupted A -> B -> A chain is still representable; without `seen` this would loop forever
-  // and hang the page rather than just rendering a slightly wrong label.
-  const seen = new Set<string>([group.id])
-  let currentId = group.parent_group_id ?? null
-  while (currentId && !seen.has(currentId)) {
-    seen.add(currentId)
-    const parentName = groupNameById.get(currentId)
-    // An ancestor missing from the roster (e.g. created server-side by `converse` after this map
-    // was built) truncates the chain instead of dropping the whole label to a bare name.
-    if (!parentName) break
-    parts.unshift(parentName)
-    currentId = parentById.get(currentId) ?? null
-  }
-  return parts.join(' / ')
+  // An ancestor missing from the roster (e.g. created server-side by `converse` after this map was
+  // built) truncates the chain instead of dropping the whole label to a bare name.
+  return qualifiedName(group.id, group.name, group.parent_group_id, groupNameById, parentById)
 }
 
 // True when `candidateId` IS `ancestorId` or sits anywhere beneath it in the tree. The guard that

@@ -14,9 +14,9 @@
 import { supabase } from './supabase'
 import { fetchAllRows, type QueryError } from './pagedSelect'
 import { groupDisplayName } from './groupDisplayName'
-import { ATTENDEE_PLACEHOLDER } from './moments'
+import { ATTENDEE_PLACEHOLDER, fetchMomentParentIds } from './moments'
+import { momentDisplayName, momentTitle } from './momentDisplayName'
 import { personLabel } from './personLabel'
-import { summarize } from './summarize'
 import { formatEventWhen } from './dates'
 import type { SearchDoc } from './globalSearch'
 
@@ -85,10 +85,16 @@ function buildPetDocs(rows: PetRow[]): SearchDoc[] {
   }))
 }
 
-function buildMomentDocs(rows: MomentRow[]): { docs: SearchDoc[]; labelById: Map<string, string> } {
+function buildMomentDocs(
+  rows: MomentRow[],
+  parentById: Map<string, string>
+): { docs: SearchDoc[]; labelById: Map<string, string> } {
+  const titleById = new Map(rows.map((m) => [m.id, momentTitle(m)]))
   const labelById = new Map<string, string>()
   const docs = rows.map((m) => {
-    const title = summarize(m.occasion, m.raw_description ?? '')
+    // The qualified "Steamboat Trip / Strawberry Park Hot Springs" path, for the same reason group
+    // docs get one below: a result reading "Day 2" tells the founder nothing about which Day 2.
+    const title = momentDisplayName(m, titleById, parentById)
     labelById.set(m.id, title)
     return {
       kind: 'event' as const,
@@ -172,7 +178,7 @@ function buildTagDocs(rows: TagRow[]): SearchDoc[] {
 export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: QueryError }> {
   // .order('id') on every read is what makes paging safe — without a stable sort Postgres may
   // return rows in a different order per page, which duplicates some and skips others.
-  const [people, pets, moments, groups, tags] = await Promise.all([
+  const [people, pets, moments, groups, tags, momentParents] = await Promise.all([
     fetchAllRows<PersonRow>((from, to) =>
       supabase
         .from('people')
@@ -194,6 +200,9 @@ export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: Q
       supabase.from('groups').select('id, name, summary, parent_group_id').order('id').range(from, to)
     ),
     fetchAllRows<TagRow>((from, to) => supabase.from('tags').select('id, name').order('id').range(from, to)),
+    // Kept out of the moments select above so a missing `parent_moment_id` costs the "Trip / Day 2"
+    // prefix and nothing else — see fetchMomentParentIds.
+    fetchMomentParentIds(),
   ])
 
   // Notes last: their subtitle and their navigation target both come from the maps above.
@@ -209,7 +218,7 @@ export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: Q
   )
 
   const { docs: personDocs, nameById } = buildPeopleDocs(people.data)
-  const { docs: momentDocs, labelById: momentLabels } = buildMomentDocs(moments.data)
+  const { docs: momentDocs, labelById: momentLabels } = buildMomentDocs(moments.data, momentParents)
   const { docs: groupDocs, labelById: groupLabels } = buildGroupDocs(groups.data)
 
   return {

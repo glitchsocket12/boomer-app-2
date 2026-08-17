@@ -362,7 +362,13 @@ export function unitsForCard(card: CountdownCard, now: Date): DisplayUnit[] {
   return displayUnits(bd, card.direction)
 }
 
-function momentTitle(m: CountdownMoment): string {
+/**
+ * What a pinned event's card is titled. Exported because the "pin an event" picker has to offer the
+ * same name the card will end up showing — it used to keep its own copy of this line, which is
+ * exactly how the two drift apart. (The picker then prefixes the parent event onto it for
+ * sub-events; see momentDisplayName.ts.)
+ */
+export function momentCardTitle(m: CountdownMoment): string {
   return m.occasion || summarize(m.occasion, m.raw_description) || 'Untitled moment'
 }
 
@@ -445,8 +451,8 @@ export function buildCards({
     if (!moment) continue
     cards.push({
       key: `countdown-${row.id}`,
-      title: row.custom_title || momentTitle(moment),
-      defaultTitle: momentTitle(moment),
+      title: row.custom_title || momentCardTitle(moment),
+      defaultTitle: momentCardTitle(moment),
       date: parseDateOnly(moment.event_date),
       direction: 'up',
       rowId: row.id,
@@ -465,8 +471,8 @@ export function buildCards({
     if (date.getTime() > todayStart.getTime()) continue
     cards.push({
       key: `milestone-${moment.id}`,
-      title: momentTitle(moment),
-      defaultTitle: momentTitle(moment),
+      title: momentCardTitle(moment),
+      defaultTitle: momentCardTitle(moment),
       date,
       direction: 'up',
       derived: true,

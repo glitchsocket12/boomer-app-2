@@ -19,7 +19,8 @@ import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { sortSubEventsByDate } from '../lib/subEvents'
 import { rankSiblingAttendees } from '../lib/siblingAttendees'
-import { ATTENDEE_PLACEHOLDER, hasSomethingToSummarize } from '../lib/moments'
+import { ATTENDEE_PLACEHOLDER, fetchMomentParentIds, hasSomethingToSummarize } from '../lib/moments'
+import { momentDisplayName, momentPickerLabel, momentTitle } from '../lib/momentDisplayName'
 import { findOrCreateTagId } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
@@ -42,7 +43,16 @@ export type NoteWithPerson = { id: string; content: string; created_at: string; 
 // once is the common case. `ids` is every underlying row the card represents, so editing/deleting
 // the card can act on all of them together.
 export type NoteGroup = { key: string; content: string; created_at: string; source: string | null; people: PersonRef[]; ids: string[] }
-export type OtherEvent = { id: string; occasion: string | null; raw_description: string }
+// Dates come along for the merge picker's row labels: two events with the same title (what a
+// repeating calendar entry produces) are only tellable apart by when they happened.
+export type OtherEvent = {
+  id: string
+  occasion: string | null
+  raw_description: string
+  event_date?: string | null
+  event_end_date?: string | null
+  created_at?: string
+}
 // The parent event and this sub-event's siblings, stripped down to just who was tagged on each —
 // the pool the "were they at this one too?" suggestions are ranked from (lib/siblingAttendees.ts).
 export type SiblingEventRef = { id: string; notes: { people: PersonRef | null }[] }
@@ -105,6 +115,8 @@ export default function EventDetail({
   const [mergeOpen, setMergeOpen] = useState(false)
   const [mergeSearch, setMergeSearch] = useState('')
   const [otherEvents, setOtherEvents] = useState<OtherEvent[]>([])
+  // { childId => parentId }, loaded with otherEvents — qualifies the merge picker's rows.
+  const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [mergeCandidate, setMergeCandidate] = useState<OtherEvent | null>(null)
   const [editingDescription, setEditingDescription] = useState(false)
   const [descriptionInput, setDescriptionInput] = useState('')
@@ -293,6 +305,15 @@ export default function EventDetail({
   // Memoised so the gallery below only refetches when the actual set of sub-events changes, not on
   // every unrelated reload of this page (rename, description edit, an attendee going in or out).
   const childEventIds = useMemo(() => childEvents.map((c) => c.id), [childEvents])
+
+  // Titles behind the merge picker's "Parent / Child" row labels. THIS event is added on top of the
+  // roster because its own sub-events are merge candidates while the roster query excludes it
+  // (.neq('id', eventId)) — without it, their labels would fall back to a bare "Day 2".
+  const otherEventTitleById = useMemo(() => {
+    const titles = new Map(otherEvents.map((e) => [e.id, momentTitle(e)]))
+    if (moment) titles.set(moment.id, momentTitle(moment))
+    return titles
+  }, [otherEvents, moment])
 
   function startAddSubEvent() {
     setSubEventDateInput(moment?.event_date ?? '')
@@ -715,10 +736,22 @@ export default function EventDetail({
     setMergeCandidate(null)
     setMergeSearch('')
     if (otherEvents.length === 0) {
-      const { data } = await fetchAllRows((from, to) =>
-        supabase.from('moments').select('id, occasion, raw_description').neq('id', eventId).order('id').range(from, to)
-      )
+      // The parent map rides alongside rather than being a column on the select above — same
+      // fail-open reasoning as loadParentEvent; see fetchMomentParentIds. It's what lets a
+      // sub-event show up here as "Trip / Day 2" instead of an unidentifiable "Day 2".
+      const [{ data }, parentIds] = await Promise.all([
+        fetchAllRows((from, to) =>
+          supabase
+            .from('moments')
+            .select('id, occasion, raw_description, event_date, event_end_date, created_at')
+            .neq('id', eventId)
+            .order('id')
+            .range(from, to)
+        ),
+        fetchMomentParentIds(),
+      ])
       setOtherEvents((data as OtherEvent[]) ?? [])
+      setMomentParentById(parentIds)
     }
   }
 
@@ -863,6 +896,8 @@ export default function EventDetail({
       mergeSearch={mergeSearch}
       onMergeSearchChange={setMergeSearch}
       otherEvents={otherEvents}
+      eventPickerLabel={(e) => momentPickerLabel(e, otherEventTitleById, momentParentById)}
+      eventPlainLabel={(e) => momentDisplayName(e, otherEventTitleById, momentParentById)}
       mergeCandidate={mergeCandidate}
       onSelectMergeCandidate={setMergeCandidate}
       onCancelMerge={() => setMergeOpen(false)}
@@ -959,6 +994,8 @@ export function EventDetailView({
   mergeSearch = '',
   onMergeSearchChange = () => {},
   otherEvents = [],
+  eventPickerLabel = (e: OtherEvent) => summarize(e.occasion, e.raw_description),
+  eventPlainLabel = (e: OtherEvent) => summarize(e.occasion, e.raw_description),
   mergeCandidate = null,
   onSelectMergeCandidate = () => {},
   onCancelMerge = () => {},
@@ -1047,6 +1084,10 @@ export function EventDetailView({
   mergeSearch?: string
   onMergeSearchChange?: (v: string) => void
   otherEvents?: OtherEvent[]
+  /** Row label for the merge picker: "Parent / Child — June 12, 2026" (see momentDisplayName.ts). */
+  eventPickerLabel?: (event: OtherEvent) => string
+  /** The same qualified name without the date, for prose ("Merge this event into …?"). */
+  eventPlainLabel?: (event: OtherEvent) => string
   mergeCandidate?: OtherEvent | null
   onSelectMergeCandidate?: (e: OtherEvent) => void
   onCancelMerge?: () => void
@@ -1778,19 +1819,21 @@ export function EventDetailView({
                 <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search events…" />
                 <div style={styles.mergeResultsList}>
                   {otherEvents
-                    .filter((e) => {
-                      const label = summarize(e.occasion, e.raw_description).toLowerCase()
-                      return mergeSearch.trim() ? label.includes(mergeSearch.trim().toLowerCase()) : false
-                    })
+                    // Matched on the full "Parent / Child — date" label, so typing a trip's name
+                    // finds the days underneath it too.
+                    .map((e) => ({ event: e, label: eventPickerLabel(e) }))
+                    .filter(({ label }) =>
+                      mergeSearch.trim() ? label.toLowerCase().includes(mergeSearch.trim().toLowerCase()) : false
+                    )
                     .slice(0, 8)
-                    .map((e) => (
+                    .map(({ event: e, label }) => (
                       <button
                         key={e.id}
                         type="button"
                         onClick={() => onSelectMergeCandidate(e)}
                         style={styles.mergeResultButton}
                       >
-                        {summarize(e.occasion, e.raw_description)}
+                        {label}
                       </button>
                     ))}
                 </div>
@@ -1803,7 +1846,7 @@ export function EventDetailView({
             ) : (
               <>
                 <span>
-                  Merge this event into "{summarize(mergeCandidate.occasion, mergeCandidate.raw_description)}"?
+                  Merge this event into "{eventPlainLabel(mergeCandidate)}"?
                   All notes and group tags move there, this event is deleted, and you'll be taken to the kept event. This can't be undone.
                 </span>
                 <div style={styles.suggestButtonRow}>

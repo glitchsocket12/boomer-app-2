@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { formatEventWhen, nextOccurrenceDate } from '../lib/dates'
+import { fetchMomentParentIds } from '../lib/moments'
 import CountdownsSection from '../components/CountdownsSection'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
@@ -59,6 +60,8 @@ export default function Calendar({
 }) {
   const [moments, setMoments] = useState<MomentRow[]>([])
   const [people, setPeople] = useState<PersonRow[]>([])
+  // { childId => parentId } — lets the Countdowns picker name a sub-event as "Trip / Day 2".
+  const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [tagFilter, setTagFilter] = useState('all')
   const [pendingCount, setPendingCount] = useState(0)
@@ -93,7 +96,7 @@ export default function Calendar({
 
   async function load() {
     setLoading(true)
-    const [momentsRes, peopleRes] = await Promise.all([
+    const [momentsRes, peopleRes, parentIds] = await Promise.all([
       fetchAllRows((from, to) =>
         supabase
           .from('moments')
@@ -109,9 +112,12 @@ export default function Calendar({
           .order('id')
           .range(from, to)
       ),
+      // Own query, fail-open — see fetchMomentParentIds. Only the Countdowns picker below reads it.
+      fetchMomentParentIds(),
     ])
     setMoments((momentsRes.data as unknown as MomentRow[]) ?? [])
     setPeople((peopleRes.data as unknown as PersonRow[]) ?? [])
+    setMomentParentById(parentIds)
     setLoading(false)
   }
 
@@ -534,6 +540,7 @@ export default function Calendar({
           `countdowns` table. */}
       <CountdownsSection
         moments={moments}
+        momentParentById={momentParentById}
         people={people}
         onSelectEvent={onSelectEvent}
         onSelectPerson={onSelectPerson}

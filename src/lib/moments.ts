@@ -1,3 +1,4 @@
+import { fetchAllRows } from './pagedSelect'
 import { supabase } from './supabase'
 
 // Shared write path for creating a blank event shell. Lifted out of Events.tsx (2026-08-06) when
@@ -42,6 +43,27 @@ export function hasSomethingToSummarize(
   })
   if (hasRealNote) return true
   return (subEvents ?? []).some((s) => !!s.summary?.trim() || !!s.raw_description?.trim())
+}
+
+/**
+ * Which events are sub-events, and of what — `{ childId => parentId }`, children only.
+ *
+ * Feeds momentDisplayName so every event picker can show "Trip / Day 2" instead of a bare "Day 2",
+ * and doubles as the "is this already a sub-event?" test where one is needed. Deliberately its own
+ * query rather than a column on each page's main moments select: same fail-open reasoning as
+ * EventDetail's loadParentEvent — if `parent_moment_id` ever isn't there, callers get an empty map
+ * (nothing is a sub-event, labels stay bare) instead of a page that won't load.
+ */
+export async function fetchMomentParentIds(): Promise<Map<string, string>> {
+  const { data, error } = await fetchAllRows<{ id: string; parent_moment_id: string | null }>((from, to) =>
+    supabase.from('moments').select('id, parent_moment_id').not('parent_moment_id', 'is', null).order('id').range(from, to)
+  )
+  if (error) return new Map()
+  const parentById = new Map<string, string>()
+  for (const row of data) {
+    if (row.parent_moment_id) parentById.set(row.id, row.parent_moment_id)
+  }
+  return parentById
 }
 
 /**
