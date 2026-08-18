@@ -1448,3 +1448,59 @@ one measurement, and the measurement was cheap — a MutationObserver around the
 of work, versus a day of optimizing queries that were already fast enough. Also: a sweep is only as
 good as its inventory. The 2026-08-11 pass swept browser reads and still left one, because the file
 it lived in was not on the list anyone was reading from.
+
+## 2026-08-17 — "Give me the FACTS": the roll-call was in the input, not the instructions
+
+The founder's ask was about tone: *"I think I like the bullet format more than narrative. I don't need it to tell me a story. I want it to give me the FACTS about the story, and if I want to review what my original phrasology was, I can just review the notes."* Plus a second, sharper note — don't list who was there, because the page already has a "Who was there" section right below the summary.
+
+Before changing anything, four of their own events were pulled at random and laid out side by side, current summary against a hand-written bullet version, as a published comparison page. One of the four made the whole argument by itself. **Sam and Joelle's Wedding had 26 notes. Three of them said anything. The other 23 said nothing but `Was there.`** — the placeholder row the app writes whenever you tag an attendee. Four fifths of that event's summary was the model dutifully reading those 23 names back, to a reader already looking at the same 23 names as chips immediately underneath.
+
+That reframed the fix. The roll-call was not the model being chatty; it was **being fed in**. `notesText` included every placeholder row, each prefixed with a full name. So the change is two things, not one: a prompt that asks for bullets, and a filter that stops sending 507 of the account's 764 notes at all (66% of them). Dropping them also cut ~11% of the input tokens on every future call — a free win that arrived attached to a correctness fix.
+
+### What the cost measurement was for, and where it was wrong
+
+The founder asked what it would cost to redo all 107 existing summaries. Rather than estimate, the exact prompt was reconstructed client-side for all 107 from the same fields the Edge Function reads, and its characters counted: 129,443 in, 47,972 of stored summaries out. Characters were converted to tokens using the system prompt itself as the yardstick (4,122 chars = 1,268 tokens, already measured against this model — 3.25 chars/token). Predicted: **25¢**, and the Sonnet 5 introductory pricing ends 2026-08-31, after which the same sweep is ~37¢.
+
+Actual, metered: **~46¢.** The input half of the estimate was almost exact (a single call measured 452 input tokens where the ratio predicted ~450). The output half was wrong, in two ways worth remembering:
+
+1. **Bullets run longer than the prose they replaced** — using the existing stored summaries as a proxy for future output assumed the format change was length-neutral. It wasn't; total output came in at 25,739 tokens against ~14,760 predicted.
+2. **Sonnet 5 bills adaptive thinking, and it's on by default** — unlike Sonnet 4.6. The first metered call showed `thinking_tokens: 87` inside a 313-token output. Nothing in the code asks for thinking; the model's default changed underneath it.
+
+The estimate was still the right call — it answered the only question that mattered ("is this a cost decision or a rounding error?") correctly, and being off by 20¢ on 46¢ changed nothing. But "use the existing cached output as a proxy for the new output" is only sound when the format isn't what's changing.
+
+### Three iterations, and what actually fixed it
+
+The first deployed prompt failed on the very first real event in three distinct ways, none of which the prose rules had prevented:
+
+- **It moved an action onto the account owner.** Caroline's note said *she* drove from Colorado Springs; the summary said *"I drove to the Berzins house."* The "rewrite in first person" rule and the new "don't name people unnecessarily" rule combined into a fabrication.
+- **It duplicated a shared evening once per attendee.** Three people each had a near-identical note about the same drive, dinner and seats, and it emitted the dinner twice.
+- **It restated the header.** *"The concert fell on Caroline's birthday, May 23"* — printed verbatim in the meta line directly above.
+
+Round two added explicit rules for all three. It half-worked: the "I drove" fabrication became a correct "we", but the date bullet survived, the duplication survived, and a new failure appeared — every bullet on the Eliana Joy call became *"She told me…" / "She said…" / "She mentioned…" / "She explained…"*, narrating who reported each fact instead of stating it.
+
+Round three replaced argument with evidence: **concrete wrong/right example pairs drawn from the actual failures**, embedded in the prompt.
+
+```
+Wrong, because the date is already printed directly above the summary:
+  `- The concert fell on Caroline's birthday, May 23.`
+Wrong, because it narrates who reported the fact instead of stating it:
+  `- She told me she starts a Quaker service year in Boston on August 30.`
+Right:
+  `- She starts a Quaker service year in Boston on August 30.`
+```
+
+That landed all three at once. The lesson is the boring one and it keeps being true: on a current model, **a demonstrated wrong/right pair outperforms another paragraph of rules**. Three rounds of increasingly emphatic prose moved one failure; one round of examples moved all of them.
+
+One over-correction had to be walked back separately — "never move an action onto the account owner" was strong enough that the owner's *own* note came back as *"Jake believes this was the night…"* instead of *"I believe…"*. Stating the converse explicitly fixed it.
+
+### The regression the sweep exposed
+
+With the prompt good, all 111 summaries were regenerated — children before parents, so each multi-day event read freshly-rewritten sub-summaries. Zero failures, `cache_creation: 0` throughout after the first call, confirming the cached prefix held across the whole run.
+
+Then the check that mattered: **seven events came back reading only "Nothing else about the day itself was recorded."** Every one of them had zero real notes — all placeholders, no description — so after the new filter there was genuinely nothing left to summarize, and the thin-event rule became the entire summary.
+
+`hasSomethingToSummarize()` in `src/lib/moments.ts` already knows about exactly this case, and `EventDetail` gates on it before ever calling. But the sweep invoked the function directly, and so does `converse`'s background kickoff — both bypass that gate. The Edge Function had no such check of its own. It does now: no description, no real note, no sub-event with content means clear the cached summary and return `skipped: "nothing_to_summarize"` before spending a call, so the page falls back to its real "Nothing written yet — add a description" empty state.
+
+Six of the seven cleared cleanly on re-run. The seventh had a real description and produced a proper bullet.
+
+**Final state:** 105 events with summaries — 98 bullets, 7 in the multi-day sub-event format (deliberately unchanged; the founder approved that shape on 2026-08-10), 0 in the old prose. Verified in the browser against the real account: bullets render as a genuine list with a hanging indent, no raw `- ` reaches the page, and "Who was there" still sits below them carrying the names the summary no longer repeats.
