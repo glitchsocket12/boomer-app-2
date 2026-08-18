@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import NoteWithDetection from '../components/NoteWithDetection'
@@ -12,6 +12,10 @@ import SearchAddPicker from '../components/SearchAddPicker'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import VoiceInputButton from '../components/VoiceInputButton'
 import SummaryText from '../components/SummaryText'
+import EventEnrichmentBoxes, {
+  type EnrichmentGame,
+  type EnrichmentWeather,
+} from '../components/EventEnrichmentBoxes'
 import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
 import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { summarize } from '../lib/summarize'
@@ -30,6 +34,12 @@ import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow
 import { fullName } from '../lib/personLabel'
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
+/**
+ * A suggestion chip held at a fixed slot in its box after being clicked, so acting on one never
+ * reshuffles the chips after it. `index` is the position it occupied in the rendered grid; `box`
+ * is which of the three suggestion sections it belongs to. See pinnedChips in EventDetailView.
+ */
+type PinnedChip = { person: PersonRef; box: 'siblings' | 'group' | 'family'; index: number }
 export type GroupRef = {
   id: string
   name: string
@@ -86,6 +96,19 @@ export type MomentDetail = {
   dismissed_person_ids: string[] | null
 }
 
+/**
+ * Looked-up outside data for the game/weather boxes. Deliberately NOT part of MomentDetail: these
+ * columns arrive with the 2026-08-17 migration, which is applied by hand, and naming an unmigrated
+ * column in the main select would 400 the whole event page rather than just this feature. Same
+ * fail-open reasoning as summarize-moment's separate parent_moment_id read.
+ */
+export type Enrichment = {
+  weather: EnrichmentWeather | null
+  game: EnrichmentGame | null
+  game_candidates: EnrichmentGame[] | null
+  game_dismissed: boolean
+}
+
 export default function EventDetail({
   eventId,
   onSelectPerson,
@@ -122,6 +145,10 @@ export default function EventDetail({
   const [descriptionInput, setDescriptionInput] = useState('')
   const [savingDescription, setSavingDescription] = useState(false)
   const [refreshingSummary, setRefreshingSummary] = useState(false)
+  // Game + weather boxes. Held apart from `moment` on purpose — see loadEnrichment.
+  const [enrichment, setEnrichment] = useState<Enrichment | null>(null)
+  const [enriching, setEnriching] = useState(false)
+  const [choosingGame, setChoosingGame] = useState<string | null>(null)
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
@@ -159,6 +186,9 @@ export default function EventDetail({
     loadMoment()
     loadPickerLists()
     loadChildEvents()
+    // Cleared first so navigating between events never shows the previous one's boxes.
+    setEnrichment(null)
+    loadEnrichment()
     setEditingBasics(false)
     setEditingDescription(false)
     setManageOpen(false)
@@ -372,6 +402,122 @@ export default function EventDetail({
     setMoment(loaded)
     if (!silent) setLoading(false)
     return loaded
+  }
+
+  // Its own query, and one that fails open: if the 2026-08-17 enrichment migration hasn't been
+  // run on this database yet, this 400s and the boxes simply never appear, instead of taking the
+  // whole event page down with them.
+  async function loadEnrichment(): Promise<Enrichment | null> {
+    const { data, error } = await supabase
+      .from('moments')
+      .select('weather, game, game_candidates, game_dismissed')
+      .eq('id', eventId)
+      .maybeSingle()
+    if (error || !data) {
+      setEnrichment(null)
+      return null
+    }
+    const loaded = data as unknown as Enrichment
+    setEnrichment(loaded)
+    return loaded
+  }
+
+  // Single-flight, same reasoning as summarizingRef below — a date edit and the initial load can
+  // both want an enrichment pass, and each one is a burst of third-party HTTP calls.
+  const enrichingRef = useRef(false)
+
+  async function runEnrichment(refresh = false) {
+    if (enrichingRef.current) return
+    enrichingRef.current = true
+    try {
+      const { data } = await supabase.functions.invoke('enrich-event', {
+        body: { momentId: eventId, refresh },
+      })
+      if (data) {
+        setEnrichment({
+          weather: data.weather ?? null,
+          game: data.game ?? null,
+          game_candidates: data.gameCandidates ?? null,
+          game_dismissed: false,
+        })
+      }
+    } finally {
+      enrichingRef.current = false
+    }
+  }
+
+  // Fill on a cache miss only. This costs no AI tokens, but it does hit ESPN and Open-Meteo, and
+  // a PAST game's score and a past day's weather never change — so once a value is stored
+  // (including the "we looked and found nothing" sentinel) this never fires again, and only the
+  // refresh button or a date/location edit re-fetches.
+  //
+  // The two exceptions are both the same situation — we looked before the event had happened:
+  // weather parked at `too_soon` because the archive only reaches today, and a game found while
+  // still `Scheduled`, whose stored score is a meaningless 0–0. Both become worth exactly one
+  // more look once the date has passed, and both re-checks are local date comparisons rather
+  // than network calls.
+  useEffect(() => {
+    if (!enrichment || enrichingRef.current) return
+    const past = moment?.event_date ? moment.event_date <= new Date().toISOString().slice(0, 10) : false
+    const needsGame =
+      (enrichment.game === null && enrichment.game_candidates === null) ||
+      (past && enrichment.game?.status === 'ok' && enrichment.game.completed === false)
+    const needsWeather =
+      enrichment.weather === null || (past && enrichment.weather?.status === 'too_soon')
+    // No refresh flag: that is reserved for the button, and it also un-dismisses the picker.
+    // The Edge Function re-derives staleness from the row itself and is the authority.
+    if (needsWeather || needsGame) runEnrichment()
+  }, [enrichment, moment?.event_date])
+
+  // Confirming one of the "Which game was this?" options. Writes the chosen game straight to the
+  // cache column — no second lookup needed, the candidate already holds the full record.
+  async function handleChooseGame(game: EnrichmentGame) {
+    setChoosingGame(game.espnId ?? '')
+    const { error } = await supabase
+      .from('moments')
+      .update({ game, game_candidates: null, game_fetched_at: new Date().toISOString() })
+      .eq('id', eventId)
+    setChoosingGame(null)
+    if (error) {
+      setActionError("Couldn't save that game — please try again.")
+      return
+    }
+    setEnrichment((prev) => (prev ? { ...prev, game, game_candidates: null } : prev))
+    // The venue is a better place to ask about than free text, so the weather is now worth redoing.
+    await supabase.from('moments').update({ weather: null }).eq('id', eventId)
+    setEnrichment((prev) => (prev ? { ...prev, weather: null } : prev))
+  }
+
+  // "None of these." Suppresses the picker without destroying the candidates, so the refresh
+  // button can bring it back if they change their mind.
+  async function handleDismissGame() {
+    const { error } = await supabase.from('moments').update({ game_dismissed: true }).eq('id', eventId)
+    if (error) {
+      setActionError("Couldn't dismiss that — please try again.")
+      return
+    }
+    setEnrichment((prev) => (prev ? { ...prev, game_dismissed: true } : prev))
+  }
+
+  async function handleRefreshEnrichment() {
+    setEnriching(true)
+    await runEnrichment(true)
+    setEnriching(false)
+  }
+
+  /**
+   * Clears cached enrichment after an edit that invalidates it. Its own write, never folded into
+   * the caller's update, for the same unmigrated-column reason as loadEnrichment — a failure here
+   * must not take the user's actual save down with it.
+   */
+  async function invalidateEnrichment(scope: 'all' | 'game') {
+    const update =
+      scope === 'all'
+        ? { weather: null, weather_fetched_at: null, game: null, game_candidates: null, game_fetched_at: null }
+        : { game: null, game_candidates: null, game_fetched_at: null }
+    const { error } = await supabase.from('moments').update(update).eq('id', eventId)
+    if (error) return
+    await loadEnrichment()
   }
 
   // Single-flight. Every note produces at least two onSaved calls — one the instant it's inserted,
@@ -593,6 +739,9 @@ export default function EventDetail({
     if (error) return
     setEditingDescription(false)
     await loadMoment(true)
+    // Only the game half: the description is where a team gets named, but it says nothing about
+    // where or when, so cached weather is still correct and shouldn't be re-fetched.
+    await invalidateEnrichment('game')
   }
 
   // "Removing" someone from Who Was There is pure untagging, NOT deletion — attendance is just
@@ -702,6 +851,12 @@ export default function EventDetail({
     setMoment({ ...moment, occasion: newOccasion, event_date: newDate, location: newLocation })
     setEditingBasics(false)
     onRenamed?.(summarize(newOccasion, moment.raw_description))
+
+    // The date and the place are the two inputs both boxes are built from, and the title is what
+    // names the team, so any of the three changing makes the cached lookup wrong rather than stale.
+    if (newDate !== moment.event_date || newLocation !== moment.location || newOccasion !== moment.occasion) {
+      await invalidateEnrichment('all')
+    }
   }
 
   // Permanently removes this event and everything tied only to it (its notes, its group tags).
@@ -854,6 +1009,12 @@ export default function EventDetail({
       onLocationInputChange={setLocationInput}
       onSaveBasics={handleSaveBasics}
       onCancelEditBasics={() => setEditingBasics(false)}
+      enrichment={enrichment}
+      enriching={enriching}
+      choosingGame={choosingGame}
+      onRefreshEnrichment={handleRefreshEnrichment}
+      onChooseGame={handleChooseGame}
+      onDismissGame={handleDismissGame}
       editingDescription={editingDescription}
       descriptionInput={descriptionInput}
       savingDescription={savingDescription}
@@ -952,6 +1113,14 @@ export function EventDetailView({
   onLocationInputChange = () => {},
   onSaveBasics = () => {},
   onCancelEditBasics = () => {},
+  // Defaults to null so the demo twin, which passes none of these, simply renders no boxes and
+  // stays entirely API-free.
+  enrichment = null,
+  enriching = false,
+  choosingGame = null,
+  onRefreshEnrichment = () => {},
+  onChooseGame = () => {},
+  onDismissGame = () => {},
   editingDescription = false,
   descriptionInput = '',
   savingDescription = false,
@@ -1039,6 +1208,12 @@ export function EventDetailView({
   onLocationInputChange?: (v: string) => void
   onSaveBasics?: (e: FormEvent) => void
   onCancelEditBasics?: () => void
+  enrichment?: Enrichment | null
+  enriching?: boolean
+  choosingGame?: string | null
+  onRefreshEnrichment?: () => void
+  onChooseGame?: (game: EnrichmentGame) => void
+  onDismissGame?: () => void
   editingDescription?: boolean
   descriptionInput?: string
   savingDescription?: boolean
@@ -1102,6 +1277,37 @@ export function EventDetailView({
   // itself instead; picking a different action clears it.
   const [justAdded, setJustAdded] = useState<string | null>(null)
 
+  // Suggestion chips you've already acted on stay in the grid at the exact slot you clicked,
+  // rendered with a tick, instead of disappearing. Dropping them out was what made working down a
+  // long list so awkward (founder report 2026-08-17): every click reflowed every chip after it, so
+  // the next name you were aiming at had already moved out from under the cursor. This list is
+  // PURELY positional — whether a chip reads as added is derived from `attendees` below, so
+  // clicking a ticked chip untags them again and it flips back to "+" without moving.
+  const [pinnedChips, setPinnedChips] = useState<PinnedChip[]>([])
+  const pinnedChipIds = new Set(pinnedChips.map((k) => k.person.id))
+
+  // Navigating to another event must not carry the previous one's pins across.
+  useEffect(() => {
+    setPinnedChips([])
+  }, [moment.id])
+
+  function pinAndAddAttendee(person: PersonRef, box: PinnedChip['box'], index: number) {
+    setPinnedChips((prev) => (prev.some((k) => k.person.id === person.id) ? prev : [...prev, { person, box, index }]))
+    return onAddAttendee(person)
+  }
+
+  // Splices a box's pinned chips back into its live list at the slot they were clicked in.
+  // Ascending order matters: inserting each at its recorded final index rebuilds the original
+  // arrangement exactly. The filter first covers the untagged-again case, where a pinned person is
+  // back in the live list too and would otherwise render twice.
+  function withPinnedChips(list: PersonRef[], box: PinnedChip['box']): PersonRef[] {
+    const mine = pinnedChips.filter((k) => k.box === box)
+    if (mine.length === 0) return list
+    const out = list.filter((p) => !pinnedChipIds.has(p.id))
+    for (const k of [...mine].sort((a, b) => a.index - b.index)) out.splice(Math.min(k.index, out.length), 0, k.person)
+    return out
+  }
+
   // Opening any picker wipes both the last confirmation and the last failure, so neither one
   // haunts the next action you take.
   function onOpenPicker() {
@@ -1139,6 +1345,30 @@ export function EventDetailView({
       }
     }
   }
+
+  // The other half of the "clicking a name shifts the page" problem (founder report 2026-08-17):
+  // pinning the chips holds the grid stable internally, but adding someone also grows "Who was
+  // there" ABOVE it, and roughly every fifth add wraps that row and pushes the whole suggestion
+  // block down by a row's height. So hold the block still: remember where it sits in the DOCUMENT
+  // (not the viewport — document coordinates don't move when the reader scrolls between renders,
+  // so this can't fight them for control of the scrollbar) and scroll by the difference whenever
+  // the attendee count changes underneath it. Instant, not smooth: this is meant to be invisible,
+  // an animation would be the very motion it exists to cancel.
+  const suggestionBlockRef = useRef<HTMLDivElement>(null)
+  const suggestionBlockDocTop = useRef<number | null>(null)
+  const lastAttendeeCount = useRef(attendees.size)
+
+  useLayoutEffect(() => {
+    const el = suggestionBlockRef.current
+    const docTop = el ? el.getBoundingClientRect().top + window.scrollY : null
+    const before = suggestionBlockDocTop.current
+    if (docTop !== null && before !== null && lastAttendeeCount.current !== attendees.size) {
+      const delta = docTop - before
+      if (Math.abs(delta) > 0.5) window.scrollBy({ top: delta, behavior: 'instant' })
+    }
+    lastAttendeeCount.current = attendees.size
+    suggestionBlockDocTop.current = docTop
+  })
 
   // Notes created together from a single Home-page entry get identical content per tagged
   // person (see converse/index.ts's per-attendee insert loop) — collapse those into one card
@@ -1291,6 +1521,21 @@ export function EventDetailView({
         </>
       )}
 
+      {/* Directly under the date/location line, which is where the founder asked for it, and
+          above the description so the looked-up facts never read as part of what they wrote. */}
+      <EventEnrichmentBoxes
+        game={enrichment?.game ?? null}
+        gameCandidates={enrichment?.game_candidates ?? null}
+        weather={enrichment?.weather ?? null}
+        gameDismissed={enrichment?.game_dismissed ?? false}
+        readOnly={readOnly}
+        refreshing={enriching}
+        choosing={choosingGame}
+        onRefresh={onRefreshEnrichment}
+        onChooseGame={onChooseGame}
+        onDismissGame={onDismissGame}
+      />
+
       {editingDescription ? (
         <form
           onSubmit={(e) => {
@@ -1388,6 +1633,9 @@ export function EventDetailView({
         <p style={styles.empty}>{readOnly ? 'No one tagged yet.' : ADD_HINT.attendee}</p>
       )}
 
+      {/* All three suggestion boxes share one wrapper purely so the scroll anchor above has a
+          single thing to hold still — it carries no styles of its own. */}
+      <div ref={suggestionBlockRef}>
       {/* Sub-event pages only (siblingEvents is empty otherwise). Sits above the group and family
           boxes because it's the strongest signal here — the same crowd usually turns up to every
           part of a multi-day event. Ordered by how many other parts each person came to, not by
@@ -1411,11 +1659,13 @@ export function EventDetailView({
             {`These people were at other parts of ${parentEvent?.occasion || 'this event'}. Tap a name to add them to who was there, or hover to dismiss.`}
           </p>
           <div style={styles.chipRow}>
-            {suggestedFromSiblings.map((p) => (
+            {withPinnedChips(suggestedFromSiblings, 'siblings').map((p, i) => (
               <SuggestedAttendeeChip
                 key={p.id}
                 person={p}
-                onApprove={() => onAddAttendee(p)}
+                added={attendees.has(p.id)}
+                onApprove={() => pinAndAddAttendee(p, 'siblings', i)}
+                onUndo={() => onRemoveAttendee(p)}
                 onDeny={() => onDenySuggestion(p)}
               />
             ))}
@@ -1446,11 +1696,13 @@ export function EventDetailView({
           </div>
           <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
           <div style={styles.chipRow}>
-            {sortByLastName(Array.from(suggestedAttendees.values())).map((p) => (
+            {withPinnedChips(sortByLastName(Array.from(suggestedAttendees.values())), 'group').map((p, i) => (
               <SuggestedAttendeeChip
                 key={p.id}
                 person={p}
-                onApprove={() => onAddAttendee(p)}
+                added={attendees.has(p.id)}
+                onApprove={() => pinAndAddAttendee(p, 'group', i)}
+                onUndo={() => onRemoveAttendee(p)}
                 onDeny={() => onDenySuggestion(p)}
               />
             ))}
@@ -1481,17 +1733,20 @@ export function EventDetailView({
           </div>
           <p style={styles.chatHint}>Tap a name to add them to who was there, or hover to dismiss.</p>
           <div style={styles.chipRow}>
-            {sortByLastName(Array.from(suggestedFamily.values())).map((p) => (
+            {withPinnedChips(sortByLastName(Array.from(suggestedFamily.values())), 'family').map((p, i) => (
               <SuggestedAttendeeChip
                 key={p.id}
                 person={p}
-                onApprove={() => onAddAttendee(p)}
+                added={attendees.has(p.id)}
+                onApprove={() => pinAndAddAttendee(p, 'family', i)}
+                onUndo={() => onRemoveAttendee(p)}
                 onDeny={() => onDenySuggestion(p)}
               />
             ))}
           </div>
         </>
       )}
+      </div>
 
       {/* Sub-events, under this section's new name (2026-08-07) — same content/logic as before,
           just relabeled to match the consistent Title → Date/Location → Summary → Who was there →
@@ -2021,11 +2276,16 @@ function TagChip({ tag, onRemove }: { tag: TagRef; onRemove?: () => void }) {
 // and can't flicker, matching GroupDetail.tsx's SuggestionChip pattern.
 function SuggestedAttendeeChip({
   person,
+  added = false,
   onApprove,
+  onUndo,
   onDeny,
 }: {
   person: PersonRef
+  /** Already tagged on this event — the chip holds its slot with a tick instead of disappearing. */
+  added?: boolean
   onApprove: () => void
+  onUndo?: () => void
   onDeny: () => void
 }) {
   const [hovered, setHovered] = useState(false)
@@ -2033,10 +2293,15 @@ function SuggestedAttendeeChip({
 
   return (
     <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <button onClick={onApprove} style={styles.suggestChip}>
-        + {label}
+      <button onClick={added ? onUndo : onApprove} style={added ? styles.suggestChipAdded : styles.suggestChip}>
+        {/* Fixed-width glyph cell: "+" and "✓" aren't the same width, and letting the chip resize
+            as it flips would reintroduce the reflow this whole thing exists to stop. */}
+        <span style={styles.chipGlyph}>{added ? '✓' : '+'}</span>
+        {label}
       </button>
-      {(hovered || IS_TOUCH) && (
+      {/* No dismiss badge once they're added — "don't suggest them again" contradicts having just
+          said yes, and the way back is the same chip. */}
+      {!added && (hovered || IS_TOUCH) && (
         <button
           onClick={(e) => {
             e.stopPropagation()
