@@ -34,6 +34,7 @@ import SearchAddPicker from '../components/SearchAddPicker'
 import UndoBanner from '../components/UndoBanner'
 import ManagePanel from '../components/ManagePanel'
 import FloatingActionBubble from '../components/FloatingActionBubble'
+import SummaryText from '../components/SummaryText'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space, subgroupPalette } from '../lib/theme'
 import { fullName } from '../lib/personLabel'
@@ -1937,7 +1938,10 @@ export function GroupDetailView({
                 </div>
               )}
 
-              <p style={styles.description}>{moment.summary || 'Putting this memory into words…'}</p>
+              {/* Same renderer the event page uses. Was a flat <p> until 2026-08-17, which was fine
+                  while every summary was prose — but event summaries are bullets now, and a raw
+                  "- " would have shown through here on every event tied to a group. */}
+              <SummaryText style={styles.description} text={moment.summary || 'Putting this memory into words…'} />
 
               {attendees.size > 0 && (
                 <>

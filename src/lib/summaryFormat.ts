@@ -14,10 +14,38 @@
 //
 // Deliberately conservative: anything that isn't confidently a sub-event line stays a plain
 // paragraph, so an ordinary single-event summary (prose, no sub-events) renders exactly as before.
+//
+// 2026-08-17: ordinary events are now summarized as bullets too (founder ask — "I don't need it to
+// tell me a story, I want the FACTS"), so `- ` lines are recognised here as well. The two shapes
+// have to coexist indefinitely: changing the prompt doesn't rewrite anything already stored, so an
+// event keeps its old prose paragraph until something regenerates it.
 
 export type SummaryBlock =
   | { kind: 'paragraph'; text: string }
   | { kind: 'subEvent'; date: string; title: string; body: string }
+  | { kind: 'bullet'; text: string }
+
+// The bullet markers `summarize-moment` may emit. The prompt asks for `- ` specifically, but models
+// drift on the marker character, so accept the obvious near-misses rather than rendering a literal
+// "* " at the front of every line.
+const BULLET_MARKERS = ['- ', '– ', '— ', '• ', '* ']
+
+/**
+ * Strips the leading bullet marker off a line, or returns null if the line isn't a bullet.
+ *
+ * Deliberately requires the trailing space: a summary sentence starting with a bare hyphen is not a
+ * thing the prompt produces, but a date range mid-paragraph ("2018-2019") must never be mistaken for
+ * one, and an em dash opening a clause is far more likely punctuation than a bullet without it.
+ */
+export function parseBulletLine(line: string): string | null {
+  for (const marker of BULLET_MARKERS) {
+    if (line.startsWith(marker)) {
+      const text = line.slice(marker.length).trim()
+      return text || null
+    }
+  }
+  return null
+}
 
 // The prompt asks for `·` and `—` specifically, but models drift on punctuation, so accept the
 // obvious near-misses rather than silently falling back to the old flat rendering.
@@ -94,6 +122,15 @@ export function parseSummaryBlocks(summary: string): SummaryBlock[] {
     if (subEvent) {
       flush()
       blocks.push({ kind: 'subEvent', ...subEvent })
+      continue
+    }
+    // Checked after the sub-event shape on purpose: a sub-event line never starts with a bullet
+    // marker (the prompt forbids it there), but if a model ever emitted one anyway, the richer
+    // date/title/body split is the better reading of it.
+    const bullet = parseBulletLine(line)
+    if (bullet) {
+      flush()
+      blocks.push({ kind: 'bullet', text: bullet })
     } else {
       paragraph.push(line)
     }
@@ -106,4 +143,14 @@ export function parseSummaryBlocks(summary: string): SummaryBlock[] {
 /** True when the summary actually has the sub-event shape worth styling as a list. */
 export function hasSubEventBlocks(blocks: SummaryBlock[]): boolean {
   return blocks.some((b) => b.kind === 'subEvent')
+}
+
+/**
+ * True when the summary is the bullet shape `summarize-moment` has emitted since 2026-08-17.
+ *
+ * Every event summarized before that date is still a prose paragraph and stays one until it's
+ * regenerated, so both shapes have to render correctly side by side for as long as the two coexist.
+ */
+export function hasBulletBlocks(blocks: SummaryBlock[]): boolean {
+  return blocks.some((b) => b.kind === 'bullet')
 }
