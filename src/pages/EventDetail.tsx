@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import NoteWithDetection from '../components/NoteWithDetection'
@@ -40,6 +40,13 @@ export type PersonRef = { id: string; name: string; last_name: string | null }
  * is which of the three suggestion sections it belongs to. See pinnedChips in EventDetailView.
  */
 type PinnedChip = { person: PersonRef; box: 'siblings' | 'group' | 'family'; index: number }
+
+/**
+ * How long attendee edits have to stop before the cached summary is thrown away and regenerated.
+ * Long enough to swallow a run of chip clicks (the thing it exists for), short enough that someone
+ * who adds one person and sits still sees the summary catch up while they're still on the page.
+ */
+const SUMMARY_SETTLE_MS = 4000
 export type GroupRef = {
   id: string
   name: string
@@ -586,6 +593,35 @@ export default function EventDetail({
     }
   }
 
+  // Attendee chips get clicked in RUNS — a wedding day is a dozen names one after another. Routing
+  // each one through handleNoteSaved() made every single click null the cached summary, which cost
+  // an AI regeneration per name (the exact waste handleApproveAllSuggestions was already written to
+  // avoid, CLAUDE.md rule 3) and collapsed the summary block to its one-line "Putting this memory
+  // into words…" placeholder mid-run. That collapse is ~100px, so the chip you were aiming at
+  // jumped up a hundred pixels on every click — the founder's 2026-08-17 report of the page
+  // shifting was mostly this, not the chip grid itself.
+  //
+  // So an attendee change reloads the roster immediately (the chip has to respond at once) but only
+  // invalidates the summary once the clicking stops. One regeneration per burst, and the summary
+  // block keeps its height while you work down the list.
+  const summarySettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (summarySettleTimer.current) clearTimeout(summarySettleTimer.current)
+    }
+  }, [])
+
+  async function handleAttendeeChanged() {
+    await loadMoment(true)
+    if (summarySettleTimer.current) clearTimeout(summarySettleTimer.current)
+    summarySettleTimer.current = setTimeout(async () => {
+      summarySettleTimer.current = null
+      await supabase.from('moments').update({ summary: null }).eq('id', eventId)
+      await loadMoment(true)
+    }, SUMMARY_SETTLE_MS)
+  }
+
   // Every write below returns whether it actually landed (2026-08-11, item 91). Before this they
   // all discarded the { error } Supabase hands back, so a rejected insert still drew "✓ Added X"
   // and a chip that only disappeared on the next reload — and since the action bubble became the
@@ -601,15 +637,15 @@ export default function EventDetail({
       setActionError(`Couldn't add ${fullName(person)} to this event — please try again.`)
       return false
     }
-    await handleNoteSaved()
+    await handleAttendeeChanged()
     return true
   }
 
   // Confirm a whole suggestion box at once — the counterpart to handleDenyAllSuggestions, and
   // the same idea as GroupDetail's own handleApproveAllSuggestions. Deliberately ONE insert of
-  // every row plus ONE handleNoteSaved(), not a loop over handleAddAttendee: handleNoteSaved
-  // nulls the cached summary and reloads, so a loop would spend an AI summary regeneration per
-  // person for what the user experiences as a single click (CLAUDE.md rule 3).
+  // every row, not a loop over handleAddAttendee, so the roster reload is a single round trip
+  // rather than one per person (the summary regeneration is debounced either way now — see
+  // handleAttendeeChanged).
   async function handleApproveAllSuggestions(people: PersonRef[]) {
     if (people.length === 0) return
     setActionError(null)
@@ -620,7 +656,7 @@ export default function EventDetail({
       setActionError("Couldn't add those people to this event — please try again.")
       return
     }
-    await handleNoteSaved()
+    await handleAttendeeChanged()
   }
 
   // The "someone who isn't on file yet was there" half of the attendee picker. Splits the typed
@@ -759,7 +795,7 @@ export default function EventDetail({
       setActionError(`Couldn't remove ${person.name} from this event — please try again.`)
       return
     }
-    await handleNoteSaved()
+    await handleAttendeeChanged()
   }
 
   // Editing a note directly fixes wrong/fabricated content wherever it's read from — this page,
@@ -1346,29 +1382,6 @@ export function EventDetailView({
     }
   }
 
-  // The other half of the "clicking a name shifts the page" problem (founder report 2026-08-17):
-  // pinning the chips holds the grid stable internally, but adding someone also grows "Who was
-  // there" ABOVE it, and roughly every fifth add wraps that row and pushes the whole suggestion
-  // block down by a row's height. So hold the block still: remember where it sits in the DOCUMENT
-  // (not the viewport — document coordinates don't move when the reader scrolls between renders,
-  // so this can't fight them for control of the scrollbar) and scroll by the difference whenever
-  // the attendee count changes underneath it. Instant, not smooth: this is meant to be invisible,
-  // an animation would be the very motion it exists to cancel.
-  const suggestionBlockRef = useRef<HTMLDivElement>(null)
-  const suggestionBlockDocTop = useRef<number | null>(null)
-  const lastAttendeeCount = useRef(attendees.size)
-
-  useLayoutEffect(() => {
-    const el = suggestionBlockRef.current
-    const docTop = el ? el.getBoundingClientRect().top + window.scrollY : null
-    const before = suggestionBlockDocTop.current
-    if (docTop !== null && before !== null && lastAttendeeCount.current !== attendees.size) {
-      const delta = docTop - before
-      if (Math.abs(delta) > 0.5) window.scrollBy({ top: delta, behavior: 'instant' })
-    }
-    lastAttendeeCount.current = attendees.size
-    suggestionBlockDocTop.current = docTop
-  })
 
   // Notes created together from a single Home-page entry get identical content per tagged
   // person (see converse/index.ts's per-attendee insert loop) — collapse those into one card
@@ -1633,9 +1646,6 @@ export function EventDetailView({
         <p style={styles.empty}>{readOnly ? 'No one tagged yet.' : ADD_HINT.attendee}</p>
       )}
 
-      {/* All three suggestion boxes share one wrapper purely so the scroll anchor above has a
-          single thing to hold still — it carries no styles of its own. */}
-      <div ref={suggestionBlockRef}>
       {/* Sub-event pages only (siblingEvents is empty otherwise). Sits above the group and family
           boxes because it's the strongest signal here — the same crowd usually turns up to every
           part of a multi-day event. Ordered by how many other parts each person came to, not by
@@ -1746,7 +1756,6 @@ export function EventDetailView({
           </div>
         </>
       )}
-      </div>
 
       {/* Sub-events, under this section's new name (2026-08-07) — same content/logic as before,
           just relabeled to match the consistent Title → Date/Location → Summary → Who was there →
@@ -2573,6 +2582,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
+  // A suggestion that's already been said yes to, holding its slot in the grid. Every box-model
+  // value matches suggestChip exactly — only the border style and fill change, so flipping between
+  // the two can't move the chip or anything after it.
+  suggestChipAdded: {
+    fontSize: fontSize.body,
+    padding: '0.35rem 0.8rem',
+    borderRadius: radius.pill,
+    border: border.primary,
+    backgroundColor: colors.inkWash,
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  chipGlyph: { display: 'inline-block', width: '0.9em', textAlign: 'center', marginRight: '0.3em' },
   groupChip: {
     display: 'inline-flex',
     alignItems: 'center',

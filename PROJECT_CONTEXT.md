@@ -1037,6 +1037,29 @@ src/
 │   │                            are excluded from both, so nobody is suggested twice.
 │   │                            `loadSiblingEvents` is a separate fail-open query, same
 │   │                            reasoning as loadParentEvent.
+│   │                            (2026-08-17) Clicking a suggestion no longer moves the page,
+│   │                            in all three boxes. Two causes, both fixed. (a) The chip used
+│   │                            to leave the grid, reflowing every chip after it — it now
+│   │                            HOLDS its slot and flips to a ticked, filled chip
+│   │                            (`suggestChipAdded`, box-model identical to `suggestChip`;
+│   │                            the +/✓ sits in a fixed-width `chipGlyph` span so the chip
+│   │                            can't resize). `pinnedChips` records {person, box, index} on
+│   │                            click and `withPinnedChips` splices them back into the live
+│   │                            list at that index, ascending; it's purely positional, so
+│   │                            "added" stays derived from `attendees` and clicking a ticked
+│   │                            chip untags them and flips it back to "+" without moving.
+│   │                            Pins reset on `moment.id`. (b) Every add nulled the cached
+│   │                            summary, collapsing that block to its one-line "Putting this
+│   │                            memory into words…" placeholder — a ~100px jump per click,
+│   │                            plus one AI regeneration per name (CLAUDE.md rule 3).
+│   │                            `handleAttendeeChanged` now reloads the roster immediately
+│   │                            but debounces the invalidation by `SUMMARY_SETTLE_MS` (4s),
+│   │                            so a run of clicks costs one regeneration and the summary
+│   │                            keeps its height throughout. Measured: 5 clicks = 5
+│   │                            regenerations before, 1 after; 0px of chip movement across
+│   │                            all 37 chips. A scroll-anchor approach was tried first and
+│   │                            removed — it chased the summary collapse and double-applied
+│   │                            the correction, making the jump worse.
 │   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
 │   ├── DueForUpdate.tsx       — people sorted oldest/no note first
 │   ├── ManageLocations.tsx    — (item 66, 2026-08-12) reached via "Manage locations →"
