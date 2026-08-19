@@ -11,10 +11,14 @@
 
 import { matchScore } from './searchRanking'
 
-export type DocKind = 'person' | 'pet' | 'event' | 'group' | 'note' | 'tag'
+export type DocKind = 'person' | 'pet' | 'event' | 'group' | 'note' | 'tag' | 'notebook'
 
 /** Where a result navigates to. A note points at whatever it hangs off, not at itself. */
-export type SearchTarget = { kind: 'person' | 'pet' | 'event' | 'group' | 'tag'; id: string; label: string }
+export type SearchTarget = {
+  kind: 'person' | 'pet' | 'event' | 'group' | 'tag' | 'notebook'
+  id: string
+  label: string
+}
 
 export type SearchDoc = {
   kind: DocKind
@@ -43,7 +47,7 @@ const BODY_ONLY_SCORE = 5
 
 // Which kind wins a tie. People first because a name is the most common thing to look up, notes
 // second-to-last because they're the most numerous and the least specific.
-const KIND_ORDER: Record<DocKind, number> = { person: 0, group: 1, event: 2, pet: 3, tag: 4, note: 5 }
+const KIND_ORDER: Record<DocKind, number> = { person: 0, group: 1, event: 2, pet: 3, tag: 4, notebook: 5, note: 6 }
 
 function scoreDoc(doc: SearchDoc, q: string): number | null {
   if (doc.title.toLowerCase().includes(q)) return matchScore(doc.title, q)

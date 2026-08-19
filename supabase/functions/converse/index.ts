@@ -90,6 +90,8 @@ serve(async (req) => {
       { data: pets },
       { data: personPets },
       { data: genderRows },
+      { data: notebooks },
+      { data: notebookEntries },
     ] = await Promise.all([
       // Paged for the same reason person_groups is (see fetchAllPersonGroups): 700 people already,
       // and the 1000th person onward would just stop existing as far as the model is concerned.
@@ -125,6 +127,22 @@ serve(async (req) => {
       // function — going down.
       fetchAllRows((from, to) =>
         supabaseClient.from("people").select("id, gender").order("id").range(from, to)
+      ),
+      // Notebooks — the app's internal side (see migrations_manual/2026-08-18-notebooks.sql).
+      // Two more separate queries for the same reason as pets and gender above: their migration is
+      // run by hand, so on a database where it hasn't been pasted yet these two come back empty and
+      // the chat loses notebook context, instead of the whole function going down.
+      //
+      // ai_visible is filtered HERE, in the query, not when the block is rendered. It's a privacy
+      // promise the founder can toggle per notebook, and the narrower the gap between "excluded"
+      // and "never fetched", the fewer ways a later edit can accidentally leak one into the prompt.
+      supabaseClient.from("notebooks").select("id, name").eq("ai_visible", true).order("id"),
+      fetchAllRows((from, to) =>
+        supabaseClient
+          .from("notebook_entries")
+          .select("id, notebook_id, content, entry_date, created_at, notebook_entry_people(person_id)")
+          .order("id")
+          .range(from, to)
       ),
     ])
 
@@ -285,6 +303,40 @@ serve(async (req) => {
       })
       .join("\n")
 
+    // Notebook entries fed to the model, newest first. Capped because this block has no natural
+    // ceiling — a notebook someone writes in daily grows forever, and every entry would ride along
+    // in the system prompt of every message from then on (CLAUDE.md rule 3). 200 entries is far
+    // more than the account holds today while still being a bound; past that, the oldest drop out
+    // and stay findable through global search, which reads every entry regardless.
+    const NOTEBOOK_ENTRY_LIMIT = 200
+
+    const visibleNotebookNameById: Record<string, string> = {}
+    for (const nb of notebooks ?? []) visibleNotebookNameById[nb.id] = nb.name
+
+    const notebooksContext = (notebookEntries ?? [])
+      // Entries whose notebook is switched off (or deleted) have no name here and drop out.
+      .filter((e: any) => visibleNotebookNameById[e.notebook_id])
+      .sort((a: any, b: any) => {
+        // Same one-timeline ordering as the browser's sortEntries: an undated entry ranks by when
+        // it was written. Tie-broken by id so the block is byte-stable across turns — an unstable
+        // sort here would invalidate this cache tier on every single message.
+        const aKey = a.entry_date ?? a.created_at
+        const bKey = b.entry_date ?? b.created_at
+        if (aKey !== bKey) return aKey < bKey ? 1 : -1
+        return a.id < b.id ? -1 : 1
+      })
+      .slice(0, NOTEBOOK_ENTRY_LIMIT)
+      .map((e: any) => {
+        const people = (e.notebook_entry_people ?? [])
+          .map((row: any) => nameById[row.person_id])
+          .filter(Boolean)
+        const parts = [`[${visibleNotebookNameById[e.notebook_id]}] ${e.content}`]
+        if (e.entry_date) parts.push(`Date: ${e.entry_date}`)
+        if (people.length) parts.push(`People: ${[...new Set(people)].join(", ")}`)
+        return parts.join(" | ")
+      })
+      .join("\n")
+
     const groupsContext = (groups ?? [])
       .map((g: any) => `${groupNameById[g.id]} (members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"})`)
       .join("\n")
@@ -338,6 +390,8 @@ serve(async (req) => {
 Every moment recorded is tagged with [MOMENT_ID: ...] and shows "When (as described)" — the timing phrase the user originally used (like "last summer") — and "Recorded on" — the actual date they typed that phrase. IMPORTANT: interpret relative time phrases relative to when they were RECORDED, not relative to today. For example, work out which actual year "last summer" refers to based on the recorded date, not today's date. When asked things like "how many years ago," calculate using today's actual date compared to the year you worked out.
 
 The "[MOMENT_ID: ...]" tag is for YOUR bookkeeping only, so you can reference the right moment_id in your structured output. NEVER include "[MOMENT_ID: ...]" or any similar internal tag in the user-facing "reply" text — the reply should read as natural conversation with no trace of these tags.
+
+NOTEBOOKS are the user's own writing, kept separately from moments. Where a moment is the external record of something that happened and who was there, a notebook holds the internal side — what they thought, what they liked, how they were doing. Each notebook is named by the user (e.g. "Movies I loved", "How I'm doing"), and its entries are listed in this prompt prefixed with that name in square brackets. Use them freely when answering questions, exactly as you would use a moment. Two things they are NOT: they are not events, so never treat a notebook entry as something that happened on a date unless it says so; and you cannot create or edit them — there is no field in your structured output for notebooks, so if the user seems to be dictating one, just answer conversationally. Note also that a user can switch a notebook off, in which case it is absent from this prompt entirely — if you have no notebook content here, say you don't have it rather than guessing at what might be in one.
 
 Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses (e.g. "Joseph Smith (also goes by: Grandpa Joe)") — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "notes", "relevant_people", "person_group_tags", etc., and it will still resolve to the same person.
 
@@ -478,8 +532,16 @@ ${familyRoster || "(none yet)"}${selfInstruction}${kinInstruction}${chatToneInst
     // Moments tier — changes on every new capture, the most frequent write in the app, so it's
     // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier
     // busts often enough that the cheaper write usually wins).
+    //
+    // Notebooks ride along in THIS tier rather than getting a breakpoint of their own: the API
+    // allows a maximum of 4, and all four are already spoken for (three system blocks plus the one
+    // on messages below). A fifth would silently cost the cache on everything after it. They also
+    // belong here on their own merits — they're written about as often as moments are.
     const momentsContext = `Here are the moments already recorded, each tagged with [MOMENT_ID: ...]:
-${context || "(none recorded yet)"}`
+${context || "(none recorded yet)"}
+
+Here are the notebook entries, one per line, prefixed with the notebook they are in:
+${notebooksContext || "(none written yet)"}`
 
     // Truly per-turn: changes once a day, and previously sat at the FRONT of one combined dynamic
     // block, which invalidated the whole thing daily for no reason. Kept last and uncached — it's

@@ -46,6 +46,8 @@ type MomentRow = {
 type GroupRow = { id: string; name: string; summary: string | null; parent_group_id: string | null }
 type NoteRow = { id: string; content: string; person_id: string | null; moment_id: string | null; group_id: string | null }
 type TagRow = { id: string; name: string }
+type NotebookRow = { id: string; name: string }
+type NotebookEntryRow = { id: string; notebook_id: string; content: string }
 
 /** Joined with " · " into a doc's body — the bits that should match without cluttering the row. */
 function joinBody(parts: (string | null | undefined)[]): string | undefined {
@@ -165,6 +167,39 @@ function buildNoteDocs(
   return docs
 }
 
+/**
+ * Notebooks and their entries, both as `notebook`-kind docs.
+ *
+ * An entry has no page of its own, so it navigates to its notebook — the same shape buildNoteDocs
+ * uses above, where a note opens whatever it hangs off. Deliberately ignores notebooks.ai_visible:
+ * that switch governs what the Home chat is shown, not what the founder can find in their own app.
+ */
+function buildNotebookDocs(notebooks: NotebookRow[], entries: NotebookEntryRow[]): SearchDoc[] {
+  const nameById = new Map(notebooks.map((n) => [n.id, n.name]))
+  const docs: SearchDoc[] = notebooks.map((n) => ({
+    kind: 'notebook' as const,
+    id: n.id,
+    title: n.name,
+    subtitle: 'Notebook',
+    target: { kind: 'notebook' as const, id: n.id, label: n.name },
+  }))
+  for (const e of entries) {
+    const content = e.content?.trim()
+    const notebookName = nameById.get(e.notebook_id)
+    // An orphan — its notebook was deleted, or is a row this account can't see.
+    if (!content || !notebookName) continue
+    docs.push({
+      kind: 'notebook',
+      id: e.id,
+      title: content,
+      subtitle: `in ${notebookName}`,
+      body: content,
+      target: { kind: 'notebook', id: e.notebook_id, label: notebookName },
+    })
+  }
+  return docs
+}
+
 function buildTagDocs(rows: TagRow[]): SearchDoc[] {
   return rows.map((t) => ({
     kind: 'tag' as const,
@@ -178,7 +213,7 @@ function buildTagDocs(rows: TagRow[]): SearchDoc[] {
 export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: QueryError }> {
   // .order('id') on every read is what makes paging safe — without a stable sort Postgres may
   // return rows in a different order per page, which duplicates some and skips others.
-  const [people, pets, moments, groups, tags, momentParents] = await Promise.all([
+  const [people, pets, moments, groups, tags, momentParents, notebooks, notebookEntries] = await Promise.all([
     fetchAllRows<PersonRow>((from, to) =>
       supabase
         .from('people')
@@ -203,6 +238,12 @@ export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: Q
     // Kept out of the moments select above so a missing `parent_moment_id` costs the "Trip / Day 2"
     // prefix and nothing else — see fetchMomentParentIds.
     fetchMomentParentIds(),
+    fetchAllRows<NotebookRow>((from, to) =>
+      supabase.from('notebooks').select('id, name').order('id').range(from, to)
+    ),
+    fetchAllRows<NotebookEntryRow>((from, to) =>
+      supabase.from('notebook_entries').select('id, notebook_id, content').order('id').range(from, to)
+    ),
   ])
 
   // Notes last: their subtitle and their navigation target both come from the maps above.
@@ -229,9 +270,15 @@ export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: Q
       ...groupDocs,
       ...buildNoteDocs(notes.data, nameById, momentLabels, groupLabels),
       ...buildTagDocs(tags.data),
+      ...buildNotebookDocs(notebooks.data, notebookEntries.data),
     ],
     // Fail soft, matching fetchAllRows' own contract: a missing table (a migration not yet run)
     // degrades the corpus rather than emptying it, so search still works on everything else.
+    //
+    // The notebook reads are deliberately NOT in this chain. Their migration is run by hand, so
+    // between deploy and that paste they legitimately don't exist — folding them in would show a
+    // search error for a feature the account hasn't switched on yet. fetchAllRows already returns
+    // [] on failure, so the only cost of leaving them out is that notebooks aren't searchable yet.
     error: people.error ?? moments.error ?? notes.error ?? groups.error ?? pets.error ?? tags.error,
   }
 }
