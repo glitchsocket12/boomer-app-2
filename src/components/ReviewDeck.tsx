@@ -18,6 +18,15 @@ import { border, colors, fontFamily, fontSize, radius, space } from '../lib/them
 // into them without a rewrite.
 export const DECK_SIZE = 10
 
+// Batch membership survives the component unmounting, keyed by `persistKey`.
+//
+// Without this, pressing "Add more details →" on a card navigates away to the event, and coming
+// back remounts the queue, reloads it and deals a brand-new batch — so the ten you were part-way
+// through silently became a different ten. Module-level rather than sessionStorage because it only
+// needs to outlive a navigation inside one session, and stale ids cost nothing: a card that is no
+// longer in `items` simply doesn't render.
+const persisted = new Map<string, { deckIds: string[]; decided: string[] }>()
+
 export type ReviewDeckItemApi = {
   /**
    * Called by a card when it writes (or un-writes) a decision — accept, reject, "not now", undo.
@@ -36,6 +45,7 @@ export default function ReviewDeck<T>({
   deckSize = DECK_SIZE,
   nounSingular,
   nounPlural,
+  persistKey,
   onAdvance,
   onDone,
 }: {
@@ -48,6 +58,8 @@ export default function ReviewDeck<T>({
   deckSize?: number
   nounSingular: string
   nounPlural: string
+  /** Set to keep this deck's batch across a remount (e.g. navigating to an event and back). */
+  persistKey?: string
   /** Moving on clears the finished deck's leftover confirmations — the parent drops these ids. */
   onAdvance: (finishedIds: string[]) => void
   onDone: () => void
@@ -55,8 +67,12 @@ export default function ReviewDeck<T>({
   // Membership is captured once and then held, rather than recomputed as `items.slice(0, deckSize)`
   // — otherwise dismissing a card would pull the next one up into the deck and the batch of ten
   // would never end.
-  const [deckIds, setDeckIds] = useState<string[] | null>(null)
-  const [decided, setDecided] = useState<Set<string>>(new Set())
+  const [deckIds, setDeckIds] = useState<string[] | null>(() =>
+    persistKey ? persisted.get(persistKey)?.deckIds ?? null : null
+  )
+  const [decided, setDecided] = useState<Set<string>>(() =>
+    persistKey ? new Set(persisted.get(persistKey)?.decided ?? []) : new Set()
+  )
 
   useEffect(() => {
     if (deckIds === null && items.length > 0) {
@@ -64,6 +80,12 @@ export default function ReviewDeck<T>({
       setDecided(new Set())
     }
   }, [deckIds, items, deckSize, itemKey])
+
+  useEffect(() => {
+    if (!persistKey) return
+    if (deckIds === null) persisted.delete(persistKey)
+    else persisted.set(persistKey, { deckIds, decided: [...decided] })
+  }, [persistKey, deckIds, decided])
 
   function markDecided(id: string, isDecided: boolean) {
     setDecided((prev) => {

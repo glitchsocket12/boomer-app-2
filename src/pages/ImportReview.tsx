@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
+import { findLikelyMatch } from '../lib/likelyDuplicate'
 import { formatDateRange } from '../lib/dates'
-import { findOrCreateTagId, type TagRef } from '../lib/tags'
+import { type TagRef } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import SearchAddPicker from '../components/SearchAddPicker'
@@ -11,7 +12,9 @@ import SearchBox from '../components/SearchBox'
 import ReviewNoteField from '../components/ReviewNoteField'
 import ReviewDeck, { type ReviewDeckItemApi } from '../components/ReviewDeck'
 import AddressSuggestInput from '../components/AddressSuggestInput'
-import { deferUntilIso, probeTriageEnabled, wakeDueDeferrals } from '../lib/reviewQueues'
+import { deferUntilIso, invalidateReviewCounts, loadRemindDays, probeTriageEnabled, saveRemindDays, wakeDueDeferrals } from '../lib/reviewQueues'
+import { acceptCandidate, attachAttendees, attachTagsAndGroups, type AcceptOverrides } from '../lib/acceptCandidate'
+import RemindSheet from '../components/RemindSheet'
 import { groupDisplayName } from '../lib/groupDisplayName'
 import { momentDisplayName, momentPickerLabel, momentTitle } from '../lib/momentDisplayName'
 import { fetchMomentParentIds } from '../lib/moments'
@@ -53,63 +56,6 @@ function toggleIndex(set: Set<number>, i: number): Set<number> {
   if (next.has(i)) next.delete(i)
   else next.add(i)
   return next
-}
-
-// Free, client-side "might already be on file" heuristic — no AI call. Normalized word-overlap
-// on the title, optionally corroborated by date proximity/overlap. Deliberately simple and
-// tunable rather than a fuzzy-match library, since a human always reviews the suggestion before
-// anything merges.
-const STOPWORDS = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'to', 'with', 'at', 'in', 'on'])
-const TITLE_OVERLAP_THRESHOLD = 0.5
-const HIGH_CONFIDENCE_TITLE_THRESHOLD = 0.8
-const DATE_PROXIMITY_DAYS = 3
-
-function titleWords(s: string): Set<string> {
-  return new Set(
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter((w) => w && !STOPWORDS.has(w))
-  )
-}
-
-function titleOverlapRatio(a: string, b: string): number {
-  const wa = titleWords(a)
-  const wb = titleWords(b)
-  if (wa.size === 0 || wb.size === 0) return 0
-  let intersection = 0
-  for (const w of wa) if (wb.has(w)) intersection++
-  return intersection / Math.min(wa.size, wb.size)
-}
-
-function datesAreClose(candidate: Candidate, existing: ExistingMoment): boolean {
-  if (!candidate.event_date || !existing.event_date) return false
-  const dayMs = 24 * 60 * 60 * 1000
-  const cStart = new Date(`${candidate.event_date}T00:00:00`).getTime()
-  const cEnd = new Date(`${candidate.event_end_date || candidate.event_date}T00:00:00`).getTime()
-  const eStart = new Date(`${existing.event_date}T00:00:00`).getTime()
-  const eEnd = new Date(`${existing.event_end_date || existing.event_date}T00:00:00`).getTime()
-  if (cStart <= eEnd && eStart <= cEnd) return true // ranges overlap
-  const gap = cStart > eEnd ? cStart - eEnd : eStart - cEnd
-  return gap <= DATE_PROXIMITY_DAYS * dayMs
-}
-
-function findLikelyMatch(candidate: Candidate, existing: ExistingMoment[]): ExistingMoment | null {
-  const candidateTitle = candidate.occasion?.trim()
-  if (!candidateTitle) return null
-  let best: ExistingMoment | null = null
-  let bestScore = 0
-  for (const m of existing) {
-    const title = m.occasion?.trim() || summarize(null, m.raw_description)
-    const overlap = titleOverlapRatio(candidateTitle, title)
-    const matches = overlap >= HIGH_CONFIDENCE_TITLE_THRESHOLD || (overlap >= TITLE_OVERLAP_THRESHOLD && datesAreClose(candidate, m))
-    if (matches && overlap > bestScore) {
-      bestScore = overlap
-      best = m
-    }
-  }
-  return best
 }
 
 // Matches EventDetail.tsx's SuggestedAttendeeChip exactly: click the chip to add, hover reveals a
@@ -156,10 +102,16 @@ export default function ImportReview({
   onBack,
   backLabel,
   onSelectEvent,
+  restoreScrollRef,
 }: {
   onBack: () => void
   backLabel: string
   onSelectEvent: (event: { id: string; summary: string }) => void
+  // Same handshake Groups.tsx has with App.tsx: App stores window.scrollY when this page pushes a
+  // crumb, and the effect below puts it back once the real content has rendered. "Add more
+  // details →" navigates to the event and back, and without this you return to the top of a queue
+  // you were twenty cards into.
+  restoreScrollRef?: { current: number | null }
 }) {
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [existingMoments, setExistingMoments] = useState<ExistingMoment[]>([])
@@ -187,10 +139,23 @@ export default function ImportReview({
   // deck's "That's all of them" for a bare line, at exactly the moment finishing should feel like
   // finishing.
   const [loadedCount, setLoadedCount] = useState(0)
+  // The founder's saved "remind me in N days", if they've set one. Loaded once here rather than
+  // per card — every card's Remind Me needs the same answer.
+  const [defaultRemindDays, setDefaultRemindDays] = useState<number | null>(null)
 
   useEffect(() => {
     load()
   }, [])
+
+  // Restore only after the cards have actually rendered at full height — doing it while "Loading…"
+  // is still on screen scrolls to a position the content hasn't grown tall enough to reach.
+  useEffect(() => {
+    if (!loading && restoreScrollRef && restoreScrollRef.current != null) {
+      window.scrollTo(0, restoreScrollRef.current)
+      restoreScrollRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
 
   async function load() {
     setLoading(true)
@@ -199,6 +164,7 @@ export default function ImportReview({
     await wakeDueDeferrals()
     const triageOn = await probeTriageEnabled()
     setTriageEnabled(triageOn)
+    loadRemindDays().then(setDefaultRemindDays)
     const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes, parentIds] = await Promise.all([
       // Paged (lib/pagedSelect.ts). Since the 2026-08-12 "sync every calendar event" change this
       // queue is the biggest table on the account, so an unpaged read here silently stopped at
@@ -347,6 +313,7 @@ export default function ImportReview({
           remaining={undecidedTotal}
           nounSingular="event"
           nounPlural="events"
+          persistKey="calendar-import-review"
           onAdvance={handleAdvance}
           onDone={onBack}
           renderItem={(c, api: ReviewDeckItemApi) => (
@@ -362,6 +329,8 @@ export default function ImportReview({
               momentParentById={momentParentById}
               momentTitleById={momentTitleById}
               deferEnabled={triageEnabled}
+              defaultRemindDays={defaultRemindDays}
+              onRemindDefaultSaved={setDefaultRemindDays}
               calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
               onTagCreated={handleTagCreated}
               onPersonCreated={handlePersonCreated}
@@ -393,6 +362,8 @@ function CandidateCard({
   momentTitleById,
   calendarSourceLabel,
   deferEnabled,
+  defaultRemindDays,
+  onRemindDefaultSaved,
   onTagCreated,
   onPersonCreated,
   onMomentCreated,
@@ -411,8 +382,11 @@ function CandidateCard({
   momentParentById: Map<string, string>
   momentTitleById: Map<string, string>
   calendarSourceLabel: string | null
-  /** False until 2026-08-19-calendar-triage-and-defer.sql has been run — hides "Not now". */
+  /** False until 2026-08-19-calendar-triage-and-defer.sql has been run — hides "Remind Me". */
   deferEnabled: boolean
+  /** The founder's saved interval, or null to ask with the sheet. */
+  defaultRemindDays: number | null
+  onRemindDefaultSaved: (days: number) => void
   onTagCreated: (tag: TagRef) => void
   onPersonCreated: (person: PersonRef) => void
   onMomentCreated: (moment: ExistingMoment) => void
@@ -457,7 +431,8 @@ function CandidateCard({
   const [acceptError, setAcceptError] = useState<string | null>(null)
   const [savedResult, setSavedResult] = useState<
     | { kind: 'created' | 'merged' | 'noted' | 'subevent'; momentId: string; label: string; parentLabel?: string }
-    | { kind: 'rejected' | 'deferred'; label: string }
+    | { kind: 'rejected'; label: string }
+    | { kind: 'deferred'; label: string; days: number }
     | null
   >(null)
   const cardRef = useResolvedCardScroll(savedResult !== null)
@@ -471,6 +446,7 @@ function CandidateCard({
   // a sub-event / save as a note / these are different" choice is the one question on this card
   // that must not be answered by reflex, and a collapsed Accept there would create the very
   // duplicate the banner is warning about. Everything after mount is the reviewer's own choice.
+  const [remindOpen, setRemindOpen] = useState(false)
   const [expanded, setExpanded] = useState(() => findLikelyMatch(candidate, existingMoments) !== null)
 
   // Every action that writes a decision goes through these two, so the deck's progress count can
@@ -556,139 +532,53 @@ function CandidateCard({
     setIncluded((prev) => toggleIndex(prev, i))
   }
 
-  async function applyAttendees(momentId: string) {
-    for (const i of included) {
-      const person = candidate.suggested_people[i]
-      let personId = person.matched_person_id
-      if (!personId && person.name) {
-        const [first, ...rest] = person.name.trim().split(' ')
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
-        const { data: newPerson } = await supabase
-          .from('people')
-          .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
-          .select()
-          .single()
-        personId = newPerson?.id ?? null
-        if (newPerson) onPersonCreated(newPerson as PersonRef)
-      }
-      if (personId) {
-        await supabase.from('notes').insert({ person_id: personId, moment_id: momentId, content: 'Was there.' })
-      }
-    }
-
-    for (const person of manualPeople) {
-      await supabase.from('notes').insert({ person_id: person.id, moment_id: momentId, content: 'Was there.' })
-    }
-
-    for (const name of manualNewPeopleNames) {
-      const [first, ...rest] = name.trim().split(' ')
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      const { data: newPerson } = await supabase
-        .from('people')
-        .insert({ user_id: user?.id, name: first, last_name: rest.length > 0 ? rest.join(' ') : null })
-        .select()
-        .single()
-      if (newPerson?.id) {
-        onPersonCreated(newPerson as PersonRef)
-        await supabase.from('notes').insert({ person_id: newPerson.id, moment_id: momentId, content: 'Was there.' })
-      }
-    }
-  }
-
-  async function applyTagsAndGroups(momentId: string) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    const tagNames = new Set<string>()
-    for (const i of includedTags) tagNames.add(candidate.suggested_tags[i])
-    for (const name of manualNewTagNames) tagNames.add(name)
-    for (const name of tagNames) {
-      const tag = await findOrCreateTagId(supabase, user?.id, allTagsList, name)
-      if (tag) {
-        onTagCreated(tag)
-        await supabase.from('moment_tags').upsert({ moment_id: momentId, tag_id: tag.id }, { onConflict: 'moment_id,tag_id', ignoreDuplicates: true })
-      }
-    }
-    for (const id of manualTagIds) {
-      await supabase.from('moment_tags').upsert({ moment_id: momentId, tag_id: id }, { onConflict: 'moment_id,tag_id', ignoreDuplicates: true })
-    }
-
-    const groupIds = new Set<string>()
-    for (const i of includedGroups) {
-      const id = candidate.suggested_group_ids[i]
-      if (id) groupIds.add(id)
-    }
-    for (const id of manualGroupIds) groupIds.add(id)
-    for (const id of groupIds) {
-      await supabase.from('moment_groups').upsert({ moment_id: momentId, group_id: id }, { onConflict: 'moment_id,group_id', ignoreDuplicates: true })
+  // Everything the reviewer changed on this card, in the shape lib/acceptCandidate.ts takes. Built
+  // here so the merge path below attaches exactly what a plain accept would.
+  function reviewerOverrides(): AcceptOverrides {
+    return {
+      occasion,
+      location,
+      eventDate,
+      eventEndDate,
+      includedPeople: included,
+      includedTags,
+      includedGroups,
+      manualPeople,
+      manualNewPeopleNames,
+      manualTagIds,
+      manualNewTagNames,
+      manualGroupIds,
+      noteText,
+      allTags: allTagsList,
     }
   }
 
   async function handleAccept() {
     setSaving(true)
     setAcceptError(null)
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
 
-    const { data: newMoment, error } = await supabase
-      .from('moments')
-      .insert({
-        user_id: user?.id,
-        raw_description: candidate.raw_description ?? '',
-        occasion: occasion || null,
-        location: location || null,
-        // when_text is a deterministic rendering of the exact dates, not a separate field the
-        // reviewer types — kept in sync even if they hand-edit the date pickers above.
-        when_text: eventDate ? formatDateRange(eventDate, eventEndDate || null) : null,
-        event_date: eventDate || null,
-        event_end_date: eventEndDate || null,
-        // Item 35 sub-events: still a brand-new moment with its own attendees/tags/notes — the only
-        // difference from a plain Accept is that it hangs under an existing event instead of
-        // sitting at the top level. Only sent when a parent was actually picked, so an unmigrated
-        // parent_moment_id column can't break the ordinary Accept path.
-        ...(subEventParent ? { parent_moment_id: subEventParent.id } : {}),
-      })
-      .select()
-      .single()
+    const result = await acceptCandidate(candidate, {
+      ...reviewerOverrides(),
+      parentMomentId: subEventParent?.id ?? null,
+    })
 
-    if (error || !newMoment) {
+    if (!result) {
       setSaving(false)
-      if (subEventParent) setAcceptError("Couldn't add this as a sub-event — please try again.")
+      setAcceptError(
+        subEventParent ? "Couldn't add this as a sub-event — please try again." : "Couldn't save this event — please try again."
+      )
       return
     }
 
-    await applyAttendees(newMoment.id)
-    await applyTagsAndGroups(newMoment.id)
-    if (noteText.trim()) {
-      await supabase.from('notes').insert({ moment_id: newMoment.id, content: noteText.trim(), source: 'calendar_import' })
-    }
-
-    await supabase
-      .from('moment_import_candidates')
-      .update({ status: 'accepted', reviewed_at: new Date().toISOString() })
-      .eq('id', candidate.id)
-
-    onMomentCreated({
-      id: newMoment.id,
-      occasion: occasion || null,
-      location: location || null,
-      when_text: eventDate ? formatDateRange(eventDate, eventEndDate || null) : null,
-      event_date: eventDate || null,
-      event_end_date: eventEndDate || null,
-      raw_description: candidate.raw_description ?? '',
-      created_at: newMoment.created_at,
-    })
+    for (const person of result.createdPeople) onPersonCreated(person)
+    for (const tag of result.createdTags) onTagCreated(tag)
+    onMomentCreated(result.moment)
+    invalidateReviewCounts()
 
     setSaving(false)
     recordResult({
       kind: subEventParent ? 'subevent' : 'created',
-      momentId: newMoment.id,
+      momentId: result.moment.id,
       label: summarize(occasion, candidate.raw_description ?? ''),
       parentLabel: subEventParent ? momentDisplayName(subEventParent, momentTitleById, momentParentById) : undefined,
     })
@@ -726,8 +616,10 @@ function CandidateCard({
       .update({ ...fieldsToFill, summary: null })
       .eq('id', freshTarget.id)
 
-    await applyAttendees(freshTarget.id)
-    await applyTagsAndGroups(freshTarget.id)
+    const merged = await attachAttendees(freshTarget.id, candidate, reviewerOverrides())
+    const mergedTags = await attachTagsAndGroups(freshTarget.id, candidate, reviewerOverrides())
+    for (const person of merged) onPersonCreated(person)
+    for (const tag of mergedTags) onTagCreated(tag)
     if (noteText.trim()) {
       await supabase.from('notes').insert({ moment_id: freshTarget.id, content: noteText.trim(), source: 'calendar_import' })
     }
@@ -805,15 +697,31 @@ function CandidateCard({
   // plate now and comes back on its own in a month, rather than sitting in the queue forever or
   // taking a permanent "no" it didn't earn. Only offered once the migration that adds the status
   // and the date column has been run.
-  async function handleDefer() {
+  // With a saved default this applies straight away — a preference that still asked every time
+  // wouldn't be one. Without one, the sheet asks and offers to remember the answer.
+  function handleRemind() {
+    if (defaultRemindDays) applyRemind(defaultRemindDays, false)
+    else setRemindOpen(true)
+  }
+
+  async function applyRemind(days: number, makeDefault: boolean) {
     setSaving(true)
     const { error } = await supabase
       .from('moment_import_candidates')
-      .update({ status: 'deferred', deferred_until: deferUntilIso(), reviewed_at: new Date().toISOString() })
+      .update({
+        status: 'deferred',
+        deferred_until: deferUntilIso(new Date(), days),
+        reviewed_at: new Date().toISOString(),
+      })
       .eq('id', candidate.id)
+    if (!error && makeDefault) {
+      await saveRemindDays(days)
+      onRemindDefaultSaved(days)
+    }
     setSaving(false)
     if (error) return
-    recordResult({ kind: 'deferred', label: summarize(occasion, candidate.raw_description ?? '') })
+    invalidateReviewCounts()
+    recordResult({ kind: 'deferred', label: summarize(occasion, candidate.raw_description ?? ''), days })
   }
 
   // Puts a mis-tapped rejection (or a "not now") back in the queue. Nothing in the app resurfaces
@@ -846,9 +754,9 @@ function CandidateCard({
               : savedResult.kind === 'noted'
                 ? `Saved as a note on "${savedResult.label}"`
                 : savedResult.kind === 'rejected'
-                  ? `Rejected — ${savedResult.label}`
+                  ? `Turned down — ${savedResult.label}`
                   : savedResult.kind === 'deferred'
-                    ? `Set aside — ${savedResult.label}. It'll come back in a month.`
+                    ? `Set aside — ${savedResult.label}. Back in ${savedResult.days} days.`
                     : `Merged into "${savedResult.label}"`}
         </p>
         <div style={styles.suggestButtonRow}>
@@ -872,6 +780,17 @@ function CandidateCard({
       </div>
     )
   }
+
+  const remindSheet = (
+    <RemindSheet
+      open={remindOpen}
+      onClose={() => setRemindOpen(false)}
+      onPick={(days, makeDefault) => {
+        setRemindOpen(false)
+        applyRemind(days, makeDefault)
+      }}
+    />
+  )
 
   const cardTitle = summarize(occasion, candidate.raw_description ?? '', 9)
   const cardWhen = eventDate ? formatDateRange(eventDate, eventEndDate || null) : null
@@ -906,8 +825,8 @@ function CandidateCard({
             {saving ? 'Saving…' : 'Accept'}
           </button>
           {deferEnabled && (
-            <button type="button" onClick={handleDefer} style={styles.suggestNoButton} disabled={saving}>
-              Not now
+            <button type="button" onClick={handleRemind} style={styles.suggestNoButton} disabled={saving}>
+              Remind Me
             </button>
           )}
           <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
@@ -917,6 +836,7 @@ function CandidateCard({
             Details ▾
           </button>
         </div>
+        {remindSheet}
       </div>
     )
   }
@@ -1411,8 +1331,8 @@ function CandidateCard({
                     : 'Accept'}
         </button>
         {deferEnabled && !mergeTarget && !noteTarget && !subEventParent && (
-          <button type="button" onClick={handleDefer} style={styles.suggestNoButton} disabled={saving}>
-            Not now
+          <button type="button" onClick={handleRemind} style={styles.suggestNoButton} disabled={saving}>
+            Remind Me
           </button>
         )}
         <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
@@ -1426,6 +1346,7 @@ function CandidateCard({
           </button>
         )}
       </div>
+      {remindSheet}
     </div>
   )
 }

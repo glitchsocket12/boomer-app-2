@@ -3,31 +3,38 @@ import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { formatDateRange } from '../lib/dates'
 import { summarize } from '../lib/summarize'
+import { findLikelyMatch } from '../lib/likelyDuplicate'
+import { acceptCandidate, undoQuickAdd, type AcceptableCandidate } from '../lib/acceptCandidate'
+import { deferUntilIso, invalidateReviewCounts, loadRemindDays, saveRemindDays } from '../lib/reviewQueues'
+import { momentDisplayName } from '../lib/momentDisplayName'
 import SearchBox from '../components/SearchBox'
+import RemindSheet from '../components/RemindSheet'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
-type Row = {
-  id: string
-  occasion: string | null
-  location: string | null
-  event_date: string | null
-  event_end_date: string | null
-  raw_description: string | null
-  calendar_source_id: string | null
-}
+type Row = AcceptableCandidate & { calendar_source_id: string | null }
 type CalendarSourceRef = { id: string; label: string }
+type ExistingMoment = { id: string; occasion: string | null; event_date: string | null; event_end_date: string | null; raw_description: string }
+
+// What a row collapses into once it's been answered. The row does NOT leave the list — see the
+// scroll note on setStatus below.
+type Resolved =
+  | { kind: 'added'; label: string; momentId: string }
+  | { kind: 'detail'; label: string }
+  | { kind: 'reminded'; label: string; days: number }
+  | { kind: 'rejected'; label: string }
 
 const PAGE_SIZE = 50
 
-// Fast curation step between the calendar sync and the detailed accept/reject cards
-// (ImportReview.tsx) — the same two-stage shape ContactSelection.tsx has had since 2026-07-27, now
-// applied to the queue that actually has the volume. A real 3-year calendar produces ~230
-// candidates, and answering "was this even a thing worth remembering?" does not need a 695px
-// editor with attendees, tags, groups and merge options on it.
+const SELECT_COLUMNS =
+  'id, occasion, location, event_date, event_end_date, raw_description, calendar_source_id, suggested_people, suggested_tags, suggested_group_ids'
+
+// The fast pass over calendar-import candidates — one line each, four answers, no 695px editor
+// unless you ask for one. A real 3-year calendar produces ~230 candidates and most of them only
+// need "yes that happened" or "no".
 //
 // This page never filters anything itself. It shows every pending candidate and asks the founder,
-// one line at a time — which is exactly the 2026-08-12 directive ("just simply sync all new events,
-// and let the person decide themselves"), just at a size a person can actually get through.
+// one line at a time — the 2026-08-12 directive ("just simply sync all new events, and let the
+// person decide themselves") at a size a person can actually get through.
 //
 // Every tap writes immediately (no batch save), so a closed tab or a stray back-navigation never
 // loses a decision. A row left untouched stays 'pending' — a fine resting state, not an error.
@@ -35,14 +42,17 @@ export default function CalendarTriage({
   onBack,
   backLabel,
   onReviewSelected,
+  onSelectEvent,
 }: {
   onBack: () => void
   backLabel: string
   onReviewSelected: () => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
 }) {
   const [page, setPage] = useState(0)
   const [rows, setRows] = useState<Row[]>([])
   const [sources, setSources] = useState<CalendarSourceRef[]>([])
+  const [existingMoments, setExistingMoments] = useState<ExistingMoment[]>([])
   const [totalPending, setTotalPending] = useState(0)
   const [selectedCount, setSelectedCount] = useState(0)
   const [turnedDownCount, setTurnedDownCount] = useState(0)
@@ -50,6 +60,9 @@ export default function CalendarTriage({
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [writeError, setWriteError] = useState(false)
+  const [resolved, setResolved] = useState<Map<string, Resolved>>(new Map())
+  const [remindTarget, setRemindTarget] = useState<Row | null>(null)
+  const [defaultRemindDays, setDefaultRemindDays] = useState<number | null>(null)
 
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
@@ -57,7 +70,7 @@ export default function CalendarTriage({
 
   useEffect(() => {
     loadCounts()
-    loadSources()
+    loadContext()
   }, [])
 
   useEffect(() => {
@@ -79,13 +92,28 @@ export default function CalendarTriage({
     runSearch(search)
   }, [search, showTurnedDown])
 
-  // Only used for the per-row badge, and only when there's more than one calendar to tell apart —
-  // same rule ImportReview.tsx applies to its own source badge.
-  async function loadSources() {
-    const { data } = await fetchAllRows<CalendarSourceRef>((from, to) =>
-      supabase.from('calendar_sources').select('id, label').order('label').order('id').range(from, to)
-    )
-    setSources(data ?? [])
+  // Everything the rows need that isn't the rows themselves: the calendar labels for the per-row
+  // badge (only shown when there's more than one calendar to tell apart — same rule as
+  // ImportReview.tsx), the events already on file so Quick Add can refuse to create a duplicate,
+  // and whether the founder has a saved "remind me in N days".
+  async function loadContext() {
+    const [sourcesRes, momentsRes, remindDays] = await Promise.all([
+      fetchAllRows<CalendarSourceRef>((from, to) =>
+        supabase.from('calendar_sources').select('id, label').order('label').order('id').range(from, to)
+      ),
+      fetchAllRows<ExistingMoment>((from, to) =>
+        supabase
+          .from('moments')
+          .select('id, occasion, event_date, event_end_date, raw_description')
+          .order('event_date', { ascending: false, nullsFirst: false })
+          .order('id')
+          .range(from, to)
+      ),
+      loadRemindDays(),
+    ])
+    setSources(sourcesRes.data ?? [])
+    setExistingMoments(momentsRes.data ?? [])
+    setDefaultRemindDays(remindDays)
   }
 
   async function loadCounts() {
@@ -99,10 +127,9 @@ export default function CalendarTriage({
     setTurnedDownCount(rejectedRes.count ?? 0)
   }
 
-  const SELECT_COLUMNS = 'id, occasion, location, event_date, event_end_date, raw_description, calendar_source_id'
-
   async function loadPage() {
     setLoading(true)
+    setResolved(new Map())
     const from = page * PAGE_SIZE
     const to = from + PAGE_SIZE - 1
     // Undecided reads newest-event-first (the ones you actually remember are the recent ones);
@@ -111,7 +138,7 @@ export default function CalendarTriage({
     const { data } = showTurnedDown
       ? await query.eq('status', 'rejected').order('reviewed_at', { ascending: false, nullsFirst: false }).range(from, to)
       : await query.eq('status', 'pending').order('event_date', { ascending: false, nullsFirst: false }).range(from, to)
-    setRows((data as Row[]) ?? [])
+    setRows((data as unknown as Row[]) ?? [])
     setLoading(false)
   }
 
@@ -124,45 +151,143 @@ export default function CalendarTriage({
       .ilike('occasion', `%${query}%`)
       .order('event_date', { ascending: false, nullsFirst: false })
       .limit(25)
-    setSearchResults((data as Row[]) ?? [])
-  }
-
-  // 'rejected' rather than a triage-specific status: "Not this one" IS the founder saying no, and
-  // conflating it with 'skipped' (which means the MACHINE said no — see
-  // 2026-08-12-calendar-skipped-status.sql) is exactly what that migration separated.
-  async function setStatus(id: string, status: 'selected' | 'rejected' | 'pending') {
-    setBusyId(id)
-    const { error } = await supabase
-      .from('moment_import_candidates')
-      // reviewed_at is stamped only by a real "no". Keeping something isn't reviewing it — the
-      // detailed card still has to happen — and leaving it null is what makes the turned-down
-      // list's most-recently-decided-first ordering mean anything.
-      .update({ status, reviewed_at: status === 'rejected' ? new Date().toISOString() : null })
-      .eq('id', id)
-    setBusyId(null)
-    if (error) {
-      // Almost certainly the status CHECK constraint, i.e. the migration hasn't been run yet.
-      // Say so instead of silently doing nothing — see the banner below.
-      setWriteError(true)
-      return
-    }
-    setWriteError(false)
-    await Promise.all([loadCounts(), search ? runSearch(search) : loadPage()])
+    setSearchResults((data as unknown as Row[]) ?? [])
   }
 
   function rowTitle(r: Row): string {
     return summarize(r.occasion, r.raw_description ?? '', 9)
   }
 
-  function rowWhen(r: Row): string | null {
-    return r.event_date ? formatDateRange(r.event_date, r.event_end_date) : null
+  // Adjusts the counters in state instead of refetching them. Refetching flips `loading`, which
+  // swaps the whole list for "Loading…", collapses the page height and dumps you back at the top —
+  // founder report 2026-08-19. Same reasoning as Groups.tsx's `silent` reload, which exists because
+  // flashing a placeholder over an in-place change "would read as the drop bouncing".
+  function countDelta(from: 'pending' | 'rejected', to: 'pending' | 'selected' | 'rejected' | 'accepted' | 'deferred') {
+    if (from === 'pending') setTotalPending((n) => Math.max(0, n - 1))
+    if (from === 'rejected') setTurnedDownCount((n) => Math.max(0, n - 1))
+    if (to === 'pending') setTotalPending((n) => n + 1)
+    if (to === 'selected') setSelectedCount((n) => n + 1)
+    if (to === 'rejected') setTurnedDownCount((n) => n + 1)
+    invalidateReviewCounts()
+  }
+
+  function markResolved(id: string, result: Resolved | null) {
+    setResolved((prev) => {
+      const next = new Map(prev)
+      if (result) next.set(id, result)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  async function setStatus(row: Row, status: 'selected' | 'rejected' | 'deferred', extra: Record<string, unknown> = {}) {
+    setBusyId(row.id)
+    const { error } = await supabase
+      .from('moment_import_candidates')
+      // reviewed_at is stamped only by a real decision. "Add more detail" isn't one yet — the
+      // detailed card still has to happen — and leaving it null is what makes the turned-down
+      // list's most-recently-decided-first ordering mean anything.
+      .update({ status, reviewed_at: status === 'selected' ? null : new Date().toISOString(), ...extra })
+      .eq('id', row.id)
+    setBusyId(null)
+    if (error) {
+      // Almost certainly the status CHECK constraint, i.e. the migration hasn't been run yet.
+      setWriteError(true)
+      return false
+    }
+    setWriteError(false)
+    countDelta(showTurnedDown ? 'rejected' : 'pending', status)
+    return true
+  }
+
+  async function handleQuickAdd(row: Row) {
+    setBusyId(row.id)
+    const result = await acceptCandidate(row)
+    setBusyId(null)
+    if (!result) {
+      setWriteError(true)
+      return
+    }
+    setWriteError(false)
+    setExistingMoments((prev) => [{ ...result.moment }, ...prev])
+    countDelta('pending', 'accepted')
+    markResolved(row.id, { kind: 'added', label: rowTitle(row), momentId: result.moment.id })
+  }
+
+  async function handleAddDetail(row: Row) {
+    if (await setStatus(row, 'selected')) markResolved(row.id, { kind: 'detail', label: rowTitle(row) })
+  }
+
+  async function handleReject(row: Row) {
+    if (await setStatus(row, 'rejected')) markResolved(row.id, { kind: 'rejected', label: rowTitle(row) })
+  }
+
+  // With a saved default this applies straight away — a preference that still asked every time
+  // wouldn't be one. Without one, the sheet asks and offers to remember the answer.
+  async function handleRemind(row: Row) {
+    if (defaultRemindDays) {
+      await applyRemind(row, defaultRemindDays, false)
+      return
+    }
+    setRemindTarget(row)
+  }
+
+  async function applyRemind(row: Row, days: number, makeDefault: boolean) {
+    const ok = await setStatus(row, 'deferred', { deferred_until: deferUntilIso(new Date(), days) })
+    if (!ok) return
+    if (makeDefault) {
+      await saveRemindDays(days)
+      setDefaultRemindDays(days)
+    }
+    markResolved(row.id, { kind: 'reminded', label: rowTitle(row), days })
+  }
+
+  // Undo always means "put it back to undecided", including from the turned-down list — un-rejecting
+  // something is the whole point of that list, and restoring it to 'rejected' would make the button
+  // do nothing.
+  async function handleUndo(row: Row, result: Resolved) {
+    setBusyId(row.id)
+    let ok = true
+    if (result.kind === 'added') {
+      ok = await undoQuickAdd(row.id, result.momentId, 'pending')
+      if (ok) setExistingMoments((prev) => prev.filter((m) => m.id !== result.momentId))
+    } else {
+      const { error } = await supabase
+        .from('moment_import_candidates')
+        // deferred_until is only cleared for something that was actually set aside: the column
+        // arrives with 2026-08-19-calendar-triage-and-defer.sql, and sending it unconditionally
+        // would make undoing a plain rejection fail on a database that hasn't run it yet.
+        .update({ status: 'pending', reviewed_at: null, ...(result.kind === 'reminded' ? { deferred_until: null } : {}) })
+        .eq('id', row.id)
+      ok = !error
+    }
+    setBusyId(null)
+    if (!ok) {
+      setWriteError(true)
+      return
+    }
+
+    // Give back whichever pile it was sitting in, and put it back among the undecided.
+    if (result.kind === 'detail') setSelectedCount((n) => Math.max(0, n - 1))
+    if (result.kind === 'rejected') setTurnedDownCount((n) => Math.max(0, n - 1))
+    setTotalPending((n) => n + 1)
+    invalidateReviewCounts()
+
+    if (showTurnedDown) {
+      // It isn't turned down any more, so it leaves this list rather than sitting here as a row the
+      // filter no longer describes. Dropped locally, not refetched — see setStatus on why.
+      const drop = (rows: Row[]) => rows.filter((r) => r.id !== row.id)
+      setRows(drop)
+      setSearchResults((prev) => (prev ? drop(prev) : prev))
+    } else {
+      markResolved(row.id, null)
+    }
   }
 
   const displayRows = searchResults ?? rows
   const totalForCurrentFilter = showTurnedDown ? turnedDownCount : totalPending
   const totalPages = Math.max(1, Math.ceil(totalForCurrentFilter / PAGE_SIZE))
-  const sourceLabel = (id: string | null) =>
-    sources.length > 1 ? sources.find((s) => s.id === id)?.label ?? null : null
+  const sourceLabel = (id: string | null) => (sources.length > 1 ? sources.find((s) => s.id === id)?.label ?? null : null)
 
   return (
     <div style={styles.page}>
@@ -170,9 +295,9 @@ export default function CalendarTriage({
 
       <h1 style={styles.heading}>Which of these are worth keeping?</h1>
       <p style={styles.intro}>
-        Everything your calendars turned up, one line at a time. Keep the ones that meant something —
-        you'll add the details afterwards. Nothing is saved to an event until then, and every tap
-        here is stored right away, so you can stop whenever you like and pick up where you left off.
+        Everything your calendars turned up, one line at a time. Add the ones that meant something —
+        most just need a tap. Every choice here saves right away, so you can stop whenever you like
+        and pick up where you left off.
       </p>
 
       {writeError && (
@@ -183,9 +308,11 @@ export default function CalendarTriage({
       )}
 
       <div style={styles.summaryRow}>
-        <span>
-          <strong>{selectedCount}</strong> kept
-        </span>
+        {selectedCount > 0 && (
+          <span>
+            <strong>{selectedCount}</strong> waiting for detail
+          </span>
+        )}
         {(turnedDownCount > 0 || showTurnedDown) && (
           <button
             type="button"
@@ -202,7 +329,7 @@ export default function CalendarTriage({
         )}
         {selectedCount > 0 && (
           <button type="button" onClick={onReviewSelected} style={styles.reviewButton}>
-            Review {selectedCount} kept event{selectedCount === 1 ? '' : 's'} →
+            Review {selectedCount} in detail →
           </button>
         )}
       </div>
@@ -224,8 +351,45 @@ export default function CalendarTriage({
       ) : (
         <div style={styles.list}>
           {displayRows.map((r) => {
-            const when = rowWhen(r)
+            const result = resolved.get(r.id)
+            if (result) {
+              return (
+                <div key={r.id} style={styles.rowResolved}>
+                  <p style={styles.resolvedText}>
+                    {result.kind === 'added'
+                      ? `Added — ${result.label}`
+                      : result.kind === 'detail'
+                        ? `Saved for detail — ${result.label}`
+                        : result.kind === 'reminded'
+                          ? `Set aside — ${result.label}. Back in ${result.days} days.`
+                          : `Turned down — ${result.label}`}
+                  </p>
+                  <div style={styles.rowActions}>
+                    {result.kind === 'added' && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectEvent({ id: result.momentId, summary: result.label })}
+                        style={styles.linkButton}
+                      >
+                        View event →
+                      </button>
+                    )}
+                    <button type="button" onClick={() => handleUndo(r, result)} disabled={busyId === r.id} style={styles.skipButton}>
+                      {busyId === r.id ? '…' : 'Undo'}
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+
+            const when = r.event_date ? formatDateRange(r.event_date, r.event_end_date) : null
             const badge = sourceLabel(r.calendar_source_id)
+            // Quick Add saves in one tap and never shows the four-way merge banner, so without this
+            // it would be the fastest way in the app to create a duplicate. Free client-side check,
+            // no AI call — see lib/likelyDuplicate.ts.
+            const duplicate = showTurnedDown ? null : findLikelyMatch(r, existingMoments)
+            const busy = busyId === r.id
+
             return (
               <div key={r.id} style={styles.row}>
                 <div style={styles.rowInfo}>
@@ -235,19 +399,41 @@ export default function CalendarTriage({
                     {r.location && ` · ${r.location}`}
                     {badge && ` · ${badge}`}
                   </p>
+                  {duplicate && (
+                    <p style={styles.duplicateNote}>
+                      Looks like "{momentDisplayName(duplicate, new Map(), new Map())}", already on file.
+                    </p>
+                  )}
                 </div>
+                {/* Buttons get their own wrapping row rather than sitting beside the title: four of
+                    them will not fit next to text at phone width, and the phone is the primary
+                    surface (§8 item 72). */}
                 <div style={styles.rowActions}>
                   {showTurnedDown ? (
-                    <button type="button" onClick={() => setStatus(r.id, 'pending')} disabled={busyId === r.id} style={styles.keepButton}>
-                      {busyId === r.id ? '…' : 'Undo'}
+                    <button type="button" onClick={() => handleUndo(r, { kind: 'rejected', label: rowTitle(r) })} disabled={busy} style={styles.quickAddButton}>
+                      {busy ? '…' : 'Undo'}
                     </button>
                   ) : (
                     <>
-                      <button type="button" onClick={() => setStatus(r.id, 'selected')} disabled={busyId === r.id} style={styles.keepButton}>
-                        {busyId === r.id ? '…' : '+ Keep'}
+                      {duplicate ? (
+                        <button type="button" onClick={() => handleAddDetail(r)} disabled={busy} style={styles.quickAddButton}>
+                          {busy ? '…' : 'Looks familiar — review it'}
+                        </button>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => handleQuickAdd(r)} disabled={busy} style={styles.quickAddButton}>
+                            {busy ? '…' : 'Quick Add'}
+                          </button>
+                          <button type="button" onClick={() => handleAddDetail(r)} disabled={busy} style={styles.secondaryButton}>
+                            Add More Detail
+                          </button>
+                        </>
+                      )}
+                      <button type="button" onClick={() => handleRemind(r)} disabled={busy} style={styles.secondaryButton}>
+                        Remind Me
                       </button>
-                      <button type="button" onClick={() => setStatus(r.id, 'rejected')} disabled={busyId === r.id} style={styles.skipButton}>
-                        Not this one
+                      <button type="button" onClick={() => handleReject(r)} disabled={busy} style={styles.skipButton}>
+                        Reject
                       </button>
                     </>
                   )}
@@ -272,6 +458,16 @@ export default function CalendarTriage({
           </button>
         </div>
       )}
+
+      <RemindSheet
+        open={remindTarget !== null}
+        onClose={() => setRemindTarget(null)}
+        onPick={(days, makeDefault) => {
+          const target = remindTarget
+          setRemindTarget(null)
+          if (target) applyRemind(target, days, makeDefault)
+        }}
+      />
     </div>
   )
 }
@@ -318,21 +514,33 @@ const styles: { [key: string]: React.CSSProperties } = {
   list: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem' },
   row: {
     display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '0.75rem',
-    padding: '0.6rem 0.8rem',
+    flexDirection: 'column',
+    gap: '0.55rem',
+    padding: '0.7rem 0.8rem',
     backgroundColor: colors.surface,
     border: `1px solid ${neutral.grey100}`,
     borderRadius: radius.md,
   },
+  rowResolved: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: '0.5rem',
+    padding: '0.7rem 0.8rem',
+    backgroundColor: colors.surfaceSunk,
+    border: `1px solid ${neutral.grey100}`,
+    borderRadius: radius.md,
+  },
+  resolvedText: { fontSize: fontSize.body, color: colors.textMuted, margin: 0 },
   rowInfo: { minWidth: 0 },
   rowName: { fontSize: fontSize.bodyLg, color: colors.inkPlain, margin: 0 },
   rowMeta: { fontSize: fontSize.small, color: colors.textFaintest, margin: '0.1rem 0 0' },
-  rowActions: { display: 'flex', gap: '0.4rem', flexShrink: 0 },
-  keepButton: {
+  duplicateNote: { fontSize: fontSize.small, color: colors.suggest, margin: '0.25rem 0 0' },
+  rowActions: { display: 'flex', flexWrap: 'wrap', gap: '0.4rem' },
+  quickAddButton: {
     fontSize: fontSize.label,
-    padding: '0.4rem 0.75rem',
+    padding: '0.45rem 0.8rem',
     borderRadius: radius.md,
     border: border.primary,
     backgroundColor: colors.primary,
@@ -341,9 +549,20 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
     whiteSpace: 'nowrap',
   },
+  secondaryButton: {
+    fontSize: fontSize.label,
+    padding: '0.45rem 0.8rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
+    cursor: 'pointer',
+    fontFamily,
+    whiteSpace: 'nowrap',
+  },
   skipButton: {
     fontSize: fontSize.label,
-    padding: '0.4rem 0.75rem',
+    padding: '0.45rem 0.8rem',
     borderRadius: radius.md,
     border: border.default,
     backgroundColor: colors.surface,

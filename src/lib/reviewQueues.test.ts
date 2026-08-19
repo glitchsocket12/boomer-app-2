@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFER_DAYS, EMPTY_COUNTS, deferUntilIso, reviewTotal, todayIso } from './reviewQueues'
+import { DEFER_DAYS, EMPTY_COUNTS, REMIND_OPTIONS, deferUntilIso, reviewTotal, todayIso } from './reviewQueues'
 
 describe('todayIso', () => {
   it('formats the browser-local calendar day, not a UTC instant', () => {
@@ -54,5 +54,34 @@ describe('reviewTotal', () => {
 
   it('is 0 when everything is clear', () => {
     expect(reviewTotal(EMPTY_COUNTS)).toBe(0)
+  })
+})
+
+describe('REMIND_OPTIONS', () => {
+  it('every offered interval lands on a real future date', () => {
+    // Jan 31 is the trap: adding a month to the month number would produce Feb 31. Day arithmetic
+    // rolls properly, so each option has to come back as a date that actually exists.
+    const from = new Date(2026, 0, 31)
+    for (const option of REMIND_OPTIONS) {
+      const iso = deferUntilIso(from, option.days)
+      expect(iso).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      const parsed = new Date(`${iso}T00:00:00`)
+      expect(Number.isNaN(parsed.getTime())).toBe(false)
+      expect(todayIso(parsed)).toBe(iso) // round-trips, i.e. it is the day it claims to be
+      expect(parsed.getTime()).toBeGreaterThan(from.getTime())
+    }
+  })
+
+  it('offers increasing intervals, so the list reads as a scale', () => {
+    const days = REMIND_OPTIONS.map((o) => o.days)
+    expect(days).toEqual([...days].sort((a, b) => a - b))
+  })
+})
+
+describe('reviewTotal — gender gaps', () => {
+  it("leaves gender gaps out — it's a cleanup pass, not something that arrived", () => {
+    // A few hundred blank genders would swamp a number whose whole job is "this much is waiting
+    // on you". The inbox shows it on its own quiet row instead.
+    expect(reviewTotal({ ...EMPTY_COUNTS, calendarToReview: 3, genderGaps: 400 })).toBe(3)
   })
 })

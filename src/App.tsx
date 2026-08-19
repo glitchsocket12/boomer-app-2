@@ -243,6 +243,8 @@ export default function App() {
   // on a direct tab click (goToTab) so only that back-arrow round trip restores scroll, not every
   // way of landing on the Groups tab.
   const groupsScrollRef = useRef<number | null>(null)
+  // Same idea for the calendar review queue: "Add more details →" leaves the page mid-batch.
+  const importReviewScrollRef = useRef<number | null>(null)
   // Global search (backlog item 14). The corpus lives in lib/searchCorpus.ts' module cache; this is
   // just the copy the panel renders, so opening the panel never waits on a round trip once a
   // session has loaded it once.
@@ -760,6 +762,7 @@ export default function App() {
         onOpenContactSelection={() => pushCrumb({ type: 'contactSelection', id: 'contactSelection', label: 'Choose contacts' })}
         onOpenContactImportReview={() => pushCrumb({ type: 'contactImportReview', id: 'contactImportReview', label: 'Review contacts' })}
         onOpenPhotoImport={() => pushCrumb({ type: 'photoImport', id: 'photoImport', label: 'Import photos' })}
+        onOpenGenderFill={() => pushCrumb({ type: 'genderFill', id: 'genderFill', label: 'Fill in gender' })}
       />
     )
   } else if (current?.type === 'calendarTriage') {
@@ -768,6 +771,7 @@ export default function App() {
         onBack={popCrumb}
         backLabel={parentLabel}
         onReviewSelected={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
+        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
       />
     )
   } else if (current?.type === 'importReview') {
@@ -775,7 +779,11 @@ export default function App() {
       <ImportReview
         onBack={popCrumb}
         backLabel={parentLabel}
-        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+        onSelectEvent={(e) => {
+          importReviewScrollRef.current = window.scrollY
+          pushCrumb({ type: 'event', id: e.id, label: e.summary })
+        }}
+        restoreScrollRef={importReviewScrollRef}
       />
     )
   } else if (current?.type === 'birthdayReview') {

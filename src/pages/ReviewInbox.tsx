@@ -30,6 +30,7 @@ export default function ReviewInbox({
   onOpenContactSelection,
   onOpenContactImportReview,
   onOpenPhotoImport,
+  onOpenGenderFill,
 }: {
   onBack: () => void
   backLabel: string
@@ -39,6 +40,7 @@ export default function ReviewInbox({
   onOpenContactSelection: () => void
   onOpenContactImportReview: () => void
   onOpenPhotoImport: () => void
+  onOpenGenderFill: () => void
 }) {
   const [counts, setCounts] = useState<ReviewCounts>(EMPTY_COUNTS)
   const [triageEnabled, setTriageEnabled] = useState(true)
@@ -118,6 +120,20 @@ export default function ReviewInbox({
       count: counts.contactsToTriage,
       blurb: 'From your contacts file — pick the people you actually want on file.',
       onOpen: onOpenContactSelection,
+      quiet: true,
+    })
+  }
+  // Deliberately last and deliberately quiet, and NOT counted in the Home nudge (see reviewTotal):
+  // this is a cleanup pass over data you already have, not something that arrived and needs
+  // deciding. It belongs on this page because "what could I tidy up?" is the same question the
+  // page answers — it just isn't urgent.
+  if (counts.genderGaps > 0) {
+    rows.push({
+      key: 'gender',
+      label: `${counts.genderGaps.toLocaleString()} ${counts.genderGaps === 1 ? 'person is' : 'people are'} missing a gender`,
+      count: counts.genderGaps,
+      blurb: "Boomer guesses from first names — confirm the ones it got right, fix the ones it didn't.",
+      onOpen: onOpenGenderFill,
       quiet: true,
     })
   }

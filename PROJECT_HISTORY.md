@@ -1605,3 +1605,81 @@ review" on the last batch, at exactly the moment finishing should feel like fini
 Function was touched. **Nothing here has been seen in a browser**: remote sessions have no Supabase
 credentials and can't reach the live site, so the founder is the eyes, and §10 carries the ordered
 click-through list. Saying "deployed" and saying "working" are still not the same claim.
+
+## 2026-08-19, same day — the founder previews it, and "Keep" turns out to be a lie
+
+Follow-up to the entry above, which should be read first. The batching/inbox/collapsed-cards work
+went to a branch, the founder clicked through the Vercel preview, and came back with six notes.
+Five were small. The first one changed the shape of the flow.
+
+**"Keep" wasn't a decision, it was a deferral of one.** Triage offered `+ Keep` / `Not this one`,
+where Keep only forwarded the event to a second screen — so every kept event still cost a full card,
+and the fast pass was a gate in front of the slow pass rather than a replacement for it. The founder
+also wanted deferral available without going through Keep first. Offered three shapes, they picked
+a fourth: **Quick Add, Add More Detail, Remind Me, Reject** — *"and when they Remind, make it so
+that it asks a user to pick a frequency of their choice, with a checkbox that has 'Use this
+frequency as default'."*
+
+That is a better product than any of the three on offer, because it makes the labels honest. "Add
+Now" that doesn't add anything now was the flaw in the option I'd recommended, and the founder's
+version simply removes it: Quick Add adds, Add More Detail opens the card, Remind Me sets it aside.
+
+**The founder then asked the question worth writing down.** Not "build it" — *"I want Claude to
+reference similar functions in other apps and see if there are any further efficiencies I haven't
+thought of yet."* Four of the five most useful things in this round came out of that survey rather
+than out of either of our lists.
+
+**The scroll fix was already in the codebase, twice.** `Groups.tsx` has `loadGroups(silent)`, which
+skips the `loading` flip so an in-place change doesn't remount the list — written for drag-and-drop,
+where "flashing Loading… over the whole page would read as the drop bouncing." Exactly the founder's
+complaint, already solved, in a file nobody thought to look at. It also has a `restoreScrollRef`
+handshake with `App.tsx` for leave-and-come-back. Both were adopted rather than reinvented, and the
+second one fixed a bug the click-through hadn't reached yet: "Add more details →" navigated to the
+event, and coming back remounted the queue and dealt a fresh batch of ten, silently replacing the
+ten you were part-way through.
+
+**Quick Add would have been the fastest way in the app to create a duplicate.** The only reason the
+review card auto-expands on a likely match is that accepting blind creates the duplicate the banner
+warns about — and a one-tap add straight off the triage row skipped that check entirely. The
+heuristic moved into `lib/likelyDuplicate.ts` and now runs on the triage list too; a flagged row
+shows "Looks familiar — review it" *instead of* Quick Add. Free, no AI call, and it preserves the
+property that made the four-way merge banner worth building in the first place.
+
+**Accepting was fifteen round trips pretending to be one.** `applyAttendees` called
+`supabase.auth.getUser()` *inside* both of its loops — one auth call per attendee — and every
+attendee note, tag and group was its own sequential `await`. Nobody noticed while accepting was a
+deliberate act at the bottom of a 695px card. Quick Add is meant to be tap-tap-tap down a list, so
+the extraction into `lib/acceptCandidate.ts` hoisted the auth call to one and batched each table into
+a single statement.
+
+**Two bugs caught by reading the diff against the codebase's own precedent, not by running it.**
+
+`undoQuickAdd` deleted the moment with a bare `moments.delete()`. But `EventDetail.tsx`'s
+`handleDeleteEvent` deletes dependents first, awaited and error-checked — and PROJECT_HISTORY item
+93 ("Merges and undo could delete data they never moved") is a postmortem about exactly that
+ordering going wrong. A bare delete would have failed or orphaned notes, in the one code path whose
+entire job is putting things back.
+
+And `handleUndo` computed `restoreStatus = showTurnedDown ? 'rejected' : 'pending'`, which meant
+that pressing Undo *in the turned-down list* — the only button on that screen — restored the row to
+'rejected'. The button would have done nothing at all. Undo always means "back to undecided"; there
+was never a case for the ternary.
+
+**One test failed, and the test was wrong.** `findLikelyMatch` scored a fully-contained shorter
+title ("Camping Trip" inside "Camping Trip Yosemite") identically to an exact match, because the
+overlap ratio divides by the SHORTER title, so the first of the two won on a strict `>`. That is
+shipped behaviour with a documented reason, and the fix was to pin it in a test that says so rather
+than to quietly change a heuristic nobody asked about. Both candidates are plausible duplicates
+either way, and all the caller needs is that *something* got flagged so Quick Add steps aside.
+
+**Also checked and deliberately not built on:** there is no existing "frequency" vocabulary in this
+app to be consistent with — `reminders` is date-based (birthdays, anniversaries), countdowns are
+target dates, and `DueForUpdate.tsx` computes "updated N days ago" on the fly without storing a
+cadence. So `user_settings.review_remind_days` is new vocabulary rather than a second way of saying
+something the schema already said. It is stored as a plain day count so the four presets can change
+without a migration behind them.
+
+**Verification, same caveat as before.** Lint, `tsc -b`, build and 631 tests green (was 618).
+`npm run check:functions` still can't run — the proxy blocks `deno.land` — and no Edge Function was
+touched. **Nothing in this round has been seen in a browser either.** The founder is the eyes; §10
+carries the ordered list, and both migrations now need running.
