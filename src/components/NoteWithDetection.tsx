@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
-import AutoGrowTextarea from './AutoGrowTextarea'
+import AutoGrowTextarea, { LONG_NOTE_MAX_HEIGHT_PX } from './AutoGrowTextarea'
 import VoiceInputButton from './VoiceInputButton'
 import RelationshipSuggestionBanners, {
   toStagedNewPersonSuggestions,
@@ -205,11 +205,13 @@ export default function NoteWithDetection({
           placeholder={placeholder}
           style={styles.input}
           disabled={saving}
+          maxHeightPx={LONG_NOTE_MAX_HEIGHT_PX}
         />
         <VoiceInputButton
+          value={text}
+          onChange={setText}
           disabled={saving}
           onBusyChange={setVoiceBusy}
-          onTranscribed={(t) => setText((prev) => (prev ? `${prev} ${t}` : t))}
         />
         <button type="button" onClick={handleSubmit} disabled={saving || voiceBusy || !text.trim()} style={styles.button}>
           {saving ? '…' : 'Add'}

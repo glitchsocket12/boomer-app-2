@@ -864,8 +864,9 @@ export function HomeView({
             />
             {!readOnly && (
               <VoiceInputButton
+                value={input}
+                onChange={onInputChange}
                 disabled={sending}
-                onTranscribed={(text) => onInputChange(input ? `${input} ${text}` : text)}
               />
             )}
             <button onClick={onSend} disabled={sending} style={styles.button}>

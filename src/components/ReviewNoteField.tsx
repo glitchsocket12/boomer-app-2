@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import AutoGrowTextarea from './AutoGrowTextarea'
+import AutoGrowTextarea, { LONG_NOTE_MAX_HEIGHT_PX } from './AutoGrowTextarea'
 import VoiceInputButton from './VoiceInputButton'
 import { colors, fontFamily, fontSize, space } from '../lib/theme'
 
@@ -45,13 +45,13 @@ export default function ReviewNoteField({
           placeholder={placeholder}
           disabled={disabled}
           style={{ ...styles.textarea, ...textareaStyle }}
+          maxHeightPx={LONG_NOTE_MAX_HEIGHT_PX}
         />
         <VoiceInputButton
+          value={value}
+          onChange={onChange}
           disabled={disabled}
           onBusyChange={handleBusyChange}
-          // Append rather than replace, so dictating twice (or after typing) builds one note
-          // instead of quietly overwriting the earlier half. Mirrors every other mic in the app.
-          onTranscribed={(text) => onChange(value ? `${value} ${text}` : text)}
         />
       </div>
       {transcribing && <p style={styles.hint}>Finishing up your recording…</p>}

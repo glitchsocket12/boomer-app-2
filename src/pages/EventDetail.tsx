@@ -1712,9 +1712,10 @@ export function EventDetailView({
               disabled={savingDescription}
             />
             <VoiceInputButton
+              value={descriptionInput}
+              onChange={onDescriptionInputChange}
               disabled={savingDescription}
               onBusyChange={setDescriptionVoiceBusy}
-              onTranscribed={(text) => onDescriptionInputChange(descriptionInput ? `${descriptionInput} ${text}` : text)}
             />
           </div>
           <div style={styles.suggestButtonRow}>

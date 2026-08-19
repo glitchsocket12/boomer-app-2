@@ -1504,3 +1504,35 @@ Then the check that mattered: **seven events came back reading only "Nothing els
 Six of the seven cleared cleanly on re-run. The seventh had a real description and produced a proper bullet.
 
 **Final state:** 105 events with summaries — 98 bullets, 7 in the multi-day sub-event format (deliberately unchanged; the founder approved that shape on 2026-08-10), 0 in the old prose. Verified in the browser against the real account: bullets render as a genuine list with a hanging indent, no raw `- ` reaches the page, and "Who was there" still sits below them carrying the names the summary no longer repeats.
+
+## 2026-08-18 — Making the mic feel like the phone's: streaming, and three ways a name gets lost
+
+The founder's complaint was comparative, not a bug report: *"iphone, claude, all other 'voice to text' services are way more intuitive."* Reading the old component made the gap concrete. You pressed the mic, talked into a void, pressed stop, and then waited while the whole recording was base64'd, uploaded, and handed to `whisper-1` — which cannot stream. Nothing appeared until everything appeared. Meanwhile the Save button next to it was held shut (`onBusyChange`) because saving mid-transcription would drop the audio entirely, the "Listening…" bubble pulsed a dot on a timer that ticked identically whether you were talking or the mic was muted, and any failure threw the entire recording away behind a four-second toast.
+
+Two facts checked against OpenAI's live docs reframed the work. `whisper-1` is now the legacy model: `gpt-transcribe` is **cheaper** ($0.0045/min vs $0.006), roughly halves the error rate, and supports `stream: true`. And it accepts `keywords`, which in an app that is entirely about specific people is the direct fix for a complaint already sitting in the backlog — that the app doesn't spell names right. So the change lowered the bill and improved the product at the same time, which is rare enough to note.
+
+A correction also came out of it. `PROJECT_CONTEXT.md` had justified Whisper-over-Web-Speech since 2026-07-16 on the grounds that the Web Speech API *"does not work at all in iPhone Safari."* That has been untrue since iOS 14.5 in 2021. It works there; it is just unreliable there (WebKit fires `onresult` once and then goes quiet with the mic indicator still lit). The conclusion — that a server transcriber should own the authoritative text — was always right. The stated reason was wrong, and had been cited in two other decisions.
+
+### The shape of the fix
+
+The component stopped handing back one finished string and started owning a slice of the text box. It snapshots the box's contents when recording starts, and rewrites everything after that anchor as words arrive. That one change collapses three separate complaints: text appears progressively, a failure is no longer destructive because whatever arrived is already sitting in the box, and nothing needs to be frozen — saving early now saves what you actually said. All nine mic mounts moved from `onTranscribed` to `value`/`onChange`, deleting the identical append-with-a-space that each of them had been repeating.
+
+Worth recording that `Home.tsx` and `PersonDetail.tsx` — the two most-used surfaces — had never passed `onBusyChange` at all, so the drop-the-audio bug the prop existed to prevent was live in production the whole time. Removing the need for the prop fixed a bug nobody had reported, which is the argument for fixing the class rather than the instances.
+
+### Three ways a name gets lost, found only by testing against the real API
+
+The assistant's browser pane blocks microphone hardware, so the round trip had never been exercised in-app by anyone (§10 had said so since 2026-08-02). The way around it was to stop needing a microphone: Windows' built-in speech synthesizer (`System.Speech.Synthesis`) generates a WAV of known words, including real names off the founder's roster, which can be posted to the deployed function as many times as you like. Everything below was caught that way and would not have been caught by reading the code.
+
+**One.** The first end-to-end run returned `no_speech` on a perfect recording. OpenAI separates SSE frames with `\r\n\r\n`, and that byte sequence contains no `\n\n`; the parser split on `\n\n`, matched nothing, accumulated the entire transcript in a buffer and reported that it had heard nothing. A flawless transcript sat one layer below a "I didn't catch any words in that" message.
+
+**Two.** With that fixed, "Jesse Waldron" came back as "Jessie Waldron" — despite Jesse being in the roster. The keyword list was capped at 300 entries *after* being sorted alphabetically, so on an 825-person account (1002 distinct name words) everything past "Duke" was silently discarded. Jesse sits at index 476. Nothing errored; the output was simply wrong in the exact way the feature existed to prevent. The cap is now 800 and the list is tiered — given names first, then nicknames, then surnames — because if a roster must be truncated, dropping "Waldron" costs far less than dropping "Jesse". People say first names out loud.
+
+**Three.** Raising the cap to cover the whole roster broke everything: 1002 repeated `keywords[]` fields returns `400 "Could not parse multipart form"`, which names neither the parameter nor the real problem. The self-healing fallback that was supposed to catch this didn't, because it only retried on a 400 whose body mentioned "keyword" — so name steering took the entire voice feature down with it. The retry now fires on any 4xx, since the request is identical apart from how the roster is attached. Probing found the field limit sits between 900 and 1002, and that a single newline-separated `keywords` field is rejected outright despite the docs' advice to keep each keyword on its own line.
+
+**Measured, on the founder's real account:** a 71-second note streams 171 fragments and is fully transcribed 5.3 seconds after you stop, first words at ~4s. A 9-second note takes 1.8s. All three roster names spell correctly.
+
+### What is still not proven
+
+The microphone itself. `getUserMedia`, `MediaRecorder`, and the new AnalyserNode level meter have never run on real hardware — everything above was verified by feeding the deployed function a file. iOS is where it is most likely to differ: mp4 rather than webm recording, AudioContext resume rules, and no live captions by design. That hop still needs the founder and a real phone.
+
+**Lessons.** A wire format is not a detail you can infer — `\r\n` versus `\n` was the difference between working and silently reporting nothing. A cap applied after a sort is a filter, and an alphabetical filter over people's names is indistinguishable from random. And a fallback that only triggers on the error you predicted is not a fallback; the real rejection said "Could not parse multipart form" and never mentioned the parameter that caused it.

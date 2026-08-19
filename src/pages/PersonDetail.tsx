@@ -1284,8 +1284,9 @@ export function PersonDetailView({
                 disabled={saving}
               />
               <VoiceInputButton
+                value={newFact}
+                onChange={onNewFactChange}
                 disabled={saving}
-                onTranscribed={(text) => onNewFactChange(newFact ? `${newFact} ${text}` : text)}
               />
               <button type="submit" disabled={saving} style={styles.addButton}>
                 {saving ? '…' : 'Add'}
