@@ -9,7 +9,9 @@ import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import SearchAddPicker from '../components/SearchAddPicker'
 import SearchBox from '../components/SearchBox'
 import ReviewNoteField from '../components/ReviewNoteField'
+import ReviewDeck, { type ReviewDeckItemApi } from '../components/ReviewDeck'
 import AddressSuggestInput from '../components/AddressSuggestInput'
+import { deferUntilIso, probeTriageEnabled, wakeDueDeferrals } from '../lib/reviewQueues'
 import { groupDisplayName } from '../lib/groupDisplayName'
 import { momentDisplayName, momentPickerLabel, momentTitle } from '../lib/momentDisplayName'
 import { fetchMomentParentIds } from '../lib/moments'
@@ -17,10 +19,6 @@ import { IS_TOUCH } from '../lib/touch'
 import { useResolvedCardScroll } from '../lib/resolvedCardScroll'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 
-// How many candidate cards render at a time (see visibleCount below). Big enough that a normal
-// queue never shows the "Show more" button at all, small enough that a 1000-event queue opens
-// instantly.
-const CARD_BATCH_SIZE = 20
 
 type SuggestedPerson = { name: string | null; email: string | null; matched_person_id: string | null; confidence: 'high' | 'none' }
 type Candidate = {
@@ -176,12 +174,19 @@ export default function ImportReview({
   // "Parent / Child" wherever one is picked (see momentDisplayName.ts).
   const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
-  // How many cards are actually mounted. A CandidateCard is expensive: it scans every existing
-  // moment looking for a likely duplicate, and rebuilds the group roster maps and the family/group
-  // attendee suggestions from the whole account. That cost is per card, so rendering the entire
-  // queue at once is what made this page crawl once the calendar sync started importing every
-  // event (founder report 2026-08-17). Reviewers work top-down anyway — the rest load on demand.
-  const [visibleCount, setVisibleCount] = useState(CARD_BATCH_SIZE)
+  // Whether 2026-08-19-calendar-triage-and-defer.sql has been run. Until it has, this page reads
+  // 'pending' exactly as it always did and the "Not now" button stays hidden — see
+  // lib/reviewQueues.ts.
+  const [triageEnabled, setTriageEnabled] = useState(true)
+  // How many candidates across the whole queue still need a decision — the number ReviewDeck shows
+  // as "N to go". Counted from what loaded, then adjusted per decision, so it never needs a
+  // refetch mid-session.
+  const [undecidedTotal, setUndecidedTotal] = useState(0)
+  // How many candidates this visit started with. Distinguishes "the queue was already empty" from
+  // "you just finished it" — without it, dismissing the last card of the last batch would swap the
+  // deck's "That's all of them" for a bare line, at exactly the moment finishing should feel like
+  // finishing.
+  const [loadedCount, setLoadedCount] = useState(0)
 
   useEffect(() => {
     load()
@@ -189,6 +194,11 @@ export default function ImportReview({
 
   async function load() {
     setLoading(true)
+    // Anything set aside whose "bring it back in a month" date has arrived rejoins the queue
+    // before it's read, so a deferral heals itself without a scheduled job.
+    await wakeDueDeferrals()
+    const triageOn = await probeTriageEnabled()
+    setTriageEnabled(triageOn)
     const [candidatesRes, momentsRes, tagsRes, groupsRes, sourcesRes, peopleRes, relationshipsMap, selfRes, parentIds] = await Promise.all([
       // Paged (lib/pagedSelect.ts). Since the 2026-08-12 "sync every calendar event" change this
       // queue is the biggest table on the account, so an unpaged read here silently stopped at
@@ -200,7 +210,10 @@ export default function ImportReview({
           .select(
             'id, calendar_source_id, occasion, location, when_text, event_date, event_end_date, raw_description, suggested_people, suggested_tags, suggested_group_ids'
           )
-          .eq('status', 'pending')
+          // 'selected' = kept in the fast triage pass (CalendarTriage.tsx) and waiting for its
+          // detailed card. Pre-migration there is no triage stage, so 'pending' still means
+          // "waiting for this page" and is read exactly as before.
+          .eq('status', triageOn ? 'selected' : 'pending')
           .order('event_date', { ascending: false, nullsFirst: false })
           .order('id')
           .range(from, to)
@@ -238,7 +251,10 @@ export default function ImportReview({
       // fail-open; see fetchMomentParentIds.
       fetchMomentParentIds(),
     ])
-    setCandidates((candidatesRes.data as unknown as Candidate[]) ?? [])
+    const loadedCandidates = (candidatesRes.data as unknown as Candidate[]) ?? []
+    setCandidates(loadedCandidates)
+    setUndecidedTotal(loadedCandidates.length)
+    setLoadedCount(loadedCandidates.length)
     setExistingMoments((momentsRes.data as unknown as ExistingMoment[]) ?? [])
     setAllTagsList((tagsRes.data as TagRef[]) ?? [])
     setAllGroupsList((groupsRes.data as unknown as GroupRef[]) ?? [])
@@ -252,6 +268,20 @@ export default function ImportReview({
 
   function handleResolved(id: string) {
     setCandidates((prev) => prev.filter((c) => c.id !== id))
+  }
+
+  // Moving on to the next batch clears the finished one's leftover confirmations — pressing
+  // "Review 10 more" is itself the batch "Done".
+  function handleAdvance(finishedIds: string[]) {
+    const finished = new Set(finishedIds)
+    setCandidates((prev) => prev.filter((c) => !finished.has(c.id)))
+  }
+
+  // A card reporting that it wrote (or undid) a decision. Separate from handleResolved, which is
+  // the card LEAVING the list — accepting collapses a card into a confirmation that stays put
+  // until "Done", so the two moments are genuinely different.
+  function handleDecidedChange(decided: boolean) {
+    setUndecidedTotal((n) => Math.max(0, decided ? n - 1 : n + 1))
   }
 
   function handleTagCreated(tag: TagRef) {
@@ -301,26 +331,26 @@ export default function ImportReview({
 
       <h1 style={styles.heading}>Review calendar events</h1>
       <p style={styles.intro}>
-        Found on your connected calendars. Edit anything that's off, then accept or reject — nothing
-        is saved until you say yes.
+        A few at a time — there's no need to get through them all. Each one is a card: accept it as
+        it is, or open it up to add who was there and what you remember
+        {triageEnabled && ', or set it aside for later'}. Nothing is saved until you say yes.
       </p>
 
       {loading ? (
         <p style={styles.body}>Loading…</p>
-      ) : candidates.length === 0 ? (
+      ) : loadedCount === 0 ? (
         <p style={styles.body}>Nothing left to review.</p>
       ) : (
-        <>
-          {candidates.length > CARD_BATCH_SIZE && (
-            <p style={styles.queueCount}>
-              {candidates.length.toLocaleString()} events to review — showing{' '}
-              {Math.min(visibleCount, candidates.length).toLocaleString()}. Accept or reject one and
-              the next takes its place.
-            </p>
-          )}
-          {candidates.slice(0, visibleCount).map((c) => (
+        <ReviewDeck
+          items={candidates}
+          itemKey={(c) => c.id}
+          remaining={undecidedTotal}
+          nounSingular="event"
+          nounPlural="events"
+          onAdvance={handleAdvance}
+          onDone={onBack}
+          renderItem={(c, api: ReviewDeckItemApi) => (
             <CandidateCard
-              key={c.id}
               candidate={c}
               existingMoments={existingMoments}
               recentLocations={recentLocations}
@@ -331,25 +361,20 @@ export default function ImportReview({
               selfId={selfId}
               momentParentById={momentParentById}
               momentTitleById={momentTitleById}
+              deferEnabled={triageEnabled}
               calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
               onTagCreated={handleTagCreated}
               onPersonCreated={handlePersonCreated}
               onMomentCreated={handleMomentCreated}
               onSelectEvent={onSelectEvent}
+              onDecidedChange={(decided) => {
+                api.setDecided(decided)
+                handleDecidedChange(decided)
+              }}
               onResolved={() => handleResolved(c.id)}
             />
-          ))}
-          {candidates.length > visibleCount && (
-            <button
-              type="button"
-              onClick={() => setVisibleCount((n) => n + CARD_BATCH_SIZE)}
-              style={styles.showMoreButton}
-            >
-              Show {Math.min(CARD_BATCH_SIZE, candidates.length - visibleCount).toLocaleString()} more
-              {' '}({(candidates.length - visibleCount).toLocaleString()} still to review)
-            </button>
           )}
-        </>
+        />
       )}
     </div>
   )
@@ -367,10 +392,12 @@ function CandidateCard({
   momentParentById,
   momentTitleById,
   calendarSourceLabel,
+  deferEnabled,
   onTagCreated,
   onPersonCreated,
   onMomentCreated,
   onSelectEvent,
+  onDecidedChange,
   onResolved,
 }: {
   candidate: Candidate
@@ -384,10 +411,14 @@ function CandidateCard({
   momentParentById: Map<string, string>
   momentTitleById: Map<string, string>
   calendarSourceLabel: string | null
+  /** False until 2026-08-19-calendar-triage-and-defer.sql has been run — hides "Not now". */
+  deferEnabled: boolean
   onTagCreated: (tag: TagRef) => void
   onPersonCreated: (person: PersonRef) => void
   onMomentCreated: (moment: ExistingMoment) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  /** Fired when this card writes a decision (accept/reject/not now) or takes one back. */
+  onDecidedChange: (decided: boolean) => void
   onResolved: () => void
 }) {
   const [occasion, setOccasion] = useState(candidate.occasion ?? '')
@@ -426,10 +457,33 @@ function CandidateCard({
   const [acceptError, setAcceptError] = useState<string | null>(null)
   const [savedResult, setSavedResult] = useState<
     | { kind: 'created' | 'merged' | 'noted' | 'subevent'; momentId: string; label: string; parentLabel?: string }
-    | { kind: 'rejected'; label: string }
+    | { kind: 'rejected' | 'deferred'; label: string }
     | null
   >(null)
   const cardRef = useResolvedCardScroll(savedResult !== null)
+  // Cards open collapsed: a title, a date and who was suggested, which is all most of these
+  // decisions actually need. The full editor below is ~695px of inputs, pickers and suggestion
+  // boxes (see lib/resolvedCardScroll.ts) and reading it for every candidate is what made a
+  // 230-event queue feel endless. Opening it is one tap and nothing is lost by not opening it —
+  // accepting collapsed saves exactly what the scan extracted, which is what pressing Accept
+  // without touching anything has always done.
+  // Opens expanded when the duplicate heuristic has something to say: the four-way "merge / add as
+  // a sub-event / save as a note / these are different" choice is the one question on this card
+  // that must not be answered by reflex, and a collapsed Accept there would create the very
+  // duplicate the banner is warning about. Everything after mount is the reviewer's own choice.
+  const [expanded, setExpanded] = useState(() => findLikelyMatch(candidate, existingMoments) !== null)
+
+  // Every action that writes a decision goes through these two, so the deck's progress count can
+  // never drift from what the card is actually showing.
+  function recordResult(result: NonNullable<typeof savedResult>) {
+    setSavedResult(result)
+    onDecidedChange(true)
+  }
+
+  function clearResult() {
+    setSavedResult(null)
+    onDecidedChange(false)
+  }
 
   const likelyMatch = useMemo(() => findLikelyMatch(candidate, existingMoments), [candidate, existingMoments])
   // True while a possible duplicate is on screen and the reviewer hasn't answered it yet — drives
@@ -632,7 +686,7 @@ function CandidateCard({
     })
 
     setSaving(false)
-    setSavedResult({
+    recordResult({
       kind: subEventParent ? 'subevent' : 'created',
       momentId: newMoment.id,
       label: summarize(occasion, candidate.raw_description ?? ''),
@@ -684,7 +738,7 @@ function CandidateCard({
       .eq('id', candidate.id)
 
     setSaving(false)
-    setSavedResult({
+    recordResult({
       kind: 'merged',
       momentId: freshTarget.id,
       // Qualified: merging into a sub-event should confirm which one, the same way the picker
@@ -727,7 +781,7 @@ function CandidateCard({
       .eq('id', candidate.id)
 
     setSaving(false)
-    setSavedResult({
+    recordResult({
       kind: 'noted',
       momentId: target.id,
       label: momentDisplayName(target, momentTitleById, momentParentById),
@@ -744,23 +798,44 @@ function CandidateCard({
       .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
       .eq('id', candidate.id)
     setSaving(false)
-    setSavedResult({ kind: 'rejected', label: summarize(occasion, candidate.raw_description ?? '') })
+    recordResult({ kind: 'rejected', label: summarize(occasion, candidate.raw_description ?? '') })
   }
 
-  // Puts a mis-tapped rejection back in the queue. Nothing in the app resurfaces rejected
-  // candidates, so without this a slip is unrecoverable from the UI — and the row was only flipped
-  // to 'rejected', never deleted, so taking it back is just the flip in reverse.
-  async function handleUndoReject() {
+  // Sets this candidate aside instead of judging it. A real third answer: the card leaves your
+  // plate now and comes back on its own in a month, rather than sitting in the queue forever or
+  // taking a permanent "no" it didn't earn. Only offered once the migration that adds the status
+  // and the date column has been run.
+  async function handleDefer() {
+    setSaving(true)
+    const { error } = await supabase
+      .from('moment_import_candidates')
+      .update({ status: 'deferred', deferred_until: deferUntilIso(), reviewed_at: new Date().toISOString() })
+      .eq('id', candidate.id)
+    setSaving(false)
+    if (error) return
+    recordResult({ kind: 'deferred', label: summarize(occasion, candidate.raw_description ?? '') })
+  }
+
+  // Puts a mis-tapped rejection (or a "not now") back in the queue. Nothing in the app resurfaces
+  // rejected candidates, so without this a slip is unrecoverable from the UI — and the row was only
+  // flipped, never deleted, so taking it back is just the flip in reverse.
+  //
+  // Restores to 'selected', not 'pending': the founder already kept this one in the triage pass,
+  // and sending it back there would make them answer a question they've answered. Pre-migration
+  // there is no triage stage and 'pending' is what this queue reads, so that's what it goes back to.
+  async function handleUndoDecision() {
     setSaving(true)
     await supabase
       .from('moment_import_candidates')
-      .update({ status: 'pending', reviewed_at: null })
+      .update({ status: deferEnabled ? 'selected' : 'pending', reviewed_at: null, ...(deferEnabled ? { deferred_until: null } : {}) })
       .eq('id', candidate.id)
     setSaving(false)
-    setSavedResult(null)
+    clearResult()
   }
 
   if (savedResult) {
+    // Pulled out of the JSX because narrowing doesn't survive into the click handler's closure.
+    const resolvedMomentId = 'momentId' in savedResult ? savedResult.momentId : null
     return (
       <div ref={cardRef} style={styles.card}>
         <p style={styles.confirmText}>
@@ -772,17 +847,19 @@ function CandidateCard({
                 ? `Saved as a note on "${savedResult.label}"`
                 : savedResult.kind === 'rejected'
                   ? `Rejected — ${savedResult.label}`
-                  : `Merged into "${savedResult.label}"`}
+                  : savedResult.kind === 'deferred'
+                    ? `Set aside — ${savedResult.label}. It'll come back in a month.`
+                    : `Merged into "${savedResult.label}"`}
         </p>
         <div style={styles.suggestButtonRow}>
-          {savedResult.kind === 'rejected' ? (
-            <button type="button" onClick={handleUndoReject} style={styles.suggestNoButton} disabled={saving}>
+          {savedResult.kind === 'rejected' || savedResult.kind === 'deferred' ? (
+            <button type="button" onClick={handleUndoDecision} style={styles.suggestNoButton} disabled={saving}>
               {saving ? '…' : 'Undo'}
             </button>
           ) : (
             <button
               type="button"
-              onClick={() => onSelectEvent({ id: savedResult.momentId, summary: savedResult.label })}
+              onClick={() => onSelectEvent({ id: resolvedMomentId!, summary: savedResult.label })}
               style={styles.suggestYesButton}
             >
               Add more details →
@@ -790,6 +867,54 @@ function CandidateCard({
           )}
           <button type="button" onClick={onResolved} style={styles.suggestNoButton} disabled={saving}>
             Done
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const cardTitle = summarize(occasion, candidate.raw_description ?? '', 9)
+  const cardWhen = eventDate ? formatDateRange(eventDate, eventEndDate || null) : null
+
+  if (!expanded) {
+    // The fast path. Everything here is read-only except the buttons — anything that needs typing
+    // lives behind "Details". Accepting from this state saves exactly what the scan extracted,
+    // which is what pressing Accept on the full card without touching it has always done.
+    const names = candidate.suggested_people
+      .filter((_, i) => included.has(i))
+      .map((p) => p.name)
+      .filter((n): n is string => Boolean(n))
+    return (
+      <div ref={cardRef} style={styles.card}>
+        {calendarSourceLabel && <span style={styles.sourceBadge}>{calendarSourceLabel}</span>}
+        <p style={styles.collapsedTitle}>{cardTitle}</p>
+        <p style={styles.collapsedMeta}>
+          {cardWhen ?? 'No date'}
+          {location && ` · ${location}`}
+        </p>
+        {names.length > 0 && (
+          <p style={styles.collapsedMeta}>
+            With {names.slice(0, 3).join(', ')}
+            {names.length > 3 && ` and ${names.length - 3} more`}
+          </p>
+        )}
+
+        {acceptError && <p style={styles.errorBanner}>{acceptError}</p>}
+
+        <div style={styles.suggestButtonRow}>
+          <button type="button" onClick={handleAccept} style={styles.suggestYesButton} disabled={saving}>
+            {saving ? 'Saving…' : 'Accept'}
+          </button>
+          {deferEnabled && (
+            <button type="button" onClick={handleDefer} style={styles.suggestNoButton} disabled={saving}>
+              Not now
+            </button>
+          )}
+          <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
+            Reject
+          </button>
+          <button type="button" onClick={() => setExpanded(true)} style={styles.detailsButton} disabled={saving}>
+            Details ▾
           </button>
         </div>
       </div>
@@ -1285,9 +1410,21 @@ function CandidateCard({
                     ? 'Accept as a new event'
                     : 'Accept'}
         </button>
+        {deferEnabled && !mergeTarget && !noteTarget && !subEventParent && (
+          <button type="button" onClick={handleDefer} style={styles.suggestNoButton} disabled={saving}>
+            Not now
+          </button>
+        )}
         <button type="button" onClick={handleReject} style={styles.suggestNoButton} disabled={saving}>
           Reject
         </button>
+        {/* Only offered once the duplicate question has been answered — collapsing while the gold
+            box is still asking would hide the choice rather than settle it. */}
+        {!unresolvedMatch && (
+          <button type="button" onClick={() => setExpanded(false)} style={styles.detailsButton} disabled={saving}>
+            Details ▴
+          </button>
+        )}
       </div>
     </div>
   )
@@ -1307,19 +1444,18 @@ const styles: { [key: string]: React.CSSProperties } = {
   heading: { fontSize: fontSize.h1, color: colors.ink, margin: '0 0 0.5rem' },
   intro: { fontSize: fontSize.bodyLg, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 1.25rem' },
   body: { fontSize: fontSize.body, color: colors.textMuted },
-  queueCount: { fontSize: fontSize.body, color: colors.textFaint, margin: '0 0 1rem' },
-  showMoreButton: {
-    display: 'block',
-    width: '100%',
-    fontSize: fontSize.bodyLg,
-    padding: '0.7rem 1rem',
+  collapsedTitle: { fontSize: fontSize.lead, color: colors.ink, margin: '0 0 0.2rem', lineHeight: 1.3 },
+  collapsedMeta: { fontSize: fontSize.label, color: colors.textMuted, margin: '0 0 0.15rem' },
+  detailsButton: {
+    fontSize: fontSize.label,
+    padding: '0.45rem 0.9rem',
     borderRadius: radius.md,
-    border: border.default,
-    backgroundColor: colors.surface,
-    color: colors.ink,
+    border: 'none',
+    backgroundColor: 'transparent',
+    color: colors.textMuted,
     cursor: 'pointer',
     fontFamily,
-    marginBottom: space.xl,
+    marginLeft: 'auto',
   },
   card: {
     backgroundColor: colors.surface,
