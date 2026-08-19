@@ -258,6 +258,13 @@ export default function ImportReview({
     setAllTagsList((prev) => (prev.some((t) => t.id === tag.id) ? prev : [...prev, tag]))
   }
 
+  // Same idea for people. The roster is loaded once per visit, so someone added as a new attendee
+  // on one event used to be missing from every other card's "+ Add someone" search until the page
+  // was reloaded — and the same person turns up across several events in one review session.
+  function handlePersonCreated(person: PersonRef) {
+    setAllPeopleList((prev) => (prev.some((p) => p.id === person.id) ? prev : [...prev, person]))
+  }
+
   // Keeps the shared existingMoments list current so a just-accepted event is immediately
   // available as a merge/save-as-note target for the *next* candidate reviewed — without this,
   // it only showed up after a full page reload re-ran load()'s moments query.
@@ -326,6 +333,7 @@ export default function ImportReview({
               momentTitleById={momentTitleById}
               calendarSourceLabel={calendarSources.length > 1 ? calendarSources.find((s) => s.id === c.calendar_source_id)?.label ?? null : null}
               onTagCreated={handleTagCreated}
+              onPersonCreated={handlePersonCreated}
               onMomentCreated={handleMomentCreated}
               onSelectEvent={onSelectEvent}
               onResolved={() => handleResolved(c.id)}
@@ -360,6 +368,7 @@ function CandidateCard({
   momentTitleById,
   calendarSourceLabel,
   onTagCreated,
+  onPersonCreated,
   onMomentCreated,
   onSelectEvent,
   onResolved,
@@ -376,6 +385,7 @@ function CandidateCard({
   momentTitleById: Map<string, string>
   calendarSourceLabel: string | null
   onTagCreated: (tag: TagRef) => void
+  onPersonCreated: (person: PersonRef) => void
   onMomentCreated: (moment: ExistingMoment) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onResolved: () => void
@@ -507,6 +517,7 @@ function CandidateCard({
           .select()
           .single()
         personId = newPerson?.id ?? null
+        if (newPerson) onPersonCreated(newPerson as PersonRef)
       }
       if (personId) {
         await supabase.from('notes').insert({ person_id: personId, moment_id: momentId, content: 'Was there.' })
@@ -528,6 +539,7 @@ function CandidateCard({
         .select()
         .single()
       if (newPerson?.id) {
+        onPersonCreated(newPerson as PersonRef)
         await supabase.from('notes').insert({ person_id: newPerson.id, moment_id: momentId, content: 'Was there.' })
       }
     }

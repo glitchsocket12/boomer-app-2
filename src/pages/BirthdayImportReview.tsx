@@ -72,6 +72,17 @@ export default function BirthdayImportReview({ onBack, backLabel }: { onBack: ()
     setCandidates((prev) => prev.filter((c) => c.id !== id))
   }
 
+  // The roster is loaded once per visit, so a profile created by accepting one birthday used to be
+  // invisible to every other card's "link to someone existing" until the whole page was reloaded.
+  // A calendar's birthday list can easily name the same person twice.
+  function handlePersonCreated(person: PersonRef) {
+    setAllPeople((prev) =>
+      prev.some((p) => p.id === person.id)
+        ? prev
+        : [...prev, person].sort((a, b) => personLabel(a).localeCompare(personLabel(b)))
+    )
+  }
+
   return (
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
@@ -93,6 +104,7 @@ export default function BirthdayImportReview({ onBack, backLabel }: { onBack: ()
             candidate={c}
             allPeople={allPeople}
             existingReminder={c.matched_person_id ? existingReminders.find((r) => r.person_id === c.matched_person_id) ?? null : null}
+            onPersonCreated={handlePersonCreated}
             onResolved={() => handleResolved(c.id)}
           />
         ))
@@ -105,11 +117,13 @@ function CandidateCard({
   candidate,
   allPeople,
   existingReminder,
+  onPersonCreated,
   onResolved,
 }: {
   candidate: Candidate
   allPeople: PersonRef[]
   existingReminder: ExistingReminder | null
+  onPersonCreated: (person: PersonRef) => void
   onResolved: () => void
 }) {
   const [linkedPersonId, setLinkedPersonId] = useState<string | null>(candidate.matched_person_id)
@@ -190,6 +204,7 @@ function CandidateCard({
         return
       }
       personId = newPerson.id
+      onPersonCreated(newPerson as PersonRef)
     }
 
     await upsertBirthday(personId as string)

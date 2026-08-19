@@ -310,6 +310,25 @@ export default function ContactImportReview({
     setAllGroups((prev) => [...prev, group].sort((a, b) => a.name.localeCompare(b.name)))
   }
 
+  // Same reason as handleGroupCreated, for people. The roster is loaded once per visit, so a
+  // profile created by accepting one card used to be invisible to every other card's "link to
+  // someone existing" until the whole page was reloaded — and a phone address book routinely has
+  // the same person two or three times in one queue (home vs. mobile entries, duplicates from an
+  // old sync), which is exactly when you need to link the second copy to the one you just made.
+  function handlePersonCreated(person: PersonRef) {
+    setAllPeople((prev) =>
+      prev.some((p) => p.id === person.id)
+        ? prev
+        : [...prev, person].sort((a, b) => personLabel(a).localeCompare(personLabel(b)))
+    )
+  }
+
+  // Undo deletes the profile accept just created, so it has to leave the roster too — otherwise it
+  // stays searchable and linking to it would point at a row that no longer exists.
+  function handlePersonRemoved(personId: string) {
+    setAllPeople((prev) => prev.filter((p) => p.id !== personId))
+  }
+
   // Accept and reject both leave their card in place showing a confirmation (see CandidateCard's
   // savedLabel/rejected), so resolving one only refreshes the total count for the footer — a full
   // reload would yank the confirmation off-screen before it's seen. Reject used to refetch the
@@ -375,6 +394,8 @@ export default function ContactImportReview({
             allPeople={allPeople}
             allGroups={allGroups}
             onGroupCreated={handleGroupCreated}
+            onPersonCreated={handlePersonCreated}
+            onPersonRemoved={handlePersonRemoved}
             onResolved={refreshTotal}
             onDismissed={() => handleDismissed(c.id)}
             onSelectPerson={onSelectPerson}
@@ -404,6 +425,8 @@ function CandidateCard({
   allPeople,
   allGroups,
   onGroupCreated,
+  onPersonCreated,
+  onPersonRemoved,
   onResolved,
   onDismissed,
   onSelectPerson,
@@ -412,6 +435,8 @@ function CandidateCard({
   allPeople: PersonRef[]
   allGroups: GroupRef[]
   onGroupCreated: (group: GroupRef) => void
+  onPersonCreated: (person: PersonRef) => void
+  onPersonRemoved: (personId: string) => void
   onResolved: () => void
   onDismissed: () => void
   onSelectPerson: (id: string, name: string) => void
@@ -574,6 +599,9 @@ function CandidateCard({
         return
       }
       personId = newPerson.id
+      // Straight into the roster the other cards search, before anything else can fail — this is
+      // the only moment the new profile exists in memory here.
+      onPersonCreated(newPerson as PersonRef)
       undo = { kind: 'new', personId: personId as string, noteIds: [], groupIds: [], reminders: [] }
     } else {
       const { data: existingPerson } = await supabase
@@ -754,6 +782,7 @@ function CandidateCard({
           : "Couldn't restore the previous contact details. Please try again."
       )
     }
+    if (undoInfo.kind === 'new') onPersonRemoved(undoInfo.personId)
 
     // Last and most important: without this the candidate stays 'accepted' and never comes back
     // to the queue, so the founder can't retry the decision at all.
