@@ -1,7 +1,7 @@
-// The five nav tab icons plus the search glyph, hand-written as inline SVG.
+// The six nav tab icons plus the search glyph, hand-written as inline SVG.
 //
-// Deliberately NOT an icon library: this repo runs on 3 dependencies (see SECURITY.md) and five
-// glyphs don't justify a fourth, plus a library's tree-shaking would still ship more than this.
+// Deliberately NOT an icon library: this repo runs on 3 dependencies (see SECURITY.md) and six
+// glyphs still don't justify a fourth, plus a library's tree-shaking would still ship more than this.
 // Each icon is a couple of paths on a 24-box, stroked with currentColor so the active/inactive
 // colouring is just the parent's `color` — no per-icon variants to keep in sync.
 //
@@ -85,6 +85,17 @@ export function CalendarIcon({ size = 21 }: IconProps) {
       <path d="M3.3 9.6h17.4" />
       <path d="M8 3.4v3.2M16 3.4v3.2" />
       <path d="M7.6 13.3h2.2M14.2 13.3h2.2M7.6 16.7h2.2M14.2 16.7h2.2" />
+    </svg>
+  )
+}
+
+/** A ruled notebook with a spine — the internal side, kept distinct from the Events photo. */
+export function NotebooksIcon({ size = 21 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <rect x="4.6" y="3.4" width="15" height="17.2" rx="2.2" />
+      <path d="M8.4 3.4v17.2" />
+      <path d="M11.4 8.2h5M11.4 12h5M11.4 15.8h3" />
     </svg>
   )
 }

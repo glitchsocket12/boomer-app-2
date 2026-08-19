@@ -7,6 +7,12 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* Nav tab labels. Set here rather than inline in App.tsx's navStyles because the phone breakpoint
+   below has to be able to override it — an inline style would win over the media query. */
+.nav-tab-label {
+  font-size: 0.68rem;
+}
+
 /* ---------------------------------------------------------------------------
    Touch devices (phones/tablets). Found 2026-08-01 opening the app on a real
    iPhone for the first time. These are correctness fixes, NOT the mobile
@@ -25,6 +31,16 @@ body {
 @media (max-width: 480px) {
   .nav-wordmark {
     display: none;
+  }
+
+  /* Notebooks (2026-08-18) made it six tabs, and "Notebooks" is a longer word than anything else
+     in the row. At 0.68rem its label measured 56px against the ~42px each tab can have on a 375px
+     screen, so it printed 3.3px on top of the "Groups" label beside it — measured, not guessed.
+     Two changes fix it together: navStyles.link now flexes from an `auto` basis so a long label
+     starts with the room it needs, and this drops the phone-only type a step so the sum of all six
+     still fits the row. Desktop keeps 0.68rem, where there was never a problem. */
+  .nav-tab-label {
+    font-size: 0.6rem;
   }
 }
 

@@ -27,6 +27,7 @@ const SECTION_LABELS: Record<DocKind, string> = {
   event: 'Events',
   pet: 'Pets',
   tag: 'Tags',
+  notebook: 'Notebooks',
   note: 'Notes',
 }
 

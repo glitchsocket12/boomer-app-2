@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactElement } from 'react'
-import { HomeIcon, PeopleIcon, EventsIcon, CalendarIcon, GroupsIcon, SearchIcon } from './components/NavIcons'
+import { HomeIcon, PeopleIcon, EventsIcon, CalendarIcon, GroupsIcon, NotebooksIcon, SearchIcon } from './components/NavIcons'
 import { supabase } from './lib/supabase'
 import GlobalSearch from './components/GlobalSearch'
 import { cachedSearchCorpus, clearSearchCorpus, isSearchCorpusStale, loadSearchCorpus } from './lib/searchCorpus'
@@ -62,13 +62,15 @@ const ContactImportReview = lazy(() => import('./pages/ContactImportReview'))
 const About = lazy(() => import('./pages/About'))
 const Privacy = lazy(() => import('./pages/Privacy'))
 const FamilyTree = lazy(() => import('./pages/FamilyTree'))
+const Notebooks = lazy(() => import('./pages/Notebooks'))
+const NotebookDetail = lazy(() => import('./pages/NotebookDetail'))
 
 // Shown while a lazily-loaded page's chunk is in flight. Deliberately the exact "Loading…" the app
 // already shows while resolving the session, so a cold-cache page open reads as the same kind of
 // wait the app has always had rather than a new kind of flash.
 const pageFallback = <p style={{ textAlign: 'center', marginTop: '4rem' }}>Loading…</p>
 
-type Tab = 'home' | 'people' | 'events' | 'calendar' | 'groups'
+type Tab = 'home' | 'people' | 'events' | 'calendar' | 'groups' | 'notebooks'
 type AuthView = 'landing' | 'login' | 'signup' | 'demo'
 type Crumb =
   | { type: 'person'; id: string; label: string }
@@ -98,8 +100,9 @@ type Crumb =
   | { type: 'contactImportReview'; id: string; label: string }
   | { type: 'about'; id: string; label: string }
   | { type: 'privacy'; id: string; label: string }
+  | { type: 'notebook'; id: string; label: string }
 
-const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', calendar: 'Calendar', groups: 'Groups' }
+const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', calendar: 'Calendar', groups: 'Groups', notebooks: 'Notebooks' }
 
 const CRUMB_TYPES = [
   'person',
@@ -126,6 +129,7 @@ const CRUMB_TYPES = [
   'contactImportReview',
   'about',
   'privacy',
+  'notebook',
 ]
 
 // Crumb types that are single fixed pages rather than records with a real id (their `id` is
@@ -513,6 +517,10 @@ export default function App() {
         return pushCrumb({ type: 'event', id: target.id, label: target.label })
       case 'group':
         return pushCrumb({ type: 'group', id: target.id, label: target.label })
+      // Entries don't have pages of their own, so both a notebook hit and an entry hit open the
+      // notebook — same reasoning as a note opening whatever it hangs off.
+      case 'notebook':
+        return pushCrumb({ type: 'notebook', id: target.id, label: target.label })
       // A tag isn't a page of its own — it's a filter on the Events list, which is where someone
       // searching for one actually wants to end up. tagFilter matches on the tag's NAME.
       case 'tag':
@@ -816,6 +824,17 @@ export default function App() {
     content = <About onBack={popCrumb} backLabel={parentLabel} />
   } else if (current?.type === 'privacy') {
     content = <Privacy onBack={popCrumb} backLabel={parentLabel} />
+  } else if (current?.type === 'notebook') {
+    content = (
+      <NotebookDetail
+        notebookId={current.id}
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+        onRenamed={renameCurrentCrumb}
+        onDeleted={popCrumb}
+      />
+    )
   } else {
     content = (
       <>
@@ -881,6 +900,9 @@ export default function App() {
             restoreScrollRef={groupsScrollRef}
           />
         )}
+        {view === 'notebooks' && (
+          <Notebooks onSelectNotebook={(n) => pushCrumb({ type: 'notebook', id: n.id, label: n.name })} />
+        )}
       </>
     )
   }
@@ -891,6 +913,7 @@ export default function App() {
     { tab: 'events', label: 'Events', Icon: EventsIcon },
     { tab: 'calendar', label: 'Calendar', Icon: CalendarIcon },
     { tab: 'groups', label: 'Groups', Icon: GroupsIcon },
+    { tab: 'notebooks', label: 'Notebooks', Icon: NotebooksIcon },
   ]
 
   return (
@@ -910,7 +933,7 @@ export default function App() {
               aria-current={view === t.tab ? 'page' : undefined}
             >
               <t.Icon />
-              <span style={navStyles.linkLabel}>{t.label}</span>
+              <span className="nav-tab-label" style={navStyles.linkLabel}>{t.label}</span>
             </button>
           ))}
           {/* Sits with the tabs rather than beside the avatar (founder report 2026-08-12: as a bare
@@ -929,7 +952,7 @@ export default function App() {
             aria-label="Search everything"
           >
             <SearchIcon size={21} />
-            <span style={navStyles.linkLabel}>Search</span>
+            <span className="nav-tab-label" style={navStyles.linkLabel}>Search</span>
           </button>
         </div>
         <button
@@ -1026,9 +1049,13 @@ const navStyles: { [key: string]: React.CSSProperties } = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: '2px',
-    // 44px is the minimum comfortable touch target; letting them share the row from a 0 basis is
-    // what keeps five tabs inside a phone without any of them being individually pinned to a width.
-    flex: '1 1 0',
+    // Basis `auto`, not 0 (changed 2026-08-18 when Notebooks made it six tabs). From a 0 basis
+    // every tab gets an identical share, so at 375px all six were 40px wide — fine for "Home",
+    // starvation for "Notebooks", whose 56px label overflowed and printed 3.3px on top of the
+    // "Groups" label next to it. An `auto` basis makes each tab's own label its starting width and
+    // shares the remainder proportionally, so a long label gets the room it needs and a short one
+    // stops hoarding what it doesn't.
+    flex: '1 1 auto',
     // Share the row on a phone, but stop stretching once there's room — five 120px icon buttons
     // spanning a desktop bar reads as a toolbar, not a nav.
     maxWidth: '76px',
@@ -1048,8 +1075,8 @@ const navStyles: { [key: string]: React.CSSProperties } = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: '2px',
-    flex: '1 1 0',
-    // Share the row on a phone, but stop stretching once there's room — five 120px icon buttons
+    flex: '1 1 auto',
+    // Share the row on a phone, but stop stretching once there's room — six 120px icon buttons
     // spanning a desktop bar reads as a toolbar, not a nav.
     maxWidth: '76px',
     minWidth: 0,
@@ -1058,8 +1085,12 @@ const navStyles: { [key: string]: React.CSSProperties } = {
     borderRadius: radius.sm,
     cursor: 'pointer',
   },
-  // Small enough that "Calendar" — the longest label — still fits its share of a 375px row.
-  linkLabel: { fontSize: '0.68rem', lineHeight: 1.1, whiteSpace: 'nowrap' },
+  // NOTE the font-size lives in index.css, not here. "Notebooks" is the longest label in the row
+  // and needs a step down on a phone, and an inline style beats a stylesheet rule — so setting it
+  // here would silently win over the media query and the label would clip. Same reason
+  // navStyles.wordmark sets no `display`. `overflow: hidden` is the guard that makes a future
+  // seventh tab clip its own label rather than print over its neighbour's.
+  linkLabel: { lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '100%' },
   avatar: {
     width: '34px',
     height: '34px',
