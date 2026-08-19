@@ -679,12 +679,20 @@ src/
 │   │                            query (same isolation reasoning as pets above); the link hides
 │   │                            when the count is 0 or the query errors.
 │   ├── GenderFill.tsx         — (2026-08-11, item 44's auto-fill half) the one-time
-│   │                            names→gender pass. Two sections off `guessGenderFromName`:
-│   │                            "Boomer can fill these in" (a decidable first name) and
-│   │                            "Boomer can't guess these" (ambiguous or unknown), each row a
-│   │                            Male/Female/Non-binary/Other/Leave-blank select matching
-│   │                            PersonDetail's. Suggestions are deliberately NOT pre-selected —
-│   │                            "Accept all N suggestions" is one explicit counted act, which is
+│   │                            names→gender pass. Off `guessGenderFromName`: the decidable names
+│   │                            split into **"Men" and "Women" columns** (founder ask 2026-08-19 —
+│   │                            a mixed list makes you read a dropdown per row, a column headed
+│   │                            "Men" asks one question once and is a single tap if the answer is
+│   │                            yes), then "Boomer can't guess these" (ambiguous or unknown) full
+│   │                            width below. Each row is a Male/Female/Non-binary/Other/Leave-blank
+│   │                            select matching PersonDetail's; each column carries its OWN counted
+│   │                            "Accept all N" and its own paging, so accepting one never touches
+│   │                            the other. CSS grid `auto-fit`, so a phone gets two stacked lists
+│   │                            rather than two squeezed half-width ones. The old per-row
+│   │                            "— looks like male" tag is gone: it only ever rendered on rows that
+│   │                            have a guess, which is now exactly the rows already sitting under a
+│   │                            heading that says so. Suggestions are deliberately NOT pre-selected —
+│   │                            "Accept all N" is one explicit counted act, which is
 │   │                            what lets the lists page at 100 without the founder ever saving
 │   │                            rows they were never shown. Nothing writes until Save; Save
 │   │                            groups by value and chunks 100 ids per `.in()` so a few hundred

@@ -12,8 +12,13 @@
 // there's no way to fix a wrong assumption in bulk, and nothing outside the family-tree graph (the
 // only thing that applies the name guess) can word anything by gender at all.
 //
-// Suggestions are NOT pre-selected. "Accept all N suggestions" is one explicit, counted act, so the
-// list can be paged for performance without the founder ever saving rows they were never shown.
+// Suggestions are NOT pre-selected. "Accept all N" is one explicit, counted act, so the list can be
+// paged for performance without the founder ever saving rows they were never shown.
+//
+// The guesses are split into "Men" and "Women" columns (founder ask, 2026-08-19) rather than pooled
+// into one list. A mixed list makes you read a dropdown per row; a column headed "Men" asks one
+// question once — is everyone here a man? — and if the answer is yes, it's a single tap. Each
+// column carries its own Accept all, counted separately, so accepting one never touches the other.
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
@@ -52,7 +57,8 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
   // which is a real answer here — not every name has a right one among these four.
   const [choices, setChoices] = useState<Record<string, string>>({})
   const [search, setSearch] = useState('')
-  const [suggestedShown, setSuggestedShown] = useState(PAGE_STEP)
+  const [menShown, setMenShown] = useState(PAGE_STEP)
+  const [womenShown, setWomenShown] = useState(PAGE_STEP)
   const [unknownShown, setUnknownShown] = useState(PAGE_STEP)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -93,18 +99,25 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
     setAlreadySet(set)
   }
 
-  const suggested = useMemo(() => (rows ?? []).filter((r) => r.guess !== null), [rows])
+  // Split by the guess rather than pooled into one "Boomer can fill these in" list. Founder ask,
+  // 2026-08-19: reading a mixed list means checking a dropdown per row, but reading a column headed
+  // "Men" is one question asked once — is everyone here a man? — and if the answer is yes it's a
+  // single tap. The two columns are the whole point of the screen.
+  const suggestedMen = useMemo(() => (rows ?? []).filter((r) => r.guess === 'male'), [rows])
+  const suggestedWomen = useMemo(() => (rows ?? []).filter((r) => r.guess === 'female'), [rows])
   const unknown = useMemo(() => (rows ?? []).filter((r) => r.guess === null), [rows])
 
   const query = search.trim().toLowerCase()
   const matches = (r: Row) => !query || r.fullName.toLowerCase().includes(query)
-  const visibleSuggested = suggested.filter(matches)
+  const visibleMen = suggestedMen.filter(matches)
+  const visibleWomen = suggestedWomen.filter(matches)
   const visibleUnknown = unknown.filter(matches)
 
   // Counts what will actually be written, not what's been clicked — a row set back to "Leave blank"
   // drops out of `choices` entirely rather than saving an empty string.
   const pendingCount = Object.values(choices).filter(Boolean).length
-  const unacceptedSuggestions = suggested.filter((r) => choices[r.id] === undefined).length
+  const unacceptedMen = suggestedMen.filter((r) => choices[r.id] === undefined).length
+  const unacceptedWomen = suggestedWomen.filter((r) => choices[r.id] === undefined).length
 
   function setChoice(id: string, value: string) {
     setSavedCount(null)
@@ -118,11 +131,11 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
 
   // Fills only rows the founder hasn't already decided for, so pressing this after correcting a few
   // by hand never overwrites those corrections.
-  function acceptAllSuggestions() {
+  function acceptAll(column: Row[]) {
     setSavedCount(null)
     setChoices((prev) => {
       const next = { ...prev }
-      for (const r of suggested) {
+      for (const r of column) {
         if (next[r.id] === undefined && r.guess) next[r.id] = r.guess
       }
       return next
@@ -170,7 +183,8 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
     }
     setSavedCount(written)
     setChoices({})
-    setSuggestedShown(PAGE_STEP)
+    setMenShown(PAGE_STEP)
+    setWomenShown(PAGE_STEP)
     setUnknownShown(PAGE_STEP)
     await load()
   }
@@ -238,28 +252,62 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
             <SearchBox value={search} onChange={setSearch} placeholder="Find someone…" />
           </div>
 
-          {suggested.length > 0 && (
+          {(suggestedMen.length > 0 || suggestedWomen.length > 0) && (
             <section style={styles.section}>
-              <h2 style={styles.sectionHeading}>Boomer can fill these in ({suggested.length})</h2>
+              <h2 style={styles.sectionHeading}>
+                Boomer can fill these in ({suggestedMen.length + suggestedWomen.length})
+              </h2>
               <p style={styles.sectionBody}>
-                Their first name reads one way clearly enough to go with it. Accept them all, then
-                change any Boomer got wrong before you save — nothing is written until you press
-                Save.
+                Split by what their first name reads as, so you can check a whole column at once.
+                Scan one, and if they're all right, accept the lot — then change any Boomer got
+                wrong. Nothing is written until you press Save.
               </p>
-              {unacceptedSuggestions > 0 && (
-                <button type="button" onClick={acceptAllSuggestions} style={styles.acceptAllButton} disabled={saving}>
-                  Accept all {unacceptedSuggestions} suggestions
-                </button>
-              )}
-              <PersonRows
-                rows={visibleSuggested}
-                shown={suggestedShown}
-                onShowMore={() => setSuggestedShown((n) => n + PAGE_STEP)}
-                choices={choices}
-                onChoose={setChoice}
-                disabled={saving}
-                emptyText={`No one in this list matches "${search}".`}
-              />
+              {/* Grid rather than a fixed two-up: on a phone these become two stacked lists, which
+                  is the same win (one column, one question) without a squeezed half-width row. */}
+              <div style={styles.columns}>
+                {suggestedMen.length > 0 && (
+                  <div style={styles.column}>
+                    <div style={styles.columnHead}>
+                      <h3 style={styles.columnHeading}>Men ({suggestedMen.length})</h3>
+                      {unacceptedMen > 0 && (
+                        <button type="button" onClick={() => acceptAll(suggestedMen)} style={styles.acceptAllButton} disabled={saving}>
+                          Accept all {unacceptedMen}
+                        </button>
+                      )}
+                    </div>
+                    <PersonRows
+                      rows={visibleMen}
+                      shown={menShown}
+                      onShowMore={() => setMenShown((n) => n + PAGE_STEP)}
+                      choices={choices}
+                      onChoose={setChoice}
+                      disabled={saving}
+                      emptyText={`No one here matches "${search}".`}
+                    />
+                  </div>
+                )}
+                {suggestedWomen.length > 0 && (
+                  <div style={styles.column}>
+                    <div style={styles.columnHead}>
+                      <h3 style={styles.columnHeading}>Women ({suggestedWomen.length})</h3>
+                      {unacceptedWomen > 0 && (
+                        <button type="button" onClick={() => acceptAll(suggestedWomen)} style={styles.acceptAllButton} disabled={saving}>
+                          Accept all {unacceptedWomen}
+                        </button>
+                      )}
+                    </div>
+                    <PersonRows
+                      rows={visibleWomen}
+                      shown={womenShown}
+                      onShowMore={() => setWomenShown((n) => n + PAGE_STEP)}
+                      choices={choices}
+                      onChoose={setChoice}
+                      disabled={saving}
+                      emptyText={`No one here matches "${search}".`}
+                    />
+                  </div>
+                )}
+              </div>
             </section>
           )}
 
@@ -323,9 +371,6 @@ function PersonRows({
               <span style={styles.nameCell}>
                 {r.fullName}
                 {r.isSelf && <span style={styles.selfTag}> (you)</span>}
-                {/* The suggestion stays visible next to the control even after it's accepted, so a
-                    row that reads "Female" can still be told apart from one the founder typed. */}
-                {r.guess && chosen === '' && <span style={styles.guessTag}> — looks like {r.guess}</span>}
               </span>
               <select
                 value={chosen}
@@ -419,6 +464,25 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   searchRow: { marginBottom: space.xl },
   section: { marginBottom: space.xxxl },
+  // auto-fit rather than a hard two-up: on a phone this collapses to two stacked lists, which is
+  // the same win (one column, one question) without squeezing a name and a dropdown into half a
+  // screen. 260px is the narrowest a row reads comfortably at.
+  columns: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+    gap: space.xxxl,
+    alignItems: 'start',
+  },
+  column: { minWidth: 0 },
+  columnHead: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: space.md,
+    marginBottom: space.md,
+  },
+  columnHeading: { fontSize: fontSize.lead, color: colors.ink, margin: 0 },
   sectionHeading: { fontSize: fontSize.h3, color: colors.ink, margin: `0 0 ${space.xs}` },
   sectionBody: { fontSize: fontSize.body, color: colors.textMuted, lineHeight: 1.5, margin: `0 0 ${space.lg}` },
   acceptAllButton: {
@@ -430,7 +494,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.suggestDeep,
     cursor: 'pointer',
     fontFamily,
-    marginBottom: space.lg,
+    whiteSpace: 'nowrap',
   },
   list: {
     backgroundColor: colors.surface,
@@ -451,7 +515,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   // how many of 400-odd names fit on screen. `flex: 1` still fills the row on a desktop.
   nameCell: { fontSize: fontSize.bodyLg, color: colors.inkPlain, minWidth: '7rem', flex: 1 },
   selfTag: { color: colors.textFaint, fontSize: fontSize.label },
-  guessTag: { color: colors.textFaint, fontSize: fontSize.label, fontStyle: 'italic' },
   select: {
     fontSize: fontSize.base,
     padding: '0.4rem 0.6rem',
