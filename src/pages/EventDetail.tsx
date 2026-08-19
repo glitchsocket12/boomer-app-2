@@ -22,6 +22,7 @@ import { summarize } from '../lib/summarize'
 import { formatFullDate } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { sortSubEventsByDate } from '../lib/subEvents'
+import { coversWindow, weatherWindow } from '../lib/eventSpan'
 import { rankSiblingAttendees } from '../lib/siblingAttendees'
 import { ATTENDEE_PLACEHOLDER, fetchMomentParentIds, hasSomethingToSummarize } from '../lib/moments'
 import { momentDisplayName, momentPickerLabel, momentTitle } from '../lib/momentDisplayName'
@@ -76,6 +77,9 @@ export type SiblingEventRef = { id: string; notes: { people: PersonRef | null }[
 export type ChildEventRef = {
   id: string
   occasion: string | null
+  // Not rendered on the tiles either — it feeds the "where you went" list in the weather box, and
+  // the weather span, both of which need every part's place and not just the parent's.
+  location: string | null
   event_date: string | null
   event_end_date: string | null
   created_at: string
@@ -147,6 +151,9 @@ export default function EventDetail({
   const [otherEvents, setOtherEvents] = useState<OtherEvent[]>([])
   // { childId => parentId }, loaded with otherEvents — qualifies the merge picker's rows.
   const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
+  // The Manage panel's picker does double duty (same as GroupDetail.tsx): 'merge' folds this event
+  // away into the one you pick, 'nest' files this event underneath it and destroys nothing.
+  const [mergeMode, setMergeMode] = useState<'merge' | 'nest'>('merge')
   const [mergeCandidate, setMergeCandidate] = useState<OtherEvent | null>(null)
   const [editingDescription, setEditingDescription] = useState(false)
   const [descriptionInput, setDescriptionInput] = useState('')
@@ -330,7 +337,7 @@ export default function EventDetail({
   async function loadChildEvents() {
     const { data, error } = await supabase
       .from('moments')
-      .select('id, occasion, event_date, event_end_date, created_at, summary, raw_description, notes(people(id, name, last_name))')
+      .select('id, occasion, location, event_date, event_end_date, created_at, summary, raw_description, notes(people(id, name, last_name))')
       .eq('parent_moment_id', eventId)
       .order('event_date', { ascending: true, nullsFirst: false })
     // Query-level .order() gets the rough order; sortSubEventsByDate makes the same-date tie-breaks
@@ -342,6 +349,36 @@ export default function EventDetail({
   // Memoised so the gallery below only refetches when the actual set of sub-events changes, not on
   // every unrelated reload of this page (rename, description edit, an attendee going in or out).
   const childEventIds = useMemo(() => childEvents.map((c) => c.id), [childEvents])
+
+  /**
+   * Everywhere this event and its parts happened, in the order they happened (founder ask,
+   * 2026-08-17). Only the first comma-segment of each address is kept, which is both the readable
+   * part and what makes the de-dupe work at all — "Los Laureles Lodge, 313 W Carmel Valley Rd,
+   * Carmel Valley, CA 93924" and "Los Laureles Lodge, Carmel Valley, CA" are the same venue typed
+   * twice, and only collapse once the tails are gone. The weather box shows this when there is
+   * more than one, since a single place is already on the line above it.
+   */
+  const places = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const raw of [moment?.location, ...childEvents.map((c) => c.location)]) {
+      const label = (raw ?? '').split(',')[0].trim()
+      if (label && !seen.has(label.toLowerCase())) seen.set(label.toLowerCase(), label)
+    }
+    return [...seen.values()]
+  }, [moment?.location, childEvents])
+
+  /**
+   * The events this one may be filed under. Sub-events are one level deep everywhere in this app —
+   * EventDetail only renders "Associated Events" on an event with no parent of its own, so a
+   * grandchild would exist in the database with no page willing to show it. Two rules keep the
+   * tree flat: the target must be a top-level event itself (this also rules out this event's own
+   * sub-events, which carry its id as their parent), and an event that has sub-events of its own
+   * can't be moved under anything — the button is replaced by a line saying so.
+   */
+  const nestableEvents = useMemo(
+    () => otherEvents.filter((e) => !momentParentById.has(e.id)),
+    [otherEvents, momentParentById]
+  )
 
   // Titles behind the merge picker's "Parent / Child" row labels. THIS event is added on top of the
   // roster because its own sub-events are merge candidates while the roster query excludes it
@@ -393,6 +430,80 @@ export default function EventDetail({
 
     // No need to close the bubble — navigating unmounts this whole page, bubble and all.
     onSelectEvent({ id: data.id, summary: 'Untitled moment' })
+  }
+
+  /**
+   * Lifts this sub-event out of its parent and leaves it standing on its own (founder ask,
+   * 2026-08-18: a "BBQ at the Berzins" had been filed under the Sid and Kate wedding and wasn't
+   * actually part of it). The mirror image of GroupDetail.tsx's handleMoveToTopLevel, and the only
+   * way out of a nesting — until now the app could put an event under another one (New sub-event,
+   * or accepting an import as one) but never take it back out.
+   *
+   * Nothing moves except the one field: this event keeps its own title, date, notes, photos,
+   * attendees, groups and tags, so the action is reversible by re-nesting and loses nothing either
+   * way.
+   *
+   * The old parent's cached summary IS cleared, though — a parent's summary is a roll-up with one
+   * line per sub-event (see summarize-moment/index.ts), so leaving it would keep describing a part
+   * that is no longer there. Cleared lazily rather than regenerated: it rewrites itself the next
+   * time someone actually opens that event, so separating two events doesn't buy a summary nobody
+   * is looking at (CLAUDE.md rule 3). Cached weather needs no such help — the parent's span shrinks
+   * back to its own dates, coversWindow() sees the stored range no longer matches the window, and
+   * the box refetches itself on the next visit.
+   */
+  async function handleMakeStandalone() {
+    if (!parentEvent) return
+    setActionBusy(true)
+    setActionError(null)
+    const { error } = await supabase.from('moments').update({ parent_moment_id: null }).eq('id', eventId)
+    if (error) {
+      setActionBusy(false)
+      setActionError("Something went wrong separating this event — please try again.")
+      return
+    }
+    await supabase.from('moments').update({ summary: null }).eq('id', parentEvent.id)
+    setActionBusy(false)
+    // Closed so the result is visible: what changes is the "↑ Part of …" line at the top of the
+    // page disappearing, and the panel is sitting on top of it.
+    setManageOpen(false)
+    // Tails into loadParentEvent, which re-reads the (now null) parent and clears both the banner
+    // and the sibling-attendee suggestions that came with it.
+    loadChildEvents()
+  }
+
+  /**
+   * The other direction (founder ask, 2026-08-18, straight after the separate button): files this
+   * event underneath the one picked in the Manage panel, instead of leaving it standing alone at
+   * the top level. Same reasoning as GroupDetail.tsx's handleNestUnderGroup — the merge flow was
+   * the only tool for "this belongs with that", and merging destroys one of the two events to do
+   * it. Nothing moves here: title, date, notes, photos, attendees, groups and tags all stay on
+   * this event, which simply gains a parent, and "Separate this from …" undoes it.
+   *
+   * Both parents' cached summaries are cleared, since a parent's summary is a roll-up with one
+   * line per sub-event: the new one gains a part, and an event moved straight from one parent to
+   * another leaves the old one describing a part it no longer has. Lazy, same as everywhere else —
+   * they rewrite themselves when someone next opens them (CLAUDE.md rule 3).
+   */
+  async function handleNestUnderEvent() {
+    if (!mergeCandidate) return
+    setActionBusy(true)
+    setActionError(null)
+    const { error } = await supabase
+      .from('moments')
+      .update({ parent_moment_id: mergeCandidate.id })
+      .eq('id', eventId)
+    if (error) {
+      setActionBusy(false)
+      setActionError("Something went wrong moving this event — please try again.")
+      return
+    }
+    const staleParents = [mergeCandidate.id, ...(parentEvent ? [parentEvent.id] : [])]
+    await supabase.from('moments').update({ summary: null }).in('id', staleParents)
+    setActionBusy(false)
+    setMergeOpen(false)
+    setMergeCandidate(null)
+    setManageOpen(false)
+    loadChildEvents()
   }
 
   async function loadMoment(silent = false) {
@@ -464,17 +575,25 @@ export default function EventDetail({
   // more look once the date has passed, and both re-checks are local date comparisons rather
   // than network calls.
   useEffect(() => {
-    if (!enrichment || enrichingRef.current) return
-    const past = moment?.event_date ? moment.event_date <= new Date().toISOString().slice(0, 10) : false
+    if (!enrichment || !moment || enrichingRef.current) return
+    const today = new Date().toISOString().slice(0, 10)
+    const past = moment.event_date ? moment.event_date <= today : false
     const needsGame =
       (enrichment.game === null && enrichment.game_candidates === null) ||
       (past && enrichment.game?.status === 'ok' && enrichment.game.completed === false)
+    // The third case is what makes a trip's weather keep up with its parts: adding a Sunday to a
+    // wedding weekend that ended Saturday stretches the span past what was fetched, and so does
+    // every night that passes while the trip is still under way. Both are local date comparisons,
+    // so noticing costs nothing — only actually re-fetching does.
     const needsWeather =
-      enrichment.weather === null || (past && enrichment.weather?.status === 'too_soon')
+      enrichment.weather === null ||
+      (past && enrichment.weather?.status === 'too_soon') ||
+      (enrichment.weather?.status === 'ok' &&
+        !coversWindow(enrichment.weather, weatherWindow(moment, childEvents, today)))
     // No refresh flag: that is reserved for the button, and it also un-dismisses the picker.
     // The Edge Function re-derives staleness from the row itself and is the authority.
     if (needsWeather || needsGame) runEnrichment()
-  }, [enrichment, moment?.event_date])
+  }, [enrichment, moment, childEvents])
 
   // Confirming one of the "Which game was this?" options. Writes the chosen game straight to the
   // cache column — no second lookup needed, the candidate already holds the full record.
@@ -922,8 +1041,9 @@ export default function EventDetail({
     onBack()
   }
 
-  async function openMerge() {
+  async function openMerge(mode: 'merge' | 'nest' = 'merge') {
     setMergeOpen(true)
+    setMergeMode(mode)
     setMergeCandidate(null)
     setMergeSearch('')
     if (otherEvents.length === 0) {
@@ -1046,6 +1166,7 @@ export default function EventDetail({
       onSaveBasics={handleSaveBasics}
       onCancelEditBasics={() => setEditingBasics(false)}
       enrichment={enrichment}
+      places={places}
       enriching={enriching}
       choosingGame={choosingGame}
       onRefreshEnrichment={handleRefreshEnrichment}
@@ -1100,6 +1221,12 @@ export default function EventDetail({
       onCancelMerge={() => setMergeOpen(false)}
       onBackFromMergeCandidate={() => setMergeCandidate(null)}
       onConfirmMerge={handleMergeEvent}
+      mergeMode={mergeMode}
+      onChangeMergeMode={setMergeMode}
+      nestableEvents={nestableEvents}
+      canBeNested={childEvents.length === 0}
+      onConfirmNest={handleNestUnderEvent}
+      onMakeStandalone={handleMakeStandalone}
       actionBusy={actionBusy}
       actionError={actionError}
       noteBox={<NoteWithDetection subjectType="moment" subjectId={moment.id} onSaved={handleNoteSaved} placeholder="Add a note about this event…" />}
@@ -1152,6 +1279,7 @@ export function EventDetailView({
   // Defaults to null so the demo twin, which passes none of these, simply renders no boxes and
   // stays entirely API-free.
   enrichment = null,
+  places = [],
   enriching = false,
   choosingGame = null,
   onRefreshEnrichment = () => {},
@@ -1206,6 +1334,12 @@ export function EventDetailView({
   onCancelMerge = () => {},
   onBackFromMergeCandidate = () => {},
   onConfirmMerge = () => {},
+  mergeMode = 'merge',
+  onChangeMergeMode = () => {},
+  nestableEvents = [],
+  canBeNested = true,
+  onConfirmNest = () => {},
+  onMakeStandalone = () => {},
   actionBusy = false,
   actionError = null,
   noteBox,
@@ -1245,6 +1379,7 @@ export function EventDetailView({
   onSaveBasics?: (e: FormEvent) => void
   onCancelEditBasics?: () => void
   enrichment?: Enrichment | null
+  places?: string[]
   enriching?: boolean
   choosingGame?: string | null
   onRefreshEnrichment?: () => void
@@ -1291,7 +1426,7 @@ export function EventDetailView({
   onCancelDelete?: () => void
   onConfirmDelete?: () => void
   mergeOpen?: boolean
-  onOpenMerge?: () => void
+  onOpenMerge?: (mode: 'merge' | 'nest') => void
   mergeSearch?: string
   onMergeSearchChange?: (v: string) => void
   otherEvents?: OtherEvent[]
@@ -1304,6 +1439,15 @@ export function EventDetailView({
   onCancelMerge?: () => void
   onBackFromMergeCandidate?: () => void
   onConfirmMerge?: () => void
+  mergeMode?: 'merge' | 'nest'
+  onChangeMergeMode?: (mode: 'merge' | 'nest') => void
+  /** Top-level events only — see the nestableEvents memo for why the tree stays one level deep. */
+  nestableEvents?: OtherEvent[]
+  /** False once this event has sub-events of its own, which would become unreachable grandchildren. */
+  canBeNested?: boolean
+  onConfirmNest?: () => void
+  /** Only ever called when `parentEvent` is set — the button is hidden otherwise. */
+  onMakeStandalone?: () => void
   actionBusy?: boolean
   actionError?: string | null
   noteBox?: ReactNode
@@ -1540,6 +1684,7 @@ export function EventDetailView({
         game={enrichment?.game ?? null}
         gameCandidates={enrichment?.game_candidates ?? null}
         weather={enrichment?.weather ?? null}
+        places={places}
         gameDismissed={enrichment?.game_dismissed ?? false}
         readOnly={readOnly}
         refreshing={enriching}
@@ -2022,7 +2167,7 @@ export function EventDetailView({
               key: 'manage',
               icon: '⋯',
               label: 'Manage',
-              hint: 'Merge a duplicate, or delete this event.',
+              hint: 'Move this under another event, merge a duplicate, or delete this event.',
               // Set apart from the additive actions above, and it doesn't delete anything itself
               // — ManagePanel still makes deletion a separate, explicitly confirmed step.
               secondary: true,
@@ -2037,9 +2182,28 @@ export function EventDetailView({
 
         {!mergeOpen && !deleteConfirming && (
           <div style={styles.dangerButtonRow}>
-            <button type="button" onClick={onOpenMerge} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+            {/* Kept next to "Separate this from …" below, so the two directions of the same action
+                sit together, and above merge because it's the non-destructive one of the two. */}
+            {canBeNested ? (
+              <button type="button" onClick={() => onOpenMerge('nest')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                Move this under another event…
+              </button>
+            ) : (
+              <p style={styles.dangerNote}>
+                This event has its own sub-events, so it can't sit under another event. Separate them first.
+              </p>
+            )}
+            <button type="button" onClick={() => onOpenMerge('merge')} style={styles.dangerSecondaryButton} disabled={actionBusy}>
               This is a duplicate — merge it away…
             </button>
+            {/* Only offered when there's actually a parent to leave, mirroring GroupDetail.tsx's
+                "Move to top level". Named for what the founder asked for rather than for the
+                nesting jargon: the point is that the event ends up standing on its own. */}
+            {parentEvent && (
+              <button type="button" onClick={onMakeStandalone} style={styles.dangerSecondaryButton} disabled={actionBusy}>
+                Separate this from {parentEvent.occasion || 'that event'}
+              </button>
+            )}
             <button
               type="button"
               onClick={onStartDelete}
@@ -2079,10 +2243,14 @@ export function EventDetailView({
           <div style={styles.suggestBanner}>
             {!mergeCandidate ? (
               <>
-                <span>Search for the event you want to keep. Everything here will move there, and this event will be deleted:</span>
+                <span>
+                  {mergeMode === 'nest'
+                    ? 'Search for the event this one should sit under. This event keeps everything it has — its notes, photos, who was there, groups and tags all stay put — it just becomes a part of the one you pick:'
+                    : 'Search for the event you want to keep. Everything here will move there, and this event will be deleted:'}
+                </span>
                 <SearchBox value={mergeSearch} onChange={onMergeSearchChange} placeholder="Search events…" />
                 <div style={styles.mergeResultsList}>
-                  {otherEvents
+                  {(mergeMode === 'nest' ? nestableEvents : otherEvents)
                     // Matched on the full "Parent / Child — date" label, so typing a trip's name
                     // finds the days underneath it too.
                     .map((e) => ({ event: e, label: eventPickerLabel(e) }))
@@ -2107,6 +2275,22 @@ export function EventDetailView({
                   </button>
                 </div>
               </>
+            ) : mergeMode === 'nest' ? (
+              <>
+                <span>
+                  Make this event part of "{eventPlainLabel(mergeCandidate)}"? Nothing is deleted or moved — this
+                  event keeps its own notes, photos, attendees, groups and tags, and you can separate it again at any
+                  time.
+                </span>
+                <div style={styles.suggestButtonRow}>
+                  <button type="button" onClick={onConfirmNest} style={styles.suggestYesButton} disabled={actionBusy}>
+                    {actionBusy ? 'Moving…' : 'Yes, move it'}
+                  </button>
+                  <button type="button" onClick={onBackFromMergeCandidate} style={styles.suggestNoButton} disabled={actionBusy}>
+                    Back
+                  </button>
+                </div>
+              </>
             ) : (
               <>
                 <span>
@@ -2117,6 +2301,19 @@ export function EventDetailView({
                   <button type="button" onClick={onConfirmMerge} style={styles.suggestYesButton} disabled={actionBusy}>
                     {actionBusy ? 'Merging…' : 'Yes, merge'}
                   </button>
+                  {/* The escape hatch for the workflow this replaces: the founder reaches for
+                      "merge" wanting "put this under that". Only offered when the picked event is
+                      a legal target, and when this event has no sub-events of its own. */}
+                  {canBeNested && nestableEvents.some((e) => e.id === mergeCandidate.id) && (
+                    <button
+                      type="button"
+                      onClick={() => onChangeMergeMode('nest')}
+                      style={styles.suggestNoButton}
+                      disabled={actionBusy}
+                    >
+                      Make it part of that event instead
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={onBackFromMergeCandidate}
@@ -2739,6 +2936,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   dangerButtonRow: { display: 'flex', gap: space.lg, flexWrap: 'wrap' },
+  // Stands in for "Move this under another event…" when that isn't possible, so the row explains
+  // itself instead of quietly coming up one button short.
+  dangerNote: {
+    margin: 0,
+    alignSelf: 'center',
+    fontSize: fontSize.label,
+    color: colors.textMuted,
+    maxWidth: '22rem',
+  },
   dangerSecondaryButton: {
     fontSize: fontSize.label,
     padding: '0.5rem 0.9rem',

@@ -41,11 +41,23 @@ export type EnrichmentGame = {
   espnUrl?: string | null
 }
 
+export type EnrichmentWeatherDay = {
+  date: string
+  highF: number | null
+  lowF: number | null
+  precipInches: number | null
+  windMph: number | null
+  condition: string | null
+}
+
 export type EnrichmentWeather = {
   // `too_soon` = the event hasn't happened yet. Renders as nothing, same as `not_found`, but the
   // Edge Function treats it as revisitable once the date passes.
   status: 'ok' | 'not_found' | 'too_soon'
   date?: string
+  /** Set only for a multi-day event; the numbers above then cover the whole stretch. */
+  endDate?: string
+  days?: EnrichmentWeatherDay[]
   place?: { name: string; region: string | null }
   highF?: number | null
   lowF?: number | null
@@ -60,6 +72,19 @@ const isOk = (v: { status: string } | null | undefined) => Boolean(v && v.status
 
 const round = (n: number | null | undefined) =>
   n === null || n === undefined ? null : Math.round(n)
+
+// Parsed as UTC to match the plain YYYY-MM-DD the archive returns — a local-midnight parse would
+// shift every label back a day for anyone west of Greenwich, which is everyone here.
+const dayLabel = (iso: string, withWeekday = false) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', {
+    weekday: withWeekday ? 'short' : undefined,
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  })
+
+// Under a hundredth of an inch is a rounding artefact, not a day it rained on you.
+const RAIN_THRESHOLD_IN = 0.005
 
 // ---------------------------------------------------------------------------------------------
 
@@ -144,11 +169,13 @@ function GameBox({
 
 function WeatherBox({
   weather,
+  places,
   readOnly,
   refreshing,
   onRefresh,
 }: {
   weather: EnrichmentWeather
+  places: string[]
   readOnly: boolean
   refreshing: boolean
   onRefresh: () => void
@@ -158,10 +185,20 @@ function WeatherBox({
   const precip = weather.precipInches ?? 0
   const wind = round(weather.windMph)
 
+  // A multi-day event's numbers above are the extremes of the whole stretch, so the box has to say
+  // which stretch — otherwise "91° / 54°" reads as one impossibly swingy day.
+  const days = weather.days ?? []
+  const multiDay = days.length > 1
+  const rangeLabel =
+    multiDay && weather.date && weather.endDate
+      ? `${dayLabel(weather.date)} – ${dayLabel(weather.endDate)}`
+      : null
+  const wetDays = days.filter((d) => (d.precipInches ?? 0) > RAIN_THRESHOLD_IN).length
+
   return (
-    <section style={styles.box} aria-label="Weather that day">
+    <section style={styles.box} aria-label={multiDay ? 'Weather those days' : 'Weather that day'}>
       <div style={styles.boxHeaderRow}>
-        <span style={styles.boxLabel}>That day's weather</span>
+        <span style={styles.boxLabel}>{multiDay ? "Those days' weather" : "That day's weather"}</span>
         {!readOnly && <RefreshButton label="Refresh weather" onClick={onRefresh} refreshing={refreshing} />}
       </div>
 
@@ -173,15 +210,56 @@ function WeatherBox({
 
       <p style={styles.factLine}>
         {[
+          rangeLabel,
           weather.atTimeF !== undefined && weather.atTimeLabel
             ? `${round(weather.atTimeF)}° at ${weather.atTimeLabel}`
             : null,
-          precip > 0 ? `${precip.toFixed(2)} in. precipitation` : 'No precipitation',
+          precip > RAIN_THRESHOLD_IN
+            ? multiDay
+              ? `${precip.toFixed(2)} in. over ${wetDays} of the ${days.length} days`
+              : `${precip.toFixed(2)} in. precipitation`
+            : multiDay
+              ? 'No precipitation all week'
+              : 'No precipitation',
           wind !== null ? `wind to ${wind} mph` : null,
         ]
           .filter(Boolean)
           .join(' · ')}
       </p>
+
+      {/* Day by day underneath the roll-up, so "mostly clear" never buries the one afternoon it
+          poured — the whole reason the headline can safely lead with the typical day. */}
+      {multiDay && (
+        <ul style={styles.dayList}>
+          {days.map((d) => (
+            <li key={d.date} style={styles.dayItem}>
+              <span style={styles.dayDate}>{dayLabel(d.date, true)}</span>
+              <span style={styles.dayFacts}>
+                {[
+                  d.highF !== null || d.lowF !== null
+                    ? `${round(d.highF) ?? '—'}° / ${round(d.lowF) ?? '—'}°`
+                    : null,
+                  d.condition,
+                  (d.precipInches ?? 0) > RAIN_THRESHOLD_IN ? `${d.precipInches!.toFixed(2)} in.` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Founder ask, 2026-08-17: the sub-event tiles further down show a title, a date and a head
+          count but never a place, so a trip that moved around has nowhere that says where it went.
+          Listed rather than mapped onto the days above because a day can hold several stops, and
+          the weather was only ever looked up once for the trip as a whole. */}
+      {places.length > 1 && (
+        <p style={styles.placesLine}>
+          <span style={styles.placesLabel}>Where you went: </span>
+          {places.join(' · ')}
+        </p>
+      )}
 
       {/* Naming the place and date we actually looked up is the guard against a quietly wrong
           answer: an event with a guessed date or a vague location shows its own evidence. */}
@@ -248,6 +326,7 @@ export default function EventEnrichmentBoxes({
   game,
   gameCandidates,
   weather,
+  places = [],
   gameDismissed,
   readOnly = false,
   refreshing = false,
@@ -259,6 +338,8 @@ export default function EventEnrichmentBoxes({
   game: EnrichmentGame | null
   gameCandidates: EnrichmentGame[] | null
   weather: EnrichmentWeather | null
+  /** Every place this event and its sub-events happened, already shortened and de-duplicated. */
+  places?: string[]
   gameDismissed: boolean
   readOnly?: boolean
   refreshing?: boolean
@@ -290,6 +371,7 @@ export default function EventEnrichmentBoxes({
       {showWeather && (
         <WeatherBox
           weather={weather!}
+          places={places}
           readOnly={readOnly}
           refreshing={refreshing}
           onRefresh={onRefresh}
@@ -352,6 +434,22 @@ const styles: { [key: string]: React.CSSProperties } = {
   temp: { fontSize: fontSize.h3, color: colors.ink, fontWeight: 700 },
   tempLow: { fontSize: fontSize.lead, color: colors.textFaint },
   condition: { fontSize: fontSize.bodyLg, color: colors.textBody },
+
+  // A plain list, not a table: the day column is short and predictable enough that a fixed width
+  // lines the facts up on its own, and a table here would fight the box on a phone.
+  dayList: { listStyle: 'none', margin: `0 0 ${space.md} 0`, padding: 0 },
+  dayItem: { display: 'flex', gap: space.md, alignItems: 'baseline', margin: '0.15rem 0' },
+  dayDate: {
+    flex: '0 0 4.5rem',
+    fontSize: fontSize.small,
+    fontWeight: 600,
+    color: colors.textBody,
+  },
+  dayFacts: { fontSize: fontSize.small, color: colors.textMuted },
+
+  placesLine: { margin: `0 0 ${space.md} 0`, fontSize: fontSize.small, color: colors.textBody },
+  placesLabel: { fontWeight: 600, color: colors.textMuted },
+
   caption: { margin: 0, fontSize: fontSize.tiny, color: colors.textFaint },
   captionLink: { color: colors.textFaint, textDecoration: 'underline' },
 

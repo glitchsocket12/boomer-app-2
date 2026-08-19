@@ -46,6 +46,101 @@ export function shiftDate(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10)
 }
 
+/** Inclusive day count: a single day is 1, not 0. */
+export function daysInSpan(startIso: string, endIso: string): number {
+  const ms = Date.parse(`${endIso}T00:00:00Z`) - Date.parse(`${startIso}T00:00:00Z`)
+  return Math.floor(ms / 86_400_000) + 1
+}
+
+/**
+ * A trip longer than this is a data-entry error, not a trip. Capping is what stops one mistyped
+ * end date from asking the weather archive for a decade and then rendering a day-by-day list
+ * nobody could read.
+ */
+export const MAX_SPAN_DAYS = 31
+
+export type DatedRow = { event_date: string | null; event_end_date?: string | null }
+
+/**
+ * The whole stretch of days an event covers, including everything its sub-events cover.
+ *
+ * Sub-events are what actually pin down a trip's shape (founder ask, 2026-08-17: the parent
+ * event's weather should summarize the whole weekend, not just its first day). A parent row
+ * routinely carries a start date and no end — "Sid and Kate's Wedding" is stored as one day while
+ * its six sub-events between them run Thursday to Sunday — and a calendar-imported parent can
+ * carry no date at all while its children are fully dated.
+ *
+ * MIRRORED at src/lib/eventSpan.ts, because Deno can't import from src/. Keep the two in sync;
+ * src/lib/eventSpanParity.test.ts is what stops them drifting.
+ */
+export function eventSpan(
+  moment: DatedRow,
+  children: DatedRow[] = [],
+): { start: string; end: string } | null {
+  let start: string | null = null
+  let end: string | null = null
+
+  for (const row of [moment, ...children]) {
+    const rowStart = row.event_date
+    if (!rowStart) continue
+    // An end date BEFORE its start is real in this data (one event is stored 2026-09-12 ->
+    // 2026-08-15). Trusting it would invert the span and ask for a negative range, so a backwards
+    // end is simply ignored rather than used.
+    const rowEnd =
+      row.event_end_date && row.event_end_date >= rowStart ? row.event_end_date : rowStart
+    if (!start || rowStart < start) start = rowStart
+    if (!end || rowEnd > end) end = rowEnd
+  }
+
+  if (!start || !end) return null
+  return {
+    start,
+    end: daysInSpan(start, end) > MAX_SPAN_DAYS ? shiftDate(start, MAX_SPAN_DAYS - 1) : end,
+  }
+}
+
+/** The days the weather archive can actually answer for, or why it can't. */
+export type WeatherWindow =
+  | { kind: 'none' }
+  | { kind: 'too_soon' }
+  | { kind: 'ok'; start: string; end: string }
+
+/**
+ * An event's span, stopped at today, because the archive answers a future date with a hard 400.
+ *
+ * A trip that has started but not finished therefore gets a window shorter than the trip. That is
+ * on purpose: the stored weather then no longer matches the full window tomorrow, `coversWindow`
+ * says so, and the remaining days fill themselves in without anyone touching the refresh button.
+ *
+ * MIRRORED at src/lib/eventSpan.ts — see eventSpan above.
+ */
+export function weatherWindow(
+  moment: DatedRow,
+  children: DatedRow[],
+  today: string,
+): WeatherWindow {
+  const span = eventSpan(moment, children)
+  if (!span) return { kind: 'none' }
+  if (span.start > today) return { kind: 'too_soon' }
+  return { kind: 'ok', start: span.start, end: span.end > today ? today : span.end }
+}
+
+/**
+ * Whether a stored weather value still covers the whole window. False is what re-fetches, so the
+ * `kind !== 'ok'` cases answer true — a stored `too_soon` on a still-future event is handled by
+ * its own rule, and re-running a lookup that has nothing to look up would just churn.
+ *
+ * MIRRORED at src/lib/eventSpan.ts — see eventSpan above.
+ */
+export function coversWindow(
+  weather: { date?: string | null; endDate?: string | null } | null | undefined,
+  window: WeatherWindow,
+): boolean {
+  if (window.kind !== 'ok') return true
+  if (!weather?.date) return false
+  return weather.date === window.start && (weather.endDate ?? weather.date) === window.end
+}
+
 // ---------------------------------------------------------------------------------------------
 // ESPN
 // ---------------------------------------------------------------------------------------------
@@ -358,30 +453,98 @@ export const WEATHER_CODES: Record<number, string> = {
   99: 'Thunderstorm with hail',
 }
 
-export type Weather = {
-  status: 'ok'
+/** One day of a multi-day span. Absent entirely when the event was a single day. */
+export type WeatherDay = {
   date: string
-  place: Place
   highF: number | null
   lowF: number | null
   precipInches: number | null
   windMph: number | null
   condition: string | null
+}
+
+export type Weather = {
+  status: 'ok'
+  /** First day of the span that was actually requested. */
+  date: string
+  /**
+   * Last day requested, set only when the span ran longer than a day. Stored even though it is
+   * derivable from `days`, because it is what the app compares against to notice that a new
+   * sub-event has stretched the trip and the cached weather no longer covers all of it.
+   */
+  endDate?: string
+  place: Place
+  /** Across the whole span: warmest high, coldest low, total rain, strongest wind. */
+  highF: number | null
+  lowF: number | null
+  precipInches: number | null
+  windMph: number | null
+  condition: string | null
+  /** Day by day, only for a multi-day span — a single-day event stays exactly as it was. */
+  days?: WeatherDay[]
   /** Temperature at the game's start time — the one place in the app with a real time of day. */
   atTimeF?: number
   atTimeLabel?: string
 }
 
+/**
+ * Rolls a run of days into the one line the box leads with.
+ *
+ * The headline condition is the one that covered the MOST days, not the worst one: an afternoon of
+ * drizzle in the middle of a clear four-day weekend should not retitle the trip "Drizzle". Nothing
+ * is hidden by preferring the typical day to the dramatic one, because every day is still listed
+ * underneath. Ties go to whichever condition showed up first, which keeps the answer deterministic
+ * (and therefore keeps a re-fetch from silently rewriting a summary that didn't change).
+ */
+export function summarizeWeatherDays(days: WeatherDay[]): {
+  highF: number | null
+  lowF: number | null
+  precipInches: number | null
+  windMph: number | null
+  condition: string | null
+} {
+  const highs = days.map((d) => d.highF).filter((v): v is number => v !== null)
+  const lows = days.map((d) => d.lowF).filter((v): v is number => v !== null)
+  const precip = days.map((d) => d.precipInches).filter((v): v is number => v !== null)
+  const winds = days.map((d) => d.windMph).filter((v): v is number => v !== null)
+
+  const tally = new Map<string, number>()
+  for (const d of days) if (d.condition) tally.set(d.condition, (tally.get(d.condition) ?? 0) + 1)
+  let condition: string | null = null
+  let best = 0
+  // Insertion order is chronological, so the first-seen tie-break falls out of iterating the map.
+  for (const [label, count] of tally) {
+    if (count > best) {
+      condition = label
+      best = count
+    }
+  }
+
+  return {
+    highF: highs.length ? Math.max(...highs) : null,
+    lowF: lows.length ? Math.min(...lows) : null,
+    precipInches: precip.length ? precip.reduce((a, b) => a + b, 0) : null,
+    windMph: winds.length ? Math.max(...winds) : null,
+    condition,
+  }
+}
+
+/**
+ * One archive call covering the event's whole span. Open-Meteo returns a parallel array per day,
+ * so a four-day trip costs exactly what one day used to — the range is free, only the geocode and
+ * the round trip are not.
+ */
 export async function fetchWeather(
   place: Place,
-  isoDate: string,
+  startIso: string,
+  endIso: string,
   startsAt: string | null,
 ): Promise<Weather | null> {
   const params = new URLSearchParams({
     latitude: String(place.latitude),
     longitude: String(place.longitude),
-    start_date: isoDate,
-    end_date: isoDate,
+    start_date: startIso,
+    end_date: endIso,
     daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,wind_speed_10m_max',
     temperature_unit: 'fahrenheit',
     wind_speed_unit: 'mph',
@@ -397,20 +560,37 @@ export async function fetchWeather(
   const daily = json?.daily
   if (!daily?.time?.length) return null
 
-  // A response can be shaped correctly and still carry nothing (a gap in the record for that
-  // place and day). Without this the box would render a bare "°" and read as broken.
-  if (daily.temperature_2m_max?.[0] == null && daily.temperature_2m_min?.[0] == null) return null
+  const all: WeatherDay[] = daily.time.map((date: string, i: number) => {
+    const code = daily.weather_code?.[i]
+    return {
+      date,
+      highF: daily.temperature_2m_max?.[i] ?? null,
+      lowF: daily.temperature_2m_min?.[i] ?? null,
+      precipInches: daily.precipitation_sum?.[i] ?? null,
+      windMph: daily.wind_speed_10m_max?.[i] ?? null,
+      condition: typeof code === 'number' ? (WEATHER_CODES[code] ?? null) : null,
+    }
+  })
 
-  const code = daily.weather_code?.[0]
+  // A response can be shaped correctly and still carry nothing for a given day (a gap in the
+  // record for that place). Those days are dropped rather than rendered as a bare "°"; if every
+  // day is a gap there is no weather to show at all.
+  const days = all.filter((d) => d.highF !== null || d.lowF !== null)
+  if (days.length === 0) return null
+
   const weather: Weather = {
     status: 'ok',
-    date: isoDate,
+    // The REQUESTED span, not the days that came back — this pair is what the app compares against
+    // to decide the cache still covers the event, and a dropped gap-day must not make it re-fetch
+    // the same missing data forever.
+    date: startIso,
     place,
-    highF: daily.temperature_2m_max?.[0] ?? null,
-    lowF: daily.temperature_2m_min?.[0] ?? null,
-    precipInches: daily.precipitation_sum?.[0] ?? null,
-    windMph: daily.wind_speed_10m_max?.[0] ?? null,
-    condition: typeof code === 'number' ? (WEATHER_CODES[code] ?? null) : null,
+    ...summarizeWeatherDays(days),
+  }
+
+  if (endIso !== startIso) {
+    weather.endDate = endIso
+    weather.days = days
   }
 
   if (startsAt && json?.hourly?.time?.length) {

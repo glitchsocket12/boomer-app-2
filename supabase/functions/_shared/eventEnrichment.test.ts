@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { locationAttempts, normalizeRegion, shiftDate, toEspnDate, toGame } from './eventEnrichment.ts'
+import {
+  locationAttempts,
+  normalizeRegion,
+  shiftDate,
+  summarizeWeatherDays,
+  toEspnDate,
+  toGame,
+} from './eventEnrichment.ts'
 
 // Only the network-free helpers are covered here. The provider calls themselves were verified
 // against the live APIs during the build (Rockies @ Coors Field, 2025-07-04) but are deliberately
@@ -123,5 +130,64 @@ describe('toGame', () => {
     expect(g.leaders).toEqual([])
     expect(g.espnUrl).toBeNull()
     expect(toGame({ id: '2' }, 'nfl')).toBeNull()
+  })
+})
+
+describe('summarizeWeatherDays', () => {
+  const day = (date: string, highF: number, lowF: number, condition: string, precipInches = 0, windMph = 5) =>
+    ({ date, highF, lowF, precipInches, windMph, condition })
+
+  it('reports the extremes of the span, not of any one day', () => {
+    const rolled = summarizeWeatherDays([
+      day('2026-08-13', 84, 58, 'Clear', 0, 8),
+      day('2026-08-14', 91, 61, 'Clear', 0, 6),
+      day('2026-08-15', 76, 54, 'Rain showers', 0.31, 22),
+    ])
+    expect(rolled.highF).toBe(91)
+    expect(rolled.lowF).toBe(54)
+    expect(rolled.windMph).toBe(22)
+    expect(rolled.precipInches).toBeCloseTo(0.31)
+  })
+
+  it('leads with the condition that covered the most days, not the worst one', () => {
+    // An afternoon of rain in the middle of a clear weekend should not retitle the trip "Rain" —
+    // the rainy day is still visible in the day-by-day list underneath.
+    expect(
+      summarizeWeatherDays([
+        day('2026-08-13', 84, 58, 'Clear'),
+        day('2026-08-14', 91, 61, 'Clear'),
+        day('2026-08-15', 76, 54, 'Heavy rain', 1.4),
+      ]).condition,
+    ).toBe('Clear')
+  })
+
+  it('breaks a tie the same way every time, so a re-fetch never rewrites the answer', () => {
+    const days = [
+      day('2026-08-13', 84, 58, 'Overcast'),
+      day('2026-08-14', 91, 61, 'Clear'),
+    ]
+    expect(summarizeWeatherDays(days).condition).toBe('Overcast')
+    expect(summarizeWeatherDays(days).condition).toBe(summarizeWeatherDays(days).condition)
+  })
+
+  it('handles a day the archive only half-answered', () => {
+    const rolled = summarizeWeatherDays([
+      { date: '2026-08-13', highF: 84, lowF: null, precipInches: null, windMph: null, condition: null },
+      day('2026-08-14', 91, 61, 'Clear'),
+    ])
+    expect(rolled.highF).toBe(91)
+    expect(rolled.lowF).toBe(61)
+    expect(rolled.condition).toBe('Clear')
+  })
+
+  it('returns nulls rather than NaN or Infinity when there is nothing to roll up', () => {
+    const rolled = summarizeWeatherDays([])
+    expect(rolled).toEqual({
+      highF: null,
+      lowF: null,
+      precipInches: null,
+      windMph: null,
+      condition: null,
+    })
   })
 })

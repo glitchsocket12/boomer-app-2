@@ -18,6 +18,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { detectSportsTeams } from "../_shared/sportsDetect.ts"
 import {
+  coversWindow,
   fetchWeather,
   geocode,
   locationAttempts,
@@ -25,6 +26,8 @@ import {
   resolveGame,
   todayIso,
   TOO_SOON,
+  weatherWindow,
+  type DatedRow,
   type EspnGame,
 } from "../_shared/eventEnrichment.ts"
 
@@ -47,13 +50,27 @@ serve(async (req) => {
       { global: { headers: { Authorization: req.headers.get("Authorization")! } } },
     )
 
-    const { data: moment } = await supabaseClient
-      .from("moments")
-      .select(
-        "id, occasion, location, event_date, raw_description, weather, game, game_candidates, game_dismissed, notes(content)",
-      )
-      .eq("id", momentId)
-      .single()
+    const [{ data: moment }, { data: childRows }] = await Promise.all([
+      supabaseClient
+        .from("moments")
+        .select(
+          "id, occasion, location, event_date, event_end_date, raw_description, weather, game, game_candidates, game_dismissed, notes(content)",
+        )
+        .eq("id", momentId)
+        .single(),
+      // The sub-events that make up this one, if any — they carry the dates and places the parent
+      // row doesn't (founder ask, 2026-08-17: a trip's weather should cover the whole weekend).
+      // Deliberately its own query rather than folded into the .single() above, for the same
+      // reason summarize-moment splits it out: a select naming parent_moment_id 400s the WHOLE
+      // moment read if that column isn't migrated on this database, which would take the game box
+      // down with it. Failing open here costs only the roll-up.
+      supabaseClient
+        .from("moments")
+        .select("location, event_date, event_end_date")
+        .eq("parent_moment_id", momentId)
+        .order("event_date", { ascending: true, nullsFirst: false }),
+    ])
+    const children = (childRows ?? []) as (DatedRow & { location: string | null })[]
 
     if (!moment) {
       return new Response(JSON.stringify({ error: "Moment not found" }), {
@@ -68,9 +85,17 @@ serve(async (req) => {
     // stored score is a meaningless 0–0. Once the date has passed each is worth exactly one more
     // look. This lives here rather than in the caller so that an automatic re-check can't be
     // confused with the refresh button, which additionally un-dismisses the picker.
-    const past = moment.event_date ? moment.event_date <= todayIso() : false
+    const today = todayIso()
+    const window = weatherWindow(moment as DatedRow, children, today)
+    const past = moment.event_date ? moment.event_date <= today : false
     const gameStale = past && moment.game?.status === "ok" && moment.game?.completed === false
-    const weatherStale = past && moment.weather?.status === "too_soon"
+    // Three ways stored weather stops covering the event. The first is the original one — we
+    // looked before it happened. The other two arrive with sub-events: adding a Sunday to a trip
+    // that ended Saturday stretches the span past what was already fetched, and a trip still under
+    // way was only fetched as far as the archive reached, so it fills in a day at a time.
+    const weatherStale =
+      (past && moment.weather?.status === "too_soon") ||
+      (moment.weather?.status === "ok" && !coversWindow(moment.weather, window))
 
     const wantGame =
       Boolean(refresh) || (moment.game === null && moment.game_candidates === null) || gameStale
@@ -139,22 +164,28 @@ serve(async (req) => {
         // NAME is deliberately not used for the lookup — "Oracle Park" resolves to Arizona, and
         // several big stadiums aren't in the gazetteer at all.
         const confirmed = game && game.status === "ok" ? (game as EspnGame) : null
+        // A parent event often has no location of its own while every one of its parts does — a
+        // trip row called "Mary Alice Visit" whose only address lives on the day inside it. Falling
+        // through to the first sub-event that names a place is what gets those a weather box at all.
+        const ownLocation = moment.location || children.find((c) => c.location)?.location || null
         const attempts = confirmed?.venueCity
           ? [confirmed.venueCity]
-          : moment.location
-            ? locationAttempts(moment.location)
+          : ownLocation
+            ? locationAttempts(ownLocation)
             : []
 
-        if (!moment.event_date || attempts.length === 0) {
+        // `window` (computed above) covers this event AND everything underneath it, so a parent
+        // stored as a single day still gets the whole weekend it really was.
+        if (window.kind === "none" || attempts.length === 0) {
           update.weather = NOT_FOUND
-        } else if (moment.event_date > todayIso()) {
+        } else if (window.kind === "too_soon") {
           // The archive answers a future date with a 400. Checking first turns a wasted round
           // trip into a stored sentinel the frontend knows to revisit once the day arrives.
           update.weather = TOO_SOON
         } else {
           const place = await geocode(attempts, confirmed?.venueState ?? null)
           const weather = place
-            ? await fetchWeather(place, moment.event_date, confirmed?.startsAt ?? null)
+            ? await fetchWeather(place, window.start, window.end, confirmed?.startsAt ?? null)
             : null
           update.weather = weather ?? NOT_FOUND
         }

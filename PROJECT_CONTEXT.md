@@ -983,6 +983,23 @@ src/
 │   │                            put whole trips' sub-events on day one and left them
 │   │                            tie-breaking by creation order. Pre-2026-08-08 sub-events
 │   │                            still carry the inherited date until edited by hand.
+│   │                            Nesting is editable both ways from the Manage panel
+│   │                            (2026-08-18): "Move this under another event…" reuses
+│   │                            the merge picker in 'nest' mode (mergeMode state, same
+│   │                            shape as GroupDetail) and "Separate this from X" sets
+│   │                            parent_moment_id back to null. Neither moves any data —
+│   │                            notes, photos, attendees, groups and tags stay put — and
+│   │                            each undoes the other. Both null the affected parents'
+│   │                            cached summaries (a re-parent nulls old AND new), since a
+│   │                            parent's summary is a per-sub-event roll-up; lazy, so it
+│   │                            rebuilds on next view. Cached weather needs no
+│   │                            invalidation — the span changes, coversWindow() sees the
+│   │                            stored range no longer matches and refetches itself.
+│   │                            Nest targets are top-level events only (nestableEvents
+│   │                            filters on momentParentById), and an event that HAS
+│   │                            sub-events shows a line saying it can't sit under another
+│   │                            event instead of the button — both rules keep the tree one
+│   │                            level deep, which is what the whole UI assumes.
 │   │                            Summary regeneration (2026-08-08): the gate is
 │   │                            `hasSomethingToSummarize()` (lib/moments.ts), not
 │   │                            `raw_description.trim()` — a manually-created event has a
