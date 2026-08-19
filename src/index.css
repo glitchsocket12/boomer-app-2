@@ -14,6 +14,65 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+   Notebook entry prose (2026-08-19). Two classes, ONE ruleset: `.notebook-prose`
+   styles a saved entry, `.notebook-editor-content` styles the same markup while
+   it's being written. They must stay identical or text visibly reflows the
+   moment you press Save, which reads as the app mangling what you wrote.
+   Written in CSS rather than inline styles because these apply to HTML produced
+   by the editor, which React never renders element by element.
+   --------------------------------------------------------------------------- */
+.notebook-prose > :first-child,
+.notebook-editor-content > :first-child { margin-top: 0; }
+.notebook-prose > :last-child,
+.notebook-editor-content > :last-child { margin-bottom: 0; }
+
+.notebook-prose p,
+.notebook-editor-content p { margin: 0 0 0.6em; }
+
+.notebook-prose h2,
+.notebook-editor-content h2 { font-size: 1.25rem; font-weight: 600; margin: 0.8em 0 0.35em; }
+.notebook-prose h3,
+.notebook-editor-content h3 { font-size: 1.08rem; font-weight: 600; margin: 0.8em 0 0.35em; }
+
+.notebook-prose ul, .notebook-prose ol,
+.notebook-editor-content ul, .notebook-editor-content ol { margin: 0 0 0.6em; padding-left: 1.4em; }
+.notebook-prose li,
+.notebook-editor-content li { margin: 0.15em 0; }
+/* ProseMirror wraps each list item's text in its own <p>; without this every bullet
+   inherits the 0.6em paragraph gap and the list falls apart into loose lines. */
+.notebook-prose li > p,
+.notebook-editor-content li > p { margin: 0; }
+
+.notebook-prose blockquote,
+.notebook-editor-content blockquote {
+  margin: 0 0 0.6em;
+  padding-left: 0.9em;
+  border-left: 3px solid #DDE1E6;
+  color: #4A4F57;
+}
+
+.notebook-prose a,
+.notebook-editor-content a { color: #2D7FF9; }
+
+.notebook-prose code,
+.notebook-editor-content code {
+  background: #F3F4F6;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+/* The empty-state hint. ProseMirror's empty paragraph still holds a trailing <br>, so `:empty`
+   can never match it — the Placeholder extension tags the node and this draws it. */
+.notebook-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: #9AA0A8;
+}
+
+/* ---------------------------------------------------------------------------
    Touch devices (phones/tablets). Found 2026-08-01 opening the app on a real
    iPhone for the first time. These are correctness fixes, NOT the mobile
    redesign — see PWA.md.

@@ -133,14 +133,23 @@ serve(async (req) => {
       // run by hand, so on a database where it hasn't been pasted yet these two come back empty and
       // the chat loses notebook context, instead of the whole function going down.
       //
-      // ai_visible is filtered HERE, in the query, not when the block is rendered. It's a privacy
-      // promise the founder can toggle per notebook, and the narrower the gap between "excluded"
-      // and "never fetched", the fewer ways a later edit can accidentally leak one into the prompt.
-      supabaseClient.from("notebooks").select("id, name").eq("ai_visible", true).order("id"),
+      // Both switches are applied HERE, in the query, not when the block is rendered. They're
+      // privacy promises the founder controls per notebook, and the narrower the gap between
+      // "excluded" and "never fetched", the fewer ways a later edit can leak one into the prompt.
+      // `locked` is the stronger of the two: a locked notebook is off-limits regardless of
+      // ai_visible, because otherwise anyone at an open tab just asks Boomer instead of opening it.
+      supabaseClient
+        .from("notebooks")
+        .select("id, name")
+        .eq("ai_visible", true)
+        .eq("locked", false)
+        .order("id"),
+      // content_text, never content — entries are written in a rich editor, and feeding the model
+      // HTML would spend tokens on markup it has no use for.
       fetchAllRows((from, to) =>
         supabaseClient
           .from("notebook_entries")
-          .select("id, notebook_id, content, entry_date, created_at, notebook_entry_people(person_id)")
+          .select("id, notebook_id, content_text, entry_date, created_at, notebook_entry_people(person_id)")
           .order("id")
           .range(from, to)
       ),
@@ -314,8 +323,8 @@ serve(async (req) => {
     for (const nb of notebooks ?? []) visibleNotebookNameById[nb.id] = nb.name
 
     const notebooksContext = (notebookEntries ?? [])
-      // Entries whose notebook is switched off (or deleted) have no name here and drop out.
-      .filter((e: any) => visibleNotebookNameById[e.notebook_id])
+      // Entries whose notebook is switched off, locked, or deleted have no name here and drop out.
+      .filter((e: any) => visibleNotebookNameById[e.notebook_id] && e.content_text?.trim())
       .sort((a: any, b: any) => {
         // Same one-timeline ordering as the browser's sortEntries: an undated entry ranks by when
         // it was written. Tie-broken by id so the block is byte-stable across turns — an unstable
@@ -330,7 +339,7 @@ serve(async (req) => {
         const people = (e.notebook_entry_people ?? [])
           .map((row: any) => nameById[row.person_id])
           .filter(Boolean)
-        const parts = [`[${visibleNotebookNameById[e.notebook_id]}] ${e.content}`]
+        const parts = [`[${visibleNotebookNameById[e.notebook_id]}] ${e.content_text.trim()}`]
         if (e.entry_date) parts.push(`Date: ${e.entry_date}`)
         if (people.length) parts.push(`People: ${[...new Set(people)].join(", ")}`)
         return parts.join(" | ")

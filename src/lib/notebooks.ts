@@ -16,6 +16,7 @@ export type Notebook = {
   id: string
   name: string
   ai_visible: boolean
+  locked: boolean
   created_at: string
   /** Denormalised for the list page only — not a column. */
   entryCount: number
@@ -70,7 +71,7 @@ export async function fetchNotebooks(): Promise<{ notebooks: Notebook[]; error: 
   const { data, error } = await fetchAllRows<any>((from, to) =>
     supabase
       .from('notebooks')
-      .select('id, name, ai_visible, created_at, notebook_entries(count)')
+      .select('id, name, ai_visible, locked, created_at, notebook_entries(count)')
       .order('created_at', { ascending: false })
       .order('id')
       .range(from, to)
@@ -79,6 +80,7 @@ export async function fetchNotebooks(): Promise<{ notebooks: Notebook[]; error: 
     id: n.id,
     name: n.name,
     ai_visible: n.ai_visible,
+    locked: n.locked ?? false,
     created_at: n.created_at,
     // PostgREST returns an aggregate embed as [{ count: N }], and as [] for an empty notebook.
     entryCount: n.notebook_entries?.[0]?.count ?? 0,
@@ -89,7 +91,7 @@ export async function fetchNotebooks(): Promise<{ notebooks: Notebook[]; error: 
 export async function fetchNotebook(id: string): Promise<{ notebook: Notebook | null; error: QueryError }> {
   const { data, error } = await supabase
     .from('notebooks')
-    .select('id, name, ai_visible, created_at')
+    .select('id, name, ai_visible, locked, created_at')
     .eq('id', id)
     .maybeSingle()
   if (error || !data) return { notebook: null, error: (error as QueryError) ?? null }
@@ -151,9 +153,17 @@ export async function deleteNotebook(id: string): Promise<QueryError> {
   return error as QueryError
 }
 
+/**
+ * `content` is editor HTML; `content_text` is the same thing flattened to words.
+ *
+ * Stored rather than derived because the two readers can't derive it: search would otherwise match
+ * "strong" inside every bold word, and `converse` runs on Deno where there's no DOM to parse with.
+ * Both are written together here so they can never drift — see lib/richText.ts.
+ */
 export async function addEntry(
   notebookId: string,
   content: string,
+  contentText: string,
   entryDate: string | null
 ): Promise<{ id: string } | null> {
   const {
@@ -162,7 +172,13 @@ export async function addEntry(
 
   const { data, error } = await supabase
     .from('notebook_entries')
-    .insert({ user_id: user?.id, notebook_id: notebookId, content, entry_date: entryDate })
+    .insert({
+      user_id: user?.id,
+      notebook_id: notebookId,
+      content,
+      content_text: contentText,
+      entry_date: entryDate,
+    })
     .select('id')
     .single()
 
@@ -175,7 +191,7 @@ export async function addEntry(
 
 export async function updateEntry(
   id: string,
-  patch: { content?: string; entry_date?: string | null }
+  patch: { content?: string; content_text?: string; entry_date?: string | null }
 ): Promise<QueryError> {
   const { error } = await supabase.from('notebook_entries').update(patch).eq('id', id)
   return error as QueryError
@@ -193,6 +209,59 @@ export async function linkPerson(entryId: string, personId: string): Promise<Que
     .from('notebook_entry_people')
     .upsert({ entry_id: entryId, person_id: personId }, { onConflict: 'entry_id,person_id' })
   return error as QueryError
+}
+
+export async function setLocked(id: string, locked: boolean): Promise<QueryError> {
+  const { error } = await supabase.from('notebooks').update({ locked }).eq('id', id)
+  return error as QueryError
+}
+
+// --- The PIN -----------------------------------------------------------------------------------
+//
+// All three go through security-definer RPCs. `notebook_pins` has RLS on and NO policy, so the
+// hash is unreachable from the client entirely — see 2026-08-19-notebook-editor-and-lock.sql for
+// why that matters and, just as importantly, for what this lock does NOT protect against.
+
+export async function getPinStatus(): Promise<{ hasPin: boolean; lockedUntil: string | null }> {
+  const { data, error } = await supabase.rpc('notebook_pin_status')
+  if (error || !data) return { hasPin: false, lockedUntil: null }
+  return { hasPin: !!(data as any).has_pin, lockedUntil: (data as any).locked_until ?? null }
+}
+
+/**
+ * `currentPin` is required to change an existing PIN. The forgotten-PIN path leaves it null and
+ * instead relies on the account password having just been re-entered — see `reauthenticate` below
+ * and the function's own comment in the migration.
+ */
+export async function setPin(newPin: string, currentPin: string | null): Promise<{ error: string | null }> {
+  const { error } = await supabase.rpc('set_notebook_pin', {
+    p_new_pin: newPin,
+    p_current_pin: currentPin,
+  })
+  return { error: error ? error.message : null }
+}
+
+export async function verifyPin(pin: string): Promise<{ ok: boolean; lockedOut: boolean }> {
+  const { data, error } = await supabase.rpc('verify_notebook_pin', { p_pin: pin })
+  if (error) return { ok: false, lockedOut: /too many attempts/i.test(error.message) }
+  return { ok: data === true, lockedOut: false }
+}
+
+/**
+ * Re-enter the account password to prove it's still you, which is what earns the right to reset a
+ * forgotten PIN. Uses a fresh sign-in rather than a password check because Supabase has no
+ * "verify this password" call — the side effect is a new token for the same account, which is
+ * exactly the freshness signal `set_notebook_pin` looks for.
+ */
+export async function reauthenticate(password: string): Promise<{ ok: boolean; error: string | null }> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user?.email) return { ok: false, error: 'No signed-in account.' }
+
+  const { error } = await supabase.auth.signInWithPassword({ email: user.email, password })
+  if (error) return { ok: false, error: 'That password did not match.' }
+  return { ok: true, error: null }
 }
 
 export async function unlinkPerson(entryId: string, personId: string): Promise<QueryError> {
