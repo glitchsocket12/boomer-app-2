@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import AutoGrowTextarea, { LONG_NOTE_MAX_HEIGHT_PX } from '../components/AutoGrowTextarea'
-import VoiceInputButton from '../components/VoiceInputButton'
+import RichTextEditor from '../components/RichTextEditor'
+import NotebookLockGate from '../components/NotebookLockGate'
 import SearchAddPicker from '../components/SearchAddPicker'
 import ManagePanel from '../components/ManagePanel'
 import { PersonChip } from '../components/Chips'
 import { formatDateRange } from '../lib/dates'
+import { htmlToPlainText, isBlankHtml, toRenderableHtml } from '../lib/richText'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { supabase } from '../lib/supabase'
 import {
@@ -13,10 +14,13 @@ import {
   deleteNotebook,
   fetchEntries,
   fetchNotebook,
+  getPinStatus,
   isMissingTable,
   linkPerson,
   renameNotebook,
   setAiVisible,
+  setLocked,
+  setPin,
   unlinkPerson,
   updateEntry,
   type NotebookEntry,
@@ -76,6 +80,16 @@ export default function NotebookDetail({
   const [renameValue, setRenameValue] = useState('')
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
+  // Lock state. `unlocked` deliberately lives in component state and nowhere else: leaving the
+  // notebook unmounts this page, so walking away re-arms the lock with no timer to get wrong.
+  const [isLocked, setIsLocked] = useState(false)
+  const [unlocked, setUnlocked] = useState(false)
+  const [pinPrompt, setPinPrompt] = useState(false)
+  const [newPinValue, setNewPinValue] = useState('')
+  const [currentPinValue, setCurrentPinValue] = useState('')
+  const [hasPin, setHasPin] = useState(false)
+  const [lockError, setLockError] = useState<string | null>(null)
+
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,7 +109,10 @@ export default function NotebookDetail({
       setName(notebook.name)
       setRenameValue(notebook.name)
       setAiVisibleState(notebook.ai_visible)
+      setIsLocked(notebook.locked)
     }
+    const status = await getPinStatus()
+    setHasPin(status.hasPin)
     setEntries(rows)
     setPeople(peopleResult.data)
     setLoading(false)
@@ -110,10 +127,14 @@ export default function NotebookDetail({
   }
 
   async function handleAdd() {
-    const content = draft.trim()
-    if (!content || saving) return
+    if (isBlankHtml(draft) || saving) return
     setSaving(true)
-    const created = await addEntry(notebookId, content, showDraftDate && draftDate ? draftDate : null)
+    const created = await addEntry(
+      notebookId,
+      draft,
+      htmlToPlainText(draft),
+      showDraftDate && draftDate ? draftDate : null
+    )
     setSaving(false)
     if (!created) return
     setDraft('')
@@ -127,14 +148,20 @@ export default function NotebookDetail({
 
   function startEditing(entry: NotebookEntry) {
     setEditingId(entry.id)
-    setEditText(entry.content)
+    // Through toRenderableHtml, not raw: an entry written before the editor existed is plain text,
+    // and handing that straight to TipTap would parse it as markup — collapsing its line breaks and
+    // swallowing any stray "<". This escapes it and turns the newlines into real breaks first.
+    setEditText(toRenderableHtml(entry.content))
     setEditDate(entry.entry_date ?? '')
   }
 
   async function handleSaveEdit(entryId: string) {
-    const content = editText.trim()
-    if (!content) return
-    await updateEntry(entryId, { content, entry_date: editDate || null })
+    if (isBlankHtml(editText)) return
+    await updateEntry(entryId, {
+      content: editText,
+      content_text: htmlToPlainText(editText),
+      entry_date: editDate || null,
+    })
     setEditingId(null)
     await reloadEntries()
   }
@@ -171,6 +198,40 @@ export default function NotebookDetail({
     await setAiVisible(notebookId, next)
   }
 
+  async function handleToggleLock() {
+    if (isLocked) {
+      // Unlocking is only reachable from inside an already-unlocked notebook, so the PIN has
+      // just been proven — no need to ask for it twice.
+      setIsLocked(false)
+      setLockError(null)
+      await setLocked(notebookId, false)
+      return
+    }
+    // Locking the first notebook is also where the PIN gets created; after that it's a straight flip.
+    if (!hasPin) {
+      setPinPrompt(true)
+      return
+    }
+    setIsLocked(true)
+    setUnlocked(true)
+    await setLocked(notebookId, true)
+  }
+
+  async function handleCreatePin() {
+    const next = newPinValue.trim()
+    if (next.length < 4) return setLockError('Use at least 4 characters.')
+    setLockError(null)
+    const { error } = await setPin(next, hasPin ? currentPinValue.trim() || null : null)
+    if (error) return setLockError(error)
+    setHasPin(true)
+    setPinPrompt(false)
+    setNewPinValue('')
+    setCurrentPinValue('')
+    setIsLocked(true)
+    setUnlocked(true)
+    await setLocked(notebookId, true)
+  }
+
   async function handleDeleteNotebook() {
     await deleteNotebook(notebookId)
     setManageOpen(false)
@@ -178,6 +239,19 @@ export default function NotebookDetail({
   }
 
   const pickerItems = people.map((p) => ({ id: p.id, label: personLabelOf(p) }))
+
+  // Before anything else — including the loading state, so a locked notebook's entries never reach
+  // the DOM at all rather than being drawn and then covered over.
+  if (isLocked && !unlocked) {
+    return (
+      <NotebookLockGate
+        notebookName={name || 'Notebook'}
+        backLabel={backLabel}
+        onBack={onBack}
+        onUnlocked={() => setUnlocked(true)}
+      />
+    )
+  }
 
   return (
     <div style={styles.page}>
@@ -203,17 +277,13 @@ export default function NotebookDetail({
       ) : (
         <>
           <div style={styles.composer}>
-            <div style={styles.composerRow}>
-              <AutoGrowTextarea
-                value={draft}
-                onChange={setDraft}
-                placeholder="Write something…"
-                disabled={saving}
-                maxHeightPx={LONG_NOTE_MAX_HEIGHT_PX}
-                style={styles.composerInput}
-              />
-              <VoiceInputButton value={draft} onChange={setDraft} disabled={saving} onBusyChange={setVoiceBusy} />
-            </div>
+            <RichTextEditor
+              value={draft}
+              onChange={setDraft}
+              placeholder="Write something…"
+              disabled={saving}
+              onVoiceBusyChange={setVoiceBusy}
+            />
             <div style={styles.composerActions}>
               {showDraftDate ? (
                 <input
@@ -232,7 +302,7 @@ export default function NotebookDetail({
                 onClick={handleAdd}
                 /* Held shut while the mic is still working so tapping Save doesn't drop the tail of
                    a dictation that hasn't landed in the box yet. */
-                disabled={saving || voiceBusy || !draft.trim()}
+                disabled={saving || voiceBusy || isBlankHtml(draft)}
                 style={styles.saveButton}
               >
                 {saving ? 'Saving…' : 'Save'}
@@ -249,12 +319,7 @@ export default function NotebookDetail({
               {entries.map((entry) =>
                 editingId === entry.id ? (
                   <div key={entry.id} style={styles.entryCardEditing}>
-                    <AutoGrowTextarea
-                      value={editText}
-                      onChange={setEditText}
-                      maxHeightPx={LONG_NOTE_MAX_HEIGHT_PX}
-                      style={styles.composerInput}
-                    />
+                    <RichTextEditor value={editText} onChange={setEditText} autoFocus />
                     <div style={styles.editRow}>
                       <input
                         type="date"
@@ -310,7 +375,14 @@ export default function NotebookDetail({
                 ) : (
                   <div key={entry.id} style={styles.entryCard}>
                     {entry.entry_date && <div style={styles.entryDate}>{formatDateRange(entry.entry_date, null)}</div>}
-                    <div style={styles.entryContent}>{entry.content}</div>
+                    {/* Sanitized on the way out, not trusted from the database — see lib/richText.ts.
+                        TipTap already constrains what it writes, so this is the guard for rows that
+                        predate the editor or were changed by anything other than it. */}
+                    <div
+                      className="notebook-prose"
+                      style={styles.entryContent}
+                      dangerouslySetInnerHTML={{ __html: toRenderableHtml(entry.content) }}
+                    />
                     <div style={styles.entryFooter}>
                       <div style={styles.chipRow}>
                         {entry.people.map((p) => (
@@ -366,6 +438,62 @@ export default function NotebookDetail({
             {aiVisible ? 'On' : 'Off'}
           </button>
         </div>
+
+        <div style={styles.toggleRow}>
+          <div>
+            <div style={styles.toggleTitle}>Lock this notebook</div>
+            <div style={styles.toggleHelp}>
+              Asks for your PIN before opening it, every time you come back to it. It's also kept out
+              of search and out of Boomer while locked. This guards against someone finding your tab
+              open — it isn't encryption.
+            </div>
+          </div>
+          <button
+            onClick={handleToggleLock}
+            role="switch"
+            aria-checked={isLocked}
+            style={isLocked ? styles.toggleOn : styles.toggleOff}
+          >
+            {isLocked ? 'On' : 'Off'}
+          </button>
+        </div>
+
+        {pinPrompt && (
+          <div style={styles.pinSetup}>
+            <p style={styles.pinSetupText}>
+              Pick a PIN. It's the same PIN for every locked notebook, and you can reset it with your
+              account password if you forget it.
+            </p>
+            {hasPin && (
+              <input
+                type="password"
+                value={currentPinValue}
+                onChange={(e) => setCurrentPinValue(e.target.value)}
+                placeholder="Current PIN"
+                style={styles.renameInput}
+                aria-label="Current PIN"
+              />
+            )}
+            <div style={styles.editRow}>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={newPinValue}
+                onChange={(e) => setNewPinValue(e.target.value)}
+                placeholder="New PIN (4+ characters)"
+                style={styles.renameInput}
+                aria-label="New PIN"
+              />
+              <button onClick={handleCreatePin} style={styles.saveButton} disabled={newPinValue.trim().length < 4}>
+                Save
+              </button>
+            </div>
+            {lockError && <p style={styles.lockError}>{lockError}</p>}
+            <button onClick={() => { setPinPrompt(false); setLockError(null) }} style={styles.subtleButton}>
+              Cancel
+            </button>
+          </div>
+        )}
 
         <div style={styles.dangerZone}>
           {confirmingDelete ? (
@@ -500,11 +628,13 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.textFaint,
     marginBottom: space.xs,
   },
+  // No `whiteSpace: pre-wrap` — line breaks are real <p>/<br> elements now, and pre-wrap would
+  // additionally honour the newlines the editor puts BETWEEN tags when it serialises, doubling
+  // every gap. Legacy plain-text entries get their breaks from toRenderableHtml instead.
   entryContent: {
     fontSize: fontSize.body,
     color: colors.ink,
     lineHeight: 1.65,
-    whiteSpace: 'pre-wrap',
   },
   entryFooter: {
     display: 'flex',
@@ -603,6 +733,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
+  pinSetup: {
+    marginTop: space.lg,
+    padding: space.lg,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSunk,
+  },
+  pinSetupText: {
+    fontSize: fontSize.small,
+    color: colors.textBody,
+    lineHeight: 1.55,
+    margin: `0 0 ${space.md}`,
+  },
+  lockError: { fontSize: fontSize.small, color: colors.danger, margin: `${space.md} 0 0` },
   dangerZone: { marginTop: space.xxl, paddingTop: space.xl, borderTop: border.light },
   dangerText: { fontSize: fontSize.body, color: colors.textBody, margin: `0 0 ${space.md}`, lineHeight: 1.6 },
   loading: { fontSize: fontSize.body, color: colors.textMuted },

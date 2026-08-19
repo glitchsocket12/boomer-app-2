@@ -47,7 +47,9 @@ type GroupRow = { id: string; name: string; summary: string | null; parent_group
 type NoteRow = { id: string; content: string; person_id: string | null; moment_id: string | null; group_id: string | null }
 type TagRow = { id: string; name: string }
 type NotebookRow = { id: string; name: string }
-type NotebookEntryRow = { id: string; notebook_id: string; content: string }
+// content_text, never content: entries are written in a rich editor, and searching the raw HTML
+// would match "strong" inside every bold word and "li" inside every list.
+type NotebookEntryRow = { id: string; notebook_id: string; content_text: string | null }
 
 /** Joined with " · " into a doc's body — the bits that should match without cluttering the row. */
 function joinBody(parts: (string | null | undefined)[]): string | undefined {
@@ -184,9 +186,11 @@ function buildNotebookDocs(notebooks: NotebookRow[], entries: NotebookEntryRow[]
     target: { kind: 'notebook' as const, id: n.id, label: n.name },
   }))
   for (const e of entries) {
-    const content = e.content?.trim()
+    const content = e.content_text?.trim()
     const notebookName = nameById.get(e.notebook_id)
-    // An orphan — its notebook was deleted, or is a row this account can't see.
+    // No name means the notebook was deleted, is a row this account can't see — or is LOCKED, since
+    // the query above never fetched those. That last case is why this filter is load-bearing rather
+    // than just defensive.
     if (!content || !notebookName) continue
     docs.push({
       kind: 'notebook',
@@ -238,11 +242,13 @@ export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: Q
     // Kept out of the moments select above so a missing `parent_moment_id` costs the "Trip / Day 2"
     // prefix and nothing else — see fetchMomentParentIds.
     fetchMomentParentIds(),
+    // Locked notebooks are excluded outright — name included. A lock that still let someone at an
+    // open tab find the contents by searching for a word in them would be decoration.
     fetchAllRows<NotebookRow>((from, to) =>
-      supabase.from('notebooks').select('id, name').order('id').range(from, to)
+      supabase.from('notebooks').select('id, name').eq('locked', false).order('id').range(from, to)
     ),
     fetchAllRows<NotebookEntryRow>((from, to) =>
-      supabase.from('notebook_entries').select('id, notebook_id, content').order('id').range(from, to)
+      supabase.from('notebook_entries').select('id, notebook_id, content_text').order('id').range(from, to)
     ),
   ])
 

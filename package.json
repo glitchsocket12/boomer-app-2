@@ -15,6 +15,10 @@
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@supabase/supabase-js": "^2.110.3",
+    "@tiptap/extensions": "^3.30.2",
+    "@tiptap/pm": "^3.30.2",
+    "@tiptap/react": "^3.30.2",
+    "@tiptap/starter-kit": "^3.30.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -24,6 +28,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "deno": "^2.9.5",
+    "happy-dom": "^20.11.2",
     "oxlint": "^1.73.0",
     "supabase": "^2.109.1",
     "typescript": "~6.0.2",

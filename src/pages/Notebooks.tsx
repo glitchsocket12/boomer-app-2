@@ -84,7 +84,9 @@ export function NotebooksView({
               <span style={styles.cardName}>{n.name}</span>
               <span style={styles.cardMeta}>
                 {n.entryCount === 0 ? 'Empty' : n.entryCount === 1 ? '1 entry' : `${n.entryCount} entries`}
-                {!n.ai_visible && <span style={styles.privateTag}>Private</span>}
+                {n.locked && <span style={styles.lockedTag}>🔒 Locked</span>}
+                {/* Only worth saying when the notebook isn't locked — locking already implies it. */}
+                {!n.ai_visible && !n.locked && <span style={styles.privateTag}>Private</span>}
               </span>
             </button>
           ))}
@@ -229,6 +231,14 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: border.light,
     backgroundColor: colors.surfaceSunk,
     color: colors.textSubtle,
+  },
+  lockedTag: {
+    fontSize: fontSize.micro,
+    padding: '0.1rem 0.45rem',
+    borderRadius: radius.pill,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
   },
   loading: { fontSize: fontSize.body, color: colors.textMuted },
   empty: {
