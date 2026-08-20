@@ -21,6 +21,7 @@ import {
   type Union,
   type TreeSide,
 } from '../lib/familyTree'
+import { findTreeIssues } from '../lib/treeHealth'
 import {
   linkRelationship,
   createAndLinkRelationship,
@@ -1455,7 +1456,63 @@ export function FamilyTreeView({
         </div>
       ))}
 
+      {!readOnly && graph && <TreeHealth graph={graph} onSelectPerson={onSelectPerson} />}
+
       <p style={styles.legend}>{legendText}</p>
+    </div>
+  )
+}
+
+/**
+ * What the data says that can't be true. Runs over the graph already in memory — no query, no AI,
+ * nothing to cache — so it can just run rather than hide behind a button. Collapsed by default:
+ * the list is normally short and always the same until the founder changes something, and a tree
+ * page that opens with a warning banner every time would train them to look past it.
+ */
+function TreeHealth({
+  graph,
+  onSelectPerson,
+}: {
+  graph: Graph
+  onSelectPerson?: (id: string, name: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const issues = useMemo(() => findTreeIssues(graph), [graph])
+
+  if (issues.length === 0) {
+    return <p style={styles.healthClean}>Nothing in your family data looks off.</p>
+  }
+
+  return (
+    <div style={styles.healthBanner}>
+      <button type="button" onClick={() => setOpen((v) => !v)} style={styles.healthToggle}>
+        {open ? '▾' : '▸'} {issues.length === 1 ? '1 thing in your family data' : `${issues.length} things in your family data`} worth
+        a look
+      </button>
+      {open && (
+        <div style={styles.healthList}>
+          {issues.map((issue, i) => (
+            <div key={`${issue.kind}:${issue.personIds.join('-')}:${i}`} style={styles.healthItem}>
+              <span>{issue.message}</span>
+              <span style={styles.healthFix}>{issue.fix}</span>
+              {onSelectPerson && (
+                <span style={styles.healthPeople}>
+                  {issue.personIds.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => onSelectPerson(id, graph.nameById.get(id) ?? 'Someone')}
+                      style={styles.textLinkButton}
+                    >
+                      {graph.nameById.get(id) ?? 'Someone'}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1611,4 +1668,31 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
   },
   legend: { fontSize: '0.78rem', color: colors.textFaintest, marginTop: space.xl, lineHeight: 1.5 },
+  healthClean: { fontSize: fontSize.small, color: colors.textFaintest, marginTop: space.xl, marginBottom: 0 },
+  healthBanner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: space.md,
+    marginTop: space.xl,
+    padding: '0.85rem 1rem',
+    borderRadius: radius.lg,
+    border: border.suggest,
+    backgroundColor: colors.suggestBg,
+    color: colors.suggestDeep,
+  },
+  healthToggle: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    textAlign: 'left',
+    fontSize: fontSize.body,
+    fontWeight: 600,
+    color: colors.suggestDeep,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  healthList: { display: 'flex', flexDirection: 'column', gap: space.lg },
+  healthItem: { display: 'flex', flexDirection: 'column', gap: space.xs, fontSize: fontSize.body, lineHeight: 1.5 },
+  healthFix: { fontSize: fontSize.small, color: colors.textBody },
+  healthPeople: { display: 'flex', flexWrap: 'wrap', gap: space.md },
 }
