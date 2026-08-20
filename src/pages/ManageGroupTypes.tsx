@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { DEFAULT_GROUP_TYPES } from '../lib/groupTypes'
-import { border, colors, fontFamily, fontSize, maxWidth, radius, space } from '../lib/theme'
+import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
 type GroupTypeRow = { id: string; name: string; usageCount: number }
 
@@ -306,7 +306,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     alignItems: 'center',
     width: '100%',
     padding: '0.75rem 0',
-    borderTop: '1px solid #F0EEE8',
+    borderTop: `1px solid ${neutral.warmLine}`,
     flexWrap: 'wrap',
     gap: space.md,
   },
@@ -318,7 +318,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.label,
     padding: '0.4rem 0.75rem',
     borderRadius: radius.sm,
-    border: '1px solid #999',
+    border: `1px solid ${neutral.grey500}`,
     backgroundColor: 'transparent',
     color: colors.textBody,
     cursor: 'pointer',

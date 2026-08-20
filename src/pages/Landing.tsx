@@ -379,7 +379,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: radius.md,
     backgroundColor: 'transparent',
     color: colors.ink,
-    border: '2px solid #2E4034',
+    border: `2px solid ${neutral.forest}`,
     cursor: 'pointer',
     fontFamily,
     marginTop: space.md,
@@ -474,13 +474,13 @@ const styles: { [key: string]: React.CSSProperties } = {
   th: {
     textAlign: 'center',
     padding: '0.6rem 0.5rem',
-    borderBottom: '2px solid #2E4034',
+    borderBottom: `2px solid ${neutral.forest}`,
     color: colors.ink,
   },
   thFeature: {
     textAlign: 'left',
     padding: '0.6rem 0.5rem',
-    borderBottom: '2px solid #2E4034',
+    borderBottom: `2px solid ${neutral.forest}`,
     color: colors.ink,
   },
   td: {

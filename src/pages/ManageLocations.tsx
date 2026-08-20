@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { findLocationClusters, tallyLocations, type LocationCluster, type LocationRow } from '../lib/locationGroups'
-import { border, colors, fontFamily, fontSize, maxWidth, radius, space } from '../lib/theme'
+import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
 // Backlog item 66. `moments.location` is free text with no id behind it, so the same real place
 // typed three ways is three unrelated values — and once they exist, nothing in the app can tell
@@ -290,7 +290,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     alignItems: 'center',
     width: '100%',
     padding: '0.75rem 0',
-    borderTop: '1px solid #F0EEE8',
+    borderTop: `1px solid ${neutral.warmLine}`,
     flexWrap: 'wrap',
     gap: space.md,
   },
@@ -302,7 +302,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.label,
     padding: '0.4rem 0.9rem',
     borderRadius: radius.sm,
-    border: '1px solid #999',
+    border: `1px solid ${neutral.grey500}`,
     backgroundColor: 'transparent',
     color: colors.textBody,
     cursor: 'pointer',

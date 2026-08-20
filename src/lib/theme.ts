@@ -123,6 +123,7 @@ export const neutral = {
   grey900: '#333',
   grey800: '#444',
   grey600: '#5A5A5A',
+  grey500: '#999',
   grey400: '#AAA',
   grey300: '#BBB',
   grey200: '#DDD',
@@ -135,6 +136,14 @@ export const neutral = {
   warm100: '#F4F4F0',
   warm150: '#F1F1EE',
   warm200: '#C7C7BE',
+  /** Warm hairlines between rows. Pre-redesign holdovers: the item-84 palette's own dividers are
+   *  `colors.divider`/`dividerWarm`, which are cooler. Named here because each is used in several
+   *  files, so folding them into the cool set later is a two-line change instead of a hunt. */
+  warmLine: '#F0EEE8',
+  warmLineDeep: '#E2DFD6',
+  /** The pre-redesign brand green, still holding the landing page and one onboarding card
+   *  together. Same holdover story as the warm lines above — kept exact, not merged. */
+  forest: '#2E4034',
   /** Muted green-greys (sit alongside the `ink` family without being it). */
   sage: '#6B7A6E',
   sageWash: '#EAF1EC',
