@@ -29,6 +29,7 @@ import {
 import { dismissSuggestion } from '../lib/dismissedSuggestions'
 import { acceptCoParentGap, acceptCoupleGap } from '../lib/suggestRelationshipGaps'
 import { acceptEventGroupSuggestion } from '../lib/suggestEventGroups'
+import { acceptFamilyGroupSuggestion } from '../lib/suggestFamilyGroups'
 import {
   loadFamilyTagSuggestions,
   acceptFamilyTagSuggestion,
@@ -276,6 +277,8 @@ export default function Home({
           return acceptCoupleGap(suggestion)
         case 'event_group':
           return acceptEventGroupSuggestion(suggestion.momentId, suggestion.groupId)
+        case 'family_group':
+          return acceptFamilyGroupSuggestion(suggestion)
       }
     })
   }
@@ -294,6 +297,8 @@ export default function Home({
           return dismissSuggestion('family_couple', suggestion.aId, suggestion.bId)
         case 'event_group':
           return dismissSuggestion('event_group', suggestion.momentId, suggestion.groupId)
+        case 'family_group':
+          return dismissSuggestion('family_group', suggestion.aId, suggestion.bId)
       }
     })
   }
@@ -743,6 +748,23 @@ export function HomeView({
                               {groupLabel(s.groupId, s.groupName)}
                             </button>
                             ? Everyone who was there is a member.
+                          </>
+                        )}
+                        {s.kind === 'family_group' && (
+                          <>
+                            Make a group for{' '}
+                            {s.memberIds.map((id, i) => (
+                              <span key={id}>
+                                {i > 0 && (i === s.memberIds.length - 1 ? ' and ' : ', ')}
+                                <button
+                                  onClick={() => onSelectPerson({ id, name: s.memberNames[i] })}
+                                  style={styles.connectionLink}
+                                >
+                                  {personLabel({ id, name: s.memberNames[i] }, selfId, { capitalize: false })}
+                                </button>
+                              </span>
+                            ))}
+                            ? They'd be called “{s.suggestedName}” — rename it any time.
                           </>
                         )}
                       </span>

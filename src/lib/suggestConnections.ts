@@ -7,6 +7,8 @@ import type { RelationshipGapSuggestion } from './suggestRelationshipGaps'
 import { loadRelationshipGapSuggestions } from './suggestRelationshipGaps'
 import type { EventGroupSuggestion } from './suggestEventGroups'
 import { loadEventGroupSuggestions } from './suggestEventGroups'
+import type { FamilyGroupSuggestion } from './suggestFamilyGroups'
+import { loadFamilyGroupSuggestions } from './suggestFamilyGroups'
 
 export type ConnectionPerson = { id: string; name: string; last_name: string | null }
 export type ConnectionGroup = { id: string; name: string }
@@ -14,7 +16,11 @@ export type ConnectionSuggestion = { kind: 'person_group'; person: ConnectionPer
 
 // Everything Home's "Connections to make" card can ask about. One card, several question shapes —
 // see loadHomeSuggestions at the bottom for why they're pooled rather than given a card each.
-export type HomeSuggestion = ConnectionSuggestion | RelationshipGapSuggestion | EventGroupSuggestion
+export type HomeSuggestion =
+  | ConnectionSuggestion
+  | RelationshipGapSuggestion
+  | EventGroupSuggestion
+  | FamilyGroupSuggestion
 
 // Stable identity for a suggestion, independent of object identity — Home uses it as the React key
 // and to drop the right row from local state once a write comes back clean.
@@ -28,6 +34,8 @@ export function suggestionKey(s: HomeSuggestion): string {
       return `family_couple:${s.aId}:${s.bId}`
     case 'event_group':
       return `event_group:${s.momentId}:${s.groupId}`
+    case 'family_group':
+      return `family_group:${s.aId}:${s.bId}`
   }
 }
 
@@ -214,10 +222,11 @@ export function sampleAcrossKinds(pools: HomeSuggestion[][], limit = SAMPLE_SIZE
 // no refetch, no reload, and not one extra query over what this already did.
 export async function loadHomeSuggestions(): Promise<HomeSuggestion[]> {
   const dismissals = await loadDismissals()
-  const [personGroup, relationshipGaps, eventGroups] = await Promise.all([
+  const [personGroup, relationshipGaps, eventGroups, familyGroups] = await Promise.all([
     loadConnectionSuggestions(),
     loadRelationshipGapSuggestions(dismissals),
     loadEventGroupSuggestions(dismissals),
+    loadFamilyGroupSuggestions(dismissals),
   ])
   // family_coparent and family_couple are split into separate pools on purpose: they come from one
   // source but read as different questions, and pooling them lets a big pile of co-parent gaps
@@ -228,6 +237,7 @@ export async function loadHomeSuggestions(): Promise<HomeSuggestion[]> {
       relationshipGaps.filter((s) => s.kind === 'family_coparent'),
       relationshipGaps.filter((s) => s.kind === 'family_couple'),
       eventGroups,
+      familyGroups,
     ],
     Infinity
   )
