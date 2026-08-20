@@ -369,7 +369,7 @@ export default function EventDetail({
 
   /**
    * The events this one may be filed under. Sub-events are one level deep everywhere in this app —
-   * EventDetail only renders "Associated Events" on an event with no parent of its own, so a
+   * EventDetail only renders "Sub Events" on an event with no parent of its own, so a
    * grandchild would exist in the database with no page willing to show it. Two rules keep the
    * tree flat: the target must be a top-level event itself (this also rules out this event's own
    * sub-events, which carry its id as their parent), and an event that has sub-events of its own
@@ -1903,12 +1903,13 @@ export function EventDetailView({
         </>
       )}
 
-      {/* Sub-events, under this section's new name (2026-08-07) — same content/logic as before,
-          just relabeled to match the consistent Title → Date/Location → Summary → Who was there →
-          Associated Events → Associated Groups → Notes → Manage order used across Event/Group. */}
+      {/* "Sub Events" here, "Associated Events" on Group and Person — founder's call via the
+          feedback widget, 2026-08-11, reversing the blanket rename item 84 made on 2026-08-07.
+          The two lists aren't the same thing: these are days INSIDE this event, while a group's or
+          a person's are events they're merely tied to. Section ORDER stays as item 84 set it. */}
       {!parentEvent && (
         <>
-          <h2 style={styles.subheading}>Associated Events</h2>
+          <h2 style={styles.subheading}>Sub Events</h2>
           {childEvents.length === 0 ? (
             <p style={styles.empty}>{readOnly ? 'No sub-events yet.' : ADD_HINT.subEvent}</p>
           ) : (

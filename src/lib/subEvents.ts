@@ -1,4 +1,4 @@
-// Ordering for an event's sub-events ("Associated Events" on EventDetail).
+// Ordering for an event's sub-events ("Sub Events" on EventDetail).
 //
 // The founder's ask (2026-08-08): the tiles should read left-to-right in the order the sub-events
 // happened, not in the order they were added to the database. The Supabase query already sorts by
