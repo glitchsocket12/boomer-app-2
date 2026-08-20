@@ -48,9 +48,10 @@ src/
 │   │                            recipe (same sat/lightness, hue is the only thing that varies) —
 │   │                            fixes a palette that read as "disjointed." `radius` bumped larger,
 │   │                            `shadow` softened, `fontFamily` is now system-sans (was Georgia
-│   │                            serif). `CountdownsSection.tsx` was deliberately skipped in the
-│   │                            sweep (concurrent uncommitted work elsewhere at the time) — still
-│   │                            on the old green `ink`-as-accent pattern, needs a follow-up pass.
+│   │                            serif). `CountdownsSection.tsx` was skipped in that sweep
+│   │                            (concurrent uncommitted work at the time) and **caught up
+│   │                            2026-08-19**: its three filled controls (+ Add, Save, active
+│   │                            chip) now read `primary` like every other fill in the app.
 │   │                            This is Section 1 of a larger structural rework (Manage popups,
 │   │                            consistent page section order, floating chat, nav/avatar, calendar
 │   │                            enhancements) — see the mockup artifact for the full picture;
