@@ -684,8 +684,20 @@ src/
 │   │                            a mixed list makes you read a dropdown per row, a column headed
 │   │                            "Men" asks one question once and is a single tap if the answer is
 │   │                            yes), then "Boomer can't guess these" (ambiguous or unknown) full
-│   │                            width below. Each row is a Male/Female/Non-binary/Other/Leave-blank
-│   │                            select matching PersonDetail's; each column carries its OWN counted
+│   │                            width below — and that list is DRAG-AND-DROP (founder ask
+│   │                            2026-08-19): two sticky Men/Women buckets, a ⠿ handle per row,
+│   │                            `@dnd-kit/core` with the same MouseSensor(distance 4) +
+│   │                            TouchSensor(delay 200, tolerance 8) pair as GroupDetail's subgroup
+│   │                            drag — the touch DELAY is what leaves a long list scrollable on a
+│   │                            phone. Handle, not whole-row: `touch-action: none` is read at
+│   │                            touch-start, so on the row it would kill scrolling. Single-item
+│   │                            drag, not GroupDetail's select-then-drag-a-batch — unknown names
+│   │                            are one-at-a-time judgments, so a select mode would never pay for
+│   │                            itself. Dropping outside both buckets is a no-op. Each row is a
+│   │                            Male/Female/Non-binary/Other/Leave-blank
+│   │                            select matching PersonDetail's — kept on every row deliberately: it
+│   │                            is the only way to say non-binary/other, the keyboard path, and the
+│   │                            fallback when dragging is awkward. Each column carries its OWN counted
 │   │                            "Accept all N" and its own paging, so accepting one never touches
 │   │                            the other. CSS grid `auto-fit`, so a phone gets two stacked lists
 │   │                            rather than two squeezed half-width ones. The old per-row
