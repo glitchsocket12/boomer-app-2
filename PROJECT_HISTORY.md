@@ -1683,3 +1683,37 @@ without a migration behind them.
 `npm run check:functions` still can't run — the proxy blocks `deno.land` — and no Edge Function was
 touched. **Nothing in this round has been seen in a browser either.** The founder is the eyes; §10
 carries the ordered list, and both migrations now need running.
+
+---
+
+## 2026-08-19 — "It isn't even guessing if Ben or Braden is a male name": a list of 840 names, replaced by 16,002
+
+The founder's complaint was flat and specific: the gender suggestion "is still way too conservative — it isn't even appropriately guessing if 'Ben' or 'Braden' is a male name, or 'Bridget' or 'Joelle' are female."
+
+Three of those four were simply never typed in. `nameGender.ts` had been a hand-written list since 2026-08-05 — 374 male names, 466 female, 94 flagged ambiguous, all chosen by hand and weighted toward the generations this app's trees actually contain. Bridget *was* on it and did return `female`, which is worth noting only because it shows what the founder was really reporting: not four specific misses, but the feeling of an app that keeps asking. The list had `benjamin` but not `ben`, `bradley` but not `braden`, `joel` but not `joelle`. There is no version of that list where the next person doesn't think of four more.
+
+### The measurement that settled it
+
+The old and new implementations were run against the 315 people on the founder's real account who still had no gender on file. The old hand-written list answered **zero of them**. Not a few — zero. Every name it *could* answer had already been filled in during the 2026-08-11 bulk pass, so what was left in the queue was, by definition, exactly what it couldn't do. The founder had been looking at a list of 315 people and a feature that had nothing to say about any of them.
+
+### Where the names come from now
+
+US Social Security Administration national birth counts, 1880–2024 — 105,000 distinct first names with a count per name per year per sex. `ssa.gov` returns 403 to any scripted download, so `scripts/build-name-gender.mjs` reads the same numbers from a year-by-year GitHub mirror; the data itself is US government work in the public domain.
+
+Two cutoffs turn that into a list. A name has to have been given to at least **500** American babies over the span before the data is allowed to speak for it (below that the split is one family's spelling, and the SSA suppresses anything under 5 per year anyway). And at least **90%** of them have to have been one gender. That leaves 6,049 male and 9,953 female names, with 2,083 left out as genuinely too split to call — which is how Jordan, Casey and Taylor keep getting asked about, and now for a stated reason rather than because someone typed them into a blocklist.
+
+The founder's original ask, back in August, was to only be asked when the app is under ~75% sure. That had been implemented as "list membership, not invented probabilities," which was honest about not having data but couldn't be checked. It is now a real number, and 90% rather than 75% because the costs are asymmetric: an unanswered name costs one dropdown, and calling someone's mother "his father" is the thing the founder would actually notice.
+
+### The one thing birth certificates get wrong
+
+The SSA knows what a baby was registered as. It has never heard of the Alexandra who goes by Alex. On paper "Alex" is 96.7% male, "Sam" 98.8%, and "Jess" — a name almost every adult bearer of which is a Jessica — is **98.1% male**. Feed that to the model and it will confidently call someone's sister their brother, which is exactly the failure caught in live testing on 2026-08-16, when Alex Gregorian came back described as Sam's "brother-in-law."
+
+So four names are hand-written back over the data: `alex`, `jess`, `nat`, `sam`. Not the whole old ambiguous list — the other 90 names on it are ones the counts already refuse to call, and keeping a second hand-written copy of a judgement the data makes correctly is just a thing to drift. Ten names go the other way (`micah` at 89.4%, `willie` at 75.5%, `carmen`, `stacy`…): under the cut, answered by the old list, and no reason to stop answering. That pair of overrides is what makes this strictly more helpful rather than a trade — nothing that used to be answered is now unanswered.
+
+### Result
+
+189 of the 315, up from 0. The 126 still unanswered are correct refusals (Alex, Chris, Jordan, Casey, Taylor, Jamie, Charlie, Riley) or records that were never first names to begin with — "Capt", "MSgt", "PICO", "Bnb Paolina". Coverage now reaches well past the Anglo-American mainstream: Giuseppe, Svetlana, Siobhan, Priya, Bjorn, Kwame, Aoife, Dmitri all resolve, and so do modern names the old list stopped short of.
+
+The cost is one 116KB generated file, mirrored to the edge functions and shipped in its own lazily-loaded browser chunk — ~42KB gzipped, fetched only by the pages that name relationships, never in the entry bundle. Zero API tokens, zero network calls at runtime; it is a dictionary lookup, the same shape as `sportsTeams.generated.ts`.
+
+**Lessons.** A hand-written list of a thing the world has 105,000 of is a bug with a long fuse, and "add the four names they mentioned" would have relit it. When a founder reports a feature as too conservative, measure what it actually answers on their real data before tuning it — "answers 0 of 315" is a different problem from "answers 200 of 315 and misses Ben." And real data still needs a hand-written override where the data measures the wrong thing: the SSA counts births, and the app is trying to name adults.
