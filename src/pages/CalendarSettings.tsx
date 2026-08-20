@@ -47,14 +47,27 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
     }
     const added = data?.candidatesAdded ?? 0
     const birthdaysAdded = data?.birthdayCandidatesAdded ?? 0
+    // A batch the AI never answered used to come back as an empty result set, which read exactly
+    // like "no new events" — that wording is what hid a nine-day API-key outage (PROJECT_CONTEXT.md
+    // §10). The count now comes back from the function, and a failed run says so.
+    const failures = data?.extractionFailures ?? 0
     const parts: string[] = []
     if (added > 0) parts.push(`${added} event${added === 1 ? '' : 's'}`)
     if (birthdaysAdded > 0) parts.push(`${birthdaysAdded} birthday${birthdaysAdded === 1 ? '' : 's'}`)
-    setSyncResult(
+    const found =
       parts.length > 0
         ? `Found ${parts.join(' and ')} — check the Calendar page to review.`
-        : "All synced — nothing new found."
-    )
+        : 'All synced — nothing new found.'
+    if (failures > 0) {
+      setSyncError(
+        parts.length > 0
+          ? `${found} Some of your calendar couldn't be read this time, so there may be more — try Sync now again in a few minutes.`
+          : "Boomer couldn't read your calendar this time — that's a problem on its end, not yours. Nothing was missed; try Sync now again in a few minutes."
+      )
+      setSyncResult(null)
+    } else {
+      setSyncResult(found)
+    }
     load()
   }
 

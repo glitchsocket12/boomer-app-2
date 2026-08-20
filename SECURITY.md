@@ -95,7 +95,7 @@ Ranked by how much they'd actually matter:
 2. **Anyone with your Supabase dashboard login can read every note.** That's you today. It stays true for any employee or contractor you ever add. Only real end-to-end encryption changes it — see section 4.
 3. **Email confirmation is switched off**, so accounts can be made with addresses that don't exist. Needs turning back on before real users, along with a working confirmation email.
 4. **No "delete my account" button and no data export.** The Privacy page already admits both. These stop being a nicety and become a legal requirement (GDPR/CCPA) the moment you have users in Europe or California.
-5. **Missing browser security headers.** Standard hardening the site doesn't have yet — protects against a few categories of attack that mostly need one of the above to go wrong first.
+5. ~~**Missing browser security headers.**~~ **Four added 2026-08-19** in `vercel.json` (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and a `Permissions-Policy` that switches off camera/geolocation/payment/USB while keeping `microphone=(self)` — the voice input needs it). **HSTS deliberately left alone:** Vercel already sends `max-age=63072000; includeSubDomains; preload` on `*.vercel.app`, and writing our own would have *weakened* it; revisit only if the app moves to a custom domain, which loses that default. **The one still missing is a Content-Security-Policy**, which is the header that can white-screen the app if a source is left out of it, and there is no staging environment to try it on (every push is production). It needs to be written and watched with the founder present — not shipped overnight.
 6. **The backend accepts requests from any website.** Lower risk than it sounds, because Boomer authenticates with a token rather than a cookie, so a hostile site can't ride your logged-in session. Worth tightening anyway.
 7. **Text other people wrote reaches an AI that can write to your database.** Calendar invites and imported contact notes were authored by other people, and they get fed to Claude, which then saves records based on them. Someone could in principle word a calendar invite to manipulate what gets recorded. This corrupts data rather than leaking it, and it's the subtlest thing on this list.
 
@@ -148,7 +148,7 @@ And keep the Privacy page as honest as it currently is. It explicitly declines t
 **In code, later, roughly this order:**
 
 5. Whatever the audit turns up, if anything — jumps to the front
-6. Browser security headers
+6. ~~Browser security headers~~ — four done 2026-08-19 (`vercel.json`); CSP still open, and wants the founder watching when it ships
 7. Rate limiting on the AI endpoints
 8. Email confirmation back on, with a working confirmation email
 9. "Delete my account" and "download my data"

@@ -58,22 +58,29 @@ type Candidate = {
   source_recurrence_id: string | null
 }
 
+type ExtractionResult = {
+  index: number
+  occasion: string
+  location: string | null
+  notes: string
+  suggested_tags: string[]
+  suggested_group: string | null
+  mentioned_people: string[]
+  mentioned_family_names: string[]
+}
+
+/**
+ * Returns the batch's extractions AND whether the call actually worked. The two used to be the
+ * same thing — a failed call returned `[]`, which is byte-identical to "the AI read these events
+ * and had nothing to suggest." That is what let the 2026-08-12 API-key expiry run for days behind
+ * a green "All synced — nothing new found" (PROJECT_CONTEXT.md §10). Anything that can fail
+ * silently here has to say so out loud instead.
+ */
 async function callExtraction(
   batch: IcsEvent[],
   tagGuidance: string,
   userTimeZone: string
-): Promise<
-  {
-    index: number
-    occasion: string
-    location: string | null
-    notes: string
-    suggested_tags: string[]
-    suggested_group: string | null
-    mentioned_people: string[]
-    mentioned_family_names: string[]
-  }[]
-> {
+): Promise<{ items: ExtractionResult[]; failed: boolean }> {
   const batchData = JSON.stringify(
     batch.map((e, i) => ({
       index: i,
@@ -105,7 +112,7 @@ async function callExtraction(
 
   if (!response.ok) {
     console.error("Anthropic extraction call failed", response.status, await response.text())
-    return []
+    return { items: [], failed: true }
   }
 
   const data = await response.json()
@@ -114,10 +121,10 @@ async function callExtraction(
     const raw = textBlock?.text ?? "[]"
     const start = raw.indexOf("[")
     const end = raw.lastIndexOf("]")
-    return JSON.parse(raw.slice(start, end + 1))
+    return { items: JSON.parse(raw.slice(start, end + 1)), failed: false }
   } catch (parseError) {
     console.error("Failed to parse extraction response", String(parseError))
-    return []
+    return { items: [], failed: true }
   }
 }
 
@@ -226,7 +233,7 @@ async function scanUser(
   supabase: SupabaseClient,
   userId: string,
   accountEmail: string | null
-): Promise<{ sourcesScanned: number; candidatesAdded: number; birthdayCandidatesAdded: number }> {
+): Promise<{ sourcesScanned: number; candidatesAdded: number; birthdayCandidatesAdded: number; extractionFailures: number }> {
   const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes, existingBirthdayRes] = await Promise.all([
     // Least-recently-synced first (never-synced sorts first of all). The batch budget below is
     // per-invocation and shared across sources, so an unordered list let whichever source happened
@@ -255,7 +262,7 @@ async function scanUser(
   ])
 
   const sources = sourcesRes.data ?? []
-  if (sources.length === 0) return { sourcesScanned: 0, candidatesAdded: 0, birthdayCandidatesAdded: 0 }
+  if (sources.length === 0) return { sourcesScanned: 0, candidatesAdded: 0, birthdayCandidatesAdded: 0, extractionFailures: 0 }
 
   const userTimeZone = await getUserTimeZone(supabase, userId)
 
@@ -437,6 +444,9 @@ async function scanUser(
   let birthdayCandidatesAdded = 0
   let sourcesScanned = 0
   let batchesProcessed = 0
+  // Batches whose AI call errored or came back unparseable. Reported so a run that read nothing
+  // because the API was down can never again be worded as a run that found nothing.
+  let extractionFailures = 0
 
   for (const source of sources) {
     if (batchesProcessed >= MAX_BATCHES_PER_RUN) break
@@ -531,11 +541,13 @@ async function scanUser(
       batchesProcessed += batchChunks.length
 
       const batchResultSets = await Promise.all(batchChunks.map((batch) => callExtraction(batch, tagGuidance, userTimeZone)))
+      const failedBatches = batchResultSets.filter((r) => r.failed).length
+      extractionFailures += failedBatches
 
       const rows: Candidate[] = []
       for (let bi = 0; bi < batchChunks.length; bi++) {
         const batch = batchChunks[bi]
-        const results = batchResultSets[bi]
+        const results = batchResultSets[bi].items
         for (const r of results) {
           // Every event the AI returns an extraction for becomes a pending suggestion — the model
           // no longer decides what is "worth" keeping (founder directive, 2026-08-12: "just simply
@@ -676,7 +688,7 @@ async function scanUser(
     }
   }
 
-  return { sourcesScanned, candidatesAdded, birthdayCandidatesAdded }
+  return { sourcesScanned, candidatesAdded, birthdayCandidatesAdded, extractionFailures }
 }
 
 serve(async (req) => {
@@ -698,12 +710,19 @@ serve(async (req) => {
       let totalSources = 0
       let totalCandidates = 0
       let totalBirthdayCandidates = 0
+      let totalExtractionFailures = 0
       for (const userId of userIds) {
         const { data: userData } = await serviceClient.auth.admin.getUserById(userId)
         const result = await scanUser(serviceClient, userId, userData?.user?.email ?? null)
         totalSources += result.sourcesScanned
         totalCandidates += result.candidatesAdded
         totalBirthdayCandidates += result.birthdayCandidatesAdded
+        totalExtractionFailures += result.extractionFailures
+      }
+      // The scheduled run has no UI to report into, so its only channel is the log — and this line
+      // is the difference between "nothing new today" and "nothing was read today."
+      if (totalExtractionFailures > 0) {
+        console.error(`Scheduled scan: ${totalExtractionFailures} extraction batch(es) FAILED — those events were not read this run`)
       }
       return new Response(
         JSON.stringify({
@@ -711,6 +730,7 @@ serve(async (req) => {
           sourcesScanned: totalSources,
           candidatesAdded: totalCandidates,
           birthdayCandidatesAdded: totalBirthdayCandidates,
+          extractionFailures: totalExtractionFailures,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )

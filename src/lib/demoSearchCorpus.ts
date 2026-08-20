@@ -15,6 +15,8 @@ import {
   DEMO_GROUPS,
   DEMO_GROUP_NOTES,
   DEMO_MOMENTS,
+  DEMO_NOTEBOOKS,
+  DEMO_NOTEBOOK_ENTRIES,
   DEMO_NOTES,
   DEMO_PEOPLE,
 } from './demoData'
@@ -85,6 +87,38 @@ export const DEMO_SEARCH_DOCS: SearchDoc[] = (() => {
       subtitle: `on ${label}`,
       body: n.content,
       target: { kind: 'person', id: n.personId, label },
+    })
+  }
+
+  // Notebooks and their entries, mirroring searchCorpus.ts's buildNotebookDocs — including the part
+  // that matters most: a LOCKED notebook is left out entirely, name and all. The real query filters
+  // those out server-side; here the filter is the same rule written by hand.
+  const notebookNameById = new Map<string, string>()
+  for (const n of DEMO_NOTEBOOKS) {
+    if (n.locked) continue
+    notebookNameById.set(n.id, n.name)
+    docs.push({
+      kind: 'notebook',
+      id: n.id,
+      title: n.name,
+      subtitle: 'Notebook',
+      target: { kind: 'notebook', id: n.id, label: n.name },
+    })
+  }
+
+  for (const e of DEMO_NOTEBOOK_ENTRIES) {
+    const notebookName = notebookNameById.get(e.notebookId)
+    // The real corpus reads the plain-text column written alongside the HTML; the demo keeps the
+    // same words in DemoNotebookEntry.text, which is what the HTML is generated from.
+    const content = e.text.trim()
+    if (!content || !notebookName) continue
+    docs.push({
+      kind: 'notebook',
+      id: e.id,
+      title: content,
+      subtitle: `in ${notebookName}`,
+      body: content,
+      target: { kind: 'notebook', id: e.notebookId, label: notebookName },
     })
   }
 

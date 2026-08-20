@@ -171,6 +171,10 @@ export default function PersonDetail({
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
   const [factsLoading, setFactsLoading] = useState(true)
+  // Only ever set by an explicit refresh. A passive visit that hits a failed extraction still has
+  // the cached facts to show and nothing useful to say about it; a refresh the user asked for and
+  // that silently changed nothing is the case worth naming.
+  const [factsFailed, setFactsFailed] = useState(false)
   const [selfId, setSelfId] = useState<string | null>(null)
   const [notesOpen, setNotesOpen] = useState(true)
   const [deleteConfirming, setDeleteConfirming] = useState(false)
@@ -339,6 +343,7 @@ export default function PersonDetail({
     setFactsLoading(true)
     const { data } = await supabase.functions.invoke('person-facts', { body: { personId, refresh } })
     setKeyFacts(sortKeyFacts((data?.facts as KeyFact[]) ?? []))
+    setFactsFailed(refresh && data?.error === 'extraction_failed')
     setFactsLoading(false)
   }
 
@@ -742,6 +747,7 @@ export default function PersonDetail({
       allGroupsList={allGroupsList}
       keyFacts={keyFacts}
       factsLoading={factsLoading}
+      factsFailed={factsFailed}
       selfId={selfId}
       onBack={onBack}
       backLabel={backLabel}
@@ -845,6 +851,7 @@ export function PersonDetailView({
   allGroupsList,
   keyFacts,
   factsLoading,
+  factsFailed = false,
   selfId = null,
   onBack,
   backLabel,
@@ -932,6 +939,7 @@ export function PersonDetailView({
   allGroupsList: GroupRef[]
   keyFacts: KeyFact[]
   factsLoading: boolean
+  factsFailed?: boolean
   selfId?: string | null
   onBack: () => void
   backLabel: string
@@ -1179,6 +1187,12 @@ export function PersonDetailView({
             <span style={styles.keyFactsHeading}>Key facts</span>
             {!readOnly && <RefreshButton label="Refresh key facts" refreshing={factsLoading} onClick={onRefreshFacts} />}
           </span>
+          {factsFailed && !factsLoading && (
+            <p style={styles.keyFactsFailed}>
+              Couldn't refresh these just now — Boomer's AI didn't answer. These are the ones it had
+              already. Try again in a few minutes.
+            </p>
+          )}
           {factsLoading ? (
             <p style={styles.keyFactsLoading}>Gathering what we know…</p>
           ) : (
@@ -1861,7 +1875,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     flexDirection: 'column',
     gap: '0.4rem',
     backgroundColor: neutral.sageWashCool,
-    border: '1px solid #DDE3D8',
+    border: `1px solid ${neutral.sageLine}`,
     borderRadius: radius.lg,
     padding: '0.85rem 1rem',
     marginBottom: space.xxxl,
@@ -1869,6 +1883,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   keyFactsHeadingRow: { display: 'flex', alignItems: 'center', gap: space.md },
   keyFactsHeading: { fontSize: fontSize.tiny, textTransform: 'uppercase', letterSpacing: '0.04em', color: neutral.sage, fontWeight: 700 },
   keyFactsLoading: { margin: 0, fontSize: fontSize.body, color: colors.textFaintest, fontStyle: 'italic' },
+  keyFactsFailed: { margin: `0 0 ${space.sm}`, fontSize: fontSize.label, color: colors.danger, lineHeight: 1.5 },
   keyFactsList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' },
   keyFactsItem: { fontSize: '0.98rem', color: colors.inkPlain, lineHeight: 1.4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: space.md },
   subheading: { fontSize: '1.2rem', color: colors.ink, margin: '1.5rem 0 0.5rem 0' },
@@ -1879,7 +1894,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     flexDirection: 'column',
     gap: space.md,
     backgroundColor: neutral.warm50,
-    border: '1px dashed #C7C7BE',
+    border: `1px dashed ${neutral.warm200}`,
     borderRadius: radius.lg,
     padding: '0.85rem 1rem',
     marginBottom: space.xl,
@@ -1893,7 +1908,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     right: 0,
     bottom: 0,
     backgroundColor: colors.appBg,
-    borderTop: '1px solid #E2DFD6',
+    borderTop: `1px solid ${neutral.warmLineDeep}`,
     boxShadow: '0 -2px 8px rgba(0,0,0,0.06)',
     padding: '0.6rem 0',
     zIndex: 20,
@@ -1980,7 +1995,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.tiny,
     padding: '0.2rem 0.55rem',
     borderRadius: '5px',
-    border: '1px solid #C7C7BE',
+    border: `1px solid ${neutral.warm200}`,
     backgroundColor: neutral.warm100,
     color: colors.textSubtle,
     fontFamily,
@@ -1993,7 +2008,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radius.circle,
-    border: '1px solid #999',
+    border: `1px solid ${neutral.grey500}`,
     backgroundColor: colors.surface,
     color: colors.textBody,
     padding: 0,
@@ -2017,7 +2032,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.label,
     padding: '0.3rem 0.7rem',
     borderRadius: radius.sm,
-    border: '1px solid #999',
+    border: `1px solid ${neutral.grey500}`,
     backgroundColor: 'transparent',
     color: colors.textMuted,
     cursor: 'pointer',
@@ -2025,7 +2040,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   dangerZone: {
     marginTop: '2.5rem',
     paddingTop: space.xxl,
-    borderTop: '1px solid #E2DFD6',
+    borderTop: `1px solid ${neutral.warmLineDeep}`,
     display: 'flex',
     flexDirection: 'column',
     gap: space.lg,
@@ -2036,7 +2051,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: fontSize.label,
     padding: '0.5rem 0.9rem',
     borderRadius: radius.sm,
-    border: '1px solid #999',
+    border: `1px solid ${neutral.grey500}`,
     backgroundColor: 'transparent',
     color: colors.textBody,
     cursor: 'pointer',

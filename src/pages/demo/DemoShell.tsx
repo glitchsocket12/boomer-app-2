@@ -9,20 +9,23 @@ import DemoGroupDetail from './DemoGroupDetail'
 import DemoEvents from './DemoEvents'
 import DemoEventDetail from './DemoEventDetail'
 import DemoFamilyTree from './DemoFamilyTree'
+import DemoNotebooks from './DemoNotebooks'
+import DemoNotebookDetail from './DemoNotebookDetail'
 import GlobalSearch from '../../components/GlobalSearch'
 import { SearchIcon } from '../../components/NavIcons'
 import { DEMO_SEARCH_DOCS } from '../../lib/demoSearchCorpus'
 import type { SearchTarget } from '../../lib/globalSearch'
 import { border, colors, fontFamily, fontSize, radius, space } from '../../lib/theme'
 
-type Tab = 'home' | 'people' | 'events' | 'groups'
+type Tab = 'home' | 'people' | 'events' | 'groups' | 'notebooks'
 type Crumb =
   | { type: 'person'; id: string; label: string }
   | { type: 'group'; id: string; label: string }
   | { type: 'event'; id: string; label: string }
   | { type: 'familyTree'; id: string; label: string; memberIds?: string[] }
+  | { type: 'notebook'; id: string; label: string }
 
-const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups' }
+const TAB_LABELS: Record<Tab, string> = { home: 'Home', people: 'People', events: 'Events', groups: 'Groups', notebooks: 'Notebooks' }
 
 // The demo's own tiny nav shell — deliberately mirrors App.tsx's real one (same tab bar,
 // breadcrumb pattern) so the click-through feels like the actual app, but everything here reads
@@ -60,6 +63,7 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
       case 'person':
       case 'group':
       case 'event':
+      case 'notebook':
         return pushCrumb({ type: target.kind, id: target.id, label: target.label })
       default:
         return
@@ -116,6 +120,15 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
       />
     )
+  } else if (current?.type === 'notebook') {
+    content = (
+      <DemoNotebookDetail
+        notebookId={current.id}
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+      />
+    )
   } else if (current?.type === 'familyTree') {
     content = (
       <DemoFamilyTree
@@ -159,6 +172,9 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
           />
         )}
+        {view === 'notebooks' && (
+          <DemoNotebooks onSelectNotebook={(n) => pushCrumb({ type: 'notebook', id: n.id, label: n.name })} />
+        )}
       </>
     )
   }
@@ -176,6 +192,7 @@ export default function DemoShell({ onExit, onSignUp }: { onExit: () => void; on
           <button onClick={() => goToTab('people')} style={styles.navButton}>People</button>
           <button onClick={() => goToTab('events')} style={styles.navButton}>Events</button>
           <button onClick={() => goToTab('groups')} style={styles.navButton}>Groups</button>
+          <button onClick={() => goToTab('notebooks')} style={styles.navButton}>Notebooks</button>
           {/* With the tabs, not next to "Exit demo" — mirrors the real nav, where sitting beside
               the account avatar made it easy to hit the wrong thing (founder report 2026-08-12).
               Here the neighbour would have been the button that ENDS the demo. */}

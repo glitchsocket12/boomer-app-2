@@ -8,6 +8,7 @@
 import type { Graph, TreeData } from './familyTree'
 import { buildFamilyTreeFromGraph, buildDescendantTreeFromGraph } from './familyTree'
 import { guessGenderFromName } from './nameGender'
+import { escapeHtml } from './richText'
 
 export type DemoPerson = {
   id: string
@@ -1200,6 +1201,72 @@ const GENERATED_ROSTER = buildGeneratedRoster()
 export const DEMO_PEOPLE: DemoPerson[] = [...CORE_PEOPLE, ...GENERATED_ROSTER.people]
 export const DEMO_MOMENTS: DemoMoment[] = [...CORE_MOMENTS, ...GENERATED_ROSTER.moments]
 export const DEMO_NOTES: DemoNote[] = [...CORE_NOTES, ...GENERATED_ROSTER.notes]
+
+// ---- Notebooks (the internal side of the app — see src/pages/Notebooks.tsx) ----
+//
+// Content is HTML because the real editor stores HTML; keep it to the plain <p> the TipTap toolbar
+// produces. Voice is the same one every note in this file uses: short factual fragments, no diary
+// register — the founder's standing correction on demo copy.
+
+export type DemoNotebook = {
+  id: string
+  name: string
+  ai_visible: boolean
+  locked: boolean
+  created_at: string
+  /**
+   * Locked notebooks only. The real list page still shows a count for a locked notebook (the count
+   * is a column aggregate, not its contents), but the demo deliberately ships no text for one —
+   * a "locked" notebook whose entries sit in the public bundle would be a strange thing to claim.
+   */
+  hiddenEntryCount?: number
+}
+
+export type DemoNotebookEntry = {
+  id: string
+  notebookId: string
+  /** The words as typed. Held plainly so the demo's search corpus can read them without a DOM. */
+  text: string
+  entry_date: string | null
+  created_at: string
+  personIds: string[]
+}
+
+/** The stored shape: the real editor writes HTML, so what the demo renders is HTML too. */
+export function demoEntryHtml(entry: DemoNotebookEntry): string {
+  return `<p>${escapeHtml(entry.text)}</p>`
+}
+
+// Listed the way the real page lists them: newest notebook first, so created_at descends here.
+export const DEMO_NOTEBOOKS: DemoNotebook[] = [
+  { id: 'nb-movies', name: 'Movies worth a second watch', ai_visible: true, locked: false, created_at: '2026-06-20T00:00:00Z' },
+  { id: 'nb-dad', name: 'Things Dad says', ai_visible: true, locked: false, created_at: '2026-05-11T00:00:00Z' },
+  { id: 'nb-fishing', name: 'Fishing log', ai_visible: true, locked: false, created_at: '2026-04-03T00:00:00Z' },
+  { id: 'nb-week', name: 'How the week went', ai_visible: false, locked: false, created_at: '2026-02-15T00:00:00Z' },
+  { id: 'nb-private', name: 'Just for me', ai_visible: false, locked: true, created_at: '2026-01-09T00:00:00Z', hiddenEntryCount: 6 },
+]
+
+export const DEMO_NOTEBOOK_ENTRIES: DemoNotebookEntry[] = [
+  // Movies — no dates on any of them, which is what makes this one read as a list.
+  { id: 'nbe-m1', notebookId: 'nb-movies', text: 'The Sting. Saw it with Dad on a motel TV in Amarillo, sound half broken. Still holds up.', entry_date: null, created_at: '2026-06-20T14:02:00Z', personIds: ['walt'] },
+  { id: 'nbe-m2', notebookId: 'nb-movies', text: 'Master and Commander. Nobody I know has seen it. Everyone I make watch it says the same thing.', entry_date: null, created_at: '2026-06-22T09:40:00Z', personIds: [] },
+  { id: 'nbe-m3', notebookId: 'nb-movies', text: 'Field of Dreams. Carol cries every time. So do I. I just go check on the grill first.', entry_date: null, created_at: '2026-07-01T20:15:00Z', personIds: ['carol'] },
+  { id: 'nbe-m4', notebookId: 'nb-movies', text: 'Heat. Two hours of setup for six minutes on the street. Worth it.', entry_date: null, created_at: '2026-07-14T21:05:00Z', personIds: [] },
+
+  // Things Dad says — dated, so the same screen reads as a log instead.
+  { id: 'nbe-d1', notebookId: 'nb-dad', text: '"Measure twice, cut once, then measure again because you cut it wrong anyway." Fixing the porch rail.', entry_date: '2026-05-18', created_at: '2026-05-18T17:30:00Z', personIds: ['walt'] },
+  { id: 'nbe-d2', notebookId: 'nb-dad', text: '"A man with a good truck never eats alone." Helping Pete haul a fridge up two flights.', entry_date: '2026-06-06', created_at: '2026-06-06T12:10:00Z', personIds: ['walt', 'pete'] },
+  { id: 'nbe-d3', notebookId: 'nb-dad', text: '"Never buy a tool you can borrow from a man who owes you." He was talking about a log splitter. He has three.', entry_date: '2026-07-04', created_at: '2026-07-04T19:45:00Z', personIds: ['walt'] },
+
+  // Fishing log.
+  { id: 'nbe-f1', notebookId: 'nb-fishing', text: 'Chatfield with Frank. Four trout, all his. He sang the whole drive home. Windows up, still heard it.', entry_date: '2026-06-02', created_at: '2026-06-02T16:20:00Z', personIds: ['frank'] },
+  { id: 'nbe-f2', notebookId: 'nb-fishing', text: 'Eleven Mile. Wind all day, caught nothing, best morning in months. Steve brought coffee that tasted like a penny.', entry_date: '2026-04-19', created_at: '2026-04-19T15:00:00Z', personIds: ['steve'] },
+  { id: 'nbe-f3', notebookId: 'nb-fishing', text: 'New waders. The old ones leaked for three years before I admitted it.', entry_date: '2026-03-28', created_at: '2026-03-28T11:00:00Z', personIds: [] },
+
+  // How the week went — the "how I'm doing" case, kept out of the AI's reach (ai_visible: false).
+  { id: 'nbe-w1', notebookId: 'nb-week', text: 'Knee behaved. Slept through the night twice. Mowed before it got hot, which is the whole trick.', entry_date: '2026-06-21', created_at: '2026-06-21T18:00:00Z', personIds: [] },
+  { id: 'nbe-w2', notebookId: 'nb-week', text: 'Long one. Two calls about Dad, both turned out fine. Carol handled it better than I did.', entry_date: '2026-06-14', created_at: '2026-06-14T20:30:00Z', personIds: ['carol', 'walt'] },
+]
 
 // ---- Reminders (Birthday/Anniversary — powers the People "Upcoming dates" sort) ----
 

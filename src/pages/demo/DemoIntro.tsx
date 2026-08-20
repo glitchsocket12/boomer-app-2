@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { DEMO_PEOPLE, DEMO_MOMENTS, DEMO_GROUPS } from '../../lib/demoData'
 import { colors, fontFamily, fontSize, neutral, radius } from '../../lib/theme'
 
-type Stage = 'welcome' | 'home' | 'people' | 'events' | 'groups'
+type Stage = 'welcome' | 'home' | 'people' | 'events' | 'groups' | 'notebooks'
 
-const STAGE_ORDER: Stage[] = ['welcome', 'home', 'people', 'events', 'groups']
-const STAGE_DOT_LABELS = ['Welcome', 'Home', 'People', 'Events', 'Groups']
+const STAGE_ORDER: Stage[] = ['welcome', 'home', 'people', 'events', 'groups', 'notebooks']
+const STAGE_DOT_LABELS = ['Welcome', 'Home', 'People', 'Events', 'Groups', 'Notebooks']
 
 // Full-screen takeover shown once per demo visit, before DemoShell's tab nav appears — a first-
 // time visitor gets zero context otherwise (dropped straight into a fully-populated fake
@@ -97,9 +97,20 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           </>
         )}
 
+        {stage === 'notebooks' && (
+          <>
+            <h1 style={styles.title}>Notebooks — for what isn't an event</h1>
+            <p style={styles.body}>
+              Movies he means to watch again, the things his dad says, how the week actually went.
+              Events keep the outside record; notebooks keep the rest. Name one whatever you want —
+              and lock any of them behind a PIN, where Boomer can't read it either.
+            </p>
+          </>
+        )}
+
         <div style={styles.buttonRow}>
           <button onClick={next} style={styles.primaryButton}>
-            {stage === 'groups' ? 'Take a look around →' : 'Continue →'}
+            {stage === 'notebooks' ? 'Take a look around →' : 'Continue →'}
           </button>
           <button onClick={onFinish} style={styles.skipLink}>
             Skip

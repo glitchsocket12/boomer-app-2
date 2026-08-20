@@ -24,6 +24,7 @@ export function NotebooksView({
   onCreate,
   creating,
   onSelect,
+  readOnly = false,
 }: {
   notebooks: Notebook[]
   loading: boolean
@@ -35,6 +36,8 @@ export function NotebooksView({
   onCreate: (e: FormEvent) => void
   creating: boolean
   onSelect: (notebook: { id: string; name: string }) => void
+  /** Landing-page demo: hides the name-a-notebook form, which is a real insert. */
+  readOnly?: boolean
 }) {
   const q = search.trim().toLowerCase()
   const filtered = q ? notebooks.filter((n) => n.name.toLowerCase().includes(q)) : notebooks
@@ -47,20 +50,22 @@ export function NotebooksView({
         what you liked, how you're doing. Name one whatever you want and add to it whenever.
       </p>
 
-      <form onSubmit={onCreate} style={styles.addForm}>
-        <input
-          type="text"
-          value={newName}
-          onChange={(e) => onNewNameChange(e.target.value)}
-          placeholder="Name a notebook…"
-          style={styles.addInput}
-          disabled={creating || tablesMissing}
-          aria-label="New notebook name"
-        />
-        <button type="submit" style={styles.addButton} disabled={creating || tablesMissing || !newName.trim()}>
-          {creating ? '…' : '+ Add'}
-        </button>
-      </form>
+      {!readOnly && (
+        <form onSubmit={onCreate} style={styles.addForm}>
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => onNewNameChange(e.target.value)}
+            placeholder="Name a notebook…"
+            style={styles.addInput}
+            disabled={creating || tablesMissing}
+            aria-label="New notebook name"
+          />
+          <button type="submit" style={styles.addButton} disabled={creating || tablesMissing || !newName.trim()}>
+            {creating ? '…' : '+ Add'}
+          </button>
+        </form>
+      )}
 
       {notebooks.length > SEARCH_THRESHOLD && (
         <SearchBox value={search} onChange={onSearchChange} placeholder="Search notebooks…" style={styles.search} />
