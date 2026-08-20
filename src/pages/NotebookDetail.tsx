@@ -44,6 +44,110 @@ function todayIso(): string {
   return `${now.getFullYear()}-${month}-${day}`
 }
 
+/**
+ * One entry as it READS (the edit form is inline in the page below, and stays there — it's all
+ * write machinery). Exported so the landing-page demo draws the real card instead of a lookalike:
+ * without `onEdit` the Edit button simply isn't rendered, which is the only difference between the
+ * two surfaces.
+ */
+export function NotebookEntryCard({
+  entry,
+  onSelectPerson,
+  onEdit,
+}: {
+  entry: NotebookEntry
+  onSelectPerson: (person: { id: string; name: string }) => void
+  onEdit?: () => void
+}) {
+  return (
+    <div style={styles.entryCard}>
+      {entry.entry_date && <div style={styles.entryDate}>{formatDateRange(entry.entry_date, null)}</div>}
+      {/* Sanitized on the way out, not trusted from the database — see lib/richText.ts.
+          TipTap already constrains what it writes, so this is the guard for rows that
+          predate the editor or were changed by anything other than it. */}
+      <div
+        className="notebook-prose"
+        style={styles.entryContent}
+        dangerouslySetInnerHTML={{ __html: toRenderableHtml(entry.content) }}
+      />
+      <div style={styles.entryFooter}>
+        <div style={styles.chipRow}>
+          {entry.people.map((p) => (
+            <PersonChip
+              key={p.id}
+              label={personLabelOf(p)}
+              onClick={() => onSelectPerson({ id: p.id, name: personLabelOf(p) })}
+            />
+          ))}
+        </div>
+        {onEdit && (
+          <button onClick={onEdit} style={styles.subtleButton}>
+            Edit
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The demo's version of this page: the same frame and the same entry cards, minus everything that
+ * writes (composer, Manage panel, edit, the real PIN gate). It lives in this file rather than in
+ * src/pages/demo/ so it shares these styles — a lookalike built next door is exactly how a demo
+ * drifts away from the app it's selling.
+ */
+export function NotebookReadOnlyView({
+  name,
+  entries,
+  locked,
+  aiVisible,
+  backLabel,
+  onBack,
+  onSelectPerson,
+}: {
+  name: string
+  entries: NotebookEntry[]
+  locked: boolean
+  aiVisible: boolean
+  backLabel: string
+  onBack: () => void
+  onSelectPerson: (person: { id: string; name: string }) => void
+}) {
+  return (
+    <div style={styles.page}>
+      <button onClick={onBack} style={styles.backButton}>
+        ← Back to {backLabel}
+      </button>
+
+      <div style={styles.headerRow}>
+        <h1 style={styles.heading}>{name}</h1>
+      </div>
+
+      {locked ? (
+        // No PIN box: verifying one is a real Supabase call, and the demo makes none. Saying what
+        // the lock does is the honest version of showing it.
+        <p style={styles.privateNote}>
+          🔒 This notebook is locked. In the app it asks for your PIN before anything in it is drawn —
+          it isn't in search either, and Boomer never sees it.
+        </p>
+      ) : (
+        <>
+          {!aiVisible && (
+            <p style={styles.privateNote}>
+              Boomer can't read this notebook. It stays out of every conversation — you'll still find it in search.
+            </p>
+          )}
+          <div style={styles.entryList}>
+            {entries.map((entry) => (
+              <NotebookEntryCard key={entry.id} entry={entry} onSelectPerson={onSelectPerson} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function NotebookDetail({
   notebookId,
   onBack,
@@ -373,31 +477,12 @@ export default function NotebookDetail({
                     </div>
                   </div>
                 ) : (
-                  <div key={entry.id} style={styles.entryCard}>
-                    {entry.entry_date && <div style={styles.entryDate}>{formatDateRange(entry.entry_date, null)}</div>}
-                    {/* Sanitized on the way out, not trusted from the database — see lib/richText.ts.
-                        TipTap already constrains what it writes, so this is the guard for rows that
-                        predate the editor or were changed by anything other than it. */}
-                    <div
-                      className="notebook-prose"
-                      style={styles.entryContent}
-                      dangerouslySetInnerHTML={{ __html: toRenderableHtml(entry.content) }}
-                    />
-                    <div style={styles.entryFooter}>
-                      <div style={styles.chipRow}>
-                        {entry.people.map((p) => (
-                          <PersonChip
-                            key={p.id}
-                            label={personLabelOf(p)}
-                            onClick={() => onSelectPerson({ id: p.id, name: personLabelOf(p) })}
-                          />
-                        ))}
-                      </div>
-                      <button onClick={() => startEditing(entry)} style={styles.subtleButton}>
-                        Edit
-                      </button>
-                    </div>
-                  </div>
+                  <NotebookEntryCard
+                    key={entry.id}
+                    entry={entry}
+                    onSelectPerson={onSelectPerson}
+                    onEdit={() => startEditing(entry)}
+                  />
                 )
               )}
             </div>

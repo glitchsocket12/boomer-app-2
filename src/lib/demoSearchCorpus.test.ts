@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEMO_SEARCH_DOCS } from './demoSearchCorpus'
 import { searchDocs } from './globalSearch'
-import { DEMO_GROUPS, DEMO_MOMENTS, DEMO_PEOPLE } from './demoData'
+import { DEMO_GROUPS, DEMO_MOMENTS, DEMO_NOTEBOOKS, DEMO_NOTEBOOK_ENTRIES, DEMO_PEOPLE } from './demoData'
 
 // The demo is a public, unauthenticated surface reached from the landing page, and it can only be
 // clicked through while signed OUT — so it doesn't get exercised during the usual logged-in
@@ -22,9 +22,10 @@ describe('DEMO_SEARCH_DOCS', () => {
       person: new Set(DEMO_PEOPLE.map((p) => p.id)),
       event: new Set(DEMO_MOMENTS.map((m) => m.id)),
       group: new Set(DEMO_GROUPS.map((g) => g.id)),
+      notebook: new Set(DEMO_NOTEBOOKS.map((n) => n.id)),
     }
     const unresolved = DEMO_SEARCH_DOCS.filter((d) => {
-      const set = ids[d.target.kind as 'person' | 'event' | 'group']
+      const set = ids[d.target.kind as 'person' | 'event' | 'group' | 'notebook']
       return !set || !set.has(d.target.id)
     })
     expect(unresolved.map((d) => `${d.kind}:${d.title.slice(0, 40)}`)).toEqual([])
@@ -33,7 +34,7 @@ describe('DEMO_SEARCH_DOCS', () => {
   // DemoShell's Crumb union has no pet or tag member, so emitting one would produce a row that
   // silently does nothing when clicked (see handleSearchSelect's default branch).
   it('emits only the kinds the demo shell can actually navigate to', () => {
-    expect([...new Set(DEMO_SEARCH_DOCS.map((d) => d.kind))].sort()).toEqual(['event', 'group', 'note', 'person'])
+    expect([...new Set(DEMO_SEARCH_DOCS.map((d) => d.kind))].sort()).toEqual(['event', 'group', 'note', 'notebook', 'person'])
   })
 
   it('never emits a blank label, which would render as an empty clickable row', () => {
@@ -63,5 +64,33 @@ describe('DEMO_SEARCH_DOCS', () => {
     const distinctive = noteDoc!.body!.split(/\s+/).find((w) => w.length > 7)!.replace(/[^a-zA-Z]/g, '')
     const hits = searchDocs(DEMO_SEARCH_DOCS, distinctive)
     expect(hits.some((d) => d.id === noteDoc!.id)).toBe(true)
+  })
+
+  // The one rule in this corpus with a privacy claim behind it: the real query never fetches a
+  // locked notebook, name included, so neither may this one. A locked notebook surfacing here would
+  // put the words the demo says are hidden into the search panel.
+  it('leaves locked notebooks out entirely, name and entries alike', () => {
+    const locked = DEMO_NOTEBOOKS.filter((n) => n.locked)
+    expect(locked.length).toBeGreaterThan(0)
+    for (const n of locked) {
+      expect(DEMO_SEARCH_DOCS.some((d) => d.target.kind === 'notebook' && d.target.id === n.id)).toBe(false)
+      expect(searchDocs(DEMO_SEARCH_DOCS, n.name).length).toBe(0)
+    }
+  })
+
+  it('reaches text that only exists inside a notebook entry', () => {
+    const results = searchDocs(DEMO_SEARCH_DOCS, 'log splitter')
+    expect(results.length).toBeGreaterThan(0)
+    expect(results[0].kind).toBe('notebook')
+    expect(results[0].target.kind).toBe('notebook')
+  })
+
+  // An entry whose notebook is unlocked is searchable; one whose notebook is locked was already
+  // covered above. This checks the count rather than a sample so a new fixture can't quietly go
+  // missing from search.
+  it('lists every unlocked notebook and each of its entries', () => {
+    const unlocked = DEMO_NOTEBOOKS.filter((n) => !n.locked)
+    const entries = DEMO_NOTEBOOK_ENTRIES.filter((e) => unlocked.some((n) => n.id === e.notebookId))
+    expect(DEMO_SEARCH_DOCS.filter((d) => d.kind === 'notebook').length).toBe(unlocked.length + entries.length)
   })
 })
