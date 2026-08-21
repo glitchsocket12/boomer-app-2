@@ -724,7 +724,15 @@ src/
 │   │                            touch-start, so on the row it would kill scrolling. Single-item
 │   │                            drag, not GroupDetail's select-then-drag-a-batch — unknown names
 │   │                            are one-at-a-time judgments, so a select mode would never pay for
-│   │                            itself. Dropping outside both buckets is a no-op. Each row is a
+│   │                            itself. Dropping outside both buckets is a no-op.
+│   │                            A name you set DISAPPEARS from that list (founder ask 2026-08-20) and the
+│   │                            heading counts down, so you always face what is still to do rather than
+│   │                            scrolling past your own answers. It reappears in a collapsed "Sorted so
+│   │                            far (n)" panel below the list, whose dropdown is also the undo — "Leave
+│   │                            blank" drops the id out of `choices`, which puts the row straight back.
+│   │                            NOT applied to the Men/Women columns: "Accept all" would empty one in a
+│   │                            single tap, and seeing what you just accepted so you can fix it is the
+│   │                            point of those. Each row is a
 │   │                            Male/Female/Non-binary/Other/Leave-blank
 │   │                            select matching PersonDetail's — kept on every row deliberately: it
 │   │                            is the only way to say non-binary/other, the keyboard path, and the
