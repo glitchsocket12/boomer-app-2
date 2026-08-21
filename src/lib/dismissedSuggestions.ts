@@ -5,7 +5,7 @@ import { fetchAllRows } from './pagedSelect'
 // person->group suggestions keep using groups.dismissed_person_ids (single source of truth with
 // GroupDetail's own per-group list — see suggestConnections.ts); these are the types that had
 // nowhere to record a dismissal until the 2026-08-08 migration.
-export type DismissalKind = 'family_coparent' | 'family_couple' | 'event_group'
+export type DismissalKind = 'family_coparent' | 'family_couple' | 'event_group' | 'family_group'
 
 export type Dismissals = {
   has: (kind: DismissalKind, subjectId: string, objectId: string) => boolean
@@ -19,11 +19,14 @@ function key(kind: DismissalKind, subjectId: string, objectId: string): string {
   return `${kind}:${subjectId}:${objectId}`
 }
 
-// family_couple is a symmetric pair (nobody is the "subject" of a marriage), so it's normalized
-// the same way relationshipsTable.ts normalizes its symmetric kinds — otherwise dismissing
-// "A and B" wouldn't match a later-generated "B and A" and the question would come back.
+// family_couple and family_group are symmetric pairs (nobody is the "subject" of a marriage, and a
+// household is named by the couple at its centre), so both are normalized the same way
+// relationshipsTable.ts normalizes its symmetric kinds — otherwise dismissing "A and B" wouldn't
+// match a later-generated "B and A" and the question would come back.
+const SYMMETRIC_KINDS = new Set<DismissalKind>(['family_couple', 'family_group'])
+
 export function normalizePair(kind: DismissalKind, subjectId: string, objectId: string): [string, string] {
-  if (kind !== 'family_couple') return [subjectId, objectId]
+  if (!SYMMETRIC_KINDS.has(kind)) return [subjectId, objectId]
   return subjectId < objectId ? [subjectId, objectId] : [objectId, subjectId]
 }
 
