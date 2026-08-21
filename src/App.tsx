@@ -670,6 +670,7 @@ export default function App() {
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
         onSelectGroup={(g) => pushCrumb({ type: 'group', id: g.id, label: g.name })}
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+        onSelectPet={(p) => pushCrumb({ type: 'pet', id: p.id, label: p.name })}
         onRenamed={renameCurrentCrumb}
         onMerged={(e) => replaceCurrentCrumb({ type: 'event', id: e.id, label: e.summary })}
       />
@@ -682,6 +683,7 @@ export default function App() {
         onBack={popCrumb}
         backLabel={parentLabel}
         onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
+        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
         onRenamed={renameCurrentCrumb}
         onDeleted={popCrumb}
       />

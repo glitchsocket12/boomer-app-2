@@ -31,6 +31,14 @@ import { getRelationshipsMap, type PersonRelationships } from '../lib/relationsh
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
 import { groupDisplayName } from '../lib/groupDisplayName'
 import { IS_TOUCH } from '../lib/touch'
+import {
+  loadAllPets,
+  loadPetsForMoments,
+  petEmoji,
+  tagPetToMoment,
+  untagPetFromMoment,
+  type Pet,
+} from '../lib/pets'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 import { fullName } from '../lib/personLabel'
 
@@ -125,6 +133,7 @@ export default function EventDetail({
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
+  onSelectPet,
   onBack,
   backLabel,
   onRenamed,
@@ -134,6 +143,7 @@ export default function EventDetail({
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
+  onSelectPet: (pet: { id: string; name: string }) => void
   onBack: () => void
   backLabel: string
   onRenamed?: (newSummary: string) => void
@@ -166,6 +176,13 @@ export default function EventDetail({
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [allGroupsList, setAllGroupsList] = useState<GroupRef[]>([])
   const [allTagsList, setAllTagsList] = useState<TagRef[]>([])
+  // Pets tagged to this event and its sub-events, keyed by moment id — see loadEventPets. Held in
+  // its own state (never merged into `moment`) for the usual reason: moment_pets arrives with a
+  // hand-run migration, and naming it inside the page's main select would 400 the whole event page
+  // in the gap before that SQL is applied. `petsAvailable:false` is that gap, and hides the feature.
+  const [petsByMoment, setPetsByMoment] = useState<Record<string, Pet[]>>({})
+  const [petsAvailable, setPetsAvailable] = useState(true)
+  const [allPetsList, setAllPetsList] = useState<Pet[]>([])
   const [relationshipsById, setRelationshipsById] = useState<Map<string, PersonRelationships>>(new Map())
   const [selfId, setSelfId] = useState<string | null>(null)
   const [photosImporting, setPhotosImporting] = useState(false)
@@ -283,7 +300,11 @@ export default function EventDetail({
   // people/groups the app already has a signal for (shared group, affiliated tag). These lists
   // are small (one account's own data), so an eager fetch per page view matches the pattern
   // already used for the merge-event picker below.
+  // `loadAllPets` stays a fourth, separate call rather than a join on any of the three above —
+  // it already is its own isolated query (see lib/pets.ts), and a pets table that isn't there yet
+  // must cost the pet picker only, not the people/group/tag pickers next to it.
   async function loadPickerLists() {
+    loadAllPets().then(setAllPetsList)
     const [peopleRes, groupsRes, tagsRes] = await Promise.all([
       fetchAllRows((from, to) =>
         supabase.from('people').select('id, name, last_name').order('name').order('id').range(from, to)
@@ -349,6 +370,23 @@ export default function EventDetail({
   // Memoised so the gallery below only refetches when the actual set of sub-events changes, not on
   // every unrelated reload of this page (rename, description edit, an attendee going in or out).
   const childEventIds = useMemo(() => childEvents.map((c) => c.id), [childEvents])
+
+  /**
+   * Which pets were at this event (2026-08-20). Covers the sub-events in the same query so pets
+   * roll up into "Who was there" the way people already do — on a multi-day trip the dog gets
+   * tagged on the day it came along, and the parent event would otherwise show nobody's pets.
+   * Keyed off childEventIds rather than childEvents so it only refires when the set of sub-events
+   * actually changes.
+   */
+  useEffect(() => {
+    loadEventPets()
+  }, [eventId, childEventIds])
+
+  async function loadEventPets() {
+    const { byMoment, available } = await loadPetsForMoments([eventId, ...childEventIds])
+    setPetsByMoment(byMoment)
+    setPetsAvailable(available)
+  }
 
   /**
    * Everywhere this event and its parts happened, in the order they happened (founder ask,
@@ -805,6 +843,29 @@ export default function EventDetail({
     return handleAddAttendee(newPerson as PersonRef)
   }
 
+  // Pets deliberately do NOT route through handleAttendeeChanged: that helper's whole job is to
+  // null the cached summary so the AI rewrites it, and the summary is written from the event's
+  // notes, which a pet has none of. Regenerating it after tagging the dog would spend an API call
+  // to produce the identical paragraph (CLAUDE.md rule 3).
+  async function handleAddPet(pet: Pet): Promise<boolean> {
+    setActionError(null)
+    if (!(await tagPetToMoment(eventId, pet.id))) {
+      setActionError(`Couldn't add ${pet.name} to this event — please try again.`)
+      return false
+    }
+    await loadEventPets()
+    return true
+  }
+
+  async function handleRemovePet(pet: Pet) {
+    setActionError(null)
+    if (!(await untagPetFromMoment(eventId, pet.id))) {
+      setActionError(`Couldn't remove ${pet.name} from this event — please try again.`)
+      return
+    }
+    await loadEventPets()
+  }
+
   async function handleTagGroup(groupId: string): Promise<boolean> {
     setActionError(null)
     const { error } = await supabase
@@ -1198,6 +1259,11 @@ export default function EventDetail({
       onAddAttendee={handleAddAttendee}
       onCreateAndAddAttendee={handleCreateAndAddAttendee}
       onRemoveAttendee={handleRemoveAttendee}
+      petsByMoment={petsAvailable ? petsByMoment : {}}
+      allPets={petsAvailable ? allPetsList : []}
+      onSelectPet={onSelectPet}
+      onAddPet={handleAddPet}
+      onRemovePet={handleRemovePet}
       onEditNote={handleEditNote}
       onDeleteNote={handleDeleteNote}
       onDenySuggestion={handleDenySuggestion}
@@ -1311,6 +1377,14 @@ export function EventDetailView({
   onAddAttendee = async () => false,
   onCreateAndAddAttendee = async () => false,
   onRemoveAttendee = () => {},
+  // Pets default to empty, which is also what the container passes before the moment_pets
+  // migration is run — so the demo twin and a pre-migration database land on the same code path:
+  // no pet chips, no pet row in the action bubble, nothing to explain.
+  petsByMoment = {},
+  allPets = [],
+  onSelectPet = () => {},
+  onAddPet = async () => false,
+  onRemovePet = () => {},
   onEditNote = () => {},
   onDeleteNote = () => {},
   onDenySuggestion = () => {},
@@ -1414,6 +1488,11 @@ export function EventDetailView({
   onAddAttendee?: (person: PersonRef) => Promise<boolean>
   onCreateAndAddAttendee?: (name: string) => Promise<boolean>
   onRemoveAttendee?: (person: PersonRef) => void
+  petsByMoment?: Record<string, Pet[]>
+  allPets?: Pet[]
+  onSelectPet?: (pet: { id: string; name: string }) => void
+  onAddPet?: (pet: Pet) => Promise<boolean>
+  onRemovePet?: (pet: Pet) => void
   onEditNote?: (noteIds: string[], newContent: string) => void
   onDeleteNote?: (noteIds: string[]) => void
   onDenySuggestion?: (person: PersonRef) => void
@@ -1526,6 +1605,20 @@ export function EventDetailView({
     }
   }
 
+  // The pets half of the same roll-up. Directly-tagged first so a pet tagged on BOTH this event and
+  // one of its days keeps its untag badge; anything only reachable through a sub-event is marked
+  // and loses the badge, exactly like a rolled-up person.
+  const pets = new Map<string, Pet>()
+  for (const pet of petsByMoment[moment.id] ?? []) pets.set(pet.id, pet)
+  const rolledUpPetIds = new Set<string>()
+  for (const childId of subEventIds) {
+    for (const pet of petsByMoment[childId] ?? []) {
+      if (pets.has(pet.id)) continue
+      pets.set(pet.id, pet)
+      rolledUpPetIds.add(pet.id)
+    }
+  }
+  const petList = Array.from(pets.values()).sort((a, b) => a.name.localeCompare(b.name))
 
   // Notes created together from a single Home-page entry get identical content per tagged
   // person (see converse/index.ts's per-attendee insert loop) — collapse those into one card
@@ -1769,11 +1862,16 @@ export function EventDetailView({
       )}
 
       <h2 style={styles.subheading}>Who was there</h2>
-      {attendees.size > 0 ? (
+      {/* Pets sit in this same list rather than under a "Pets" heading of their own (2026-08-20):
+          they already share the People list, and the founder's report was that they couldn't be
+          tagged to an event — not that they needed a section. The species emoji is what tells a
+          pet chip apart from a person's at a glance. */}
+      {attendees.size > 0 || petList.length > 0 ? (
         <>
           <p style={styles.chatHint}>
             {readOnly ? 'Tap a name for their profile.' : 'Tap a name for their profile, or hover to untag them from this event.'}
-            {rolledUpAttendeeIds.size > 0 && ' Everyone tagged on a sub-event is included here too.'}
+            {(rolledUpAttendeeIds.size > 0 || rolledUpPetIds.size > 0) &&
+              ' Everyone tagged on a sub-event is included here too.'}
           </p>
           <div style={styles.chipRow}>
             {sortByLastName(Array.from(attendees.values())).map((p) => (
@@ -1784,6 +1882,15 @@ export function EventDetailView({
                 viaSubEvent={rolledUpAttendeeIds.has(p.id)}
                 onSelect={() => onSelectPerson(p)}
                 onRemove={readOnly || rolledUpAttendeeIds.has(p.id) ? undefined : () => onRemoveAttendee(p)}
+              />
+            ))}
+            {petList.map((pet) => (
+              <PetAttendeeChip
+                key={pet.id}
+                pet={pet}
+                viaSubEvent={rolledUpPetIds.has(pet.id)}
+                onSelect={() => onSelectPet({ id: pet.id, name: pet.name })}
+                onRemove={readOnly || rolledUpPetIds.has(pet.id) ? undefined : () => onRemovePet(pet)}
               />
             ))}
           </div>
@@ -2053,6 +2160,38 @@ export function EventDetailView({
                 </>
               ),
             },
+            // Only when there are pets on file (and the moment_pets table exists — the container
+            // passes an empty list until then). There's no "+ create a new pet" path in here on
+            // purpose: a pet has to belong to someone, and the owner is picked on a person's
+            // profile, so offering creation here would open a form that can't finish.
+            ...(allPets.length > 0
+              ? [
+                  {
+                    key: 'pets',
+                    icon: '🐾',
+                    label: 'Add a pet who was there',
+                    onSelect: () => onOpenPicker(),
+                    body: (
+                      <>
+                        <SearchAddPicker
+                          items={allPets
+                            .filter((pet) => !pets.has(pet.id))
+                            .map((pet) => ({ id: pet.id, label: `${petEmoji(pet)} ${pet.name}` }))}
+                          placeholder="Search pets to tag…"
+                          onSelect={async (item) => {
+                            const pet = allPets.find((p) => p.id === item.id)
+                            if (!pet) return
+                            if (await onAddPet(pet)) setJustAdded(pet.name)
+                          }}
+                          emptyText="No pets match."
+                          browseAll
+                        />
+                        <AddedLine name={justAdded} />
+                      </>
+                    ),
+                  },
+                ]
+              : []),
             {
               key: 'tag',
               icon: '🏷️',
@@ -2406,6 +2545,47 @@ function AttendeeChip({
             onRemove()
           }}
           aria-label={`Untag ${label} from this event`}
+          className="touch-action" style={styles.cornerBadge}
+        >
+          {TRASH_ICON}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// AttendeeChip's twin for a pet (2026-08-20). Same chip, same corner-badge untag, with the species
+// emoji in front — that prefix is doing real work: it's what stops "Bella" in this row from reading
+// as a person when the family also knows a Bella.
+function PetAttendeeChip({
+  pet,
+  viaSubEvent = false,
+  onSelect,
+  onRemove,
+}: {
+  pet: Pet
+  viaSubEvent?: boolean
+  onSelect: () => void
+  onRemove?: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button
+        onClick={onSelect}
+        style={styles.attendeeChip}
+        title={viaSubEvent ? `${pet.name} is tagged on a sub-event — untag them there` : undefined}
+      >
+        <span style={styles.petChipEmoji}>{petEmoji(pet)}</span> {pet.name}
+      </button>
+      {(hovered || IS_TOUCH) && onRemove && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Untag ${pet.name} from this event`}
           className="touch-action" style={styles.cornerBadge}
         >
           {TRASH_ICON}
@@ -2771,6 +2951,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
+  // Emoji inherit the button's italic/style context otherwise, same reason PetDetail and the
+  // People list each set this on theirs.
+  petChipEmoji: { fontStyle: 'normal' },
   suggestChip: {
     fontSize: fontSize.body,
     padding: '0.35rem 0.8rem',

@@ -108,6 +108,80 @@ export async function loadOwnersByPetId(): Promise<Record<string, PetOwner[]>> {
   return byPet
 }
 
+// --- Pets at events (moment_pets, 2026-08-20) ----------------------------------------------------
+//
+// A pet is tagged to an event through its own join table rather than through `notes` the way a
+// person is (see migrations_manual/2026-08-20-moment-pets.sql for why). Practical consequence for
+// callers: a pet has no per-event note, so nothing here touches the event's cached summary — and
+// deliberately so, since nulling `summary` on every chip tap costs an AI regeneration (CLAUDE.md
+// rule 3) for text that never mentions the pet anyway.
+
+export type PetEventRef = {
+  id: string
+  occasion: string | null
+  raw_description: string
+  event_date: string | null
+}
+
+// Pets tagged on any of these moments, keyed by moment id — one round trip for an event and all of
+// its sub-events, so the roll-up "Who was there" already does for people costs no extra queries.
+// `available:false` means moment_pets isn't migrated yet, and carries the same meaning it does in
+// loadPetsForPerson: hide the feature rather than offer a control whose writes vanish.
+export async function loadPetsForMoments(
+  momentIds: string[]
+): Promise<{ byMoment: Record<string, Pet[]>; available: boolean }> {
+  if (momentIds.length === 0) return { byMoment: {}, available: true }
+  const { data, error } = await supabase
+    .from('moment_pets')
+    .select(`moment_id, pets(${PET_COLUMNS})`)
+    .in('moment_id', momentIds)
+  if (error || !data) return { byMoment: {}, available: !error }
+  const byMoment: Record<string, Pet[]> = {}
+  for (const row of data as any[]) {
+    if (!row.pets) continue
+    ;(byMoment[row.moment_id] ??= []).push(normalize(row.pets))
+  }
+  for (const pets of Object.values(byMoment)) sortPets(pets)
+  return { byMoment, available: true }
+}
+
+// The reverse lookup, for a pet's own page. Same fail-open shape: a missing table reads as "this
+// feature isn't here", never as "this pet went to nothing."
+export async function loadEventsForPet(petId: string): Promise<{ events: PetEventRef[]; available: boolean }> {
+  const { data, error } = await supabase
+    .from('moment_pets')
+    .select('moments(id, occasion, raw_description, event_date)')
+    .eq('pet_id', petId)
+  if (error || !data) return { events: [], available: !error }
+  const events = (data as any[])
+    .map((row) => row.moments)
+    .filter(Boolean)
+    .map((m) => ({ id: m.id, occasion: m.occasion ?? null, raw_description: m.raw_description ?? '', event_date: m.event_date ?? null }))
+  // Most recent first, undated last — the order every other event list in the app reads in.
+  events.sort((a, b) => {
+    if (!a.event_date || !b.event_date) return a.event_date ? -1 : b.event_date ? 1 : 0
+    return b.event_date.localeCompare(a.event_date)
+  })
+  return { events, available: true }
+}
+
+// Both writes return whether they actually landed, matching EventDetail's people/group/tag handlers
+// — a discarded { error } there is what let "✓ Added" print over a write that never happened.
+export async function tagPetToMoment(momentId: string, petId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('moment_pets')
+    .upsert({ moment_id: momentId, pet_id: petId }, { onConflict: 'moment_id,pet_id', ignoreDuplicates: true })
+  if (error) console.error('Pet event tag failed', error)
+  return !error
+}
+
+// Detachment only, same as unlinkPet and the group untag: the pet and the event both survive.
+export async function untagPetFromMoment(momentId: string, petId: string): Promise<boolean> {
+  const { error } = await supabase.from('moment_pets').delete().eq('moment_id', momentId).eq('pet_id', petId)
+  if (error) console.error('Pet event untag failed', error)
+  return !error
+}
+
 // Real deletion, for the pet's own page — distinct from unlinkPet, which only detaches it from one
 // profile. person_pets rows cascade on the FK.
 export async function deletePet(petId: string): Promise<void> {

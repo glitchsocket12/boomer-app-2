@@ -3,15 +3,18 @@ import {
   deletePet,
   formatPetDates,
   isMemorial,
+  loadEventsForPet,
   loadPet,
   loadPetOwners,
   petEmoji,
   updatePet,
   type Pet,
+  type PetEventRef,
   type PetOwner,
 } from '../lib/pets'
 import { LabeledValueEditor } from '../components/ContactInfoSection'
-import { PersonChip } from '../components/Chips'
+import { EventChip, PersonChip } from '../components/Chips'
+import { summarize } from '../lib/summarize'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import EditButton from '../components/EditButton'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow } from '../lib/theme'
@@ -29,6 +32,7 @@ export default function PetDetail({
   onBack,
   backLabel,
   onSelectPerson,
+  onSelectEvent,
   onRenamed,
   onDeleted,
 }: {
@@ -37,11 +41,16 @@ export default function PetDetail({
   onBack: () => void
   backLabel: string
   onSelectPerson: (person: { id: string; name: string }) => void
+  onSelectEvent: (event: { id: string; summary: string }) => void
   onRenamed: (name: string) => void
   onDeleted: () => void
 }) {
   const [pet, setPet] = useState<Pet | null>(null)
   const [owners, setOwners] = useState<PetOwner[]>([])
+  // The reverse of EventDetail's pet chips (2026-08-20). Empty both when this pet went to nothing
+  // and when moment_pets isn't migrated yet — the section just doesn't render either way, which is
+  // the right degradation for a read-only list with no control on it.
+  const [events, setEvents] = useState<PetEventRef[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<Pet | null>(null)
@@ -54,9 +63,14 @@ export default function PetDetail({
 
   async function load() {
     setLoading(true)
-    const [loadedPet, loadedOwners] = await Promise.all([loadPet(petId), loadPetOwners(petId)])
+    const [loadedPet, loadedOwners, loadedEvents] = await Promise.all([
+      loadPet(petId),
+      loadPetOwners(petId),
+      loadEventsForPet(petId),
+    ])
     setPet(loadedPet)
     setOwners(loadedOwners)
+    setEvents(loadedEvents.events)
     setLoading(false)
   }
 
@@ -154,6 +168,21 @@ export default function PetDetail({
             <p style={styles.empty}>
               Not on anyone's profile right now — open a person and add {pet.name} from their Pets section.
             </p>
+          )}
+
+          {/* Hidden entirely when empty, unlike "Belongs to" above — an owner-less pet is a state
+              worth explaining, but "hasn't been tagged to anything yet" isn't, and the tagging is
+              done over on the event anyway. */}
+          {events.length > 0 && (
+            <>
+              <h2 style={styles.subheading}>Was at these events</h2>
+              <div style={styles.chipRow}>
+                {events.map((e) => {
+                  const label = summarize(e.occasion, e.raw_description)
+                  return <EventChip key={e.id} label={label} onClick={() => onSelectEvent({ id: e.id, summary: label })} />
+                })}
+              </div>
+            </>
           )}
 
           <h2 style={styles.subheading}>Pet</h2>
