@@ -27,6 +27,10 @@
 // is a separate call, so a select mode would be a toggle that never pays for itself. The dropdown
 // stays on every row — it is the only way to say non-binary or other, the keyboard path, and the
 // fallback whenever dragging is awkward.
+//
+// Names in that list disappear once you set them (founder ask, 2026-08-20) and reappear in a
+// collapsed "Sorted so far" panel, so the list always shows what's still to do rather than a
+// hundred rows of answers you already gave.
 
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -79,6 +83,8 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
   const [menShown, setMenShown] = useState(PAGE_STEP)
   const [womenShown, setWomenShown] = useState(PAGE_STEP)
   const [unknownShown, setUnknownShown] = useState(PAGE_STEP)
+  const [sortedShown, setSortedShown] = useState(PAGE_STEP)
+  const [sortedOpen, setSortedOpen] = useState(false)
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -143,11 +149,26 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
   const suggestedWomen = useMemo(() => (rows ?? []).filter((r) => r.guess === 'female'), [rows])
   const unknown = useMemo(() => (rows ?? []).filter((r) => r.guess === null), [rows])
 
+  // A name you've made a call on leaves the list (founder ask, 2026-08-20) instead of staying put
+  // with a filled-in dropdown. With a hundred-odd of them the only way to see what's left is for
+  // what's done to go away — otherwise you scroll past your own answers to reach the next question.
+  // Nothing is lost: it moves into "Sorted so far", which is also the way back out.
+  //
+  // Deliberately NOT applied to the Men/Women guess columns above. There, "Accept all" would empty
+  // a whole column in a single tap, and being able to see what you just accepted and change the
+  // ones Boomer got wrong is the entire point of showing them.
+  //
+  // A row set back to "Leave blank" drops out of `choices` entirely, so the same rule that hides a
+  // sorted name puts an unsorted one back — there's no third "cleared" state to keep track of.
+  const unknownPending = unknown.filter((r) => choices[r.id] === undefined)
+  const unknownSorted = unknown.filter((r) => choices[r.id] !== undefined)
+
   const query = search.trim().toLowerCase()
   const matches = (r: Row) => !query || r.fullName.toLowerCase().includes(query)
   const visibleMen = suggestedMen.filter(matches)
   const visibleWomen = suggestedWomen.filter(matches)
-  const visibleUnknown = unknown.filter(matches)
+  const visibleUnknownPending = unknownPending.filter(matches)
+  const visibleUnknownSorted = unknownSorted.filter(matches)
 
   // Counts what will actually be written, not what's been clicked — a row set back to "Leave blank"
   // drops out of `choices` entirely rather than saving an empty string.
@@ -224,6 +245,8 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
     setMenShown(PAGE_STEP)
     setWomenShown(PAGE_STEP)
     setUnknownShown(PAGE_STEP)
+    setSortedShown(PAGE_STEP)
+    setSortedOpen(false)
     await load()
   }
 
@@ -351,11 +374,14 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
 
           {unknown.length > 0 && (
             <section style={styles.section}>
-              <h2 style={styles.sectionHeading}>Boomer can't guess these ({unknown.length})</h2>
+              <h2 style={styles.sectionHeading}>
+                Boomer can't guess these ({unknownPending.length})
+              </h2>
               <p style={styles.sectionBody}>
                 Some names genuinely go either way — Jordan, Casey, Alex — and Boomer won't guess at
                 a name it doesn't know at all. Drag a name into Men or Women, or use the dropdown.
-                Set the ones you want; skip the rest.
+                Once you've set someone they drop off the list, so you're always looking at what's
+                still to do. Set the ones you want; skip the rest.
               </p>
               <DndContext
                 sensors={sensors}
@@ -370,16 +396,23 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
                   <GenderDropZone id="male" label="Men" count={unknownAssignedMen} dragging={activeDragId !== null} />
                   <GenderDropZone id="female" label="Women" count={unknownAssignedWomen} dragging={activeDragId !== null} />
                 </div>
-                <PersonRows
-                  rows={visibleUnknown}
-                  shown={unknownShown}
-                  onShowMore={() => setUnknownShown((n) => n + PAGE_STEP)}
-                  choices={choices}
-                  onChoose={setChoice}
-                  disabled={saving}
-                  draggable
-                  emptyText={`No one in this list matches "${search}".`}
-                />
+                {unknownPending.length === 0 ? (
+                  <p style={styles.listDone}>
+                    That's every one of them — {unknownSorted.length}{' '}
+                    {unknownSorted.length === 1 ? 'name' : 'names'} sorted. Press Save to keep it.
+                  </p>
+                ) : (
+                  <PersonRows
+                    rows={visibleUnknownPending}
+                    shown={unknownShown}
+                    onShowMore={() => setUnknownShown((n) => n + PAGE_STEP)}
+                    choices={choices}
+                    onChoose={setChoice}
+                    disabled={saving}
+                    draggable
+                    emptyText={`No one still to do matches "${search}".`}
+                  />
+                )}
                 <DragOverlay>
                   {activeDragId && (
                     <div style={styles.dragGhost}>
@@ -388,6 +421,40 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
                   )}
                 </DragOverlay>
               </DndContext>
+
+              {/* Where the names that left the list went. Collapsed by default — the whole point was
+                  to get them off the screen — but it's the only way back if one was dropped in the
+                  wrong bucket, so it's always one tap away rather than hidden behind Start over,
+                  which throws away every answer at once. */}
+              {unknownSorted.length > 0 && (
+                <div style={styles.sortedPanel}>
+                  <button
+                    type="button"
+                    onClick={() => setSortedOpen((open) => !open)}
+                    aria-expanded={sortedOpen}
+                    style={styles.sortedToggle}
+                  >
+                    {sortedOpen ? '▾' : '▸'} Sorted so far ({unknownSorted.length})
+                  </button>
+                  {sortedOpen && (
+                    <div style={styles.sortedBody}>
+                      <p style={styles.sortedHint}>
+                        Change anyone here, or set them back to "Leave blank" to put them back on the
+                        list above.
+                      </p>
+                      <PersonRows
+                        rows={visibleUnknownSorted}
+                        shown={sortedShown}
+                        onShowMore={() => setSortedShown((n) => n + PAGE_STEP)}
+                        choices={choices}
+                        onChoose={setChoice}
+                        disabled={saving}
+                        emptyText={`No one you've sorted matches "${search}".`}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           )}
 
@@ -727,5 +794,26 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: `${space.md} 0 0`,
     fontFamily,
   },
+  // Nothing left to do reads as an achievement, not an empty list, so it gets the success colour
+  // rather than the same grey the "no search matches" line uses.
+  listDone: {
+    fontSize: fontSize.bodyLg,
+    color: colors.success,
+    lineHeight: 1.5,
+    margin: 0,
+    padding: `${space.lg} 0`,
+  },
+  sortedPanel: { marginTop: space.xl },
+  sortedToggle: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    color: colors.primary,
+    fontSize: fontSize.body,
+    fontFamily,
+    cursor: 'pointer',
+  },
+  sortedBody: { marginTop: space.md },
+  sortedHint: { fontSize: fontSize.label, color: colors.textMuted, lineHeight: 1.5, margin: `0 0 ${space.md}` },
   footNote: { fontSize: fontSize.body, color: colors.textFaint, lineHeight: 1.5, margin: 0 },
 }
