@@ -66,7 +66,7 @@ serve(async (req) => {
       fetchAllRows((from, to) =>
         supabaseClient
           .from("people")
-          .select("id, name, last_name, nicknames, middle_name, goes_by_other, emails, phones")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, emails, phones")
           .eq("user_id", user.id)
           .order("id")
           .range(from, to)
@@ -91,6 +91,7 @@ serve(async (req) => {
       name: p.name,
       last_name: p.last_name,
       nicknames: [p.nicknames, p.middle_name, p.goes_by_other].filter(Boolean).join(","),
+      former_last_names: p.former_last_names ?? null,
       emails: p.emails ?? [],
       phones: p.phones ?? [],
     }))

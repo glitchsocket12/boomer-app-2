@@ -8,6 +8,7 @@ import {
 } from "../_shared/relationships.ts"
 import { findSelfPerson } from "../_shared/selfContext.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
+import { claimFormerNameKeys, mergeFormerLastNames, parseFormerLastNames } from "../_shared/formerNames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,7 +45,7 @@ serve(async (req) => {
 
     const { data: person } = await supabaseClient
       .from("people")
-      .select("name, last_name, nicknames, reminders(id, label, month, day)")
+      .select("name, last_name, nicknames, former_last_names, reminders(id, label, month, day)")
       .eq("id", personId)
       .single()
 
@@ -61,7 +62,7 @@ serve(async (req) => {
 
     const { data: allPeople } = await supabaseClient
       .from("people")
-      .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+      .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self")
     const nameById: Record<string, string> = {}
     const idByName: Record<string, string> = {}
     const lastNameById: Record<string, string | null> = {}
@@ -90,6 +91,10 @@ serve(async (req) => {
         claimKey(altName.toLowerCase(), p.id)
       }
     }
+    // A former name resolves too, so "Sarah Jenkins" reaches the Sarah Mitchell already on file
+    // instead of opening a second profile for her. Runs after the loop above and before the sweep
+    // below, and never takes a key a current name already owns.
+    claimFormerNameKeys(allPeople ?? [], idByName, claimKey)
     for (const key of ambiguousKeys) delete idByName[key]
 
     const selfInfo = findSelfPerson(allPeople, nameById)
@@ -104,13 +109,13 @@ serve(async (req) => {
         ? `\n\nIMPORTANT — this text is being typed on ${person?.name ?? "this person"}'s profile page, but that does NOT mean a first-person pronoun in it ("my"/"I"/"me"/"we"/"our") refers to ${person?.name ?? "them"}. The app's user is themselves separately recorded as "${selfInfo.name}" — any first-person pronoun refers to ${selfInfo.name}, the person typing, not to ${person?.name ?? "this profile"}. When producing a "note" value, never rewrite "my X" as "${person?.name ?? "this person"}'s X" — if you rewrite it out of first person at all, resolve it to "${selfInfo.name}'s X" instead. If in doubt, leave the pronoun exactly as typed rather than guessing whose it is.`
         : ""
 
-    const addFactSystemPrompt = `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, nicknames/goes-by = ${person?.nicknames || "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.${selfPronounInstruction}
+    const addFactSystemPrompt = `You classify a short piece of text someone typed about a person named ${person?.name ?? "someone"} in an app called Boomer, so it can be filed into the right place. Info currently on file: first name = ${person?.name ?? "none"}, last name = ${person?.last_name ?? "none"}, nicknames/goes-by = ${person?.nicknames || "none"}, former last name(s) = ${person?.former_last_names || "none"}, birthday = ${birthday ? `${birthday.month}/${birthday.day}` : "none"}, anniversary = ${anniversary ? `${anniversary.month}/${anniversary.day}` : "none"}. Groups already on file: ${groupsRoster || "(none yet)"}.${selfPronounInstruction}
 
 Respond ONLY with a JSON object in this exact shape:
 {"type": "name_update" | "birthday_update" | "anniversary_update" | "note", "value": <see below>, "group_signal": null | {"group_name": "string", "confidence": "high" | "medium"}, ${FAMILY_SIGNAL_JSON_FIELD_SINGLE_SUBJECT}}
 
 "type"/"value" pairing:
-- Providing or correcting their NAME — first name, last name, a full "First Last" spelling correction, and/or a NICKNAME or "goes by" name (e.g. "Their name is spelled Jonathan Smith", "Her last name is Peterson", "It's actually spelled Katherine, not Catherine", "He goes by Bob", "Everyone calls her Gigi"): {"type": "name_update", "value": {"first_name": "TheFirstName" or null, "last_name": "TheLastName" or null, "nicknames": ["NewNickname1"] or null}}. Only include the part(s) actually being given/corrected — set the others to null. If the user states a full "First Last" name, include BOTH as the authoritative spelling of the whole name, even if one part already matches what's on file. "nicknames" is for a name they go by that ISN'T their formal first/last name (e.g. a childhood nickname, a name only some people call them, "Grandpa Joe") — list only newly-stated nickname(s), not ones already on file.
+- Providing or correcting their NAME — first name, last name, a full "First Last" spelling correction, and/or a NICKNAME or "goes by" name (e.g. "Their name is spelled Jonathan Smith", "Her last name is Peterson", "It's actually spelled Katherine, not Catherine", "He goes by Bob", "Everyone calls her Gigi"): {"type": "name_update", "value": {"first_name": "TheFirstName" or null, "last_name": "TheLastName" or null, "nicknames": ["NewNickname1"] or null, "former_last_names": ["OldSurname"] or null}}. Only include the part(s) actually being given/corrected — set the others to null. If the user states a full "First Last" name, include BOTH as the authoritative spelling of the whole name, even if one part already matches what's on file. "nicknames" is for a name they go by that ISN'T their formal first/last name (e.g. a childhood nickname, a name only some people call them, "Grandpa Joe") — list only newly-stated nickname(s), not ones already on file. "former_last_names" is different again and is for a LAST name they USED to have — a maiden name, or one changed by marriage, divorce, remarriage or adoption ("she was a Jenkins before she married", "née Jenkins", "she uses Okafor again since the divorce"): record the OLD SURNAME ONLY, never their first name and never the whole old name, and only when it's newly stated. If the text gives both a current and a former surname ("Sarah Mitchell, née Jenkins"), set "last_name" to the current one AND "former_last_names" to the old one.
 - Providing or correcting their BIRTHDAY (month/day only, no year): {"type": "birthday_update", "value": {"month": 1-12, "day": 1-31}}
 - Providing or correcting their ANNIVERSARY date (month/day only, no year): {"type": "anniversary_update", "value": {"month": 1-12, "day": 1-31}}
 - Anything else (a plain fact, memory, or detail that doesn't fit the above): {"type": "note", "value": "the text, lightly cleaned up if needed, otherwise unchanged"}
@@ -165,7 +170,7 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
     }
 
     if (result.type === "name_update") {
-      const updates: { name?: string; last_name?: string; nicknames?: string } = {}
+      const updates: { name?: string; last_name?: string; nicknames?: string; former_last_names?: string } = {}
       if (result.value?.first_name) updates.name = result.value.first_name
       if (result.value?.last_name) updates.last_name = result.value.last_name
       if (Array.isArray(result.value?.nicknames) && result.value.nicknames.length > 0) {
@@ -179,6 +184,14 @@ ${familySignalPromptSingleSubject(person?.name ?? "this person")}`
         }
         updates.nicknames = merged.join(", ")
       }
+      // Additive for the same reason nicknames are: a maiden name captured in one conversation
+      // must not wipe the one recorded months ago on a different screen. `existing` is the RAW
+      // column — never the folded lookup list, which would copy a nickname into this field.
+      const mergedFormer = mergeFormerLastNames(
+        parseFormerLastNames(person?.former_last_names),
+        result.value?.former_last_names
+      )
+      if (mergedFormer) updates.former_last_names = mergedFormer.join(", ")
       if (Object.keys(updates).length > 0) {
         await supabaseClient.from("people").update(updates).eq("id", personId)
       }

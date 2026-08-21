@@ -19,9 +19,15 @@ import {
 // supabase/functions/_shared/ (for the import) and src/lib/ (for the review screen re-check),
 // because Deno can't import from src/. Every case runs through both copies.
 
-function strength(contactName: string, personName: string, lastName: string | null, aliases: string[] = []) {
-  const edge = nameMatchStrength(contactName, personNameKeys(personName, lastName, aliases))
-  const app = appNameMatchStrength(contactName, appPersonNameKeys(personName, lastName, aliases))
+function strength(
+  contactName: string,
+  personName: string,
+  lastName: string | null,
+  aliases: string[] = [],
+  formerLastNames: string[] = []
+) {
+  const edge = nameMatchStrength(contactName, personNameKeys(personName, lastName, aliases, formerLastNames))
+  const app = appNameMatchStrength(contactName, appPersonNameKeys(personName, lastName, aliases, formerLastNames))
   expect(app, `mirror drift for "${contactName}" vs "${personName} ${lastName ?? ''}"`).toBe(edge)
   return edge
 }
@@ -89,6 +95,34 @@ describe('nameMatchStrength', () => {
     expect(strength('Maria Lesar', 'Alex', 'Lesar')).toBe('none')
     expect(strength('Alex Lesar', 'Jordan', 'Park')).toBe('none')
   })
+
+  // A former name is the one alias that counts as a SURNAME. Without it, a maiden/married pair is
+  // a surname conflict, which is a hard 'none' — the import queue doesn't even ask, and the same
+  // miss is what makes chat open a second profile for someone already on file.
+  it('matches a former surname against the current one', () => {
+    expect(strength('Sarah Jenkins', 'Sarah', 'Mitchell', [], ['Jenkins'])).toBe('strong')
+    expect(strength('Sarah Mitchell', 'Sarah', 'Mitchell', [], ['Jenkins'])).toBe('strong')
+    // Unchanged when nothing is recorded: the app only knows a name changed if it was told.
+    expect(strength('Sarah Jenkins', 'Sarah', 'Mitchell')).toBe('none')
+  })
+
+  it('carries more than one former surname, for a remarriage', () => {
+    expect(strength('Sarah Okafor', 'Sarah', 'Mitchell', [], ['Jenkins', 'Okafor'])).toBe('strong')
+    expect(strength('Sarah Jenkins', 'Sarah', 'Mitchell', [], ['Jenkins', 'Okafor'])).toBe('strong')
+  })
+
+  it('never lets a former surname act as a given name', () => {
+    // The whole failure mode this column exists to avoid: "Jenkins" filed as a first name.
+    expect(strength('Jenkins Mitchell', 'Sarah', 'Mitchell', [], ['Jenkins'])).toBe('none')
+    expect(strength('Jenkins', 'Sarah', 'Mitchell', [], ['Jenkins'])).toBe('none')
+    // Her sister-in-law is not her.
+    expect(strength('Emily Jenkins', 'Sarah', 'Mitchell', [], ['Jenkins'])).toBe('none')
+  })
+
+  it('combines a nickname with a former surname, and still holds initials to the same bar', () => {
+    expect(strength('Sadie Jenkins', 'Sarah', 'Mitchell', ['Sadie'], ['Jenkins'])).toBe('strong')
+    expect(strength('S. Jenkins', 'Sarah', 'Mitchell', [], ['Jenkins'])).toBe('weak')
+  })
 })
 
 const PEOPLE: MatchablePerson[] = [
@@ -151,5 +185,23 @@ describe('findBestPersonMatch', () => {
 
   it('returns nothing for someone genuinely new', () => {
     expect(match('Priya Raghunathan', ['priya@example.com'])).toBeNull()
+  })
+
+  it('finds someone imported under the name they used to have', () => {
+    const remarried: MatchablePerson[] = [
+      { id: 'sarah', name: 'Sarah', last_name: 'Mitchell', nicknames: null, former_last_names: 'Jenkins' },
+    ]
+    expect(match('Sarah Jenkins', [], [], remarried)).toEqual({ personId: 'sarah', confidence: 'high' })
+    expect(match('Sarah Mitchell', [], [], remarried)).toEqual({ personId: 'sarah', confidence: 'high' })
+  })
+
+  it('asks rather than asserts when a former name collides with someone real', () => {
+    // A genuine Sarah Jenkins on file, and a Sarah Mitchell who used to be one. Both score the
+    // same, so the existing tie guard drops the confident tier to a question instead of picking.
+    const collision: MatchablePerson[] = [
+      { id: 'real-jenkins', name: 'Sarah', last_name: 'Jenkins', nicknames: null },
+      { id: 'was-jenkins', name: 'Sarah', last_name: 'Mitchell', nicknames: null, former_last_names: 'Jenkins' },
+    ]
+    expect(match('Sarah Jenkins', [], [], collision)).toEqual({ personId: 'real-jenkins', confidence: 'none' })
   })
 })

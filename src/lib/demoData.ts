@@ -17,6 +17,7 @@ export type DemoPerson = {
   middle_name: string | null
   goes_by_kind: 'first' | 'middle' | 'last' | 'other' | null
   goes_by_other: string | null
+  former_last_names?: string | null
   nicknames: string | null
   is_self: boolean
   created_at: string
@@ -82,7 +83,7 @@ export type DemoKeyFact = {
 
 const CORE_PEOPLE: DemoPerson[] = [
   { id: 'gary', name: 'Gary', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: true, created_at: '2024-01-05T00:00:00Z' },
-  { id: 'carol', name: 'Carol', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-05T00:00:00Z' },
+  { id: 'carol', name: 'Carol', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, former_last_names: 'Whitfield', is_self: false, created_at: '2024-01-05T00:00:00Z' },
   { id: 'mike', name: 'Mike', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-06T00:00:00Z' },
   { id: 'jenna', name: 'Jenna', last_name: 'Pemberton', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-06T00:00:00Z' },
   { id: 'beth', name: 'Beth', last_name: 'Pemberton-Ortiz', middle_name: null, goes_by_kind: null, goes_by_other: null, nicknames: null, is_self: false, created_at: '2024-01-06T00:00:00Z' },

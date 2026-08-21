@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { nameMatchStrength, personNameKeys } from '../lib/nameMatchStrength'
+import { parseFormerLastNames } from '../lib/formerNames'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
@@ -47,6 +48,7 @@ type PersonRef = {
   nicknames?: string | null
   middle_name?: string | null
   goes_by_other?: string | null
+  former_last_names?: string | null
 }
 type GroupRef = { id: string; name: string; parent_group_id?: string | null }
 
@@ -104,7 +106,12 @@ function matchIsImplausible(fullName: string, matchedPersonId: string | null, pe
   const aliases = [person.nicknames, person.middle_name, person.goes_by_other]
     .filter(Boolean)
     .flatMap((v) => String(v).split(','))
-  return nameMatchStrength(fullName, personNameKeys(person.name, person.last_name, aliases)) === 'none'
+  // Former surnames stay OUT of `aliases` and go in their own argument: everything in that list
+  // is treated as a given name, which is the one thing a former surname must never be.
+  const formerLastNames = parseFormerLastNames(person.former_last_names)
+  return (
+    nameMatchStrength(fullName, personNameKeys(person.name, person.last_name, aliases, formerLastNames)) === 'none'
+  )
 }
 
 const CLEARED_MATCH = { matched_person_id: null, match_confidence: 'none' } as const
@@ -241,7 +248,7 @@ export default function ContactImportReview({
       fetchAllRows((from, to) =>
         supabase
           .from('people')
-          .select('id, name, last_name, nicknames, middle_name, goes_by_other')
+          .select('id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names')
           .order('name')
           .order('id')
           .range(from, to)

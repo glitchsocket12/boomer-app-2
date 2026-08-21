@@ -20,6 +20,7 @@ function toPerson(id: string): Person {
     nicknames: p.nicknames,
     middle_name: p.middle_name,
     goes_by_other: p.goes_by_other,
+    former_last_names: p.former_last_names ?? null,
     created_at: p.created_at,
     person_groups: groups,
     notes,

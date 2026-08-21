@@ -17,6 +17,7 @@ import { groupDisplayName } from './groupDisplayName'
 import { ATTENDEE_PLACEHOLDER, fetchMomentParentIds } from './moments'
 import { momentDisplayName, momentTitle } from './momentDisplayName'
 import { personLabel } from './personLabel'
+import { formerFullNames, parseFormerLastNames } from './formerNames'
 import { formatEventWhen } from './dates'
 import type { SearchDoc } from './globalSearch'
 
@@ -27,6 +28,7 @@ type PersonRow = {
   middle_name: string | null
   nicknames: string | null
   goes_by_other: string | null
+  former_last_names: string | null
   organization: string | null
   job_title: string | null
   is_self: boolean
@@ -71,7 +73,19 @@ function buildPeopleDocs(rows: PersonRow[]): { docs: SearchDoc[]; nameById: Map<
       // The account owner renders as "You" (item 33) but stays findable by their real name, which
       // is why the substitution happens here and not in `title`.
       display: display === title ? undefined : display,
-      body: joinBody([p.nicknames, p.middle_name, p.goes_by_other, p.organization, p.job_title]),
+      // Both forms of a former name go in: the bare surname so "Jenkins" hits, and the whole
+      // old name because globalSearch substring-matches the entire query against the body, so a
+      // search for "Sarah Jenkins" would miss a body holding only "Jenkins". A body-only hit
+      // scores below every title hit, which is right — her current name should outrank her old one.
+      body: joinBody([
+        p.nicknames,
+        p.middle_name,
+        p.goes_by_other,
+        p.former_last_names,
+        ...formerFullNames(p.name, parseFormerLastNames(p.former_last_names)),
+        p.organization,
+        p.job_title,
+      ]),
       target: { kind: 'person' as const, id: p.id, label: title },
     }
   })
@@ -221,7 +235,7 @@ export async function buildSearchCorpus(): Promise<{ docs: SearchDoc[]; error: Q
     fetchAllRows<PersonRow>((from, to) =>
       supabase
         .from('people')
-        .select('id, name, last_name, middle_name, nicknames, goes_by_other, organization, job_title, is_self')
+        .select('id, name, last_name, middle_name, nicknames, goes_by_other, former_last_names, organization, job_title, is_self')
         .order('id')
         .range(from, to)
     ),

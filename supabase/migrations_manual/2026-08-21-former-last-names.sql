@@ -1,0 +1,13 @@
+-- Former names (maiden names and any other surname someone used to go by).
+--
+-- Comma-separated and additive, exactly like people.nicknames — but the two are NOT
+-- interchangeable, and that distinction is the whole point of a separate column. Every existing
+-- alias field (nicknames, middle_name, goes_by_other) is folded into the GIVEN-name side of name
+-- matching; see personNameKeys() in supabase/functions/_shared/nameMatch.ts, where aliases
+-- "count as given names but never as surnames". A maiden name is a SURNAME alias, so filing one
+-- in nicknames would record "Jenkins" as a first name and Sarah Jenkins would still fail to match
+-- Sarah Mitchell.
+--
+-- Surnames only, not whole former names: in a name change the first name doesn't move, so the
+-- bare surname is what's needed, and it drops straight into personNameKeys().surnames.
+alter table people add column if not exists former_last_names text;

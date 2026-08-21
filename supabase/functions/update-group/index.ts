@@ -9,6 +9,14 @@ import {
 import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { findSelfPerson, buildSelfInstruction } from "../_shared/selfContext.ts"
+import {
+  claimFormerNameKeys,
+  formerNameMarker,
+  mergeFormerLastNames,
+  parseFormerLastNames,
+  FORMER_NAME_PROMPT_CLAUSE,
+  FORMER_NAME_JSON_FIELD,
+} from "../_shared/formerNames.ts"
 import { mergeNicknames, parseNicknames, NICKNAME_PROMPT_CLAUSE, NICKNAME_JSON_FIELD } from "../_shared/nicknames.ts"
 
 const corsHeaders = {
@@ -55,7 +63,7 @@ serve(async (req) => {
     const { data: allPeople } = await fetchAllRows((from, to) =>
       supabaseClient
         .from("people")
-        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+        .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self")
         .order("id")
         .range(from, to)
     )
@@ -75,6 +83,7 @@ serve(async (req) => {
     // merge below writes back — merging onto the folded list would copy someone's middle name into
     // their nicknames column the first time an unrelated nickname was captured.
     const rawNicknamesById: Record<string, string[]> = {}
+    const rawFormerById: Record<string, string[]> = {}
     const lastNameById: Record<string, string | null> = {}
     const ambiguousKeys = new Set<string>()
     function claimKey(key: string, id: string) {
@@ -100,7 +109,14 @@ serve(async (req) => {
       if (p.goes_by_other) nicknames.push(String(p.goes_by_other).trim())
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
       for (const nickname of nicknames) claimKey(nickname.toLowerCase(), p.id)
+      // Kept OUT of the nicknames fold above and in its own map: everything in that list resolves
+      // as a given name, and a former surname resolving as a first name is the bug this avoids.
+      const rawFormer = parseFormerLastNames(p.former_last_names)
+      if (rawFormer.length > 0) rawFormerById[p.id] = rawFormer
     }
+    // "Sarah Jenkins" reaches the Sarah Mitchell already on file rather than opening a second
+    // profile. Never takes a key some current name already owns.
+    claimFormerNameKeys(allPeople ?? [], idByName, claimKey)
     for (const key of ambiguousKeys) delete idByName[key]
 
     // Members = explicit person_groups roster ONLY. Attending an event tagged to this group
@@ -135,8 +151,11 @@ serve(async (req) => {
 
     const knownPeople = (allPeople ?? [])
       .map((p) => {
-        const nicknames = nicknamesById[p.id]
-        return nicknames ? `${fullName(p)} (also goes by: ${nicknames.join(", ")})` : fullName(p)
+        const marks = [
+          nicknamesById[p.id] ? `also goes by: ${nicknamesById[p.id].join(", ")}` : null,
+          formerNameMarker(rawFormerById[p.id] ?? []),
+        ].filter(Boolean)
+        return marks.length > 0 ? `${fullName(p)} (${marks.join(", ")})` : fullName(p)
       })
       .join(", ")
 
@@ -156,11 +175,13 @@ CRITICAL — never invent, assume, or add a concrete detail the user did not act
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "needs_clarification": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${NICKNAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${NICKNAME_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
 This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes"/"nickname_updates" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.
 
 ${NICKNAME_PROMPT_CLAUSE}
+
+${FORMER_NAME_PROMPT_CLAUSE}
 
 A PET IS NOT A PERSON. If the user mentions someone's animal, never put the animal's name in "add_people" — that would create a fake human profile in their People list and Dunbar count, and make it a member of this group. Record it as ordinary note text instead. Pets have their own place in the app, recorded from the Home chat or a profile's Pets section, not here.`
 
@@ -343,6 +364,19 @@ ${otherEvents || "(none)"}`
       if (merged) {
         await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
         rawNicknamesById[id] = merged
+      }
+    }
+
+    // Same additive contract as nicknames, against the RAW column: a maiden name mentioned here
+    // must not wipe one recorded months ago from a different screen.
+    for (const update of parsed.former_name_updates ?? []) {
+      const id = idByName[String(update?.person ?? "").trim().toLowerCase()]
+      if (!id) continue
+      const existing = rawFormerById[id] ?? []
+      const merged = mergeFormerLastNames(existing, update.former_last_names)
+      if (merged) {
+        await supabaseClient.from("people").update({ former_last_names: merged.join(", ") }).eq("id", id)
+        rawFormerById[id] = merged
       }
     }
 

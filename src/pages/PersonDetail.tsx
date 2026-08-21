@@ -25,6 +25,7 @@ import { guessGenderFromName } from '../lib/nameGender'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 import { personLabel } from '../lib/personLabel'
+import { formerNameLine, parseFormerLastNames } from '../lib/formerNames'
 
 export type Note = {
   id: string
@@ -45,6 +46,7 @@ export type PersonRow = {
   middle_name: string | null
   goes_by_kind: 'first' | 'middle' | 'last' | 'other' | null
   goes_by_other: string | null
+  former_last_names?: string | null
   deceased_date?: string | null
 }
 
@@ -160,6 +162,7 @@ export default function PersonDetail({
   const [middleNameInput, setMiddleNameInput] = useState('')
   const [goesByKind, setGoesByKind] = useState<'first' | 'middle' | 'last' | 'other'>('first')
   const [goesByOtherInput, setGoesByOtherInput] = useState('')
+  const [formerNameInput, setFormerNameInput] = useState('')
   const [savingName, setSavingName] = useState(false)
   const [newFact, setNewFact] = useState('')
   const [saving, setSaving] = useState(false)
@@ -361,7 +364,7 @@ export default function PersonDetail({
       supabase.from('person_groups').select('groups(id, name, parent_group_id)').eq('person_id', personId),
       supabase
         .from('people')
-        .select('name, last_name, middle_name, goes_by_kind, goes_by_other, deceased_date')
+        .select('name, last_name, middle_name, goes_by_kind, goes_by_other, former_last_names, deceased_date')
         .eq('id', personId)
         .single(),
     ])
@@ -460,6 +463,10 @@ export default function PersonDetail({
     if (!trimmedFirst) return
     const trimmedLast = lastNameInput.trim() || null
     const trimmedMiddle = middleNameInput.trim() || null
+    // Re-joined from the field rather than merged onto what's on file, because this IS the editor
+    // for the column: the additive merge belongs on the chat paths, where a stray capture must
+    // never wipe what an earlier conversation recorded. Here the user is looking at the whole list.
+    const trimmedFormer = parseFormerLastNames(formerNameInput).join(', ') || null
 
     // Fall back to 'first' (stored as null) if the chosen slot has since gone empty — e.g. the
     // dropdown was left on "middle" but the middle name field was then cleared.
@@ -475,7 +482,8 @@ export default function PersonDetail({
       trimmedLast === person.last_name &&
       trimmedMiddle === person.middle_name &&
       finalGoesByKind === person.goes_by_kind &&
-      trimmedGoesByOther === person.goes_by_other
+      trimmedGoesByOther === person.goes_by_other &&
+      trimmedFormer === (person.former_last_names ?? null)
     if (unchanged) {
       setEditingName(false)
       return
@@ -490,6 +498,7 @@ export default function PersonDetail({
         middle_name: trimmedMiddle,
         goes_by_kind: finalGoesByKind,
         goes_by_other: trimmedGoesByOther,
+        former_last_names: trimmedFormer,
       })
       .eq('id', personId)
     setSavingName(false)
@@ -509,6 +518,7 @@ export default function PersonDetail({
       middle_name: trimmedMiddle,
       goes_by_kind: finalGoesByKind,
       goes_by_other: trimmedGoesByOther,
+      former_last_names: trimmedFormer,
       deceased_date: person.deceased_date,
     }
     setPerson(updatedPerson)
@@ -638,8 +648,8 @@ export default function PersonDetail({
     const duplicateId = personId
 
     const [dupPersonRes, survivorPersonRes, survivorRemindersRes, dupRemindersRes, dupGroupsRes, dupPetsRes] = await Promise.all([
-      supabase.from('people').select('name, last_name, nicknames, middle_name, goes_by_other').eq('id', duplicateId).single(),
-      supabase.from('people').select('nicknames').eq('id', survivorId).single(),
+      supabase.from('people').select('name, last_name, nicknames, middle_name, goes_by_other, former_last_names').eq('id', duplicateId).single(),
+      supabase.from('people').select('nicknames, last_name, former_last_names').eq('id', survivorId).single(),
       supabase.from('reminders').select('id, label').eq('person_id', survivorId),
       supabase.from('reminders').select('id, label').eq('person_id', duplicateId),
       supabase.from('person_groups').select('group_id').eq('person_id', duplicateId),
@@ -711,9 +721,28 @@ export default function PersonDetail({
       if (!mergedNicknames.some((m: string) => m.toLowerCase() === n.toLowerCase())) mergedNicknames.push(n)
     }
 
+    // A merge is the one moment the app is TOLD that two different names are one person, so a
+    // surname that differs between the two records is a former name and gets filed as one. It
+    // still goes into the nicknames fold above as the whole old name ("Sarah Jenkins"), but that
+    // list only ever feeds the given-name side of matching — without this line the surname itself
+    // is lost, and the next import under the old name proposes a new person all over again.
+    const survivor = survivorPersonRes.data
+    const mergedFormer = parseFormerLastNames(survivor?.former_last_names)
+    for (const candidate of [...parseFormerLastNames(dup?.former_last_names), dup?.last_name ?? '']) {
+      const trimmed = (candidate ?? '').trim()
+      if (!trimmed) continue
+      if (trimmed.toLowerCase() === (survivor?.last_name ?? '').trim().toLowerCase()) continue
+      if (mergedFormer.some((f) => f.toLowerCase() === trimmed.toLowerCase())) continue
+      mergedFormer.push(trimmed)
+    }
+
     const nicknamesRes = await supabase
       .from('people')
-      .update({ nicknames: mergedNicknames.join(', ') || null, key_facts: null })
+      .update({
+        nicknames: mergedNicknames.join(', ') || null,
+        former_last_names: mergedFormer.join(', ') || null,
+        key_facts: null,
+      })
       .eq('id', survivorId)
     if (nicknamesRes.error) return fail()
 
@@ -763,6 +792,7 @@ export default function PersonDetail({
       middleNameInput={middleNameInput}
       goesByKind={goesByKind}
       goesByOtherInput={goesByOtherInput}
+      formerNameInput={formerNameInput}
       savingName={savingName}
       onStartEditName={() => {
         setFirstNameInput(person?.name ?? '')
@@ -770,6 +800,7 @@ export default function PersonDetail({
         setMiddleNameInput(person?.middle_name ?? '')
         setGoesByKind(person?.goes_by_kind ?? 'first')
         setGoesByOtherInput(person?.goes_by_other ?? '')
+        setFormerNameInput(person?.former_last_names ?? '')
         setDeceasedDateInput(person?.deceased_date ?? '')
         setEditingName(true)
       }}
@@ -778,6 +809,7 @@ export default function PersonDetail({
       onMiddleNameInputChange={setMiddleNameInput}
       onGoesByKindChange={setGoesByKind}
       onGoesByOtherInputChange={setGoesByOtherInput}
+      onFormerNameInputChange={setFormerNameInput}
       onSaveName={handleSaveName}
       onCancelEditName={() => setEditingName(false)}
       deceasedDateInput={deceasedDateInput}
@@ -867,6 +899,7 @@ export function PersonDetailView({
   middleNameInput = '',
   goesByKind = 'first',
   goesByOtherInput = '',
+  formerNameInput = '',
   savingName = false,
   onStartEditName = () => {},
   onFirstNameInputChange = () => {},
@@ -874,6 +907,7 @@ export function PersonDetailView({
   onMiddleNameInputChange = () => {},
   onGoesByKindChange = () => {},
   onGoesByOtherInputChange = () => {},
+  onFormerNameInputChange = () => {},
   onSaveName = () => {},
   onCancelEditName = () => {},
   deceasedDateInput = '',
@@ -955,6 +989,7 @@ export function PersonDetailView({
   middleNameInput?: string
   goesByKind?: 'first' | 'middle' | 'last' | 'other'
   goesByOtherInput?: string
+  formerNameInput?: string
   savingName?: boolean
   onStartEditName?: () => void
   onFirstNameInputChange?: (v: string) => void
@@ -962,6 +997,7 @@ export function PersonDetailView({
   onMiddleNameInputChange?: (v: string) => void
   onGoesByKindChange?: (v: 'first' | 'middle' | 'last' | 'other') => void
   onGoesByOtherInputChange?: (v: string) => void
+  onFormerNameInputChange?: (v: string) => void
   onSaveName?: (e: FormEvent) => void
   onCancelEditName?: () => void
   deceasedDateInput?: string
@@ -1040,6 +1076,9 @@ export function PersonDetailView({
   const [kinPathOpen, setKinPathOpen] = useState(false)
 
   const fullName = person ? computeFullName(person) : personName
+  // Shown, but quietly: it's context for recognising a name you might still use for them, not a
+  // second identity. Deliberately nowhere else — list cards and chips always show the current name.
+  const formerLine = person ? formerNameLine(person.name, person.former_last_names) : ''
   const missingFactCategories = NUDGE_CATEGORIES.filter((c) => !keyFacts.some((f) => c.satisfiedBy.includes(f.category)))
   const showNudge = !readOnly && (notes.length === 0 || missingFactCategories.length > 0)
 
@@ -1072,7 +1111,19 @@ export function PersonDetailView({
               placeholder="Last name"
               style={styles.renameInput}
             />
+            <input
+              type="text"
+              value={formerNameInput}
+              onChange={(e) => onFormerNameInputChange(e.target.value)}
+              placeholder="Former name"
+              style={styles.renameInput}
+            />
           </div>
+          <p style={styles.goesByCaption}>
+            "Former name" is a last name they used to have — a maiden name, or one changed by
+            marriage, divorce or adoption. It makes them findable under the old name instead of
+            being added twice. Separate several with commas.
+          </p>
           <div style={styles.goesByRow}>
             <span style={styles.goesByLabel}>Goes by</span>
             <select
@@ -1151,11 +1202,12 @@ export function PersonDetailView({
           </div>
         </form>
       ) : (
-        <div style={styles.headingRow}>
+        <div style={formerLine ? styles.headingRowTight : styles.headingRow}>
           <h1 style={styles.heading}>{fullName}</h1>
           {!readOnly && <EditButton label="Edit name" onClick={onStartEditName} />}
         </div>
       )}
+      {!editingName && formerLine && <p style={styles.formerNameLine}>{formerLine}</p>}
 
       {kinToSelf && (
         <button
@@ -1724,6 +1776,10 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   heading: { fontSize: fontSize.h1, color: colors.ink, margin: 0 },
   headingRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: space.xl, flexWrap: 'wrap' },
+  // Same row, minus the bottom gap, so the "Formerly …" line reads as part of the name block
+  // rather than as a floating sentence halfway down the page.
+  headingRowTight: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: space.xs, flexWrap: 'wrap' },
+  formerNameLine: { fontSize: fontSize.small, color: colors.textFaintest, margin: `0 0 ${space.xl} 0` },
   treeLink: {
     display: 'block',
     background: 'none',

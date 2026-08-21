@@ -13,6 +13,14 @@ import { getUserTimeZone } from "../_shared/userSettings.ts"
 import { isoDateInTimeZone } from "../_shared/tz.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { sanitizeIsoDate } from "../_shared/dateValidation.ts"
+import {
+  claimFormerNameKeys,
+  formerNameMarker,
+  mergeFormerLastNames,
+  parseFormerLastNames,
+  FORMER_NAME_PROMPT_CLAUSE,
+  FORMER_NAME_JSON_FIELD,
+} from "../_shared/formerNames.ts"
 import { mergeNicknames, parseNicknames, NICKNAME_PROMPT_CLAUSE, NICKNAME_JSON_FIELD } from "../_shared/nicknames.ts"
 
 const corsHeaders = {
@@ -70,7 +78,7 @@ serve(async (req) => {
       fetchAllRows((from, to) =>
         supabaseClient
           .from("people")
-          .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self")
           .order("id")
           .range(from, to)
       ),
@@ -105,6 +113,7 @@ serve(async (req) => {
     // merge below writes back — merging onto the folded list would copy someone's middle name into
     // their nicknames column the first time an unrelated nickname was captured.
     const rawNicknamesById: Record<string, string[]> = {}
+    const rawFormerById: Record<string, string[]> = {}
     const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — otherwise two
     // different people sharing one would collide and whichever loaded last would win every
@@ -134,13 +143,23 @@ serve(async (req) => {
       if (p.goes_by_other) nicknames.push(String(p.goes_by_other).trim())
       if (nicknames.length > 0) nicknamesById[p.id] = nicknames
       for (const nickname of nicknames) claimKey(nickname.toLowerCase(), p.id)
+      // Kept OUT of the nicknames fold above and in its own map: everything in that list resolves
+      // as a given name, and a former surname resolving as a first name is the bug this avoids.
+      const rawFormer = parseFormerLastNames(p.former_last_names)
+      if (rawFormer.length > 0) rawFormerById[p.id] = rawFormer
     }
+    // "Sarah Jenkins" reaches the Sarah Mitchell already on file rather than opening a second
+    // profile. Never takes a key some current name already owns.
+    claimFormerNameKeys(people ?? [], idByName, claimKey)
     for (const key of ambiguousKeys) delete idByName[key]
 
     const peopleRoster = (people ?? [])
       .map((p: any) => {
-        const nicknames = nicknamesById[p.id]
-        return nicknames ? `${nameById[p.id]} (also goes by: ${nicknames.join(", ")})` : nameById[p.id]
+        const marks = [
+          nicknamesById[p.id] ? `also goes by: ${nicknamesById[p.id].join(", ")}` : null,
+          formerNameMarker(rawFormerById[p.id] ?? []),
+        ].filter(Boolean)
+        return marks.length > 0 ? `${nameById[p.id]} (${marks.join(", ")})` : nameById[p.id]
       })
       .join(", ")
 
@@ -177,12 +196,14 @@ Each call covers exactly one note the user just submitted — there's no back-an
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "needs_clarification": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${NICKNAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${NICKNAME_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
 This is saved immediately after every single turn, so only include in "new_people"/"mentioned_names"/"additional_notes"/"moment_field_updates"/"add_groups"/"nickname_updates" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
 
 ${NICKNAME_PROMPT_CLAUSE}
+
+${FORMER_NAME_PROMPT_CLAUSE}
 
 CRITICAL — NEVER create a profile for someone just because they came up in the story. Not everyone the user mentions is someone they want a contact for: a couple they got talking to, a waiter, a friend-of-a-friend. Creating profiles for those clutters their People list and their Dunbar count, and it is annoying to undo.
 - "new_people" is ONLY for someone the user EXPLICITLY asked you to add — "add Jim as a contact", "make a profile for Dave". If they didn't ask, it doesn't go here.
@@ -369,6 +390,19 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
       if (merged) {
         await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
         rawNicknamesById[id] = merged
+      }
+    }
+
+    // Same additive contract as nicknames, against the RAW column: a maiden name mentioned here
+    // must not wipe one recorded months ago from a different screen.
+    for (const update of parsed.former_name_updates ?? []) {
+      const id = idByName[String(update?.person ?? "").trim().toLowerCase()]
+      if (!id) continue
+      const existing = rawFormerById[id] ?? []
+      const merged = mergeFormerLastNames(existing, update.former_last_names)
+      if (merged) {
+        await supabaseClient.from("people").update({ former_last_names: merged.join(", ") }).eq("id", id)
+        rawFormerById[id] = merged
       }
     }
 

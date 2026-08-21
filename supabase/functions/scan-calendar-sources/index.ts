@@ -6,6 +6,7 @@ import { isoDateInTimeZone } from "../_shared/tz.ts"
 import { formatEventDateText } from "../_shared/eventDates.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
+import { claimFormerNameKeys } from "../_shared/formerNames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -250,7 +251,7 @@ async function scanUser(
     fetchAllRows((from, to) =>
       supabase
         .from("people")
-        .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self")
+        .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self")
         .eq("user_id", userId)
         .order("id")
         .range(from, to)
@@ -299,6 +300,9 @@ async function scanUser(
     if (p.goes_by_other) nicknames.push(String(p.goes_by_other).trim())
     for (const n of nicknames) claimKey(n.toLowerCase(), p.id)
   }
+  // A former name resolves too, so an invite naming someone by the name they used to have finds
+  // the person already on file. Never takes a key a current name already owns.
+  claimFormerNameKeys(peopleRes.data ?? [], idByName, claimKey)
   for (const key of ambiguousKeys) delete idByName[key]
 
   // Surname lookup for "mentioned_family_names" below — a family/household reference resolves

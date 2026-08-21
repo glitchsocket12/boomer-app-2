@@ -38,8 +38,17 @@ function surnameSet(tokens: string[]): Set<string> {
  * Builds the comparison keys for someone already on file. `aliases` is anything else they answer
  * to — nicknames, middle name, goes-by — which count as given names but never as surnames, so a
  * nickname can't quietly overrule a surname that disagrees.
+ *
+ * `formerLastNames` is the one alias that works the other way round: a maiden or other former
+ * surname joins `surnames`, never `givens`. That asymmetry is the entire reason it needs its own
+ * column rather than riding along in `nicknames` — see 2026-08-21-former-last-names.sql.
  */
-export function personNameKeys(name: string, lastName: string | null, aliases: string[] = []): PersonNameKeys {
+export function personNameKeys(
+  name: string,
+  lastName: string | null,
+  aliases: string[] = [],
+  formerLastNames: string[] = []
+): PersonNameKeys {
   const tokens = nameTokens(name)
   const givens = new Set<string>()
   if (tokens[0]) givens.add(tokens[0])
@@ -51,6 +60,11 @@ export function personNameKeys(name: string, lastName: string | null, aliases: s
   // split hold a whole name — so fall back to "everything after the first word" when last_name is
   // empty rather than treating those people as having no surname at all.
   const surnames = lastName ? surnameSet(nameTokens(lastName)) : surnameSet(tokens.slice(1))
+  // Both names count from here on, so an imported "Sarah Jenkins" reaches Sarah Mitchell through
+  // surnameRelation's ordinary 'match' branch instead of being thrown out as a 'conflict'.
+  for (const former of formerLastNames) {
+    for (const token of surnameSet(nameTokens(former))) surnames.add(token)
+  }
   return { givens, surnames }
 }
 
@@ -138,6 +152,11 @@ export type MatchablePerson = {
   name: string
   last_name: string | null
   nicknames: string | null
+  // Its own field on purpose. import-contacts pre-joins nicknames/middle_name/goes_by_other into
+  // the `nicknames` string above, and everything in there lands in `givens` — a former surname
+  // swept into that fold would be filed as a first name, which is the exact failure this column
+  // exists to fix.
+  former_last_names?: string | null
   emails?: { label: string; value: string }[] | null
   phones?: { label: string; value: string }[] | null
 }
@@ -175,7 +194,8 @@ export function buildPersonIndex(people: MatchablePerson[]): PersonIndexEntry[] 
     keys: personNameKeys(
       person.name,
       person.last_name,
-      (person.nicknames ?? "").split(",").map((n) => n.trim()).filter(Boolean)
+      (person.nicknames ?? "").split(",").map((n) => n.trim()).filter(Boolean),
+      (person.former_last_names ?? "").split(",").map((n) => n.trim()).filter(Boolean)
     ),
   }))
 }

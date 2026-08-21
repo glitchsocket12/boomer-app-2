@@ -20,6 +20,7 @@ import {
   DEMO_NOTES,
   DEMO_PEOPLE,
 } from './demoData'
+import { formerFullNames, parseFormerLastNames } from './formerNames'
 import type { SearchDoc } from './globalSearch'
 import { summarize } from './summarize'
 
@@ -46,7 +47,13 @@ export const DEMO_SEARCH_DOCS: SearchDoc[] = (() => {
       title,
       // The demo's own "self" person is Gary Pemberton, whose name is the whole point of the
       // persona — so unlike the real app, no "You" substitution here.
-      body: joinBody([p.nicknames, p.middle_name, p.goes_by_other]),
+      body: joinBody([
+        p.nicknames,
+        p.middle_name,
+        p.goes_by_other,
+        p.former_last_names,
+        ...formerFullNames(p.name, parseFormerLastNames(p.former_last_names)),
+      ]),
       target: { kind: 'person', id: p.id, label: title },
     })
   }

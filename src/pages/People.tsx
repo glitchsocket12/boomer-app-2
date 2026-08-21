@@ -8,6 +8,7 @@ import SearchBox from '../components/SearchBox'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { formatPetLine, loadAllPets, loadOwnersByPetId, isMemorial, petEmoji, type Pet, type PetOwner } from '../lib/pets'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
+import { formerFullNames, parseFormerLastNames } from '../lib/formerNames'
 
 type GroupRef = { id: string; name: string }
 type EventRef = { id: string; summary: string }
@@ -20,6 +21,7 @@ export type Person = {
   nicknames: string | null
   middle_name: string | null
   goes_by_other: string | null
+  former_last_names: string | null
   created_at: string
   person_groups: { groups: GroupRef | null }[]
   notes: { moment_id: string | null; moments: { id: string; occasion: string | null; raw_description: string } | null }[]
@@ -107,7 +109,13 @@ export function filterRows(rows: ListRow[], search: string): ListRow[] {
       fullName.toLowerCase().includes(query) ||
       (person.nicknames ?? '').toLowerCase().includes(query) ||
       (person.middle_name ?? '').toLowerCase().includes(query) ||
-      (person.goes_by_other ?? '').toLowerCase().includes(query)
+      (person.goes_by_other ?? '').toLowerCase().includes(query) ||
+      // Both forms, so a name change is findable either as the bare old surname or whole
+      // ("Jenkins" and "Sarah Jenkins" both reach Sarah Mitchell).
+      (person.former_last_names ?? '').toLowerCase().includes(query) ||
+      formerFullNames(person.name, parseFormerLastNames(person.former_last_names)).some((n) =>
+        n.toLowerCase().includes(query)
+      )
     )
   })
 }
@@ -167,7 +175,7 @@ export default function People({
       supabase
         .from('people')
         .select(
-          'id, name, last_name, nicknames, middle_name, goes_by_other, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
+          'id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
         )
         .eq('is_self', false)
         .order('name')

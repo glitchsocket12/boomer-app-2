@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { getRelationshipsForPerson } from "../_shared/relationshipsTable.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
+import { claimFormerNameKeys } from "../_shared/formerNames.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -61,7 +62,7 @@ serve(async (req) => {
       fetchAllRows((from, to) =>
         supabaseClient
           .from("people")
-          .select("id, name, last_name, nicknames, middle_name, goes_by_other")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names")
           .order("id")
           .range(from, to)
       ),
@@ -114,6 +115,10 @@ serve(async (req) => {
         claimKey(altName.toLowerCase(), p.id)
       }
     }
+    // A former name resolves too, so "Sarah Jenkins" reaches the Sarah Mitchell already on file
+    // instead of opening a second profile for her. Runs after the loop above and before the sweep
+    // below, and never takes a key a current name already owns.
+    claimFormerNameKeys(allPeople ?? [], idByName, claimKey)
     for (const key of ambiguousKeys) delete idByName[key]
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
