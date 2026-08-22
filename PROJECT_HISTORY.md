@@ -1570,3 +1570,36 @@ So four names are hand-written back over the data: `alex`, `jess`, `nat`, `sam`.
 The cost is one 116KB generated file, mirrored to the edge functions and shipped in its own lazily-loaded browser chunk — ~42KB gzipped, fetched only by the pages that name relationships, never in the entry bundle. Zero API tokens, zero network calls at runtime; it is a dictionary lookup, the same shape as `sportsTeams.generated.ts`.
 
 **Lessons.** A hand-written list of a thing the world has 105,000 of is a bug with a long fuse, and "add the four names they mentioned" would have relit it. When a founder reports a feature as too conservative, measure what it actually answers on their real data before tuning it — "answers 0 of 315" is a different problem from "answers 200 of 315 and misses Ben." And real data still needs a hand-written override where the data measures the wrong thing: the SSA counts births, and the app is trying to name adults.
+
+## 2026-08-21 — One file, two sessions: how a finished feature sat unshipped for a day
+
+Former names shipped on 2026-08-21 in every place that resolves a name — search, contact
+import, `nameMatchStrength`, five Edge Functions — except the one the founder actually asks
+questions in. `converse` was written, `deno check`-clean, and left uncommitted in the working
+tree overnight.
+
+The reason had nothing to do with the code. A different session that week had edited the same
+file to teach chat about pets at events (`moment_pets` in the prompt, the JSON shape, and an
+apply loop), and that edit was also uncommitted. Git tracks files, not intentions: there was no
+way to commit the former-name lines without carrying the pets lines along, and deploying an Edge
+Function deploys whatever is in the file. Shipping one meant shipping both, and the pets half had
+not been verified by the session holding the pen. So the session stopped and wrote down exactly
+what `converse` would need if the work were lost — every helper call, in order — and left the
+decision to the founder.
+
+**The visible cost was a day of the exact bug the feature existed to fix.** The profile said
+"Formerly Jenkins", search found her by it, contact import stopped proposing her twice — but
+typing "Sarah Jenkins" into Home chat still opened a second Sarah, because chat was the one
+reader that had not been told. A feature that is 6/7 deployed reads to the user as broken, since
+they meet it wherever they happen to be standing.
+
+Released the next day on the founder's call, both halves together, in one commit. The picker
+merge rode along with it: pets stopped having their own 🐾 row and joined "Add who was there",
+with namespaced `person:`/`pet:` ids because the picker hands back only an id.
+
+**Lessons.** An uncommitted file is a shared resource, and the second session to touch one
+inherits the first's unfinished decisions. Committing early — even behind nothing, even
+imperfect — is what keeps one session's caution from becoming another's blocker. And when work
+does have to be held, the thing to write down is not "this is held" but the reconstruction
+recipe: the note left in §10 that day listed all seven helper calls in order, which is why
+releasing it a day later cost a build, a test run, and one click-through rather than a rewrite.
