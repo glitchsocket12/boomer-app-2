@@ -17,6 +17,15 @@ import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { rollUpGroupMemberIds } from "../_shared/groupRollup.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { mergeNicknames, parseNicknames } from "../_shared/nicknames.ts"
+import {
+  claimFormerNameKeys,
+  formerNameMarker,
+  mergeFormerLastNames,
+  parseFormerLastNames,
+  FORMER_NAME_PROMPT_CLAUSE,
+  FORMER_NAME_ROSTER_CLAUSE,
+  FORMER_NAME_JSON_FIELD,
+} from "../_shared/formerNames.ts"
 import { effectiveGender } from "../_shared/nameGender.ts"
 
 const corsHeaders = {
@@ -98,7 +107,7 @@ serve(async (req) => {
       fetchAllRows((from, to) =>
         supabaseClient
           .from("people")
-          .select("id, name, last_name, nicknames, middle_name, goes_by_other, is_self, deceased_date")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self, deceased_date")
           .order("id")
           .range(from, to)
       ),
@@ -163,6 +172,8 @@ serve(async (req) => {
     // a middle name/callsign, for name-resolution and roster display only, so those never get
     // persisted into the nicknames column themselves.
     const altNamesById: Record<string, string[]> = {}
+    // Former surnames, kept apart from altNamesById for the reason given where it's filled.
+    const formerById: Record<string, string[]> = {}
     const lastNameById: Record<string, string | null> = {}
     // A bare first name or nickname only maps to a person if that key is unique — otherwise two
     // different people sharing one (e.g. two "Bob"s, or two people who both go by "Bob") would
@@ -223,7 +234,14 @@ serve(async (req) => {
       if (p.goes_by_other) altNames.push(String(p.goes_by_other).trim())
       if (altNames.length > 0) altNamesById[p.id] = altNames
       for (const altName of altNames) claimKey(altName.toLowerCase(), p.id)
+      // Deliberately NOT in altNames: everything in that list resolves as a given name, and a
+      // former surname resolving as a first name is precisely the failure this column fixes.
+      const rawFormer = parseFormerLastNames(p.former_last_names)
+      if (rawFormer.length > 0) formerById[p.id] = rawFormer
     }
+    // "Sarah Jenkins" now reaches the Sarah Mitchell already on file instead of falling through to
+    // the create-a-new-person path and splitting her in two. Never takes a key a current name owns.
+    claimFormerNameKeys(people ?? [], idByName, claimKey)
     for (const key of ambiguousKeys) delete idByName[key]
 
     // Qualified "Parent / Child" names throughout — the model sees them in the roster below and
@@ -379,7 +397,11 @@ serve(async (req) => {
       .map((p: any) => {
         const altNames = altNamesById[p.id]
         const g = genderById[p.id]
-        const marks = [g ? (g === "male" ? "m" : "f") : null, altNames ? `also goes by: ${altNames.join(", ")}` : null]
+        const marks = [
+          g ? (g === "male" ? "m" : "f") : null,
+          altNames ? `also goes by: ${altNames.join(", ")}` : null,
+          formerNameMarker(formerById[p.id] ?? []),
+        ]
           .filter(Boolean)
           .join(", ")
         return marks ? `${nameById[p.id]} (${marks})` : nameById[p.id]
@@ -401,6 +423,8 @@ Every moment recorded is tagged with [MOMENT_ID: ...] and shows "When (as descri
 The "[MOMENT_ID: ...]" tag is for YOUR bookkeeping only, so you can reference the right moment_id in your structured output. NEVER include "[MOMENT_ID: ...]" or any similar internal tag in the user-facing "reply" text — the reply should read as natural conversation with no trace of these tags.
 
 NOTEBOOKS are the user's own writing, kept separately from moments. Where a moment is the external record of something that happened and who was there, a notebook holds the internal side — what they thought, what they liked, how they were doing. Each notebook is named by the user (e.g. "Movies I loved", "How I'm doing"), and its entries are listed in this prompt prefixed with that name in square brackets. Use them freely when answering questions, exactly as you would use a moment. Two things they are NOT: they are not events, so never treat a notebook entry as something that happened on a date unless it says so; and you cannot create or edit them — there is no field in your structured output for notebooks, so if the user seems to be dictating one, just answer conversationally. Note also that a user can switch a notebook off, in which case it is absent from this prompt entirely — if you have no notebook content here, say you don't have it rather than guessing at what might be in one.
+
+${FORMER_NAME_ROSTER_CLAUSE}
 
 Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses (e.g. "Joseph Smith (also goes by: Grandpa Joe)") — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "notes", "relevant_people", "person_group_tags", etc., and it will still resolve to the same person.
 
@@ -424,6 +448,7 @@ A PET is an animal belonging to one or more people — a dog, cat, horse, fish, 
 - Only fill in "species"/"breed" when the user actually says so. Leave them null rather than guessing — "puppy" tells you it's a dog, not what breed it is.
 - If the user says a pet died, set "deceased_date" (resolve the date the same way as event_date). Any pet the roster marks "PASSED AWAY" must be spoken about in the past tense, and never ask a follow-up question that assumes it's still alive.
 - Answering questions about pets ("what's Sarah's dog called?", "how old is Biscuit?") comes straight from the roster — match on the owner and the kind of animal. If the person has no pet on file, say so rather than inventing one.
+- A pet can ATTEND an event, exactly like a person. If the user says one was there ("we brought Biscuit to the lake house", "Ozzy came to the barbecue"), put its name in that entry's "moment_pets" and it will show under Who Was There alongside the people. This is the ONLY way to record a pet at an event — a pet's name still never goes in "notes" as the "person", not even here. Use the exact name from the roster, or a pet you are recording in "pets" this same turn. If the pet was there AND the user said something about it worth keeping ("Biscuit swam for the first time"), tag the pet in "moment_pets" and write the detail as a general note with "person": null.
 
 A TAG is completely different from a group: it describes WHAT KIND of thing a moment was (e.g. "milestone," "vacation," "medical," "tradition," "reunion"), not WHO it's affiliated with. Never put the same word in both "moment_groups" and "moment_tags" for one entry — a Pop Warner story gets "Pop Warner" as a group (who/what recurring affiliation) and, separately, maybe "milestone" as a tag (what kind of thing it was), only if it genuinely reads as a big/notable moment. When a moment's content clearly suggests a kind of event worth categorizing this way, add 1-3 tags to that entry's "moment_tags" — never more than 3, and always prefer reusing an exact (case-insensitive) match from the tags already created (shown below) over coining a new, similar-but-different one (e.g. reuse "milestone" rather than adding "big milestone" or "major milestone" as a separate tag). If nothing about the moment clearly fits an existing or obviously-new category, leave "moment_tags" empty rather than forcing one.
 
@@ -439,6 +464,7 @@ Each time the user writes something, figure out what they're doing:
 - If they give a real name for someone previously recorded under a vague placeholder, that's a rename, not a new person.
 - If they mention someone's last name specifically, that's a last name update, not a general note.
 - If they mention a nickname or a name someone "goes by" (e.g. "she goes by Sammy", "everyone calls him Bob", "my friend Sam, who goes by Sammy"), that's a nickname update — capture it in "nickname_updates" so it becomes a real, searchable "goes by" name on their profile, in addition to however it naturally fits into "notes"/"reply". Only include nickname(s) that are newly stated, not ones already shown in the roster provided in this prompt.
+${FORMER_NAME_PROMPT_CLAUSE}
 
 ${familySignalPromptMultiSubject()}
 
@@ -459,7 +485,7 @@ How to use it:
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], ${FORMER_NAME_JSON_FIELD}, "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"], "moment_pets": ["Biscuit"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
 
 IMPORTANT — capture EVERY concrete detail the user gives about an event, not just who attended. A "notes" entry doesn't have to be about a specific person: anything the user says about the event itself — what was done, eaten, said, how it went, the weather, an activity, a gift, a reaction — belongs in its own "notes" entry with "person" set to null, UNLESS it's naturally about one specific attendee (in which case attach it to that person's own note instead). Never let a real detail the user typed disappear just because it wasn't about a named person — the event's own page shows these general notes alongside the per-person ones. Don't pad a note with filler if the user gave no detail (that's what "Was there." is for — see below); but when they DID give detail, capture it, even if it means several separate notes entries for one event.
@@ -634,7 +660,7 @@ ${notebooksContext || "(none written yet)"}`
 
     let parsed: any = { reply: ranOutThinking
       ? "That one took more thinking than I had room for. Try asking about a smaller group, or narrowing the question."
-      : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
+      : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], former_name_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -709,6 +735,19 @@ ${notebooksContext || "(none written yet)"}`
       if (merged) {
         await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
         nicknamesById[id] = merged
+      }
+    }
+
+    // Same additive contract, against the RAW column: a maiden name mentioned in one conversation
+    // must not wipe one recorded months ago from a different screen.
+    for (const update of parsed.former_name_updates ?? []) {
+      const id = idByName[update.person?.trim().toLowerCase()]
+      if (!id) continue
+      const existing = formerById[id] ?? []
+      const merged = mergeFormerLastNames(existing, update.former_last_names)
+      if (merged) {
+        await supabaseClient.from("people").update({ former_last_names: merged.join(", ") }).eq("id", id)
+        formerById[id] = merged
       }
     }
 
@@ -1035,6 +1074,30 @@ ${notebooksContext || "(none written yet)"}`
             .upsert({ moment_id: momentId, tag_id: tagId }, { onConflict: "moment_id,tag_id", ignoreDuplicates: true })
           taggedTags.set(tagId, tagNameById[tagId] ?? tagName)
         }
+      }
+
+      // Pets at this event (2026-08-20). Unlike groups and tags there is deliberately no
+      // find-or-CREATE here: a pet needs an owner, and one invented from a bare name at an event
+      // would be an ownerless orphan showing on nobody's profile — the exact silent write the
+      // top-level pets loop refuses to make. A name that isn't already on file (or created earlier
+      // this same turn, which is why that loop runs first) is dropped and logged.
+      //
+      // Ambiguity is resolved the same way as everywhere else: `idByPetName` has already had every
+      // shared bare name deleted out of it, so two dogs called Bella resolve to NEITHER rather than
+      // to whichever was indexed last. The prompt tells the model to ask which one instead.
+      for (const rawPetName of momentEntry.moment_pets ?? []) {
+        const petName = String(rawPetName ?? "").trim()
+        if (!petName) continue
+        const key = petName.toLowerCase()
+        const petId = ambiguousPetKeys.has(key) ? null : idByPetName[key] ?? null
+        if (!petId) {
+          console.error("Pet event tag skipped: name not resolved", petName)
+          continue
+        }
+        const { error } = await supabaseClient
+          .from("moment_pets")
+          .upsert({ moment_id: momentId, pet_id: petId }, { onConflict: "moment_id,pet_id", ignoreDuplicates: true })
+        if (error) console.error("Pet event tag failed", petName, error.message)
       }
     }
 

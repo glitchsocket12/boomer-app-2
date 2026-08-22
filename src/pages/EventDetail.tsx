@@ -2130,20 +2130,36 @@ export function EventDetailView({
             {
               key: 'people',
               icon: '👥',
-              label: 'Add people who were there',
+              // ONE picker for people and pets (founder, 2026-08-20: "I'd like to be able to add
+              // pets to an event the same way I add a person. Not a whole new separate box."). Ids
+              // are namespaced because the two come from different tables and the picker hands back
+              // only an id — the prefix is what routes the write, not a lookup-and-hope.
+              label: 'Add who was there',
               onSelect: () => onOpenPicker(),
               body: (
                 <>
                   <SearchAddPicker
-                    items={allPeople
-                      .filter((p) => !attendees.has(p.id))
-                      .map((p) => ({ id: p.id, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` }))}
-                    placeholder="Search people to tag, or type a new name…"
+                    items={[
+                      ...allPeople
+                        .filter((p) => !attendees.has(p.id))
+                        .map((p) => ({ id: `person:${p.id}`, label: `${p.name}${p.last_name ? ` ${p.last_name}` : ''}` })),
+                      // Species emoji rides in `prefix`, not glued to the label — see the Item type
+                      // in SearchAddPicker for why that distinction is load-bearing for ranking.
+                      ...allPets
+                        .filter((pet) => !pets.has(pet.id))
+                        .map((pet) => ({ id: `pet:${pet.id}`, label: pet.name, prefix: petEmoji(pet) })),
+                    ]}
+                    placeholder="Search people and pets to tag, or type a new name…"
                     // Every one of these awaits the write and only confirms on a true result:
                     // before item 91 the "✓ Added" line fired on the same tick as the insert, so
                     // it appeared whether or not anything was actually saved.
                     onSelect={async (item) => {
-                      const person = allPeople.find((p) => p.id === item.id)
+                      if (item.id.startsWith('pet:')) {
+                        const pet = allPets.find((p) => p.id === item.id.slice(4))
+                        if (pet && (await onAddPet(pet))) setJustAdded(pet.name)
+                        return
+                      }
+                      const person = allPeople.find((p) => p.id === item.id.slice(7))
                       if (!person) return
                       const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
                       if (await onAddAttendee(person)) setJustAdded(label)
@@ -2160,38 +2176,6 @@ export function EventDetailView({
                 </>
               ),
             },
-            // Only when there are pets on file (and the moment_pets table exists — the container
-            // passes an empty list until then). There's no "+ create a new pet" path in here on
-            // purpose: a pet has to belong to someone, and the owner is picked on a person's
-            // profile, so offering creation here would open a form that can't finish.
-            ...(allPets.length > 0
-              ? [
-                  {
-                    key: 'pets',
-                    icon: '🐾',
-                    label: 'Add a pet who was there',
-                    onSelect: () => onOpenPicker(),
-                    body: (
-                      <>
-                        <SearchAddPicker
-                          items={allPets
-                            .filter((pet) => !pets.has(pet.id))
-                            .map((pet) => ({ id: pet.id, label: `${petEmoji(pet)} ${pet.name}` }))}
-                          placeholder="Search pets to tag…"
-                          onSelect={async (item) => {
-                            const pet = allPets.find((p) => p.id === item.id)
-                            if (!pet) return
-                            if (await onAddPet(pet)) setJustAdded(pet.name)
-                          }}
-                          emptyText="No pets match."
-                          browseAll
-                        />
-                        <AddedLine name={justAdded} />
-                      </>
-                    ),
-                  },
-                ]
-              : []),
             {
               key: 'tag',
               icon: '🏷️',

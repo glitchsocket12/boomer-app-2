@@ -3,7 +3,11 @@ import SearchBox from './SearchBox'
 import { rankMatches } from '../lib/searchRanking'
 import { border, colors, fontFamily, fontSize, radius, space } from '../lib/theme'
 
-type Item = { id: string; label: string }
+// `prefix` renders in front of the label but is deliberately NOT part of it, because `label` is
+// what rankMatches scores against: an emoji glued onto the front turns a "starts with what I
+// typed" hit into a mid-string one, so a pet called Maple would sort below every unrelated person
+// whose name merely contains "map". Anything decorative goes here, anything searchable in `label`.
+type Item = { id: string; label: string; prefix?: string }
 
 // Enough rows to choose from without the list swallowing the page. Anything past this is
 // summarised by the "more matches" line rather than silently dropped — see rankMatches.
@@ -149,11 +153,18 @@ export default function SearchAddPicker({
                   onClick={() => commit(i)}
                   style={active ? { ...base, ...styles.activeRow, border: activeBorder } : base}
                 >
-                  {row.kind === 'create'
-                    ? createLabel
-                      ? createLabel(query.trim())
-                      : `+ Add "${query.trim()}"`
-                    : row.item.label}
+                  {row.kind === 'create' ? (
+                    createLabel ? (
+                      createLabel(query.trim())
+                    ) : (
+                      `+ Add "${query.trim()}"`
+                    )
+                  ) : (
+                    <>
+                      {row.item.prefix && <span style={styles.prefix}>{row.item.prefix} </span>}
+                      {row.item.label}
+                    </>
+                  )}
                 </button>
               )
             })
@@ -192,6 +203,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
   },
+  prefix: { fontStyle: 'normal' },
   empty: { color: colors.textFaintest, fontSize: fontSize.label, fontStyle: 'italic', margin: 0 },
   moreHint: { color: colors.textFaintest, fontSize: fontSize.label, fontStyle: 'italic', margin: 0, padding: '0 0.2rem' },
   // Layered over whichever base row style applies. Note the border is re-stated as a full
