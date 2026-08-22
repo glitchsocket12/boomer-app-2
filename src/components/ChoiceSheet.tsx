@@ -6,7 +6,7 @@
 // Unlike FilterPanel this carries role="dialog" and moves focus into the sheet on open — a
 // chooser is a decision point, so landing outside it strands keyboard and VoiceOver users.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
 export type Choice = {
@@ -22,12 +22,20 @@ export default function ChoiceSheet({
   title,
   subtitle,
   actions,
+  footer,
 }: {
   open: boolean
   onClose: () => void
   title: string
   subtitle?: string
   actions: Choice[]
+  /**
+   * Optional row under the choices, for something that modifies the decision rather than being one
+   * of them — today that's the "use this as my default" checkbox on the Remind Me sheet
+   * (CalendarTriage.tsx). Kept out of `actions` on purpose: everything in that list is a button
+   * that closes the sheet by doing something, and a checkbox that did that would be a trap.
+   */
+  footer?: ReactNode
 }) {
   const firstActionRef = useRef<HTMLButtonElement | null>(null)
 
@@ -77,6 +85,7 @@ export default function ChoiceSheet({
             </button>
           ))}
         </div>
+        {footer && <div style={styles.footer}>{footer}</div>}
       </div>
     </div>
   )
@@ -104,6 +113,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     boxSizing: 'border-box',
     fontFamily,
   },
+  footer: { marginTop: space.lg, paddingTop: space.lg, borderTop: border.light },
   headerRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: space.lg },
   title: { fontSize: fontSize.h3, color: colors.ink, margin: 0 },
   subtitle: { fontSize: fontSize.body, color: colors.textMuted, margin: `${space.xxs} 0 0` },

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { loadReviewCounts } from '../lib/reviewQueues'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { formatEventWhen, nextOccurrenceDate } from '../lib/dates'
@@ -49,14 +50,12 @@ export default function Calendar({
   onSelectPerson,
   onSelectEvent,
   onOpenCalendarSettings,
-  onOpenImportReview,
-  onOpenBirthdayReview,
+  onOpenReviewInbox,
 }: {
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   onOpenCalendarSettings: () => void
-  onOpenImportReview: () => void
-  onOpenBirthdayReview: () => void
+  onOpenReviewInbox: () => void
 }) {
   const [moments, setMoments] = useState<MomentRow[]>([])
   const [people, setPeople] = useState<PersonRow[]>([])
@@ -64,8 +63,7 @@ export default function Calendar({
   const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [tagFilter, setTagFilter] = useState('all')
-  const [pendingCount, setPendingCount] = useState(0)
-  const [pendingBirthdayCount, setPendingBirthdayCount] = useState(0)
+  const [reviewCount, setReviewCount] = useState(0)
   const today = useMemo(() => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
@@ -82,16 +80,9 @@ export default function Calendar({
 
   useEffect(() => {
     load()
-    supabase
-      .from('moment_import_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'pending')
-      .then(({ count }) => setPendingCount(count ?? 0))
-    supabase
-      .from('birthday_import_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'pending')
-      .then(({ count }) => setPendingBirthdayCount(count ?? 0))
+    // Shared with Home via lib/reviewQueues.ts — this page used to run its own two counts with
+    // their own copy, so the same backlog could read differently depending which screen you were on.
+    loadReviewCounts().then((counts) => setReviewCount(counts.total))
   }, [])
 
   async function load() {
@@ -291,19 +282,10 @@ export default function Calendar({
         </button>
       </div>
 
-      {pendingCount > 0 && (
-        <button onClick={onOpenImportReview} style={styles.importNudge}>
+      {reviewCount > 0 && (
+        <button onClick={onOpenReviewInbox} style={styles.importNudge}>
           <span>
-            {pendingCount} event{pendingCount === 1 ? '' : 's'} found from your calendar — review
-          </span>
-          <span>→</span>
-        </button>
-      )}
-
-      {pendingBirthdayCount > 0 && (
-        <button onClick={onOpenBirthdayReview} style={styles.importNudge}>
-          <span>
-            {pendingBirthdayCount} birthday{pendingBirthdayCount === 1 ? '' : 's'} found from your calendar — review
+            {reviewCount.toLocaleString()} thing{reviewCount === 1 ? '' : 's'} to review
           </span>
           <span>→</span>
         </button>

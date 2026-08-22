@@ -81,6 +81,13 @@ export default function SearchAddPicker({
     else onSelect(row.item)
     setQuery('')
     setHighlight(-1)
+    // Closes the list on the way out. Clearing the query alone isn't enough for a `browseAll`
+    // picker: `browsing` is `browseAll && focused && !q`, so emptying the box flips it true and the
+    // full list springs straight back open under the founder's finger (reported 2026-08-19 on
+    // ContactImportReview's group picker — "I want it to close after you select one"). Picking one
+    // is the end of a search, so end it. Non-browseAll pickers are unaffected: `showList` is
+    // already false for them once the query clears.
+    setFocused(false)
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {

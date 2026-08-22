@@ -430,6 +430,45 @@ src/
 │   │                            Bounded by MAX_GENERATIONS 25 / MAX_ANCESTOR_NODES 2000; a
 │   │                            truncated walk reports "unrelated" rather than hanging.
 │   │                            Mirrored (math only) in _shared/kinship.ts for the AI — §4.
+│   ├── acceptCandidate.ts     — (2026-08-19) the ONE write path for turning a calendar-import
+│   │                            candidate into a real event. `acceptCandidate(candidate,
+│   │                            overrides)` creates the moment, attaches attendees/tags/groups and
+│   │                            marks the candidate accepted; `attachAttendees`/`attachTagsAndGroups`
+│   │                            are exported separately for ImportReview's merge-into-an-existing-
+│   │                            event path. Overrides are all optional — omitting them is "accept
+│   │                            it as the scan found it", which is what CalendarTriage's Quick Add
+│   │                            does and what an untouched review card has always saved. Every
+│   │                            write is BATCHED: the original called `auth.getUser()` INSIDE each
+│   │                            attendee loop and awaited one insert per attendee/tag/group (~15
+│   │                            serial round trips for 5 people + 3 tags); now one auth call and
+│   │                            one array statement per table. `undoQuickAdd` deletes dependents
+│   │                            BEFORE the moment, the same order as EventDetail's
+│   │                            handleDeleteEvent — see item 93's postmortem for why that order is
+│   │                            not optional. It deliberately does NOT delete profiles the accept
+│   │                            created (they may already be on other events by then).
+│   ├── likelyDuplicate.ts     — (2026-08-19) the free client-side "might already be on file" check
+│   │                            (title word-overlap + date proximity, no AI call), lifted out of
+│   │                            ImportReview.tsx because CalendarTriage needs the same answer:
+│   │                            Quick Add saves in one tap without ever showing the four-way merge
+│   │                            banner, so without this it would be the fastest way in the app to
+│   │                            create a duplicate. Two copies of the thresholds would drift on the
+│   │                            first tuning pass. Note the ratio divides by the SHORTER title, so
+│   │                            a fully-contained title scores 1.0 — pinned in the tests, and fine
+│   │                            for what it drives (both are plausible duplicates either way).
+│   ├── reviewQueues.ts        — (2026-08-19) the one owner of "what's waiting to be reviewed".
+│   │                            `loadReviewCounts()` returns every import queue's count (Home and
+│   │                            Calendar both read it, so the two can't disagree; ReviewInbox.tsx
+│   │                            shows the same numbers as a breakdown) — set-aside is deliberately
+│   │                            OUT of `total` via `reviewTotal()`, since "Not now" has to actually
+│   │                            take something off the plate. `probeTriageEnabled()` memoises a
+│   │                            one-shot `select('id, deferred_until')` — an unknown COLUMN errors,
+│   │                            an unknown status VALUE would not, so it's the reliable test for
+│   │                            "has 2026-08-19-calendar-triage-and-defer.sql been run"; false keeps
+│   │                            the whole app on its pre-triage behaviour. `wakeDueDeferrals()` is
+│   │                            an idempotent update flipping due 'deferred' rows back to
+│   │                            'selected', called on load by the inbox and the queue (no cron).
+│   │                            `todayIso`/`deferUntilIso` are browser-local calendar-day math —
+│   │                            `toISOString()` would set things aside a day early after 5pm ET.
 │   ├── resolvedCardScroll.ts  — (2026-08-17) the accept/reject landing behaviour shared by all
 │   │                            four import review queues. `useResolvedCardScroll(resolved)`
 │   │                            returns a ref to put on the card's root in BOTH its editing and
@@ -693,12 +732,40 @@ src/
 │   │                            query (same isolation reasoning as pets above); the link hides
 │   │                            when the count is 0 or the query errors.
 │   ├── GenderFill.tsx         — (2026-08-11, item 44's auto-fill half) the one-time
-│   │                            names→gender pass. Two sections off `guessGenderFromName`:
-│   │                            "Boomer can fill these in" (a decidable first name) and
-│   │                            "Boomer can't guess these" (ambiguous or unknown), each row a
-│   │                            Male/Female/Non-binary/Other/Leave-blank select matching
-│   │                            PersonDetail's. Suggestions are deliberately NOT pre-selected —
-│   │                            "Accept all N suggestions" is one explicit counted act, which is
+│   │                            names→gender pass. Off `guessGenderFromName`: the decidable names
+│   │                            split into **"Men" and "Women" columns** (founder ask 2026-08-19 —
+│   │                            a mixed list makes you read a dropdown per row, a column headed
+│   │                            "Men" asks one question once and is a single tap if the answer is
+│   │                            yes), then "Boomer can't guess these" (ambiguous or unknown) full
+│   │                            width below — and that list is DRAG-AND-DROP (founder ask
+│   │                            2026-08-19): two sticky Men/Women buckets, a ⠿ handle per row,
+│   │                            `@dnd-kit/core` with the same MouseSensor(distance 4) +
+│   │                            TouchSensor(delay 200, tolerance 8) pair as GroupDetail's subgroup
+│   │                            drag — the touch DELAY is what leaves a long list scrollable on a
+│   │                            phone. Handle, not whole-row: `touch-action: none` is read at
+│   │                            touch-start, so on the row it would kill scrolling. Single-item
+│   │                            drag, not GroupDetail's select-then-drag-a-batch — unknown names
+│   │                            are one-at-a-time judgments, so a select mode would never pay for
+│   │                            itself. Dropping outside both buckets is a no-op.
+│   │                            A name you set DISAPPEARS from that list (founder ask 2026-08-20) and the
+│   │                            heading counts down, so you always face what is still to do rather than
+│   │                            scrolling past your own answers. It reappears in a collapsed "Sorted so
+│   │                            far (n)" panel below the list, whose dropdown is also the undo — "Leave
+│   │                            blank" drops the id out of `choices`, which puts the row straight back.
+│   │                            NOT applied to the Men/Women columns: "Accept all" would empty one in a
+│   │                            single tap, and seeing what you just accepted so you can fix it is the
+│   │                            point of those. Each row is a
+│   │                            Male/Female/Non-binary/Other/Leave-blank
+│   │                            select matching PersonDetail's — kept on every row deliberately: it
+│   │                            is the only way to say non-binary/other, the keyboard path, and the
+│   │                            fallback when dragging is awkward. Each column carries its OWN counted
+│   │                            "Accept all N" and its own paging, so accepting one never touches
+│   │                            the other. CSS grid `auto-fit`, so a phone gets two stacked lists
+│   │                            rather than two squeezed half-width ones. The old per-row
+│   │                            "— looks like male" tag is gone: it only ever rendered on rows that
+│   │                            have a guess, which is now exactly the rows already sitting under a
+│   │                            heading that says so. Suggestions are deliberately NOT pre-selected —
+│   │                            "Accept all N" is one explicit counted act, which is
 │   │                            what lets the lists page at 100 without the founder ever saving
 │   │                            rows they were never shown. Nothing writes until Save; Save
 │   │                            groups by value and chunks 100 ids per `.in()` so a few hundred
@@ -1550,6 +1617,38 @@ Full story: PROJECT_HISTORY.md.
 │   │                            callback` Edge Function, then reloads at `/` — sessionStorage's
 │   │                            nav-restore key already reflects wherever the user was when they
 │   │                            clicked "Connect," so no return-path plumbing is needed.
+│   ├── ReviewInbox.tsx        — (2026-08-19) crumb `reviewInbox`, singleton. The one place that
+│   │                            answers "what's waiting for me?" — one row per import queue (label,
+│   │                            count, one plain line, tap to open the page that already existed),
+│   │                            with the "still to look through" piles styled quieter than the
+│   │                            ready-to-review ones. Replaced the up-to-FOUR stacked "N found"
+│   │                            nudges on Home.tsx/Calendar.tsx, which now show ONE `N things to
+│   │                            review →` into here. Also owns the set-aside row (count, when the
+│   │                            first one returns, "Show them now" = wake all) — deferral is
+│   │                            cross-cutting and shouldn't nag from inside the queue it came from.
+│   │                            Shows a quiet "a database update is pending" note while
+│   │                            `probeTriageEnabled()` is false.
+│   ├── CalendarTriage.tsx     — (2026-08-19) crumb `calendarTriage`, singleton. Fast Keep / Not
+│   │                            this one pass over `status='pending'` calendar candidates, one line
+│   │                            each (title · date · location · calendar badge when 2+ connected).
+│   │                            Structural clone of ContactSelection.tsx — 50/page, immediate
+│   │                            writes (no batch save), debounced search across ALL rows in the
+│   │                            filter, and an "N turned down — review/undo" toggle.
+│   │                            **Four answers per row (founder-directed 2026-08-19, replacing
+│   │                            Keep/Not-this-one):** `Quick Add` creates the event there and then
+│   │                            via lib/acceptCandidate.ts; `Add More Detail` writes 'selected' and
+│   │                            hands off to ImportReview.tsx; `Remind Me` writes 'deferred' with a
+│   │                            date from RemindSheet.tsx; `Reject` writes 'rejected', because that
+│   │                            is what the founder's no is (reusing 'skipped' would conflate it
+│   │                            with the machine's — see §6). Buttons sit on their own wrapping row
+│   │                            under the title: four will not fit beside text at 375px.
+│   │                            A row flagged by lib/likelyDuplicate.ts shows "Looks familiar —
+│   │                            review it" INSTEAD of Quick Add, so the one-tap path can never
+│   │                            create the duplicate the review card's merge banner exists to
+│   │                            prevent. Every answer collapses the row in place with an Undo and
+│   │                            the row does NOT leave the list — see the scroll note below. This
+│   │                            page filters nothing: it shows every candidate, just at a size a
+│   │                            person can get through (the 2026-08-12 directive stands).
 │   ├── BirthdayImportReview.tsx — (2026-07-26) accept/reject queue for
 │   │                            `birthday_import_candidates`, mirrors ImportReview.tsx's card
 │   │                            idiom but simpler (name + date only, no tags/groups/location).
@@ -1574,9 +1673,33 @@ Full story: PROJECT_HISTORY.md.
 │   │                            (2026-08-18) `onPersonCreated` pushes a just-created profile into
 │   │                            the page-level `allPeople` roster, so it's linkable from the other
 │   │                            cards without a page reload — see §12.
-│   └── ImportReview.tsx       — (2026-07-24, item 48; overhauled 2026-07-25) accept/reject queue
-│                                for AI-extracted calendar-import candidates
-│                                (`moment_import_candidates`, status=pending). Accept no longer
+│   └── ImportReview.tsx       — (2026-07-24, item 48; overhauled 2026-07-25; **reshaped 2026-08-19
+│                                — read this paragraph first**) accept/reject queue for
+│                                AI-extracted calendar-import candidates. Three changes:
+│                                (a) it now reads `status='selected'` (kept in CalendarTriage.tsx),
+│                                falling back to 'pending' when `probeTriageEnabled()` is false;
+│                                (b) the card list is wrapped in `ReviewDeck` — batches of 10 with a
+│                                progress line and a real ending, replacing `CARD_BATCH_SIZE`/
+│                                "Show 20 more (210 still to review)"; (c) cards open COLLAPSED
+│                                (title · date · location · who, then Accept / Not now / Reject /
+│                                Details ▾) and expand to the full editor described below on tap —
+│                                EXCEPT when `findLikelyMatch` fires, where the card opens expanded
+│                                and stays that way until the four-way duplicate question is
+│                                answered, because a collapsed Accept there would create the very
+│                                duplicate the banner warns about. Accepting collapsed saves exactly
+│                                what the scan extracted (what Accept on an untouched full card
+│                                always did). "Not now" writes `status='deferred'` +
+│                                `deferred_until` = today + 30d and confirms "Set aside — …. It'll
+│                                come back in N days" with Undo. Undo restores 'selected', not
+│                                'pending' — the founder already triaged it and shouldn't be asked
+│                                twice. (2026-08-19) "Not now" is now **Remind Me** and opens
+│                                RemindSheet.tsx, matching the triage row; accept/merge go through
+│                                lib/acceptCandidate.ts so there is one write path, not two; and the
+│                                page takes a `restoreScrollRef` from App.tsx (same handshake as
+│                                Groups.tsx) while ReviewDeck holds its batch by `persistKey`, so
+│                                "Add more details →" and back returns you to the same place in the
+│                                same ten. Everything below still describes the expanded card.
+│                                (`moment_import_candidates`). Accept no longer
 │                                auto-advances — shows a confirmation state ("Added —
 │                                {event}"/"Merged into {event}") with "Add more details →" (jumps
 │                                to EventDetail) and "Done". Free client-side heuristic (title
@@ -1784,6 +1907,28 @@ Full story: PROJECT_HISTORY.md.
 │   │                            Optional `onBusyChange(busy)` (2026-08-02) reports
 │   │                            recording/transcribing so a caller can disable its save
 │   │                            button — accepting mid-transcription otherwise drops the audio.
+│   ├── RemindSheet.tsx        — (2026-08-19) "Remind me about this in…" — 1 week / 1 month /
+│   │                            3 months / 6 months, plus a "use this as my default, don't ask
+│   │                            again" checkbox that writes `user_settings.review_remind_days`.
+│   │                            Once a default is saved, both review screens apply it without
+│   │                            opening the sheet (a preference that still asked every time
+│   │                            wouldn't be one). A thin wrapper over ChoiceSheet, which gained an
+│   │                            optional `footer` slot for the checkbox — it can't live in
+│   │                            `actions`, where every entry closes the sheet by doing something.
+│   ├── ReviewDeck.tsx         — (2026-08-19) the finish line on an import queue. Serves `items` in
+│   │                            batches of `DECK_SIZE` (10), shows "N of 10 done · M more after it"
+│   │                            while you work, and an end-of-batch panel ("Nice — 10 events
+│   │                            reviewed. 204 to go") with `Review 10 more` / `I'm done for now`.
+│   │                            Batch membership is captured once, NOT recomputed as
+│   │                            `items.slice(0, 10)` — otherwise dismissing a card pulls the next
+│   │                            one up and the batch never ends. Cards report a decision through
+│   │                            `renderItem`'s `api.setDecided`, which is a different moment from
+│   │                            leaving the list (they collapse to a confirmation and sit until
+│   │                            "Done"). Generic on purpose: birthdays/contacts/photos are meant to
+│   │                            get the same treatment and need no rewrite here. `persistKey`
+│   │                            (2026-08-19) keeps a batch across a REMOUNT — "Add more details →"
+│   │                            navigates to the event, and coming back used to deal a fresh ten,
+│   │                            silently replacing the ten you were part-way through.
 │   ├── ReviewNoteField.tsx    — (2026-08-02) label + AutoGrowTextarea + mic, the free-text
 │   │                            "what do you actually know about them" box on all four import
 │   │                            review queues (ContactImportReview / BirthdayImportReview /
@@ -2314,11 +2459,24 @@ calendar_sources id, user_id, ical_url, label, last_synced_at?, last_sync_error?
               see CalendarSettings.tsx and birthday_import_candidates below.
 moment_import_
 candidates    id, user_id, calendar_source_id, ical_uid (unique per user, dedupes
-              across re-scans), status ('pending'/'accepted'/'rejected'/'skipped'
+              across re-scans), deferred_until date? (2026-08-19, set with
+              status='deferred'; a partial index covers the due-row sweep),
+              status ('pending'/'accepted'/'rejected'/'skipped'
               — 'skipped' added 2026-08-12 and retired the same day when the
               founder removed the AI filter; nothing writes it now, the
               constraint value is just left in place for a possible opt-in
-              auto-filter. Every reader filters to 'pending'), occasion?,
+              auto-filter — and 2026-08-19 deliberately did NOT reuse it for the
+              founder's own "not this one", which writes 'rejected'; keeping a
+              machine's no separate from a person's is why it exists.
+              **Two values added 2026-08-19**
+              (`migrations_manual/2026-08-19-calendar-triage-and-defer.sql`):
+              'selected' = kept in CalendarTriage.tsx's fast pass, waiting for its
+              detailed card (same word, same job as in
+              contact_import_candidates); 'deferred' = "Not now", returns to the
+              queue on `deferred_until`. So the flow is pending → selected →
+              accepted/rejected, with deferred as a loop back to selected. No rows
+              were migrated — existing 'pending' rows simply show up in triage,
+              which is where an untriaged candidate belongs), occasion?,
               location?, when_text?, event_date?, event_end_date? (2026-07-25, both
               exact from the ICS DTSTART/DTEND, bypassing the AI entirely — see
               `icsEndDateToIsoDate` in `_shared/ics.ts`), raw_description?,
@@ -2413,6 +2571,8 @@ notebook_pins — user_id PK, pin_hash, created_at. One PIN per ACCOUNT, not per
                 strands a notebook.
 ```
 
+`user_settings.review_remind_days` (integer, nullable — `2026-08-19-review-remind-default.sql`): the founder's saved "remind me in N days" for the import queues, set by RemindSheet's "use this as my default" checkbox. Null = ask every time. A plain day count rather than an enum so the offered presets can change without a migration; nothing else in the schema stores a cadence (`reminders` is date-based, countdowns are target dates).
+
 `dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
 
 `platform_stats()` — one deliberate exception to "RLS on everything": a `SECURITY DEFINER` SQL function (`migrations_manual/2026-07-30-platform-stats.sql`) returning cross-account totals (people/moments/groups/notes) for the Landing page's platform databox (§3). Granted to anon/authenticated (public page, no session) — **confirmed live 2026-07-30**, real cross-account totals rendering on Landing.
@@ -2434,6 +2594,7 @@ notebook_pins — user_id PK, pin_hash, created_at. One PIN per ACCOUNT, not per
 - **Location cleanup** (item 66, 2026-08-12 — see §3 ManageLocations.tsx / locationGroups.ts): "Manage locations →" on Events lists every place written on an event with its count, rewrites one across all of them at once, and proposes clusters of spellings that look like the same address. Found 4 spellings of one real address on the founder's account, with no false positives across the other 95 locations.
 - **Untagged-event sweep** (2026-08-12): Events' group filter has a "No group yet" option, the manual counterpart to Home's event-tagging card (which only offers events where every attendee shares a group). 51 of 119 on the real account.
 - **Event tags** (items 28 + 34, 2026-07-22 — see §3/§4/§6): manual tag/untag on EventDetail (create-or-reuse picker, browse-all-on-focus, hover-remove chip) and AI-suggested tagging via `converse` (capture-time only, capped 1-3/moment, reuse-biased), backed by new `tags`/`moment_tags` tables. Events page has a tag filter dropdown (growing from tags actually applied) plus a "Manage tags →" link to `ManageTags.tsx` for a full add/rename/delete view with usage counts. 10 generic starter tags auto-seed once per account. Alphabetical order enforced at render time everywhere tags list (picker, chips, filter, Manage Tags), independent of creation order. Verified live end-to-end against the real account, test data cleaned up after. `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred — see §8 item 28.
+- **Reviewing imports** (2026-08-19): Home and Calendar show ONE `N things to review →` nudge (was up to four stacked "N found" banners) into `ReviewInbox.tsx`, which breaks the total down per queue and owns the set-aside pile. Calendar events get a two-stage flow like contacts already had: `CalendarTriage.tsx` (fast Keep / Not this one, one line each) then `ImportReview.tsx` for what was kept. That queue now serves batches of 10 (`ReviewDeck.tsx`) with a progress line and an end-of-batch panel instead of an endless "Show 20 more"; its cards open collapsed (Accept / Not now / Reject / Details) and expand on tap, except when the duplicate heuristic fires, where the card opens expanded so the merge question can't be answered by reflex. "Not now" is a real third answer — `status='deferred'`, back in the queue in 30 days. Counts come from one shared module (`lib/reviewQueues.ts`) so Home and Calendar can't disagree. Nothing here filters: the 2026-08-12 "sync everything, let the person decide" directive is untouched, this only changes the size of the bite. No AI call added anywhere. **Round 2 (2026-08-19, after the founder's preview):** the triage row now offers four answers — Quick Add (creates the event on the spot), Add More Detail, Remind Me (pick 1 week / 1 month / 3 months / 6 months, with a "use this as my default" checkbox → `user_settings.review_remind_days`), Reject — so most events never need a second screen. A row the duplicate check flags shows "Looks familiar — review it" instead of Quick Add, so the one-tap path can't create a duplicate. Both triage lists now hold your scroll position (they adjust counters in state instead of refetching, which flipped `loading` and dumped you at the top — Groups.tsx's `silent` idiom); the review queue keeps your place and your batch across "Add more details →" and back. `SearchAddPicker` closes on select. The contact review card gained "Add to events" beside "Add to groups" (attendance is a `notes` row, and undo comes free from the existing snapshot). The inbox gained a quiet "N people missing a gender" row → `GenderFill.tsx`, excluded from Home's total. **Needs both `migrations_manual/2026-08-19-*.sql` files (§10); until they run the app fails open to exactly its old behaviour.** Not yet click-tested in a browser — see §10.
 - **Contacts import** (item 65, 2026-07-27): founder-requested, previously-parked "iPhone Contacts import" now built. vCard (.vcf) upload only (`ContactsImport.tsx`, no Storage bucket — base64-in-JSON-body, same pattern as voice upload), parsed by a hand-rolled `_shared/vcard.ts` (handles Apple's item-grouping/X-ABLabel convention for Anniversary + related-names, BDAY-no-year, multi-value TEL/EMAIL/ADR/URL). Deliberately NOT a one-shot bulk-accept: a curation step (`ContactSelection.tsx`, paginated 50/page, immediate per-row DB writes so nothing is lost mid-browse) comes before the usual accept/reject-with-matching review (`ContactImportReview.tsx`, scoped to founder-selected contacts only). Matching: exact/nickname first, then word-overlap fuzzy fallback (`_shared/nameMatch.ts`), corroborated by exact phone/email match. Accept into an existing person fills blank scalar fields and unions array fields (never overwrites/loses existing data); birthday/anniversary go through a new shared `src/lib/reminders.ts` helper into the existing `reminders` table. Business-only vCards (no personal name) are silently skipped in the parser itself. Contact photos and auto-linking Apple's related-names into the real `relationships` table are explicitly out of scope this pass (see §8 item 65). New "Contact Info" collapsible section on `PersonDetail.tsx` (own isolated query, same pattern as `gender`) makes birthday/address/phone/email/etc. manually editable on any profile too, not just importable. Verified live end-to-end against the real account (upload → skip business contact → select/skip/undo with reload-persistence confirmed → new-person accept → merge-into-existing accept with field union confirmed via direct DB read → PersonDetail rendering → re-upload dedupe) — all test data cleaned up after. **Bug fix #1 (2026-07-26):** oversized uploads (e.g. real iCloud exports with a full-res photo embedded per contact, which the parser never reads) were bloating the upload past the Edge Function's ~55MB request-size ceiling (`WORKER_RESOURCE_LIMIT`). `ContactsImport.tsx` now strips `PHOTO`/`LOGO`/`SOUND` fields client-side before base64-encoding. Confirmed fixed against a synthetic 50MB photo-laden file. **Bug fix #2 (2026-07-26, the founder's actual reported file — 2071 contacts, 518KB, no photos):** same `WORKER_RESOURCE_LIMIT` error but from CPU, not payload size — `_shared/nameMatch.ts`'s fuzzy matcher recomputed word-set/regex work from scratch for every (imported contact × existing person) pair, so importing thousands of contacts against an account with hundreds of people already on file ran millions of redundant regex/Set operations and blew the compute budget. Fixed by precomputing each person's candidate-name word-sets and normalized email/phone Sets once (`buildPersonIndex`) before the per-contact loop instead of inside it. **Deployed and confirmed live 2026-07-27** (founder-provided token) — re-tested against the founder's actual 2071-contact/518KB file that originally surfaced this bug: 2008 candidates added, 3 skipped (business-only), no error. That real file's candidates are now sitting in the founder's actual review queue (this was the founder's real data, not test data — nothing to clean up). **Bug fix #3 (2026-07-31):** a high-confidence auto-match (two different real people who happened to share one phone number) had no way in `ContactImportReview.tsx` to say "not them" — the name-edit fields only ever rendered when unmatched, so a wrong match silently discarded any name typed in and merged the new contact's info into the wrong existing person on Accept. Fixed with an explicit "Not the same person — add as new" button that clears the match and reveals the editable name fields, plus an accept-time snapshot (`UndoInfo`) enabling an inline "Undo" link on the post-accept confirmation that exactly reverses either outcome (deletes the newly-created person, or restores an existing person's pre-merge field values/reminders/groups/note) and puts the candidate back to `status='selected'` to be reviewed again. Root-cause data fix applied live (the founder's actual "David Bengford" contact, wrongly merged into "David Adelstein," split back into its own person — confirmed no shared groups/notes/reminders had been added, so the split was clean). New code verified live via a disposable test person + candidate (both the "add as new" path and the "undo a merge" path confirmed via direct DB read, test data cleaned up after). **Bug fix #4 (2026-08-10, founder-reported "it asks if every single Alex is Alex Lesar"):** the fuzzy matcher scored names by word overlap divided by the SHORTER name, so "Alex Lesar" vs. "Alex Smith" scored 0.5 (a match) and vs. a bare "Alex" on file scored 1.0 (high confidence) — 574 of the founder's 576 stored matches were that bug. Replaced with a surname-first rule (`_shared/nameMatch.ts` + its `src/lib/nameMatchStrength.ts` mirror — see §3); exact/nickname `idByName` now claims WHOLE names only, since first-name keys were the other half of the same bug. A shared email/phone no longer overrides a given-name mismatch on its own (households share a landline), phone numbers compare on their last 10 digits, and two equally-plausible people yield a question or nothing rather than a coin flip. `ContactImportReview.tsx` re-checks every stored match on read and sweeps the whole `selected` set once per visit (chunked 100/write), so an existing queue self-heals without a re-import — the founder's dropped from 576 bad matches to 7 real ones on one page load. Deployed + verified live. **Accept/reject landing (2026-08-17):** both actions now collapse the card in place and park it at the top of the screen (`lib/resolvedCardScroll.ts`), matching the other three review queues. Reject shows `Rejected — {name}` with Undo (status back to `selected`, original `matched_person_id` restored) instead of the row vanishing, and both confirmations carry a Done that drops the card from the list. Reject used to refetch the whole page, which is exactly what it can't do now that it has something to confirm — the parent's `refreshTotal` only updates the footer count, and `handleDismissed` removes the card on Done. **Bug fix #5 (2026-08-18, founder report):** the `allPeople` roster is loaded once per visit, so a profile created by accepting one card didn't appear in any other card's "link to someone existing" search until the whole page was reloaded — the worst case being a phone address book that lists the same person two or three times. `onPersonCreated`/`onPersonRemoved` now keep that roster in step with accept and undo (same shape as the existing `onGroupCreated`); see §12. Verified live on the founder's real queue: accepted "Chris Mcgee," found them from the next card's search with no reload, then undid it and confirmed they left the roster and the candidate returned to the queue.
 - **Former names** (item 101, 2026-08-21 — see §6, §12): a maiden or otherwise-changed surname on a profile. Set in PersonDetail's name form ("Former name" box) or conversationally; shown as a muted "Formerly Sarah Jenkins." line under the name and nowhere else. Makes the old name resolve everywhere: People + global search, the `claimKey` name→id index in all 6 chat/scan functions, and `nameMatchStrength` (a maiden/married pair scored a surname `conflict` = no match at all, so contact import proposed a duplicate). A merge now files the loser's differing surname here. Roster marker `Sarah Mitchell (formerly Jenkins)`, emitted only when set. Demo: Carol Pemberton, formerly Whitfield.
 - **Pets** (item 73, 2026-08-01): profile card, own detail page, and People-list presence — **migration run and verified live end-to-end 2026-08-01 (§10).** Pets are shared records (`pets`/`person_pets`), so the family dog lives on both spouses' profiles and is edited once, on the pet's own page; the picker searches every pet on the account, making "add a new pet" and "attach the spouse's dog" the same gesture, and removing from a profile unlinks rather than deletes. Species is free text and each pet carries an open `{label, value}` Details list, so a fish and a horse both fit without new columns. Pets also appear in the People list with a species emoji (🐕/🐈/🐟/🐾), which is a display merge only — they never enter the People count or Dunbar math. Deceased pets sort last, render as "In memory," and get no follow-up nudges. **Home chat reads AND writes pets** (`converse`, deployed 2026-08-01): "Sarah got a puppy named Biscuit" creates and links it, "what's Sarah's dog called?" answers from the roster, "Biscuit is Tom's dog too" adds a second owner rather than a duplicate pet, two same-named pets make it ask which, and a pet that died is recorded and spoken about in the past tense. Chat writes are additive-only — they fill blanks, never overwrite what the profile form set. Merge carries pets to the survivor; delete-profile cleans up its links. **Pets at events (2026-08-20, founder-reported — "app is not letting me tag pets to events"): migration applied and verified live.** The 2026-08-01 pass deliberately kept pets out of the moments graph; this crosses that line with a `moment_pets` join table (§6), not by widening `notes`. The pet sits in "Who was there" with its species emoji, taps through to its own page, and hover-untags non-destructively; a pet tagged on a sub-event rolls up to the parent exactly like a person does. The pet's own page gained "Was at these events". **One picker for both, 2026-08-21** (founder: "the same way I add a person. Not a whole new separate box.") — the separate 🐾 row is gone and "Add who was there" lists people and pets together, ids namespaced `person:`/`pet:` since the picker returns only an id. The species emoji rides in `SearchAddPicker`'s `prefix` field, never glued to `label`, because `label` is what `rankMatches` scores — an emoji in front demotes a prefix match to a mid-string one and buries "Maple" under every name containing "map". No create-a-pet path in there on purpose: a pet needs an owner, and owners are picked on a profile, so typing a new name still creates a *person*. **Home chat can tag pets to events (`converse`, deployed 2026-08-21):** "we brought Biscuit to the lake house" writes `moment_pets`. Resolution only, never creation — an unknown or ambiguous name is dropped and logged rather than becoming an ownerless pet.
@@ -2569,6 +2730,8 @@ Also worth noting: a separate concurrent session was actively editing `EventDeta
 
 **Small known follow-ups:** ~~align `person-facts`' category vocabulary with the shared 5-kind enum~~ — **DONE AND DEPLOYED 2026-08-12.** The shared closed enum is `spouse | partner | parent | child | sibling` (`_shared/relationships.ts`); `person-facts` had no **partner** category, so `RELATIONSHIP_CATEGORY_IDS` folded `partnerIds` in under `spouse` and the table-injection path hardcoded the label "Married to". Now a real `partner` category, defaulting to "In a relationship with", with the label table driving both instead of a `category === "spouse"` ternary; frontend gained the category, a sort slot beside spouse, and a `satisfiedBy` list so the "Is X married?" nudge stops asking about someone already recorded as dating. The three PLURAL group categories (`siblings`/`parents`/`kids`) deliberately keep their spelling — they're the stored shape of every cached `key_facts` row and the key `KEY_FACTS_CATEGORY` looks up, so renaming buys nothing visible and costs an AI regeneration sweep across every profile (CLAUDE.md rule 3). **Measured on the real account, and it revises the severity:** 4 partner rows / 8 people, and NONE currently renders "Married to" — the AI's own `relationship_label` had been carrying it ("Engaged to", "Girlfriend of", "In a relationship with"), all still filed under the wrong category. The hardcoded default only bites on the table-injection path, which is one regeneration away for the 4 of those 8 whose `key_facts` are NULL. **Deployed but NOT live-verified end-to-end** — every generation path currently returns `extraction_failed` because of §10's API-key outage, so the new chip has never actually been produced. Re-check once the key is fixed. ~~nicknames stated via `update-moment` aren't written (only lookup)~~ — **DONE and deployed 2026-08-11**: `update-moment` and `update-group` now capture `nickname_updates` like `converse` always has, off a shared `_shared/nicknames.ts` (`mergeNicknames`, additive + case-insensitive dedupe, 10 tests) with the prompt clause and JSON field as shared constants so the next fix lands in all three at once (the item 76 bug class). **The trap, worth remembering:** both new functions build their nickname LOOKUP list with `middle_name`/`goes_by_other` folded in — safe while read-only, but merging onto it would copy a middle name into the `nicknames` column, so the write merges onto a separate raw mirror (`rawNicknamesById`). One-time prompt-cache invalidation, by design (the clause sits in `stableInstructions`, never interpolated). `person-facts` deliberately untouched — it's a Key Facts extractor, not a capture path. **Live-verified 2026-08-11** against a disposable person + event on the real account: "Everyone calls him Chip" through `update-moment` wrote `nicknames: "Chip"`; a second turn ("people also call him Skipper") merged additively to `"Chip, Skipper"`; and with `middle_name: "Bartholomew"` set on that person, the middle name did NOT leak into the column — the trap above, confirmed on real infrastructure. Test data deleted after. `update-group`'s half is the same code path but wasn't separately exercised. ~~Edge Function test coverage (needs Anthropic/Supabase mocks)~~ — **DONE 2026-08-12**, 116 new tests across 7 files (suite 381 → 501). `_shared` modules that had never been tested now are: `dateValidation`, `eventDates`, `tz`, `promptCache`, `ics`, `vcard`, `selfContext`, `userSettings`. The Supabase-mock half is real but cheap — `userSettings`/`selfContext` declare their own `MinimalSupabaseClient` shape, so a ~15-line fake covers `from().select().eq().maybeSingle()` with no SDK, network or database; `buildKinInstruction` takes its rows as an argument, so its whole path runs against a stub that throws if anything tries to query. **What is still NOT covered, deliberately:** each function's `index.ts` orchestration. Those hold `serve()` and a live `fetch` to Anthropic with no seam to inject either, so testing them means refactoring for dependency injection first — a real piece of work, not a follow-up line. `npm run check:functions` (item 95) still typechecks them. ~~no retroactive group backfill for pre-2026-07-15 moments~~ — **CLOSED 2026-08-12, mostly superseded.** Item 85's `loadEventGroupSuggestions` has no date filter, so old untagged moments already surface on Home for one-tap tagging; what it can't reach is events with fewer than 2 attendees or whose attendees don't all share a group. Those are now findable by hand: Events' group filter gained a **"No group yet"** option (matching the existing "No tags yet"/"No location" sentinels), which on the real account narrows 119 events to **51**. A bulk auto-tagger was NOT built — the precision bar that makes the suggestion card trustworthy is exactly what a backfill would have to abandon.
 
+96. **Mass imports were built for a handful of cards, not a real import** — **PHASE 1 DONE 2026-08-19** (see §7 "Reviewing imports"). Follow-on from the 2026-08-12 directive: removing the AI filter was right, but it moved the whole burden onto a review screen whose answer to ~230 candidates was "Show 20 more (210 still to review)", a ~695px editor per card, no answer between accept and reject, and four separate nudges on Home. Founder chose (2026-08-19) small batches + one inbox, lighter cards, "Not now" as a real state, and a triage pass for calendar events; explicitly did NOT choose a bulk "Accept all N straightforward ones". **Round 2 DONE 2026-08-19** off the founder's preview: four answers on the triage row (Quick Add / Add More Detail / Remind Me / Reject), a chosen-and-rememberable reminder interval, scroll position held on both triage lists and across the review queue's navigations, "Add to events" on the contact card, the picker closing on select, and the gender pass surfaced in the inbox. **Phase 2, still open:** port `ReviewDeck`, the collapsed cards and Remind Me to `BirthdayImportReview` / `ContactImportReview` / `PhotoImportReview` — the deck is already generic, so this is wiring, not design. Also worth doing: `CalendarTriage` and `ContactSelection` are near-identical and want a shared `TriageList` before a third fast pass copies them again.
+
 ## 9. Product & UX decisions (the standing "why")
 
 - **iPhone app is the real end goal** — weigh iPhone Safari support in every web-API choice (this decided a server transcriber over Web Speech). Note the reason, corrected 2026-08-18: Web Speech is *supported* in iOS Safari (14.5+), it is merely unreliable there, so it serves as an optional visual aid on other browsers rather than being unusable everywhere.
@@ -2589,6 +2752,9 @@ Also worth noting: a separate concurrent session was actively editing `EventDeta
 
 ## 10. Pending manual steps, open bugs, cleanup
 
+- **Founder action needed: run `migrations_manual/2026-08-19-calendar-triage-and-defer.sql`** (item 96). Adds 'selected'/'deferred' to `moment_import_candidates.status` and a `deferred_until` date. Until it runs the app fails open — `probeTriageEnabled()` sees no `deferred_until` column, so ImportReview keeps reading 'pending' exactly as before and the triage page + "Not now" stay hidden; the inbox says so in a quiet line. **Reload after running it** (the probe is memoised per page load).
+- **Founder action needed: run `migrations_manual/2026-08-19-review-remind-default.sql`** (item 96 round 2). Adds nullable `user_settings.review_remind_days`. Until it runs, Remind Me still works — it just asks for an interval every time instead of remembering one. **Reload after running it.**
+- **Item 96 is NOT click-tested in a browser.** Build/lint/tests green, but remote sessions have no Supabase credentials and the proxy blocks the live site (§8 item 72), so nobody has seen these screens run. Worth the founder's eyes on, in order: one nudge on Home instead of four → the inbox rows → triage Keep/Not-this-one sticking across a reload → a batch of 10 ending with the summary panel → a collapsed Accept saving the right title/date/attendees → a possible-duplicate card opening expanded → "Not now" + Undo.
 - ~~**LIVE OUTAGE, found 2026-08-12: the project's `ANTHROPIC_API_KEY` secret is rejected — every AI feature is down.**~~ — **RESOLVED, confirmed 2026-08-19.** The key was replaced; `people.key_facts_updated_at` has rows written 2026-08-17 and twice on 2026-08-19, which only happens when an Anthropic call succeeds. (Left in place because the *shape* of this outage is the lesson: a project-wide secret with a scheduled expiry took ten functions down at once and nothing said a word.) Historical detail follows. Anthropic answers `401 {"type":"authentication_error","message":"API key is invalid."}`. **Cause confirmed 2026-08-12 by Anthropic's own "API key expiring soon" email: the key (named `boomer-app`) had a scheduled expiry date of 2026-08-12 UTC and reached it.** Not a revocation, not a leak — so the replacement is a routine reissue, and the only durable fix is to check the expiry date on the new key. The secret is project-wide (set 2026-07-13) and **10 Edge Functions read it**: `add-fact`, `converse`, `person-facts`, `scan-calendar-sources`, `suggest-prompts`, `summarize-group`, `summarize-moment`, `update-group`, `update-moment`, `google-photos-picker-session-create`. So Home chat, note detection, Key Facts, event/group summaries and calendar scanning are all failing right now. **Founder action: issue a new key at console.anthropic.com and set it** (`npx supabase secrets set ANTHROPIC_API_KEY=… --project-ref dedtnytxhzzjimkozncc`, or Dashboard → Project Settings → Edge Functions → Secrets). **It fails silently by design** — `person-facts` returns `extraction_failed` and falls back to cached facts, `suggest-prompts` returns its hardcoded fallbacks — which is why nothing surfaced an error and it went unnoticed. Found while live-verifying the item-66/partner work: four real people (Kate Tolli, Caroline Newman, Abe Leonard, Cormac Dunn) have `key_facts` NULL because generation has been failing. Start date unknown — the CLI has no `functions logs` subcommand, so it needs the Dashboard's log view to pin down. **Worth adding afterwards:** nothing anywhere alerts on this, and a silent-failure class this wide is exactly what §12 exists for. **Still open as of 2026-08-12 evening, and it is what the founder now sees as "calendars are not syncing"** — re-confirmed from the deployed functions' own logs: 8× `Anthropic extraction call failed 401` from one "Sync now" click, and `Anthropic API error 401` from the Home chat seconds later. Calendar sync fails *silently* too (the button returns success and reports "nothing new found", because a failed extraction returns `[]` and reads as "no events worth suggesting"), so the only visible trace is a `last_synced_at` that stops advancing.
 - **The calendar scan no longer decides what is worth keeping — founder directive, 2026-08-12: "just simply sync all new events, and let the person decide themselves whether or not they want to accept/reject it."** Every in-range, non-cancelled, unseen event now becomes a `pending` review card. The AI call stays, but only to extract the clean title/location/notes and suggest tags, groups and people — it no longer returns an `include` verdict, and the "skip generic solo logistics" framing is gone from both the system prompt and the tag guidance. **Why:** the filter was rejecting ~88% of what it saw — one measured sync auto-skipped 202 events and let 28 through, with the rejects being things like `AMD` ×58, `Doc Appt`, `Haircut`, `Lawn Aeration`. The 202 already buried were released by **deleting** their rows (`2026-08-12-unskip-calendar-candidates.sql`, applied), so the scan rediscovers and re-extracts them properly. **Not by flipping them to `pending`** — that was tried first and was wrong: a skip row is a bare tombstone (uid only, no title/location/notes), so flipping produced 202 blank review cards, and permanently, since the row's own uid is what keeps the event out of `seenUids`. Deleting is what makes it unseen again. **This also dissolves the re-judging bug below by construction** — every event now gets a row on the run it is first seen, so nothing can be re-sent to the API forever. `'skipped'` is retained as an allowed status but is written by nothing; an opt-in auto-filter could reuse it. **Known consequence, not yet addressed:** the queue jumped 164 → 366 pending and `ImportReview.tsx` has no bulk action, so it is one card at a time — a "reject all like this" or a multi-select is the obvious next ask if it proves tedious.
 - ~~Second calendar-sync bug, 2026-08-12: the scan re-judged the same rejected events forever~~ — **superseded the same day by the directive above, which removes the filter that caused it.** Kept because the shape is worth remembering: `scan-calendar-sources` only ever wrote a row for an event the AI approved, so an `include: false` was thrown away, the event stayed out of `seenUids`, and it was re-sent to the API on every run. Measured: **322 events (140 + 182) re-judged every run against a 240-event/8-batch cap**, so "Jake Personal" never reached the end of its own list, never got `last_synced_at` stamped, and read "Last synced Aug 4" for 9 days. The **least-recently-synced-first source ordering** added alongside it is still in place and still earns its keep (the batch budget is per-run and shared, so an unordered list let one calendar spend it every time).

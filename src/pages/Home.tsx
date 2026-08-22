@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type RefObject, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { supabase } from '../lib/supabase'
+import { loadReviewCounts } from '../lib/reviewQueues'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { isSelf, personLabel } from '../lib/personLabel'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
@@ -68,10 +69,7 @@ export default function Home({
   onSelectDunbar,
   onSelectNudges,
   onNavigateTab,
-  onOpenImportReview,
-  onOpenBirthdayReview,
-  onOpenContactImportReview,
-  onOpenContactSelection,
+  onOpenReviewInbox,
   askOnMount,
   onAskConsumed,
 }: {
@@ -81,10 +79,7 @@ export default function Home({
   onSelectDunbar: () => void
   onSelectNudges: () => void
   onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
-  onOpenImportReview: () => void
-  onOpenBirthdayReview: () => void
-  onOpenContactImportReview: () => void
-  onOpenContactSelection: () => void
+  onOpenReviewInbox: () => void
   // A question typed into global search whose plain word-match found nothing useful, handed off to
   // the chat (backlog item 14 → 30). The panel does no AI work of its own; this is the one path
   // where a search costs an API call, and it takes a deliberate tap to get here.
@@ -99,10 +94,7 @@ export default function Home({
   const [stats, setStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
   const [recallAssists, setRecallAssists] = useState<number | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
-  const [pendingImportCount, setPendingImportCount] = useState(0)
-  const [pendingBirthdayImportCount, setPendingBirthdayImportCount] = useState(0)
-  const [pendingContactSelectedCount, setPendingContactSelectedCount] = useState(0)
-  const [pendingContactUndecidedCount, setPendingContactUndecidedCount] = useState(0)
+  const [reviewCount, setReviewCount] = useState(0)
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [mentionedPeopleSuggestions, setMentionedPeopleSuggestions] = useState<MentionedPersonSuggestion[]>([])
@@ -161,31 +153,9 @@ export default function Home({
         notes: notes.count ?? 0,
       })
     })
-    supabase
-      .from('moment_import_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'pending')
-      .then(({ count }) => setPendingImportCount(count ?? 0))
-    // birthday_import_candidates is a newer table (2026-07-26) — count query fails open to 0 via
-    // the same `?? 0` fallback if the migration hasn't been applied yet.
-    supabase
-      .from('birthday_import_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'pending')
-      .then(({ count }) => setPendingBirthdayImportCount(count ?? 0))
-    // Deliberately count 'selected' here, not raw 'pending' — a founder mid-way through curating a
-    // large contacts file shouldn't feel nagged about the ones they haven't gotten to yet. The
-    // still-undecided count gets its own lower-key secondary line instead (see HomeView below).
-    supabase
-      .from('contact_import_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'selected')
-      .then(({ count }) => setPendingContactSelectedCount(count ?? 0))
-    supabase
-      .from('contact_import_candidates')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'pending')
-      .then(({ count }) => setPendingContactUndecidedCount(count ?? 0))
+    // Every import queue's count, from the one module that owns them (lib/reviewQueues.ts) —
+    // Home and Calendar both read it, so the two screens can't disagree about how much is left.
+    loadReviewCounts().then((counts) => setReviewCount(counts.total))
   }, [])
 
   // Free/deterministic, so it's cheap to just recompute on every Home visit rather than caching —
@@ -430,14 +400,8 @@ export default function Home({
       onSelectDunbar={onSelectDunbar}
       onSelectNudges={onSelectNudges}
       onNavigateTab={onNavigateTab}
-      pendingImportCount={pendingImportCount}
-      onOpenImportReview={onOpenImportReview}
-      pendingBirthdayImportCount={pendingBirthdayImportCount}
-      onOpenBirthdayReview={onOpenBirthdayReview}
-      pendingContactSelectedCount={pendingContactSelectedCount}
-      onOpenContactImportReview={onOpenContactImportReview}
-      pendingContactUndecidedCount={pendingContactUndecidedCount}
-      onOpenContactSelection={onOpenContactSelection}
+      reviewCount={reviewCount}
+      onOpenReviewInbox={onOpenReviewInbox}
       bottomRef={bottomRef}
       devTools={<DevOnboardingReset />}
     />
@@ -487,14 +451,8 @@ export function HomeView({
   onSelectDunbar,
   onSelectNudges,
   onNavigateTab,
-  pendingImportCount = 0,
-  onOpenImportReview,
-  pendingBirthdayImportCount = 0,
-  onOpenBirthdayReview,
-  pendingContactSelectedCount = 0,
-  onOpenContactImportReview,
-  pendingContactUndecidedCount = 0,
-  onOpenContactSelection,
+  reviewCount = 0,
+  onOpenReviewInbox,
   bottomRef,
   devTools,
   readOnly = false,
@@ -533,14 +491,8 @@ export function HomeView({
   onSelectDunbar: () => void
   onSelectNudges: () => void
   onNavigateTab: (tab: 'people' | 'events' | 'groups') => void
-  pendingImportCount?: number
-  onOpenImportReview?: () => void
-  pendingBirthdayImportCount?: number
-  onOpenBirthdayReview?: () => void
-  pendingContactSelectedCount?: number
-  onOpenContactImportReview?: () => void
-  pendingContactUndecidedCount?: number
-  onOpenContactSelection?: () => void
+  reviewCount?: number
+  onOpenReviewInbox?: () => void
   bottomRef: RefObject<HTMLDivElement | null>
   devTools?: ReactNode
   readOnly?: boolean
@@ -551,37 +503,14 @@ export function HomeView({
 
       {thread.length === 0 && (
         <>
-          {pendingImportCount > 0 && onOpenImportReview && (
-            <button onClick={onOpenImportReview} style={styles.importNudge}>
+          {/* One line, not four. Calendar events, birthdays, contacts and photos each used to get
+              their own "N found" banner here, stacked — four pipelines is an implementation detail,
+              and what the founder actually wants to know is whether there's anything waiting. The
+              breakdown lives on ReviewInbox.tsx, one tap away. */}
+          {reviewCount > 0 && onOpenReviewInbox && (
+            <button onClick={onOpenReviewInbox} style={styles.importNudge}>
               <span>
-                {pendingImportCount} event{pendingImportCount === 1 ? '' : 's'} found from your calendar
-              </span>
-              <span>→</span>
-            </button>
-          )}
-
-          {pendingBirthdayImportCount > 0 && onOpenBirthdayReview && (
-            <button onClick={onOpenBirthdayReview} style={styles.importNudge}>
-              <span>
-                {pendingBirthdayImportCount} birthday{pendingBirthdayImportCount === 1 ? '' : 's'} found from your calendar
-              </span>
-              <span>→</span>
-            </button>
-          )}
-
-          {pendingContactSelectedCount > 0 && onOpenContactImportReview && (
-            <button onClick={onOpenContactImportReview} style={styles.importNudge}>
-              <span>
-                {pendingContactSelectedCount} contact{pendingContactSelectedCount === 1 ? '' : 's'} selected, ready to review
-              </span>
-              <span>→</span>
-            </button>
-          )}
-
-          {pendingContactUndecidedCount > 0 && onOpenContactSelection && (
-            <button onClick={onOpenContactSelection} style={styles.importNudgeSecondary}>
-              <span>
-                {pendingContactUndecidedCount} more contact{pendingContactUndecidedCount === 1 ? '' : 's'} to look through
+                {reviewCount.toLocaleString()} thing{reviewCount === 1 ? '' : 's'} to review
               </span>
               <span>→</span>
             </button>
@@ -919,21 +848,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: 'pointer',
     fontFamily,
     marginTop: space.xxl,
-  },
-  importNudgeSecondary: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-    fontSize: fontSize.label,
-    padding: '0.6rem 1rem',
-    borderRadius: radius.lg,
-    border: `1px solid ${neutral.grey100}`,
-    backgroundColor: 'transparent',
-    color: colors.textFaintest,
-    cursor: 'pointer',
-    fontFamily,
-    marginTop: space.md,
   },
   statsRow: { display: 'flex', gap: space.lg, marginTop: space.xxl },
   statTile: {

@@ -52,6 +52,8 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const CalendarSettings = lazy(() => import('./pages/CalendarSettings'))
 const PhotoImportReview = lazy(() => import('./pages/PhotoImportReview'))
 const GooglePhotosOAuthCallback = lazy(() => import('./pages/GooglePhotosOAuthCallback'))
+const ReviewInbox = lazy(() => import('./pages/ReviewInbox'))
+const CalendarTriage = lazy(() => import('./pages/CalendarTriage'))
 const ImportReview = lazy(() => import('./pages/ImportReview'))
 const BirthdayImportReview = lazy(() => import('./pages/BirthdayImportReview'))
 const ContactsImport = lazy(() => import('./pages/ContactsImport'))
@@ -89,6 +91,8 @@ type Crumb =
   | { type: 'settings'; id: string; label: string }
   | { type: 'calendarSettings'; id: string; label: string }
   | { type: 'photoImport'; id: string; label: string }
+  | { type: 'reviewInbox'; id: string; label: string }
+  | { type: 'calendarTriage'; id: string; label: string }
   | { type: 'importReview'; id: string; label: string }
   | { type: 'birthdayReview'; id: string; label: string }
   | { type: 'contactsImport'; id: string; label: string }
@@ -116,6 +120,8 @@ const CRUMB_TYPES = [
   'settings',
   'calendarSettings',
   'photoImport',
+  'reviewInbox',
+  'calendarTriage',
   'importReview',
   'birthdayReview',
   'contactsImport',
@@ -129,7 +135,7 @@ const CRUMB_TYPES = [
 // Crumb types that are single fixed pages rather than records with a real id (their `id` is
 // just a copy of `type`, e.g. `{ type: 'circle', id: 'circle' }`) — the URL only needs one
 // segment for these, not a `/type/id` pair.
-const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'manageLocations', 'manageGroupTypes', 'genderFill', 'circle', 'settings', 'calendarSettings', 'photoImport', 'about', 'privacy'])
+const SINGLETON_CRUMB_TYPES = new Set(['dunbar', 'nudges', 'manageTags', 'manageLocations', 'manageGroupTypes', 'genderFill', 'circle', 'settings', 'calendarSettings', 'photoImport', 'reviewInbox', 'calendarTriage', 'about', 'privacy'])
 
 const AUTH_VIEWS = new Set<AuthView>(['landing', 'login', 'signup', 'demo'])
 
@@ -241,6 +247,8 @@ export default function App() {
   // on a direct tab click (goToTab) so only that back-arrow round trip restores scroll, not every
   // way of landing on the Groups tab.
   const groupsScrollRef = useRef<number | null>(null)
+  // Same idea for the calendar review queue: "Add more details →" leaves the page mid-batch.
+  const importReviewScrollRef = useRef<number | null>(null)
   // Global search (backlog item 14). The corpus lives in lib/searchCorpus.ts' module cache; this is
   // just the copy the panel renders, so opening the panel never waits on a round trip once a
   // session has loaded it once.
@@ -753,12 +761,39 @@ export default function App() {
         onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
       />
     )
+  } else if (current?.type === 'reviewInbox') {
+    content = (
+      <ReviewInbox
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onOpenCalendarTriage={() => pushCrumb({ type: 'calendarTriage', id: 'calendarTriage', label: 'Look through events' })}
+        onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
+        onOpenBirthdayReview={() => pushCrumb({ type: 'birthdayReview', id: 'birthdayReview', label: 'Review birthdays' })}
+        onOpenContactSelection={() => pushCrumb({ type: 'contactSelection', id: 'contactSelection', label: 'Choose contacts' })}
+        onOpenContactImportReview={() => pushCrumb({ type: 'contactImportReview', id: 'contactImportReview', label: 'Review contacts' })}
+        onOpenPhotoImport={() => pushCrumb({ type: 'photoImport', id: 'photoImport', label: 'Import photos' })}
+        onOpenGenderFill={() => pushCrumb({ type: 'genderFill', id: 'genderFill', label: 'Fill in gender' })}
+      />
+    )
+  } else if (current?.type === 'calendarTriage') {
+    content = (
+      <CalendarTriage
+        onBack={popCrumb}
+        backLabel={parentLabel}
+        onReviewSelected={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
+        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+      />
+    )
   } else if (current?.type === 'importReview') {
     content = (
       <ImportReview
         onBack={popCrumb}
         backLabel={parentLabel}
-        onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
+        onSelectEvent={(e) => {
+          importReviewScrollRef.current = window.scrollY
+          pushCrumb({ type: 'event', id: e.id, label: e.summary })
+        }}
+        restoreScrollRef={importReviewScrollRef}
       />
     )
   } else if (current?.type === 'birthdayReview') {
@@ -813,10 +848,7 @@ export default function App() {
             onSelectDunbar={() => pushCrumb({ type: 'dunbar', id: 'dunbar', label: "Dunbar's number" })}
             onSelectNudges={() => pushCrumb({ type: 'nudges', id: 'nudges', label: 'Due for an update' })}
             onNavigateTab={goToTab}
-            onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
-            onOpenBirthdayReview={() => pushCrumb({ type: 'birthdayReview', id: 'birthdayReview', label: 'Review birthdays' })}
-            onOpenContactImportReview={() => pushCrumb({ type: 'contactImportReview', id: 'contactImportReview', label: 'Review contacts' })}
-            onOpenContactSelection={() => pushCrumb({ type: 'contactSelection', id: 'contactSelection', label: 'Choose contacts' })}
+            onOpenReviewInbox={() => pushCrumb({ type: 'reviewInbox', id: 'reviewInbox', label: 'To review' })}
             askOnMount={pendingAsk}
             onAskConsumed={() => setPendingAsk(null)}
           />
@@ -852,8 +884,7 @@ export default function App() {
             onSelectPerson={(p) => pushCrumb({ type: 'person', id: p.id, label: p.name })}
             onSelectEvent={(e) => pushCrumb({ type: 'event', id: e.id, label: e.summary })}
             onOpenCalendarSettings={() => pushCrumb({ type: 'calendarSettings', id: 'calendarSettings', label: 'Calendar settings' })}
-            onOpenImportReview={() => pushCrumb({ type: 'importReview', id: 'importReview', label: 'Review calendar events' })}
-            onOpenBirthdayReview={() => pushCrumb({ type: 'birthdayReview', id: 'birthdayReview', label: 'Review birthdays' })}
+            onOpenReviewInbox={() => pushCrumb({ type: 'reviewInbox', id: 'reviewInbox', label: 'To review' })}
           />
         )}
         {view === 'groups' && (

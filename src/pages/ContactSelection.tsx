@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { invalidateReviewCounts } from '../lib/reviewQueues'
 import SearchBox from '../components/SearchBox'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
@@ -96,11 +97,28 @@ export default function ContactSelection({
     setSearchResults((data as Row[]) ?? [])
   }
 
+  // Drops the row and adjusts the counters in state rather than refetching. Refetching flips
+  // `loading`, which swaps the whole list for "Loading…", collapses the page height and dumps you
+  // back at the top of a list you had scrolled well into — founder report 2026-08-19. Same
+  // reasoning as Groups.tsx's `silent` reload, which exists because flashing a placeholder over an
+  // in-place change "would read as the drop bouncing".
   async function setStatus(id: string, status: 'selected' | 'skipped' | 'pending') {
     setBusyId(id)
-    await supabase.from('contact_import_candidates').update({ status }).eq('id', id)
+    const { error } = await supabase.from('contact_import_candidates').update({ status }).eq('id', id)
     setBusyId(null)
-    await Promise.all([loadCounts(), search ? runSearch(search) : loadPage()])
+    if (error) return
+
+    const from = showSkipped ? 'skipped' : 'pending'
+    if (from === 'skipped') setSkippedCount((n) => Math.max(0, n - 1))
+    else setTotalPending((n) => Math.max(0, n - 1))
+    if (status === 'selected') setSelectedCount((n) => n + 1)
+    if (status === 'skipped') setSkippedCount((n) => n + 1)
+    if (status === 'pending') setTotalPending((n) => n + 1)
+    invalidateReviewCounts()
+
+    const drop = (rows: Row[]) => rows.filter((r) => r.id !== id)
+    setRows(drop)
+    setSearchResults((prev) => (prev ? drop(prev) : prev))
   }
 
   const displayRows = searchResults ?? rows

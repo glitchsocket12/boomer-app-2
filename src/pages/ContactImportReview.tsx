@@ -6,6 +6,8 @@ import { parseFormerLastNames } from '../lib/formerNames'
 import { upsertReminder } from '../lib/reminders'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
+import { momentDisplayName, momentTitle } from '../lib/momentDisplayName'
+import { fetchMomentParentIds } from '../lib/moments'
 import MatchCallout from '../components/MatchCallout'
 import ReviewNoteField from '../components/ReviewNoteField'
 import { groupDisplayName } from '../lib/groupDisplayName'
@@ -51,6 +53,7 @@ type PersonRef = {
   former_last_names?: string | null
 }
 type GroupRef = { id: string; name: string; parent_group_id?: string | null }
+type MomentRef = { id: string; occasion: string | null; raw_description: string; event_date: string | null }
 
 // What handleAccept actually touched, captured at accept time so handleUndo can put things back
 // exactly rather than guessing — a snapshot of the "before" state for an existing-person merge,
@@ -193,6 +196,10 @@ export default function ContactImportReview({
   const [totalSelected, setTotalSelected] = useState(0)
   const [allPeople, setAllPeople] = useState<PersonRef[]>([])
   const [allGroups, setAllGroups] = useState<GroupRef[]>([])
+  // Events, for the "Add to events" picker — loaded once here rather than per card, same as the
+  // people and group rosters above.
+  const [allMoments, setAllMoments] = useState<MomentRef[]>([])
+  const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
 
   // The roster has to be in hand before the first page renders, not alongside it: cards read the
@@ -244,7 +251,7 @@ export default function ContactImportReview({
   }
 
   async function loadRoster(): Promise<Map<string, PersonRef>> {
-    const [peopleRes, groupsRes] = await Promise.all([
+    const [peopleRes, groupsRes, momentsRes, parentIds] = await Promise.all([
       fetchAllRows((from, to) =>
         supabase
           .from('people')
@@ -256,10 +263,23 @@ export default function ContactImportReview({
       fetchAllRows((from, to) =>
         supabase.from('groups').select('id, name, parent_group_id').order('name').order('id').range(from, to)
       ),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('moments')
+          .select('id, occasion, raw_description, event_date')
+          .order('event_date', { ascending: false, nullsFirst: false })
+          .order('id')
+          .range(from, to)
+      ),
+      // Isolated and fail-open, so a sub-event label degrades to the plain title rather than
+      // taking the picker down — same reasoning as ImportReview.tsx's use of it.
+      fetchMomentParentIds(),
     ])
     const people = (peopleRes.data as PersonRef[]) ?? []
     setAllPeople(people)
     setAllGroups((groupsRes.data as GroupRef[]) ?? [])
+    setAllMoments((momentsRes.data as unknown as MomentRef[]) ?? [])
+    setMomentParentById(parentIds)
     return new Map(people.map((p) => [p.id, p]))
   }
 
@@ -400,6 +420,8 @@ export default function ContactImportReview({
             candidate={c}
             allPeople={allPeople}
             allGroups={allGroups}
+            allMoments={allMoments}
+            momentParentById={momentParentById}
             onGroupCreated={handleGroupCreated}
             onPersonCreated={handlePersonCreated}
             onPersonRemoved={handlePersonRemoved}
@@ -431,6 +453,8 @@ function CandidateCard({
   candidate,
   allPeople,
   allGroups,
+  allMoments,
+  momentParentById,
   onGroupCreated,
   onPersonCreated,
   onPersonRemoved,
@@ -441,6 +465,8 @@ function CandidateCard({
   candidate: Candidate
   allPeople: PersonRef[]
   allGroups: GroupRef[]
+  allMoments: MomentRef[]
+  momentParentById: Map<string, string>
   onGroupCreated: (group: GroupRef) => void
   onPersonCreated: (person: PersonRef) => void
   onPersonRemoved: (personId: string) => void
@@ -448,6 +474,7 @@ function CandidateCard({
   onDismissed: () => void
   onSelectPerson: (id: string, name: string) => void
 }) {
+  const [selectedMomentIds, setSelectedMomentIds] = useState<string[]>([])
   const [linkedPersonId, setLinkedPersonId] = useState<string | null>(candidate.matched_person_id)
   const [pickerOpen, setPickerOpen] = useState(candidate.match_confidence !== 'high')
   const [search, setSearch] = useState('')
@@ -524,6 +551,20 @@ function CandidateCard({
   const selectedGroups = selectedGroupIds
     .map((id) => allGroups.find((g) => g.id === id))
     .filter((g): g is GroupRef => !!g)
+
+  const momentTitleById = useMemo(() => new Map(allMoments.map((m) => [m.id, momentTitle(m)])), [allMoments])
+  const momentLabel = (m: MomentRef) => momentDisplayName(m, momentTitleById, momentParentById)
+  const selectedMoments = selectedMomentIds
+    .map((id) => allMoments.find((m) => m.id === id))
+    .filter((m): m is MomentRef => !!m)
+
+  function addMoment(id: string) {
+    setSelectedMomentIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
+  }
+
+  function removeMoment(id: string) {
+    setSelectedMomentIds((prev) => prev.filter((m) => m !== id))
+  }
 
   function addGroup(id: string) {
     setSelectedGroupIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
@@ -698,6 +739,17 @@ function CandidateCard({
       undo.groupIds = selectedGroupIds
     }
 
+    // Attendance is a note, not a join table — `person_groups` is membership, and being AT an event
+    // is recorded as one "Was there." note per person (§9, "Membership ≠ attendance"). Pushing the
+    // new ids onto undo.noteIds is all Undo needs: it already deletes every note this accept wrote.
+    if (selectedMomentIds.length > 0) {
+      const { data: attendanceNotes } = await supabase
+        .from('notes')
+        .insert(selectedMomentIds.map((momentId) => ({ person_id: personId, moment_id: momentId, content: 'Was there.' })))
+        .select('id')
+      for (const note of (attendanceNotes as { id: string }[] | null) ?? []) undo.noteIds.push(note.id)
+    }
+
     await markReviewed('accepted', personId)
     setSaving(false)
     setUndoInfo(undo)
@@ -808,6 +860,7 @@ function CandidateCard({
     setMiddleNameInput(candidate.middle_name || '')
     setLastNameInput(candidate.last_name || '')
     setSelectedGroupIds([])
+    setSelectedMomentIds([])
     // noteText is deliberately NOT reset. Everything else here is derived from the candidate, but
     // this is the founder's own words — undoing a wrong match shouldn't make them retype it.
     setUndoInfo(null)
@@ -1023,6 +1076,35 @@ function CandidateCard({
           onCreateNew={handleCreateGroup}
           createLabel={(q) => `+ Create group "${q}"`}
           emptyText="No groups match."
+          browseAll
+        />
+      </div>
+
+      {/* Mirrors the groups block above exactly — same chip row, same picker, same placement — so
+          "who they're with" and "where you saw them" read as one pair of questions rather than two
+          different features. No onCreateNew: inventing an event from a contact card is a different
+          job, so this lists what already exists. */}
+      <div style={styles.groupSection}>
+        <p style={styles.body}>Add to events:</p>
+        {selectedMoments.length > 0 && (
+          <div style={styles.chipRow}>
+            {selectedMoments.map((m) => (
+              <span key={m.id} style={styles.chip}>
+                {momentLabel(m)}
+                <button type="button" onClick={() => removeMoment(m.id)} style={styles.chipRemove} aria-label={`Remove ${momentLabel(m)}`}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <SearchAddPicker
+          items={allMoments
+            .filter((m) => !selectedMomentIds.includes(m.id))
+            .map((m) => ({ id: m.id, label: momentLabel(m) }))}
+          placeholder="Add them to an event…"
+          onSelect={(item) => addMoment(item.id)}
+          emptyText="No events match."
           browseAll
         />
       </div>

@@ -1537,6 +1537,153 @@ The microphone itself. `getUserMedia`, `MediaRecorder`, and the new AnalyserNode
 
 **Lessons.** A wire format is not a detail you can infer — `\r\n` versus `\n` was the difference between working and silently reporting nothing. A cap applied after a sort is a filter, and an alphabetical filter over people's names is indistinguishable from random. And a fallback that only triggers on the error you predicted is not a fallback; the real rejection said "Could not parse multipart form" and never mentioned the parameter that caused it.
 
+## 2026-08-19 — Making a 230-event import something a person can actually get through
+
+Founder ask, in full: *"Think of some ways to make processing the mass imports more simple and
+digestible for the long term user."* An open brief, so the first job was to find out what the
+actual friction is rather than guess at it.
+
+**What the code said.** Four things, all measurable, none of them a bug:
+
+1. `ImportReview.tsx` rendered 20 cards and a button reading *"Show 20 more (210 still to review)"*.
+   No session, no progress, and no point at which stopping felt like completing anything.
+2. One `CandidateCard` is a title input, an address autocomplete, two date pickers, a notes
+   textarea, attendee chips, a person picker, two suggestion boxes, tag chips, group chips and four
+   merge dispositions — ~695px, per the measurement already sitting in `lib/resolvedCardScroll.ts`.
+   Most of these decisions are "yes, that was a real thing."
+3. Accept and Reject were the only two answers. Nothing between them.
+4. Home stacked up to four separate "N found" nudges, one per import pipeline.
+
+And a fifth thing, which was really the shape of the whole problem: **contacts already had the
+answer.** `ContactSelection.tsx` has been running a fast one-line Keep/Skip pass in front of the
+heavy cards since 2026-07-27. The queue that actually has the volume never got one.
+
+**The constraint that shaped every option.** On 2026-08-12 the founder deleted the AI's
+"is this worth suggesting" filter, having been shown it rejecting 202 of 230 events: *"it should
+just simply sync all new events, and let the person decide themselves."* That ruling is right and it
+is not up for renegotiation, so nothing proposed here filters, hides, ranks-by-guess or
+auto-decides. Every idea on the table only changed the SIZE OF THE BITE — batching, collapsing,
+deferring, and one place to see it all. The queue still contains exactly what it contained.
+
+**What the founder picked**, from four options offered: small batches + one inbox, lighter cards,
+"Not now" as a real state, and yes to a triage pass for calendar events. They explicitly did **not**
+pick the fifth idea, a bulk "Accept all N straightforward ones" in the `GenderFill.tsx` idiom —
+worth remembering before anyone proposes it again.
+
+**Two decisions inside the build worth keeping.**
+
+*A possible duplicate opens the card expanded.* The four-way "merge / add as a sub-event / save as a
+note / these are different" banner is careful work, and it exists precisely because accepting there
+creates the duplicate it is warning about. A collapsed Accept button next to an unanswered
+duplicate question would have quietly undone that whole design. So `findLikelyMatch` running at
+mount is what decides the card's initial state, and the collapse control doesn't appear until the
+question has an answer.
+
+*"Not this one" in triage writes `'rejected'`, not `'skipped'`.* Tempting, because `'skipped'` is
+sitting right there in the CHECK constraint doing nothing since the filter was deleted. But
+`'skipped'` means *the machine said no* — it was given its own value for exactly that reason, and
+conflating it with a person's decision would undo the distinction on purpose. A founder saying "not
+this one" is a rejection, and that is what gets written.
+
+**Fail-open, because code ships before SQL runs.** The migration adds two status values and a
+`deferred_until` column, and the founder runs it by hand afterwards. The gap is covered by probing
+for the COLUMN rather than the status values — an unknown column errors out of PostgREST, an
+unknown status value just matches nothing, so only the column is a reliable signal. While the probe
+is false the app is byte-for-byte its old self: `ImportReview` reads `'pending'`, the triage page
+and the "Not now" button don't render, and the inbox says a database update is pending. Running the
+SQL switches it all on with no redeploy.
+
+**A bug caught by reading the diff rather than by testing it.** The deck's progress line originally
+read `remaining - deckSize` for "more after it" — which ticks down every time you decide something
+inside the current batch, because `remaining` counts the batch's own undecided cards too. It has to
+be `remaining - (deckSize - doneInThisBatch)`, so the number holds still while you work through the
+ten in front of you. Same read caught the finish panel being replaced by a bare "Nothing left to
+review" on the last batch, at exactly the moment finishing should feel like finishing.
+
+**Verification, honestly.** `npm run lint`, `tsc -b`, `vite build` and all 618 tests green.
+`npm run check:functions` could not run — the proxy blocks `deno.land` downloads — but no Edge
+Function was touched. **Nothing here has been seen in a browser**: remote sessions have no Supabase
+credentials and can't reach the live site, so the founder is the eyes, and §10 carries the ordered
+click-through list. Saying "deployed" and saying "working" are still not the same claim.
+
+## 2026-08-19, same day — the founder previews it, and "Keep" turns out to be a lie
+
+Follow-up to the entry above, which should be read first. The batching/inbox/collapsed-cards work
+went to a branch, the founder clicked through the Vercel preview, and came back with six notes.
+Five were small. The first one changed the shape of the flow.
+
+**"Keep" wasn't a decision, it was a deferral of one.** Triage offered `+ Keep` / `Not this one`,
+where Keep only forwarded the event to a second screen — so every kept event still cost a full card,
+and the fast pass was a gate in front of the slow pass rather than a replacement for it. The founder
+also wanted deferral available without going through Keep first. Offered three shapes, they picked
+a fourth: **Quick Add, Add More Detail, Remind Me, Reject** — *"and when they Remind, make it so
+that it asks a user to pick a frequency of their choice, with a checkbox that has 'Use this
+frequency as default'."*
+
+That is a better product than any of the three on offer, because it makes the labels honest. "Add
+Now" that doesn't add anything now was the flaw in the option I'd recommended, and the founder's
+version simply removes it: Quick Add adds, Add More Detail opens the card, Remind Me sets it aside.
+
+**The founder then asked the question worth writing down.** Not "build it" — *"I want Claude to
+reference similar functions in other apps and see if there are any further efficiencies I haven't
+thought of yet."* Four of the five most useful things in this round came out of that survey rather
+than out of either of our lists.
+
+**The scroll fix was already in the codebase, twice.** `Groups.tsx` has `loadGroups(silent)`, which
+skips the `loading` flip so an in-place change doesn't remount the list — written for drag-and-drop,
+where "flashing Loading… over the whole page would read as the drop bouncing." Exactly the founder's
+complaint, already solved, in a file nobody thought to look at. It also has a `restoreScrollRef`
+handshake with `App.tsx` for leave-and-come-back. Both were adopted rather than reinvented, and the
+second one fixed a bug the click-through hadn't reached yet: "Add more details →" navigated to the
+event, and coming back remounted the queue and dealt a fresh batch of ten, silently replacing the
+ten you were part-way through.
+
+**Quick Add would have been the fastest way in the app to create a duplicate.** The only reason the
+review card auto-expands on a likely match is that accepting blind creates the duplicate the banner
+warns about — and a one-tap add straight off the triage row skipped that check entirely. The
+heuristic moved into `lib/likelyDuplicate.ts` and now runs on the triage list too; a flagged row
+shows "Looks familiar — review it" *instead of* Quick Add. Free, no AI call, and it preserves the
+property that made the four-way merge banner worth building in the first place.
+
+**Accepting was fifteen round trips pretending to be one.** `applyAttendees` called
+`supabase.auth.getUser()` *inside* both of its loops — one auth call per attendee — and every
+attendee note, tag and group was its own sequential `await`. Nobody noticed while accepting was a
+deliberate act at the bottom of a 695px card. Quick Add is meant to be tap-tap-tap down a list, so
+the extraction into `lib/acceptCandidate.ts` hoisted the auth call to one and batched each table into
+a single statement.
+
+**Two bugs caught by reading the diff against the codebase's own precedent, not by running it.**
+
+`undoQuickAdd` deleted the moment with a bare `moments.delete()`. But `EventDetail.tsx`'s
+`handleDeleteEvent` deletes dependents first, awaited and error-checked — and PROJECT_HISTORY item
+93 ("Merges and undo could delete data they never moved") is a postmortem about exactly that
+ordering going wrong. A bare delete would have failed or orphaned notes, in the one code path whose
+entire job is putting things back.
+
+And `handleUndo` computed `restoreStatus = showTurnedDown ? 'rejected' : 'pending'`, which meant
+that pressing Undo *in the turned-down list* — the only button on that screen — restored the row to
+'rejected'. The button would have done nothing at all. Undo always means "back to undecided"; there
+was never a case for the ternary.
+
+**One test failed, and the test was wrong.** `findLikelyMatch` scored a fully-contained shorter
+title ("Camping Trip" inside "Camping Trip Yosemite") identically to an exact match, because the
+overlap ratio divides by the SHORTER title, so the first of the two won on a strict `>`. That is
+shipped behaviour with a documented reason, and the fix was to pin it in a test that says so rather
+than to quietly change a heuristic nobody asked about. Both candidates are plausible duplicates
+either way, and all the caller needs is that *something* got flagged so Quick Add steps aside.
+
+**Also checked and deliberately not built on:** there is no existing "frequency" vocabulary in this
+app to be consistent with — `reminders` is date-based (birthdays, anniversaries), countdowns are
+target dates, and `DueForUpdate.tsx` computes "updated N days ago" on the fly without storing a
+cadence. So `user_settings.review_remind_days` is new vocabulary rather than a second way of saying
+something the schema already said. It is stored as a plain day count so the four presets can change
+without a migration behind them.
+
+**Verification, same caveat as before.** Lint, `tsc -b`, build and 631 tests green (was 618).
+`npm run check:functions` still can't run — the proxy blocks `deno.land` — and no Edge Function was
+touched. **Nothing in this round has been seen in a browser either.** The founder is the eyes; §10
+carries the ordered list, and both migrations now need running.
+
 ---
 
 ## 2026-08-19 — "It isn't even guessing if Ben or Braden is a male name": a list of 840 names, replaced by 16,002
