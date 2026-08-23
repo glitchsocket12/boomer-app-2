@@ -41,7 +41,7 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           <>
             <h1 style={styles.title}>Welcome to Gary's Grove</h1>
             <p style={styles.body}>
-              You're about to spend a few minutes in a fake account — Gary Pemberton, a retired
+              You're about to spend a few minutes in a fake account — Gary Pemberton, a regional
               operations manager who's been using Grove for years. He's got {PEOPLE_COUNT} people,{' '}
               {GROUP_COUNT} groups, and {MOMENT_COUNT} memories on file, some going back over a decade.
             </p>
@@ -55,7 +55,7 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           <>
             <h1 style={styles.title}>Home — so you never go in cold</h1>
             <p style={styles.body}>
-              Ever blanked mid-conversation on what your grandkid's into? Gary just told Grove
+              Ever blanked mid-conversation on what a kid in your life is into? Gary just told Grove
               "Emma scored two goals in her tournament" — once you're inside, try asking "What
               does Noah love?" and watch Grove answer instantly.
             </p>

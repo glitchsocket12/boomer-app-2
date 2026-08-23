@@ -235,14 +235,14 @@ export function buildDemoDescendantTree(memberIds: string[]): TreeData {
 // same shape person-facts.ts's real AI output takes — hand-computed here since nothing in the
 // demo ever calls the API. A couple of people also get a hand-written 'other' fact for texture.
 const EXTRA_KEY_FACT: Partial<Record<string, string>> = {
-  gary: 'Retired in 2021 after 36 years at Frontier Industrial Supply — spent his last decade as Regional Operations Manager. Works two mornings a week at Ridgeline Hardware now, just to stay busy.',
-  carol: 'Retired elementary school teacher — taught 2nd grade for 30 years.',
+  gary: 'Regional Operations Manager at Frontier Industrial Supply — 30 years there this spring. Picks up Saturdays at Ridgeline Hardware because the weekends got quiet once the kids moved out.',
+  carol: 'Teaches 2nd grade in Aurora — 28 years in the same district.',
   mike: 'Works in commercial real estate, lives in Denver.',
   beth: 'Works in physical therapy, lives in San Diego.',
   danny: 'Firefighter here in Colorado Springs.',
   emma: 'Plays club soccer.',
   noah: 'Dinosaurs. All day, every day.',
-  frank: "Met Gary at Frontier's management trainee program in 1985 — one of his oldest friends.",
+  frank: "Met Gary at Frontier's management trainee program in 1996 — one of his oldest friends.",
   priya: 'Part-time at Ridgeline Hardware, saving up for grad school.',
 }
 
@@ -483,8 +483,8 @@ const CORE_MOMENTS: DemoMoment[] = [
     when_text: 'A few years ago',
     event_date: '2022-03-14',
     raw_description:
-      "Started at Ridgeline Hardware today, a year into retirement and going a little stir-crazy at home. Sam showed me around, Priya had to explain the register three separate times. Feels good to have somewhere to be two mornings a week.",
-    summary: "Gary picked up a part-time gig at Ridgeline Hardware a year into retirement — Sam showed him around, Priya walked him through the register.",
+      "Started Saturdays at Ridgeline Hardware today. Frontier finally took me off the road, and the weekends got quiet once the kids moved out. Sam showed me around, Priya had to explain the register three separate times. Feels good to have somewhere to be.",
+    summary: "Gary picked up Saturday shifts at Ridgeline Hardware once Frontier took him off the road — Sam showed him around, Priya walked him through the register.",
     created_at: '2024-01-12T00:00:00Z',
     attendeeIds: ['gary', 'sam', 'priya'],
     groupIds: ['work'],
@@ -520,13 +520,13 @@ const CORE_MOMENTS: DemoMoment[] = [
   },
   {
     id: 'm16',
-    occasion: 'Retirement Party — 36 Years at Frontier',
+    occasion: '25 Years at Frontier',
     location: 'Colorado Springs',
     when_text: 'About five years ago',
     event_date: '2021-02-26',
     raw_description:
-      "Retired today after 36 years at Frontier. They threw a party at the warehouse — same building I started in back in '85. Frank and Steve drove in for it. Got a plaque and a watch I'll probably never wear, but the company was worth more than either.",
-    summary: "Gary retired after 36 years at Frontier Industrial Supply, celebrated at the same warehouse he started in back in 1985 — with Frank and Steve driving in for it.",
+      "Twenty-five years at Frontier today. They threw a lunch at the warehouse — same building I started in back in '96. Frank and Steve drove in for it. Got a plaque and a watch I'll probably never wear, but the company was worth more than either.",
+    summary: "Gary hit 25 years at Frontier Industrial Supply, marked at the same warehouse he started in back in 1996 — with Frank and Steve driving in for it.",
     created_at: '2024-01-13T00:00:00Z',
     attendeeIds: ['gary', 'carol', 'mike', 'beth', 'danny', 'frank', 'steve'],
     groupIds: ['family', 'crew'],
@@ -576,13 +576,13 @@ const CORE_MOMENTS: DemoMoment[] = [
   },
   {
     id: 'm20',
-    occasion: "Carol's Retirement — 30 Years Teaching",
+    occasion: "Carol's 25th Year Teaching",
     location: 'Aurora',
     when_text: 'Several years ago',
     event_date: '2018-06-15',
     raw_description:
-      "Carol retired today after 30 years teaching 2nd grade. Her classroom threw her a party, kids made cards, one kid cried harder than Carol did. She's taught half of Aurora how to read at this point.",
-    summary: "Carol retired after 30 years teaching 2nd grade in Aurora — her class threw her a card-and-cake send-off.",
+      "Twenty-five years of 2nd grade for Carol today. Her classroom threw her a party, kids made cards, one kid cried harder than Carol did. She's taught half of Aurora how to read at this point.",
+    summary: "Carol hit 25 years teaching 2nd grade in Aurora — her class threw her a card-and-cake celebration.",
     created_at: '2024-01-15T00:00:00Z',
     attendeeIds: ['gary', 'carol'],
     groupIds: ['family'],
@@ -798,10 +798,10 @@ function n(personId: string, content: string, created_at: string, momentId: stri
 
 const CORE_NOTES: DemoNote[] = [
   // Carol
-  n('carol', 'Retired elementary school teacher, taught 2nd grade for 30 years in Aurora.', '2024-02-01T00:00:00Z'),
+  n('carol', 'Teaches 2nd grade in Aurora — 28 years in the same district.', '2024-02-01T00:00:00Z'),
   n('carol', "Keeps the family calendar. Somehow never misses a birthday. Married 40 years now — still not sure how she puts up with the workplace stories.", '2026-05-02T00:00:00Z', 'm2'),
   n('carol', 'Makes a lemon bundt cake every single Thanksgiving. Non-negotiable.', '2025-11-27T00:00:00Z', 'm6'),
-  n('carol', 'Threw Gary a retirement party after 36 years at Frontier — same warehouse he started in back in 1985. Frank and Steve drove in for it.', '2024-01-13T00:00:00Z', 'm16'),
+  n('carol', 'Threw Gary a lunch for 25 years at Frontier — same warehouse he started in back in 1996. Frank and Steve drove in for it.', '2024-01-13T00:00:00Z', 'm16'),
   n('carol', 'Hit 25 years married to Gary back in 2011. The kids threw us a backyard party. Feels like yesterday and forever ago.', '2024-01-22T00:00:00Z', 'm34'),
   // Mike
   n('mike', 'Oldest. Lives in Denver with Jenna and the kids. Works in commercial real estate.', '2024-02-02T00:00:00Z'),
@@ -897,12 +897,12 @@ const CORE_NOTES: DemoNote[] = [
   n('priya', 'Had to explain the register to Gary three separate times his first shift. Patient guy, slow learner on that one.', '2022-03-14T00:00:00Z', 'm13'),
   n('carol', "35 years married. Kept it quiet this time — just dinner out, the two of us. Sometimes that's better.", '2021-06-08T00:00:00Z', 'm14'),
   n('carlos', "Sofia was born. Tiny and loud, in that order. Flew Beth's parents out as soon as we could.", '2021-05-02T00:00:00Z', 'm15'),
-  n('frank', "Drove in for Gary's retirement party. Same warehouse we both started in back in '85 — hard to wrap your head around.", '2021-02-26T00:00:00Z', 'm16'),
-  n('mike', "Meant to add this ages ago — Dad still has that retirement watch in the box. Wears the plaque's spot on the wall more than the watch.", '2022-05-10T00:00:00Z', 'm16'),
+  n('frank', "Drove in for Gary's 25-year lunch. Same warehouse we both started in back in '96 — hard to wrap your head around.", '2021-02-26T00:00:00Z', 'm16'),
+  n('mike', "Meant to add this ages ago — Dad still has that 25-year watch in the box. Wears the plaque's spot on the wall more than the watch.", '2022-05-10T00:00:00Z', 'm16'),
   n('carol', 'Kept Thanksgiving small that year — just the six of us. Missed having everyone around the table, but it had its own kind of nice.', '2020-11-26T00:00:00Z', 'm17'),
   n('jenna', "Noah's first Christmas Eve. Three months old, slept through the whole thing while we fought a play kitchen at 11pm.", '2019-12-24T00:00:00Z', 'm18'),
   n('mike', "Noah was born. Emma took her new big-sister job very seriously — for about ten seconds.", '2019-09-03T00:00:00Z', 'm19'),
-  n('carol', 'Retired after 30 years teaching 2nd grade. My classroom threw me a party — cards, cake, one kid cried harder than I did.', '2018-06-15T00:00:00Z', 'm20'),
+  n('carol', 'Twenty-five years of 2nd grade. My classroom threw me a party — cards, cake, one kid cried harder than I did.', '2018-06-15T00:00:00Z', 'm20'),
   n('peggy', 'The whole crew came down to Tucson to see me. First real trip since Walt passed. I fed everyone way too much, per usual.', '2017-07-22T00:00:00Z', 'm21'),
   n('steve', "Talked Gary into filling in for our Tuesday game. Nine years later he's still showing up.", '2017-04-11T00:00:00Z', 'm22'),
   n('jenna', "Emma was born. Mike drove up the same night looking like he hadn't slept in a week — fair, honestly.", '2016-09-14T00:00:00Z', 'm23'),
@@ -924,7 +924,7 @@ const CORE_NOTES: DemoNote[] = [
   n('steve', "Married to Donna. She's the one who actually keeps him on time for things — golf being the notable exception.", '2024-09-01T00:00:00Z'),
   n('ray', 'Married to Yvonne, both still down in Baton Rouge. Empty nesters now.', '2024-09-01T00:00:00Z'),
   n('harold', 'Married to Barbara. Not much of a golfer herself, but she puts up with his stories about it.', '2024-09-01T00:00:00Z'),
-  n('rosa', "Frank's wife. Married almost 38 years now. Retired a couple years back, the two of them travel more these days.", '2024-09-01T00:00:00Z'),
+  n('rosa', "Frank's wife. Married almost 30 years now. They travel more these days, now the kids are out of the house.", '2024-09-01T00:00:00Z'),
   n('rosa', 'Came to the 40th anniversary dinner with Frank.', '2026-05-02T00:00:00Z', 'm2'),
   n('kevin_ibarra', "Frank and Rosa's son. Out in Austin, works in IT.", '2024-09-01T00:00:00Z'),
   n('julie_ibarra', "Frank and Rosa's daughter. Still local, teaches middle school here in the Springs.", '2024-09-01T00:00:00Z'),
@@ -1019,7 +1019,7 @@ const GEN_CATEGORIES: GenCategoryConfig[] = [
       "Worked inventory with him in the '90s — sharpest count-sheet in the building.",
       "One of the old warehouse crew, came up through the ranks together in the '80s.",
       'Covered his shift more times than either of them can count.',
-      'Retired a few years before Gary did. Still gets a Christmas card.',
+      'Took the early package when Frontier restructured. Still gets a Christmas card.',
       'Worked the front counter at the Springs branch — knew every regular customer by name.',
       "Ran forklift training for new hires, Gary included, back in '86.",
       'Transferred to the Tucson branch in the 90s — they still swap calls a couple times a year.',
@@ -1030,7 +1030,7 @@ const GEN_CATEGORIES: GenCategoryConfig[] = [
       'Ran the safety trainings every January without fail.',
       'Worked the counter alongside him before transferring to the Pueblo branch.',
       'One of the old dispatch guys — kept the whole operation running on time.',
-      'Retired the same year as Gary. Different departments, same send-off party.',
+      'Left Frontier the year the Denver branch closed. Different departments, same goodbye lunch.',
       "Worked under him after the promotion. Good years, by all accounts.",
     ],
   },
@@ -1103,7 +1103,7 @@ const GEN_CATEGORIES: GenCategoryConfig[] = [
     bioTemplates: [
       'From the Tuesday morning coffee group at the diner on Nevada Ave.',
       'Volunteers together at the food bank a couple Saturdays a month.',
-      "Fellow retiree from the neighborhood men's breakfast group.",
+      "From the neighborhood men's breakfast group.",
       "Met through Carol's book club spouses' dinners.",
       'From the community garden plot next to theirs.',
       'Usher at church together for years.',
