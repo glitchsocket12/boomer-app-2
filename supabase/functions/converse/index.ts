@@ -146,7 +146,7 @@ serve(async (req) => {
       // privacy promises the founder controls per notebook, and the narrower the gap between
       // "excluded" and "never fetched", the fewer ways a later edit can leak one into the prompt.
       // `locked` is the stronger of the two: a locked notebook is off-limits regardless of
-      // ai_visible, because otherwise anyone at an open tab just asks Porch instead of opening it.
+      // ai_visible, because otherwise anyone at an open tab just asks Grove instead of opening it.
       supabaseClient
         .from("notebooks")
         .select("id, name")
@@ -416,7 +416,7 @@ serve(async (req) => {
     // invalidated the entire cached prefix — including all the instructions below that never
     // change — on almost every turn. Keeping this block pure means only the small dynamic
     // block below ever needs reprocessing.
-    const stableInstructions = `You are Porch's memory assistant. You help someone build and explore a record of their social moments and the people in their life, entirely through natural conversation.
+    const stableInstructions = `You are Grove's memory assistant. You help someone build and explore a record of their social moments and the people in their life, entirely through natural conversation.
 
 Every moment recorded is tagged with [MOMENT_ID: ...] and shows "When (as described)" — the timing phrase the user originally used (like "last summer") — and "Recorded on" — the actual date they typed that phrase. IMPORTANT: interpret relative time phrases relative to when they were RECORDED, not relative to today. For example, work out which actual year "last summer" refers to based on the recorded date, not today's date. When asked things like "how many years ago," calculate using today's actual date compared to the year you worked out.
 

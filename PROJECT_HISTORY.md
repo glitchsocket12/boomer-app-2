@@ -1804,3 +1804,106 @@ take name-steering down, which is precisely the 2026-08-18 outage.
 diagnosis was two queries and no guesswork, and the payload size was the fact that cracked it.
 And a fallback ladder needs to know which failures it cannot fix: retrying a bad file in a
 different envelope is a second bill for the same answer.
+
+---
+
+## 2026-08-22/23 — Boomer → Porch → Grove, and the reposition that had to happen first
+
+The app was renamed twice in one day. The second rename is the interesting one, because it
+only happened after the founder refused to accept the first and asked a much better question.
+
+**What went wrong with Porch.** Item 72 step 3 had been sitting open for weeks: pick a real
+name. It got pulled forward because the App Store plan makes it blocking — an iOS bundle ID
+is permanent once a build is uploaded. A session surveyed the category, found that every
+plain descriptive name was taken (**Kinship** is a personal CRM pitched almost exactly as
+this app is; **Fondly: Memory Journal** exists), landed on Porch, and shipped it: 85
+occurrences across 34 files, all 10 Edge Functions redeployed, new icons, new favicon.
+
+The founder's reaction, next session: *"I do NOT want to rename the whole app porch. I don't
+know why it autoselected that."* And then the actually useful part: *"I think we need to
+rethink entirely what the purpose is (who it's for, what it's key features are,
+goals/direction of the features for the users) and from THERE we can visit a name."*
+
+That was right, and the diagnosis backs it up. Sorting every shipped feature into buckets:
+**capture ~40%, structure ~40%, retrieval ~20%.** The product's weight is in building a
+durable map of the people in a life. But `Landing.tsx` was selling the thin 20% *and selling
+it as a personal failing* — "In Fight of Forgetfulness," "Start remembering." That framing is
+what produced the name "Boomer" in the first place, and it's why every naming attempt kept
+landing in the crowded, clinical memory-aid aisle. It also directly contradicted §9's own
+standing rule: never make the user feel bad about forgetting.
+
+**The correction that changed everything.** Asked about the Dunbar callout, the founder
+pushed back on how it was being read:
+
+> the 'contacts' are not people you WANT to maintain close relationships with, rather, it is
+> all of the minor characters who enter your life that add the texture to the social makeup
+> of your life. All of the extra passerbys in your life.
+
+That reframes the whole product. 150 is the ceiling on relationships you actively *maintain*
+— it was never the size of a social life. The founder's account holds 724 people; the ~574
+past the close tier are the point. They're the first people a memory drops and the only place
+they're written down is here. The demo's ~180-person generated long tail had been built that
+way on purpose back in July — the product had been making this argument for a month while the
+copy argued something else.
+
+Two more corrections landed in the same pass. The forgetting angle isn't a deficit pitch,
+it's **foresight** — *"even if things aren't slipping yet, if they ever do, you'll be
+covered. that's where the 'In Fight of Forgetfulness' comes from."* So the line survives, one
+section further down, in that reading. And **Notebooks are the differentiator**, not a side
+feature: *"notebooks are the key to this — something which makes it more than just a CRM.
+it's notes for your daughter to give her on her 18th birthday — a place to file away feelings
+about work."*
+
+**The naming search, second attempt.** Ten names checked against the App Store rather than
+picked on feel. Six died on *direct category neighbours*, which is the part worth recording,
+because each one is a competitor nobody had noticed:
+
+| Name | What killed it |
+|---|---|
+| Hearth | *Hearth — Family App*: mood check-ins and AI suggestions for reaching out to family. Plus Hearth Display, a funded family organiser |
+| Keepsake | *Keepsake: Bring Family Closer* — "help families say what they've always meant to say." The held-letters idea, already shipping |
+| Homestead | *Digital Homestead* — a private, invite-only family space. The sharing idea, already shipping |
+| Harbor | Three at once: *Harbour Journal* (private AI journaling), *Harbor Social App* (social journal), *Harbor* (second brain) |
+| Trove | 8+ apps, two of them private-document vaults. The founder liked the feel; the shelf was full |
+| Orchard | Epic's enterprise "App Orchard" |
+| Understory | A tree-themed reading tracker, an AI company, and a B2B platform |
+
+**Grove** came through with one unrelated collision (an Australian parenting-events app), and
+**Heartwood** was the clean runner-up — its only collisions were a Montessori school, an inn,
+a vet, a coffee shop and an MMO. The founder picked Grove: one syllable, one pronunciation,
+an obvious icon letterform, and a metaphor that needs no explaining — many trees of many
+sizes, planted deliberately, tended for years, still standing after whoever planted them.
+That maps onto the long tail, the family tree, and the letters idea at once.
+
+The generalisable lesson: **checking a name against the App Store is also competitive
+research.** Four of the six rejections were products nobody had found in a month of building,
+and two of them were shipping features this app has on its own roadmap.
+
+**Also settled in the same session** (all now in PROJECT_CONTEXT §9, not repeated here): the
+long tail is the product and must never be filtered; the AI is a named character doing three
+jobs, with its voice as a user setting rather than a hardcoded personality; the autonomy
+boundary is *act only when certain*, paired with a not-yet-built activity log that makes every
+automatic write legible and reversible; three guardrails (never a scoreboard, never sold or
+trained on, never a public anything); Capacitor plus a cloud Mac **supersedes** the 2026-08-01
+"PWA first, NOT Capacitor" decision, because the founder wants real App Store distribution and
+renting a Mac removes the constraint that call was based on; and a cost ceiling of $10–20/month
+total for other people's AI usage, which makes per-user metering a prerequisite for opening
+signups.
+
+**One correction to the record found on the way through:** §7 claimed Notebooks were "not in
+the landing-page demo yet." Backlog item 97 shipped exactly that on 2026-08-19. §7 was stale;
+fixed in place.
+
+**What this rename cost, for the next person who has to do one.** 205 occurrences across 59
+files — more than the 85/34 of the Porch pass, because Porch had added the name to places
+Boomer never reached. Excluding `dist/`: 24 files in `src/`, 10 Edge Functions (the assistant's
+name for itself lives in the prompts, and skipping a redeploy leaves the chat introducing
+itself by the old name), four identity files, three docs. There is still no Python on this
+machine, so `scripts/generate-icons.py` cannot run and the browser-canvas fallback documented
+in `PWA.md` is the real path. The name sits in the *stable* prefix of every system prompt, so
+the first AI call after deploy pays one uncached prompt — one call, not a regression.
+
+**Deliberately not renamed, again:** lowercase `boomer` is never the product name in this repo
+— it's the `boomer-nav` session key, the Google Photos OAuth state key, the live Vercel
+hostname, and one test fixture. This file keeps Boomer and Porch in its dated entries; that's
+what the product was called at the time.

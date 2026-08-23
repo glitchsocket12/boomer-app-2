@@ -1,4 +1,4 @@
-# Security — where Porch actually stands
+# Security — where Grove actually stands
 
 _Written 2026-08-01, after a full read of the codebase. Plain language on purpose. If a sentence in here needs translating, it failed its job — say so and it gets rewritten._
 
@@ -27,7 +27,7 @@ Your own account keeps working exactly as it does now. You're already signed up;
 
 ## 2. Lock down your own logins — DONE 2026-08-01
 
-**This is the most likely way Porch actually gets breached — not a flaw in the code.** Nobody is going to find a clever hole in the app. Somebody might phish your password. Every one of these accounts is a key to some part of the system.
+**This is the most likely way Grove actually gets breached — not a flaw in the code.** Nobody is going to find a clever hole in the app. Somebody might phish your password. Every one of these accounts is a key to some part of the system.
 
 Ordered by how much damage a stolen password does:
 
@@ -56,11 +56,11 @@ You don't have a domain registrar yet — you're on a `vercel.app` address. When
 
 ### The wall
 
-Every piece of data in Porch — every person, note, event, group — is stamped with the ID of the account that owns it. Attached to each table is a rule: *only return rows whose owner matches whoever is asking.*
+Every piece of data in Grove — every person, note, event, group — is stamped with the ID of the account that owns it. Attached to each table is a rule: *only return rows whose owner matches whoever is asking.*
 
 The important part is **where** that rule lives. It's not in the app's code. It's inside the database itself. That means it isn't something a cleverly-crafted web address or a modified browser request can talk its way around — the database checks every single time, for every single query, and there's no path that skips it.
 
-This is the thing that would keep two users' notes apart. It's the right way to build it, and it's how Porch is built.
+This is the thing that would keep two users' notes apart. It's the right way to build it, and it's how Grove is built.
 
 ### What I verified by reading the code
 
@@ -96,7 +96,7 @@ Ranked by how much they'd actually matter:
 3. **Email confirmation is switched off**, so accounts can be made with addresses that don't exist. Needs turning back on before real users, along with a working confirmation email.
 4. **No "delete my account" button and no data export.** The Privacy page already admits both. These stop being a nicety and become a legal requirement (GDPR/CCPA) the moment you have users in Europe or California.
 5. ~~**Missing browser security headers.**~~ **Four added 2026-08-19** in `vercel.json` (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and a `Permissions-Policy` that switches off camera/geolocation/payment/USB while keeping `microphone=(self)` — the voice input needs it). **HSTS deliberately left alone:** Vercel already sends `max-age=63072000; includeSubDomains; preload` on `*.vercel.app`, and writing our own would have *weakened* it; revisit only if the app moves to a custom domain, which loses that default. **The one still missing is a Content-Security-Policy**, which is the header that can white-screen the app if a source is left out of it, and there is no staging environment to try it on (every push is production). It needs to be written and watched with the founder present — not shipped overnight.
-6. **The backend accepts requests from any website.** Lower risk than it sounds, because Porch authenticates with a token rather than a cookie, so a hostile site can't ride your logged-in session. Worth tightening anyway.
+6. **The backend accepts requests from any website.** Lower risk than it sounds, because Grove authenticates with a token rather than a cookie, so a hostile site can't ride your logged-in session. Worth tightening anyway.
 7. **Text other people wrote reaches an AI that can write to your database.** Calendar invites and imported contact notes were authored by other people, and they get fed to Claude, which then saves records based on them. Someone could in principle word a calendar invite to manipulate what gets recorded. This corrupts data rather than leaking it, and it's the subtlest thing on this list.
 
 ### The one deliberate hole
@@ -109,11 +109,11 @@ The Landing page shows total counts across all accounts ("X people, Y events"). 
 
 ## 4. End-to-end encryption — the real answer
 
-You asked how apps like Day One do it, and whether Porch could.
+You asked how apps like Day One do it, and whether Grove could.
 
 **How they do it:** Day One is a filing cabinet it doesn't have a key to. Your phone scrambles the entry using a key derived from your password, uploads the scrambled version, and the server genuinely cannot read it. Search and "on this day" still work because they run on *your device*, on the readable copy that never leaves it.
 
-**Why Porch can't, today:** Porch's whole value is the opposite arrangement. A server-side AI *reads* your notes — that's how you get Key Facts, summaries, and answers to "what's going on with Clare's kids." **Claude cannot read scrambled text.** So full end-to-end encryption and the app you have now are mutually exclusive. It isn't a matter of difficulty. Any app advertising both is either doing its AI on the phone, or the marketing is ahead of the architecture.
+**Why Grove can't, today:** Grove's whole value is the opposite arrangement. A server-side AI *reads* your notes — that's how you get Key Facts, summaries, and answers to "what's going on with Clare's kids." **Claude cannot read scrambled text.** So full end-to-end encryption and the app you have now are mutually exclusive. It isn't a matter of difficulty. Any app advertising both is either doing its AI on the phone, or the marketing is ahead of the architecture.
 
 Three real options, for when it matters:
 

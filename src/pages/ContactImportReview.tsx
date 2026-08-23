@@ -219,7 +219,7 @@ export default function ContactImportReview({
 
   // The per-page re-check below keeps what's on screen honest, but the filter buttons and the
   // "N contacts" count are database counts — so a queue full of bad matches would keep claiming
-  // hundreds are "Already in Porch" while every card says otherwise, and the founder would have
+  // hundreds are "Already in Grove" while every card says otherwise, and the founder would have
   // to visit all 29 pages to clear them. This sweeps the whole selected set once per visit
   // instead. After the first pass it's a near-empty read, since only real matches are left.
   function ensureSweep(roster: Map<string, PersonRef>): Promise<void> {
@@ -392,7 +392,7 @@ export default function ContactImportReview({
         {(
           [
             ['all', 'All'],
-            ['existing', 'Already in Porch'],
+            ['existing', 'Already in Grove'],
             ['new', 'New people'],
           ] as [MatchFilter, string][]
         ).map(([value, label]) => (

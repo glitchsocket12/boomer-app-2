@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
-const COMPARISON_ROWS: { feature: string; porch: boolean; social: boolean; journal: boolean; crm: boolean }[] = [
-  { feature: 'Private — no public profile', porch: true, social: false, journal: true, crm: true },
-  { feature: 'No feed / no algorithm', porch: true, social: false, journal: true, crm: true },
-  { feature: 'Organizes people & relationships automatically', porch: true, social: false, journal: false, crm: true },
-  { feature: 'Built around your real-life relationships, not leads', porch: true, social: false, journal: false, crm: false },
-  { feature: 'Never sold to advertisers', porch: true, social: false, journal: true, crm: true },
+const COMPARISON_ROWS: { feature: string; grove: boolean; social: boolean; journal: boolean; crm: boolean }[] = [
+  { feature: 'Private — no public profile', grove: true, social: false, journal: true, crm: true },
+  { feature: 'No feed / no algorithm', grove: true, social: false, journal: true, crm: true },
+  { feature: 'Organizes people & relationships automatically', grove: true, social: false, journal: false, crm: true },
+  { feature: 'Built around your real-life relationships, not leads', grove: true, social: false, journal: false, crm: false },
+  { feature: 'Never sold to advertisers', grove: true, social: false, journal: true, crm: true },
 ]
 
 function Mark({ yes }: { yes: boolean }) {
@@ -46,7 +46,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
     <div style={styles.page}>
       <nav style={styles.nav}>
         <button onClick={scrollToTop} style={styles.navBrand}>
-          Porch
+          Grove
         </button>
         <div style={styles.navActions}>
           <button onClick={() => onAuthClick('demo')} style={styles.navDemoButton}>
@@ -59,17 +59,37 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
       </nav>
 
       <section style={{ ...styles.section, ...styles.hero }}>
-        <h1 style={styles.heroTitle}>In Fight of Forgetfulness</h1>
+        <h1 style={styles.heroTitle}>Your life is bigger than your memory</h1>
         <p style={styles.heroSubtitle}>
-          A life isn't a list of names. It's the people, the events, and the groups that
-          add up to a whole — Porch helps you hold on to all of it.
+          Grove keeps everyone in it — the close ones and the hundreds of others who give it
+          texture — along with everything you've shared with them.
         </p>
         <button onClick={() => onAuthClick('signup')} style={styles.heroButton}>
-          Start remembering
+          Start your Grove
         </button>
         <button onClick={() => onAuthClick('demo')} style={styles.heroDemoLink}>
           Just want to look around? See a live demo →
         </button>
+      </section>
+
+      <section id="the-math" style={{ ...styles.section, ...styles.altBg }}>
+        <div style={styles.statCallout}>
+          <span style={styles.statNumber}>150</span>
+          <p style={styles.statCaption}>
+            the most relationships psychologists think anyone actively keeps up with —
+            Dunbar's number. It was never the size of your social life.
+          </p>
+        </div>
+        <p style={styles.body}>
+          The hundreds of people past that number are the ones who make a life feel
+          populated: the neighbor from two houses ago, your cousin's husband, whoever you
+          sat next to at three weddings running. You're not trying to keep up with them.
+          You just don't want them gone.
+        </p>
+        <p style={styles.body}>
+          They're also the first people a memory quietly drops — and the ones no contact
+          list, calendar or photo app has ever really held. That's the gap this fills.
+        </p>
       </section>
 
       {platformStats && (platformStats.people > 0 || platformStats.events > 0 || platformStats.groups > 0 || platformStats.notes > 0) && (
@@ -96,30 +116,29 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         </section>
       )}
 
-      <section id="what-is-porch" style={styles.section}>
+      <section id="what-is-grove" style={styles.section}>
         <p style={styles.body}>
-          This isn't really about remembering <em>who</em> someone is. It's about
-          everything that makes a life whole — the people in it, the events you shared
-          with them, and the groups that tie them together. A name on its own is trivia.
-          A name plus the dinner you sat through, the group you both belong to, and what
-          was going on in their life that year — that's a relationship.
+          A name on its own is trivia. A name plus the dinner you sat through, the group you
+          both belong to, and what was going on in their life that year — that's a
+          relationship. Grove holds all of it, for everyone, not just the people you'd
+          think to call.
         </p>
         <p style={styles.body}>
           Think about the car ride home from a dinner party — recapping with your spouse who
-          you saw, what you learned, who's expecting a baby. That's Porch, built into an
+          you saw, what you learned, who's expecting a baby. That's Grove, built into an
           app. Talk to it the way you'd talk on that ride home, and next time you see
           someone, you'll walk in remembering everything that matters.
+        </p>
+        <p style={styles.body}>
+          And there's a second half that isn't about anybody else. <strong>Notebooks</strong>{' '}
+          are yours — films worth remembering, how work is actually going, whatever you want
+          to keep that isn't an event. You name them, you decide what they're for, and you
+          decide whether Grove is allowed to read them at all. Some can sit behind a PIN,
+          where it can't.
         </p>
       </section>
 
       <section id="not-social-media" style={{ ...styles.section, ...styles.altBg }}>
-        <div style={styles.statCallout}>
-          <span style={styles.statNumber}>150</span>
-          <p style={styles.statCaption}>
-            the number of stable relationships psychologists say the human brain can track
-            at once — Dunbar's number. Most of us know a lot more people than that.
-          </p>
-        </div>
         <p style={styles.body}>No feed, no followers, no audience — by design.</p>
 
         <div style={styles.tableWrap}>
@@ -127,7 +146,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
             <thead>
               <tr>
                 <th style={styles.thFeature}>Feature</th>
-                <th style={styles.th}>Porch</th>
+                <th style={styles.th}>Grove</th>
                 <th style={styles.th}>Facebook / IG / TikTok</th>
                 <th style={styles.th}>Journaling apps</th>
                 <th style={styles.th}>CRM tools</th>
@@ -137,7 +156,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
               {COMPARISON_ROWS.map((row) => (
                 <tr key={row.feature}>
                   <td style={styles.tdFeature}>{row.feature}</td>
-                  <td style={styles.td}><Mark yes={row.porch} /></td>
+                  <td style={styles.td}><Mark yes={row.grove} /></td>
                   <td style={styles.td}><Mark yes={row.social} /></td>
                   <td style={styles.td}><Mark yes={row.journal} /></td>
                   <td style={styles.td}><Mark yes={row.crm} /></td>
@@ -153,20 +172,20 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
 
       <section id="how-it-works" style={styles.section}>
         <p style={styles.body}>
-          Porch is scaffolding for your memory. The technology does the tedious part —
+          Grove is scaffolding for your memory. The technology does the tedious part —
           pulling in your calendar and your contacts, sorting out who's who, quietly
           keeping it all in order — so the whole of your life stays within reach instead
           of just the last few weeks of it.
         </p>
         <ul style={styles.featureList}>
           <li style={styles.featureItem}>
-            <strong>You don't start from scratch.</strong> Connect your calendar and Porch
+            <strong>You don't start from scratch.</strong> Connect your calendar and Grove
             builds out the events you've already been to; pull in your phone contacts and it
             starts filling in the people — then nudges you over time to add what it doesn't
             know.
           </li>
           <li style={styles.featureItem}>
-            <strong>Talk, or just hit record.</strong> No forms — Porch's AI sorts out
+            <strong>Talk, or just hit record.</strong> No forms — Grove's AI sorts out
             who's who.
           </li>
           <li style={styles.featureItem}>
@@ -174,9 +193,10 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
             friends, teams, and work.
           </li>
           <li style={styles.featureItem}>
-            <strong>Backs up your memory — doesn't replace it.</strong> Psychologists have
-            shown most new information fades within days unless we revisit it (the
-            "forgetting curve"). Porch does the revisiting for you.
+            <strong>In fight of forgetfulness.</strong> Psychologists have shown most new
+            information fades within days unless we revisit it — the "forgetting curve."
+            Grove does the revisiting for you. Start it now and it's simply there, for
+            whenever you want it and whatever comes.
           </li>
         </ul>
       </section>
@@ -187,7 +207,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
           <p style={styles.demoHeadline}>Click in and look around for yourself.</p>
           <p style={styles.body}>
             Explore a fully filled-out sample profile — real people, real events, real
-            groups — exactly as Porch looks once you've been using it for a while.
+            groups — exactly as Grove looks once you've been using it for a while.
           </p>
           <button onClick={() => onAuthClick('demo')} style={styles.demoButton}>
             See a live demo →
@@ -197,10 +217,10 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
 
       <section id="who-its-for" style={styles.section}>
         <p style={styles.body}>
-          For people who care enough to want to remember — big extended families, friends
-          you see twice a year, anyone who's frozen mid-conversation trying to recall a name
-          or how two people are related, and anyone who doesn't want the last twenty years
-          of their life to blur into "we've been meaning to catch up."
+          For lives that got big. A large extended family, a couple of moves, a long
+          career, in-laws you only see at weddings, your kids' friends' parents, the team
+          you coached for six years. It isn't an age thing — it's a volume thing. If you
+          know more people than you can hold in your head, you're exactly who this is for.
         </p>
         <button onClick={() => onAuthClick('demo')} style={styles.inlineDemoLink}>
           Sound like you? Take a look around. →
@@ -209,15 +229,17 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
 
       <section id="privacy" style={{ ...styles.section, ...styles.altBg }}>
         <p style={styles.body}>
-          Nobody but you can see what's here — no public profile, no feed, no ads. Porch's
-          AI reads your notes only to organize them; everything is encrypted in transit and
-          at rest, and never sold.
+          What's here is private. No public profile, no feed, no ads, and no way for a
+          stranger to find you or the people in your life — and that part will never
+          change. Grove's AI reads your notes only to organize them. Nothing is ever sold,
+          and nothing is ever used to train a model. Everything is encrypted in transit and
+          at rest.
         </p>
       </section>
 
       <section id="get-started" style={styles.section}>
         <p style={styles.body}>
-          About a minute, no credit card — just start telling Porch about your people.
+          About a minute, no credit card — just start telling Grove about your people.
         </p>
         <div style={styles.tileRow}>
           <button onClick={() => onAuthClick('signup')} style={styles.tile}>

@@ -39,10 +39,10 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
 
         {stage === 'welcome' && (
           <>
-            <h1 style={styles.title}>Welcome to Gary's Porch</h1>
+            <h1 style={styles.title}>Welcome to Gary's Grove</h1>
             <p style={styles.body}>
               You're about to spend a few minutes in a fake account — Gary Pemberton, a retired
-              operations manager who's been using Porch for years. He's got {PEOPLE_COUNT} people,{' '}
+              operations manager who's been using Grove for years. He's got {PEOPLE_COUNT} people,{' '}
               {GROUP_COUNT} groups, and {MOMENT_COUNT} memories on file, some going back over a decade.
             </p>
             <p style={styles.body}>
@@ -55,11 +55,11 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
           <>
             <h1 style={styles.title}>Home — so you never go in cold</h1>
             <p style={styles.body}>
-              Ever blanked mid-conversation on what your grandkid's into? Gary just told Porch
+              Ever blanked mid-conversation on what your grandkid's into? Gary just told Grove
               "Emma scored two goals in her tournament" — once you're inside, try asking "What
-              does Noah love?" and watch Porch answer instantly.
+              does Noah love?" and watch Grove answer instantly.
             </p>
-            <p style={styles.body}>Talk or type — Porch remembers so you don't have to.</p>
+            <p style={styles.body}>Talk or type — Grove remembers so you don't have to.</p>
           </>
         )}
 
@@ -69,7 +69,7 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
             <p style={styles.body}>
               Gary knows {PEOPLE_COUNT} people: kids, grandkids, in-laws, his old crew from work, his
               Tuesday golf foursome, decades of coworkers and neighbors. Open anyone's profile and
-              Porch already has the key facts and how they connect — Gary never had to organize
+              Grove already has the key facts and how they connect — Gary never had to organize
               any of it himself.
             </p>
           </>
@@ -103,7 +103,7 @@ export default function DemoIntro({ onFinish }: { onFinish: () => void }) {
             <p style={styles.body}>
               Movies he means to watch again, the things his dad says, how the week actually went.
               Events keep the outside record; notebooks keep the rest. Name one whatever you want —
-              and lock any of them behind a PIN, where Porch can't read it either.
+              and lock any of them behind a PIN, where Grove can't read it either.
             </p>
           </>
         )}

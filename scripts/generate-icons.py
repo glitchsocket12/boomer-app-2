@@ -29,13 +29,13 @@ from PIL import Image, ImageDraw, ImageFont
 # ---------------------------------------------------------------------------
 # CHANGE THESE WHEN THE NAME CHANGES
 # ---------------------------------------------------------------------------
-LETTER = "P"                 # the letterform on the icon
+LETTER = "G"                 # the letterform on the icon
 BG = "#2E4034"               # dark green - the app's dominant colour (226 uses in src/)
 FG = "#FBF3E0"               # warm cream - the app's surface colour
 # ---------------------------------------------------------------------------
 
 # Windows paths come first: this repo is developed on Windows, where every path below it
-# missed and the script died on "No serif font found" (found 2026-08-22, during the Porch
+# missed and the script died on "No serif font found" (found 2026-08-22, during the Grove
 # rename). Georgia Bold is also the app's own type face, so it's the better match anyway.
 # DejaVu Serif Bold is the closest sturdy Linux equivalent; Liberation Serif is the fallback
 # (Times-metric, a little lighter).

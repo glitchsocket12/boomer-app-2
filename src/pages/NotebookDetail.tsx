@@ -128,13 +128,13 @@ export function NotebookReadOnlyView({
         // the lock does is the honest version of showing it.
         <p style={styles.privateNote}>
           🔒 This notebook is locked. In the app it asks for your PIN before anything in it is drawn —
-          it isn't in search either, and Porch never sees it.
+          it isn't in search either, and Grove never sees it.
         </p>
       ) : (
         <>
           {!aiVisible && (
             <p style={styles.privateNote}>
-              Porch can't read this notebook. It stays out of every conversation — you'll still find it in search.
+              Grove can't read this notebook. It stays out of every conversation — you'll still find it in search.
             </p>
           )}
           <div style={styles.entryList}>
@@ -372,7 +372,7 @@ export default function NotebookDetail({
 
       {!aiVisible && (
         <p style={styles.privateNote}>
-          Porch can't read this notebook. It stays out of every conversation — you'll still find it in search.
+          Grove can't read this notebook. It stays out of every conversation — you'll still find it in search.
         </p>
       )}
 
@@ -509,9 +509,9 @@ export default function NotebookDetail({
 
         <div style={styles.toggleRow}>
           <div>
-            <div style={styles.toggleTitle}>Let Porch read this</div>
+            <div style={styles.toggleTitle}>Let Grove read this</div>
             <div style={styles.toggleHelp}>
-              When this is off, nothing in this notebook goes into your conversations with Porch. Search still finds it.
+              When this is off, nothing in this notebook goes into your conversations with Grove. Search still finds it.
             </div>
           </div>
           <button
@@ -529,7 +529,7 @@ export default function NotebookDetail({
             <div style={styles.toggleTitle}>Lock this notebook</div>
             <div style={styles.toggleHelp}>
               Asks for your PIN before opening it, every time you come back to it. It's also kept out
-              of search and out of Porch while locked. This guards against someone finding your tab
+              of search and out of Grove while locked. This guards against someone finding your tab
               open — it isn't encryption.
             </div>
           </div>

@@ -61,7 +61,7 @@ serve(async (req) => {
           error: "token_exchange_failed",
           message: tokenData.refresh_token
             ? "Couldn't connect to Google Photos — please try again."
-            : "Google didn't return a refresh token. Please disconnect any prior Porch access in your Google Account settings, then try connecting again.",
+            : "Google didn't return a refresh token. Please disconnect any prior Grove access in your Google Account settings, then try connecting again.",
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )

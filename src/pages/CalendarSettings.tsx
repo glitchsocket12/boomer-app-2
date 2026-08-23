@@ -62,7 +62,7 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
       setSyncError(
         parts.length > 0
           ? `${found} Some of your calendar couldn't be read this time, so there may be more — try Sync now again in a few minutes.`
-          : "Porch couldn't read your calendar this time — that's a problem on its end, not yours. Nothing was missed; try Sync now again in a few minutes."
+          : "Grove couldn't read your calendar this time — that's a problem on its end, not yours. Nothing was missed; try Sync now again in a few minutes."
       )
       setSyncResult(null)
     } else {
@@ -143,7 +143,7 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
 
       <h1 style={styles.heading}>Calendar settings</h1>
       <p style={styles.intro}>
-        Connect calendars you want Porch to read from — nothing here shares your whole Google
+        Connect calendars you want Grove to read from — nothing here shares your whole Google
         account, just the specific calendar(s) you choose below.
       </p>
 
@@ -230,7 +230,7 @@ export default function CalendarSettings({ onBack, backLabel }: { onBack: () => 
         ) : (
           <p style={styles.body}>
             iPhone automatically keeps a "Birthdays" calendar in sync with your Contacts app — connect
-            that one here and Porch stays current as you add or update contacts, with no re-uploading.
+            that one here and Grove stays current as you add or update contacts, with no re-uploading.
             On your iPhone: open <strong>Calendar</strong> → tap <strong>Calendars</strong> at the
             bottom → tap the <strong>(i)</strong> next to <strong>Birthdays</strong> → tap{' '}
             <strong>Share Calendar</strong> → turn on <strong>Public Calendar</strong> → tap{' '}

@@ -8,9 +8,9 @@ export default function About({ onBack, backLabel }: { onBack: () => void; backL
     <div style={styles.page}>
       <button onClick={onBack} style={styles.backButton}>← Back to {backLabel}</button>
 
-      <h1 style={styles.heading}>About Porch</h1>
+      <h1 style={styles.heading}>About Grove</h1>
       <p style={styles.body}>
-        {/* TODO(founder): replace with real About copy — an honest description of what Porch is
+        {/* TODO(founder): replace with real About copy — an honest description of what Grove is
             and isn't, drafted together in a follow-up conversation. */}
         Placeholder — About copy goes here once we've written it together.
       </p>

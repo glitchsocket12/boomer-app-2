@@ -291,7 +291,7 @@ export default function PhotoImportReview({
 
       <h1 style={styles.heading}>Import photos</h1>
       <p style={styles.intro}>
-        Connect Google Photos, pick some photos in Google's own picker, and Porch will suggest which event they
+        Connect Google Photos, pick some photos in Google's own picker, and Grove will suggest which event they
         belong to (or a new one) — nothing here scans your whole library, only what you pick each time.
       </p>
 

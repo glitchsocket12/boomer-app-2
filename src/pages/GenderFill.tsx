@@ -125,7 +125,7 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
     setAlreadySet(set)
   }
 
-  // Split by the guess rather than pooled into one "Porch can fill these in" list. Founder ask,
+  // Split by the guess rather than pooled into one "Grove can fill these in" list. Founder ask,
   // 2026-08-19: reading a mixed list means checking a dropdown per row, but reading a column headed
   // "Men" is one question asked once — is everyone here a man? — and if the answer is yes it's a
   // single tap. The two columns are the whole point of the screen.
@@ -156,7 +156,7 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
   //
   // Deliberately NOT applied to the Men/Women guess columns above. There, "Accept all" would empty
   // a whole column in a single tap, and being able to see what you just accepted and change the
-  // ones Porch got wrong is the entire point of showing them.
+  // ones Grove got wrong is the entire point of showing them.
   //
   // A row set back to "Leave blank" drops out of `choices` entirely, so the same rule that hides a
   // sorted name puts an unsorted one back — there's no third "cleared" state to keep track of.
@@ -256,15 +256,15 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
 
       <h1 style={styles.heading}>Fill in Gender</h1>
       <p style={styles.body}>
-        Porch uses this to pick the right word when it describes someone — "son" instead of "child,"
+        Grove uses this to pick the right word when it describes someone — "son" instead of "child,"
         "aunt" instead of "aunt/uncle," "her mother" instead of "their parent." It's never shown as a
-        label of its own. Leaving someone blank isn't a problem; it just means Porch keeps using the
+        label of its own. Leaving someone blank isn't a problem; it just means Grove keeps using the
         vaguer word for them.
       </p>
 
       {loadError && (
         <p style={styles.errorText}>
-          Porch can't read the gender field right now, so there's nothing to fill in on this page.
+          Grove can't read the gender field right now, so there's nothing to fill in on this page.
         </p>
       )}
 
@@ -316,11 +316,11 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
           {(suggestedMen.length > 0 || suggestedWomen.length > 0) && (
             <section style={styles.section}>
               <h2 style={styles.sectionHeading}>
-                Porch can fill these in ({suggestedMen.length + suggestedWomen.length})
+                Grove can fill these in ({suggestedMen.length + suggestedWomen.length})
               </h2>
               <p style={styles.sectionBody}>
                 Split by what their first name reads as, so you can check a whole column at once.
-                Scan one, and if they're all right, accept the lot — then change any Porch got
+                Scan one, and if they're all right, accept the lot — then change any Grove got
                 wrong. Nothing is written until you press Save.
               </p>
               {/* Grid rather than a fixed two-up: on a phone these become two stacked lists, which
@@ -375,10 +375,10 @@ export default function GenderFill({ onBack, backLabel }: { onBack: () => void; 
           {unknown.length > 0 && (
             <section style={styles.section}>
               <h2 style={styles.sectionHeading}>
-                Porch can't guess these ({unknownPending.length})
+                Grove can't guess these ({unknownPending.length})
               </h2>
               <p style={styles.sectionBody}>
-                Some names genuinely go either way — Jordan, Casey, Alex — and Porch won't guess at
+                Some names genuinely go either way — Jordan, Casey, Alex — and Grove won't guess at
                 a name it doesn't know at all. Drag a name into Men or Women, or use the dropdown.
                 Once you've set someone they drop off the list, so you're always looking at what's
                 still to do. Set the ones you want; skip the rest.

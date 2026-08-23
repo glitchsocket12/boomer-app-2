@@ -499,7 +499,7 @@ export function HomeView({
 }) {
   return (
     <div style={styles.page}>
-      <h1 style={styles.heading}>Porch</h1>
+      <h1 style={styles.heading}>Grove</h1>
 
       {thread.length === 0 && (
         <>

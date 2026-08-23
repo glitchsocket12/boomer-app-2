@@ -132,7 +132,7 @@ export default function ReviewInbox({
       key: 'gender',
       label: `${counts.genderGaps.toLocaleString()} ${counts.genderGaps === 1 ? 'person is' : 'people are'} missing a gender`,
       count: counts.genderGaps,
-      blurb: "Porch guesses from first names — confirm the ones it got right, fix the ones it didn't.",
+      blurb: "Grove guesses from first names — confirm the ones it got right, fix the ones it didn't.",
       onOpen: onOpenGenderFill,
       quiet: true,
     })
