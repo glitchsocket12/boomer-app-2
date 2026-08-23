@@ -1907,3 +1907,97 @@ the first AI call after deploy pays one uncached prompt — one call, not a regr
 — it's the `boomer-nav` session key, the Google Photos OAuth state key, the live Vercel
 hostname, and one test fixture. This file keeps Boomer and Porch in its dated entries; that's
 what the product was called at the time.
+
+## 2026-08-23 — Annual wraps: the idea survived, both named apps did not
+
+The founder floated integrations: *"Think integrations with apps people use, that show their lives
+through interesting lenses with annual wrap ups… Spotify, Strava, etc. all have annual wraps which
+would be interesting logs for the notebook or events feature."* Filed as backlog item 113 and
+deliberately not built — *"Just add it into the long term feature plan. No rush to do it now."*
+This entry exists so the feasibility work isn't redone the next time someone says "let's integrate
+Spotify."
+
+### Both providers are closed, for different reasons
+
+**Strava is a policy problem, not a quota problem — and it is specifically an *AI* problem.** The
+API Policy dated June 1, 2026 prohibits using Strava Data "in connection with the development,
+training, evaluation, or operation of any AI Application," and the clause enumerates what counts:
+"ingestion into a context window or working memory," retrieval-augmented generation, embedding
+generation, evaluation, benchmarking. It also reaches "any data derived from, aggregated from,
+anonymized from, or generated using Strava Data." Grove's whole design puts notebook entries into
+`converse`'s context window (§7 — the 200 most-recent entries ride the tier-3 cached block). So the
+obvious build — sync Strava, write a notebook entry — is the *named* prohibited act, not a grey
+area. Switching the notebook's `ai_visible` off wouldn't fix it either: the policy covers
+"operation of" an AI Application, and Grove is one. Two lesser blockers behind that: the June 2026
+tier restructure caps Standard Tier at **10 users** and requires the *developer* to hold an active
+paid Strava subscription, and Strava Data "provided by a specific user can only be displayed or
+disclosed to that user" — which also rules out the tempting "you ran 38 of those miles with Marcus"
+lens, since Marcus's side of it may not be shown. One narrow carve-out worth knowing: the
+prohibition explicitly does not extend to the Strava MCP, so a *person* asking Claude about their
+own Strava is fine. An app ingesting it is not.
+
+**Spotify is an arithmetic problem.** New Development Mode apps are capped at **5 authenticated
+users** by allowlist. Extended quota is the only way past it, and as of the 2025-04-15 criteria
+update it accepts applications only from registered businesses running a service with at least
+**250,000 monthly active users**, reviewed for up to six weeks. §9's stated ambition is friends and
+family, invite-only, "public only if the feedback earns it" — so Grove does not qualify today and
+would not qualify under any plausible version of itself. A Spotify integration is therefore a full
+OAuth pipeline, token refresh and sync path built permanently for five people.
+
+Neither was worth building. Both would have looked entirely reasonable right up until the point
+where they were discovered — Strava's clause in particular reads like a training-data restriction
+until you get to the words "or operation of."
+
+### What replaced it
+
+The reframe, which the founder took: **the artifact already exists and the user already owns it.**
+Every December these apps hand over a finished, designed, shareable wrap. It gets looked at once,
+screenshotted, posted to a story, and is gone by January — nobody still has their 2019 Wrapped.
+That is the actual gap and it is Grove-shaped: not "compute my listening stats," which Spotify does
+better and owns the data for, but "be the only place my 2019, 2021 and 2026 wraps still exist, side
+by side, next to what else was happening those years." It needs no API, no approval and no policy
+exposure, and — the part that makes it strictly better than either integration — it works for every
+provider at once, including the many with no API at all (Apple Music Replay, YouTube Recap,
+Duolingo, Peloton, Reddit Recap) and including Strava's own Year in Sport, which Grove may not call
+but the user may freely screenshot and keep.
+
+### The share sheet, and why it waits for Capacitor
+
+The founder's own steer on capture was the best idea in the conversation: *"I know you can share
+the wrapped — it could be cool to share it to the app and have it pull all the various data to it
+or to save it entirely."* Both halves of that are right (keep the image as the artifact, read the
+numbers off it so it's searchable and `converse` can answer from it), and the share sheet is the
+correct front door. It is also not buildable today:
+
+- **iPhone** — Safari supports the outgoing Web Share API but has never supported the Web Share
+  **Target** API, the manifest entry that lets an installed app appear *in* the share sheet. There
+  is no web path to this on iOS at all; it takes a native Share Extension, which is what item 105's
+  Capacitor app buys. Item 105's entry now says so.
+- **Android** — Web Share Target works, but receiving *files* requires `method: "POST"` with
+  `multipart/form-data`, which requires a service worker to intercept. PWA.md declined a service
+  worker deliberately ("near-zero benefit against a real footgun"), and one wrap upload a year does
+  not overturn that.
+
+So the interim is a plain upload: on iPhone the wrap is already in Photos (Spotify's own share
+sheet offers "Save Image"), and the file picker reaches it in one tap. Same backend either way —
+when the Share Extension lands it points at the same Edge Function, so nothing is thrown away.
+
+### Sources
+
+- Strava API Policy (2026) — https://www.strava.com/legal/api_policy
+- Strava API Agreement (2026) — https://www.strava.com/legal/api ; rate limits —
+  https://developers.strava.com/docs/rate-limits/
+- Spotify, "Web API quota updates for Development Mode" (2026-07-23) —
+  https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates
+- Spotify, "Updating the Criteria for Web API Extended Access" (2025-04-15) —
+  https://developer.spotify.com/blog/2025-04-15-updating-the-criteria-for-web-api-extended-access
+
+### If auto-sync is ever wanted anyway
+
+The providers still genuinely open, none of which is Spotify or Strava: **Last.fm**
+(`user.getTopArtists?period=12month`, key issued instantly with no review, no OAuth needed for a
+public profile — but licensed for non-commercial use only, the same trap §2 already flags for
+Open-Meteo, so it would have to be revisited if Grove ever charges), **Letterboxd** (keyless
+per-user RSS at `letterboxd.com/{user}/rss/`, but only the last 50 entries, so it cannot actually
+produce a year), and **Trakt** (real OAuth, generous limits, niche audience). Each serves a thin
+slice of users, which is the argument for the provider-agnostic capture rather than any one of them.
