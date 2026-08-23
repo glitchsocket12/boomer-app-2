@@ -10,7 +10,7 @@
 //
 // The overlay follows ManagePanel's recipe (scrim, click-outside, Escape) but anchors to the top
 // rather than centring, so the input lands near the button that opened it and results grow
-// downward. The keyboard model is SearchAddPicker's, including "Ask Boomer" being just another row
+// downward. The keyboard model is SearchAddPicker's, including "Ask Porch" being just another row
 // in one flat list rather than a special case in every handler.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -235,7 +235,7 @@ export default function GlobalSearch({
                     >
                       <span style={styles.askIcon}>💬</span>
                       <span>
-                        Ask Boomer about “{trimmed}” <span style={styles.askArrow}>→</span>
+                        Ask Porch about “{trimmed}” <span style={styles.askArrow}>→</span>
                       </span>
                     </button>
                   )

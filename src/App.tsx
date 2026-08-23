@@ -925,7 +925,7 @@ export default function App() {
           {/* className carries the phone breakpoint (see index.css) — the search button below
               needs the room this takes up. */}
           <span className="nav-wordmark" style={navStyles.wordmark}>
-            Boomer
+            Porch
           </span>
           {TABS.map((t) => (
             <button

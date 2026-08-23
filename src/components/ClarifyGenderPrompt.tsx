@@ -48,7 +48,7 @@ export default function ClarifyGenderPrompt({
         <strong>{question.female}</strong>?
       </span>
       <span style={styles.why}>
-        Boomer doesn't know yet, so it's using a vaguer word for {question.personName} everywhere it
+        Porch doesn't know yet, so it's using a vaguer word for {question.personName} everywhere it
         describes them.
       </span>
       <div style={bannerStyles.suggestButtonRow}>

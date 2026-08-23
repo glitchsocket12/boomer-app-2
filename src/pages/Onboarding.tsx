@@ -292,7 +292,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           <>
             <h1 style={styles.title}>Welcome, {selfPerson.name}.</h1>
             <p style={styles.body}>
-              Boomer is organized around a few simple ideas: <strong>People</strong> hold everything about
+              Porch is organized around a few simple ideas: <strong>People</strong> hold everything about
               someone you know, <strong>Events</strong> are the moments you want remembered, <strong>Groups</strong>{' '}
               cluster the people who belong together, and <strong>Notes</strong> are the running texture on a
               person's profile — the little details that make you sound like you remember.
@@ -316,7 +316,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           <>
             <h1 style={styles.title}>Build your family tree</h1>
             <p style={styles.body}>
-              We start here because it's the fastest way to show you how Boomer actually works: everyone gets
+              We start here because it's the fastest way to show you how Porch actually works: everyone gets
               their own profile, and family is the clearest, most natural group there is. Once you see it click
               with people you already know by heart, the same idea carries over to friends, coworkers, and
               everyone else.
@@ -324,7 +324,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
             <p style={styles.body}>
               Add your spouse, kids, siblings, and parents to start — then keep going if you can: grandparents,
               cousins, in-laws. There's no limit on how far back or how far out you go, and the more you add,
-              the more useful your family tree (and the rest of Boomer) becomes.
+              the more useful your family tree (and the rest of Porch) becomes.
             </p>
             <div style={styles.treeWrap}>
               <FamilyTree
@@ -391,7 +391,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
             <h1 style={styles.title}>Which of these are part of your life?</h1>
             <p style={styles.body}>
               Friends are for a reason, a season, or a lifetime — however long they stick around, naming the
-              groups they belong to now pays off later, when Boomer can tag events and photos to the whole
+              groups they belong to now pays off later, when Porch can tag events and photos to the whole
               group at once instead of one person at a time.
             </p>
             <div style={styles.typeGrid}>
@@ -462,15 +462,15 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
 
         {selfPerson && stage === 'guide' && (
           <>
-            <h1 style={styles.title}>Here's how Boomer works</h1>
+            <h1 style={styles.title}>Here's how Porch works</h1>
             <ul style={styles.featureList}>
               <li style={styles.featureItem}>
-                <strong>Home</strong> is the chat. Type or tap the mic and just talk — Boomer
+                <strong>Home</strong> is the chat. Type or tap the mic and just talk — Porch
                 sorts out who you're talking about. Quick counts and a couple of AI-suggested
                 things worth capturing live here too.
               </li>
               <li style={styles.featureItem}>
-                <strong>People</strong> — everyone Boomer knows about gets their own page: key
+                <strong>People</strong> — everyone Porch knows about gets their own page: key
                 facts, notes, and how they connect to others.
               </li>
               <li style={styles.featureItem}>
@@ -500,7 +500,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
           <>
             <h1 style={styles.title}>You're all set.</h1>
             <p style={styles.body}>
-              That's enough to make Boomer genuinely useful right away — you can always keep building from here,
+              That's enough to make Porch genuinely useful right away — you can always keep building from here,
               whenever you talk to it or add someone new.
             </p>
             <div style={styles.buttonRow}>

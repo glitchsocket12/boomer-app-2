@@ -46,7 +46,7 @@ export default function GooglePhotosOAuthCallback() {
     return (
       <div style={styles.page}>
         <p style={styles.message}>{errorMessage}</p>
-        <a href="/" style={styles.link}>← Back to Boomer</a>
+        <a href="/" style={styles.link}>← Back to Porch</a>
       </div>
     )
   }

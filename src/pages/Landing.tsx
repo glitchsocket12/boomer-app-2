@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
-const COMPARISON_ROWS: { feature: string; boomer: boolean; social: boolean; journal: boolean; crm: boolean }[] = [
-  { feature: 'Private — no public profile', boomer: true, social: false, journal: true, crm: true },
-  { feature: 'No feed / no algorithm', boomer: true, social: false, journal: true, crm: true },
-  { feature: 'Organizes people & relationships automatically', boomer: true, social: false, journal: false, crm: true },
-  { feature: 'Built around your real-life relationships, not leads', boomer: true, social: false, journal: false, crm: false },
-  { feature: 'Never sold to advertisers', boomer: true, social: false, journal: true, crm: true },
+const COMPARISON_ROWS: { feature: string; porch: boolean; social: boolean; journal: boolean; crm: boolean }[] = [
+  { feature: 'Private — no public profile', porch: true, social: false, journal: true, crm: true },
+  { feature: 'No feed / no algorithm', porch: true, social: false, journal: true, crm: true },
+  { feature: 'Organizes people & relationships automatically', porch: true, social: false, journal: false, crm: true },
+  { feature: 'Built around your real-life relationships, not leads', porch: true, social: false, journal: false, crm: false },
+  { feature: 'Never sold to advertisers', porch: true, social: false, journal: true, crm: true },
 ]
 
 function Mark({ yes }: { yes: boolean }) {
@@ -46,7 +46,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
     <div style={styles.page}>
       <nav style={styles.nav}>
         <button onClick={scrollToTop} style={styles.navBrand}>
-          Boomer
+          Porch
         </button>
         <div style={styles.navActions}>
           <button onClick={() => onAuthClick('demo')} style={styles.navDemoButton}>
@@ -62,7 +62,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         <h1 style={styles.heroTitle}>In Fight of Forgetfulness</h1>
         <p style={styles.heroSubtitle}>
           A life isn't a list of names. It's the people, the events, and the groups that
-          add up to a whole — Boomer helps you hold on to all of it.
+          add up to a whole — Porch helps you hold on to all of it.
         </p>
         <button onClick={() => onAuthClick('signup')} style={styles.heroButton}>
           Start remembering
@@ -96,7 +96,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         </section>
       )}
 
-      <section id="what-is-boomer" style={styles.section}>
+      <section id="what-is-porch" style={styles.section}>
         <p style={styles.body}>
           This isn't really about remembering <em>who</em> someone is. It's about
           everything that makes a life whole — the people in it, the events you shared
@@ -106,7 +106,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
         </p>
         <p style={styles.body}>
           Think about the car ride home from a dinner party — recapping with your spouse who
-          you saw, what you learned, who's expecting a baby. That's Boomer, built into an
+          you saw, what you learned, who's expecting a baby. That's Porch, built into an
           app. Talk to it the way you'd talk on that ride home, and next time you see
           someone, you'll walk in remembering everything that matters.
         </p>
@@ -127,7 +127,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
             <thead>
               <tr>
                 <th style={styles.thFeature}>Feature</th>
-                <th style={styles.th}>Boomer</th>
+                <th style={styles.th}>Porch</th>
                 <th style={styles.th}>Facebook / IG / TikTok</th>
                 <th style={styles.th}>Journaling apps</th>
                 <th style={styles.th}>CRM tools</th>
@@ -137,7 +137,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
               {COMPARISON_ROWS.map((row) => (
                 <tr key={row.feature}>
                   <td style={styles.tdFeature}>{row.feature}</td>
-                  <td style={styles.td}><Mark yes={row.boomer} /></td>
+                  <td style={styles.td}><Mark yes={row.porch} /></td>
                   <td style={styles.td}><Mark yes={row.social} /></td>
                   <td style={styles.td}><Mark yes={row.journal} /></td>
                   <td style={styles.td}><Mark yes={row.crm} /></td>
@@ -153,20 +153,20 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
 
       <section id="how-it-works" style={styles.section}>
         <p style={styles.body}>
-          Boomer is scaffolding for your memory. The technology does the tedious part —
+          Porch is scaffolding for your memory. The technology does the tedious part —
           pulling in your calendar and your contacts, sorting out who's who, quietly
           keeping it all in order — so the whole of your life stays within reach instead
           of just the last few weeks of it.
         </p>
         <ul style={styles.featureList}>
           <li style={styles.featureItem}>
-            <strong>You don't start from scratch.</strong> Connect your calendar and Boomer
+            <strong>You don't start from scratch.</strong> Connect your calendar and Porch
             builds out the events you've already been to; pull in your phone contacts and it
             starts filling in the people — then nudges you over time to add what it doesn't
             know.
           </li>
           <li style={styles.featureItem}>
-            <strong>Talk, or just hit record.</strong> No forms — Boomer's AI sorts out
+            <strong>Talk, or just hit record.</strong> No forms — Porch's AI sorts out
             who's who.
           </li>
           <li style={styles.featureItem}>
@@ -176,7 +176,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
           <li style={styles.featureItem}>
             <strong>Backs up your memory — doesn't replace it.</strong> Psychologists have
             shown most new information fades within days unless we revisit it (the
-            "forgetting curve"). Boomer does the revisiting for you.
+            "forgetting curve"). Porch does the revisiting for you.
           </li>
         </ul>
       </section>
@@ -187,7 +187,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
           <p style={styles.demoHeadline}>Click in and look around for yourself.</p>
           <p style={styles.body}>
             Explore a fully filled-out sample profile — real people, real events, real
-            groups — exactly as Boomer looks once you've been using it for a while.
+            groups — exactly as Porch looks once you've been using it for a while.
           </p>
           <button onClick={() => onAuthClick('demo')} style={styles.demoButton}>
             See a live demo →
@@ -209,7 +209,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
 
       <section id="privacy" style={{ ...styles.section, ...styles.altBg }}>
         <p style={styles.body}>
-          Nobody but you can see what's here — no public profile, no feed, no ads. Boomer's
+          Nobody but you can see what's here — no public profile, no feed, no ads. Porch's
           AI reads your notes only to organize them; everything is encrypted in transit and
           at rest, and never sold.
         </p>
@@ -217,7 +217,7 @@ export default function Landing({ onAuthClick }: { onAuthClick: (mode: 'login' |
 
       <section id="get-started" style={styles.section}>
         <p style={styles.body}>
-          About a minute, no credit card — just start telling Boomer about your people.
+          About a minute, no credit card — just start telling Porch about your people.
         </p>
         <div style={styles.tileRow}>
           <button onClick={() => onAuthClick('signup')} style={styles.tile}>

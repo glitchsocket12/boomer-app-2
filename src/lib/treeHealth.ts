@@ -153,7 +153,7 @@ export function findTreeIssues(g: Graph): TreeIssue[] {
       kind: 'many_parents',
       personIds: [id, ...unique],
       message: `${nameOf(g, id)} has ${unique.length} parents on file: ${listNames(g, unique)}.`,
-      fix: "Right if one of them is a step-parent — Boomer can't tell those apart yet. Worth a look if not.",
+      fix: "Right if one of them is a step-parent — Porch can't tell those apart yet. Worth a look if not.",
     })
   }
 

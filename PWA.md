@@ -1,8 +1,8 @@
-# Putting Boomer on your phone
+# Putting Porch on your phone
 
 _Written 2026-08-01. This replaces the native-iPhone-app plan for now — see the "Why not a real app" section at the bottom for the reasoning._
 
-Boomer is now installable on your iPhone home screen. No App Store, no Mac, no $99/year, no Apple review. It gets an icon, opens full screen with no browser bar, and behaves like an app.
+Porch is now installable on your iPhone home screen. No App Store, no Mac, no $99/year, no Apple review. It gets an icon, opens full screen with no browser bar, and behaves like an app.
 
 ---
 
@@ -14,10 +14,10 @@ Boomer is now installable on your iPhone home screen. No App Store, no Mac, no $
 2. Log in (worth doing before installing — it'll remember you)
 3. Tap the **Share** button — the square with an arrow pointing up, in the bottom bar
 4. Scroll down the list and tap **Add to Home Screen**
-5. The name will show as **Boomer** — change it here if you like, this is just the label under the icon
+5. The name will show as **Porch** — change it here if you like, this is just the label under the icon
 6. Tap **Add**
 
-You'll get a dark green icon with a cream "B" on your home screen. Tapping it opens Boomer full screen — no address bar, no Safari tabs.
+You'll get a dark green icon with a cream "B" on your home screen. Tapping it opens Porch full screen — no address bar, no Safari tabs.
 
 **One thing that surprises people:** the installed app has its own separate login from Safari. If it asks you to log in again the first time, that's expected, and it should be the only time.
 
@@ -78,14 +78,21 @@ Checked against §8's open items on 2026-08-01, so it doesn't get re-derived lat
 
 ## When you change the app name
 
-The name lives in exactly four places. It's a five-minute job — deliberately, so the pending rename doesn't become a reason to delay.
+**This section used to claim the name lived in "exactly four places" and called it a five-minute job. That was wrong, and the Boomer → Porch rename on 2026-08-22 is what proved it: the real spread was 85 occurrences across 34 files.** Four places is the app's *identity*; the name is also a word the product and its AI say constantly. Corrected inventory:
 
-| File | What to change |
+| Where | What to change |
 |---|---|
 | `index.html` | The `<title>` and the `apple-mobile-web-app-title` meta tag (the home-screen label) |
 | `public/manifest.webmanifest` | `name` and `short_name` |
 | `scripts/generate-icons.py` | The `LETTER` constant, then re-run it (see below) |
-| `src/pages/Landing.tsx` | The visible wordmark in the nav and body copy |
+| `public/favicon.svg` | The letterform in the tab icon |
+| `src/` — 22 files, ~60 hits | Visible copy. `Landing.tsx` is heaviest (11), then `GenderFill.tsx` (9), `Onboarding.tsx` (8), `demo/DemoIntro.tsx` (7), `NotebookDetail.tsx` (6). Read each one — some are the product's name and some are the assistant's name mid-sentence, and they don't all survive the same replacement |
+| `supabase/functions/` — 10 files | **The AI's name for itself**, inside the prompts. Each one has to be redeployed; a rename that skips this leaves the chat introducing itself by the old name |
+| `PROJECT_CONTEXT.md`, `PWA.md`, `SECURITY.md` | Current-state docs follow the name. `PROJECT_HISTORY.md` deliberately does NOT — its dated entries keep whatever the product was called at the time |
+
+**What must NOT be renamed:** lowercase `boomer` is never the product name in this repo. It is the `boomer-nav` session-storage key, the Google Photos OAuth state key, the live Vercel hostname, memory-file references in comments, and one test fixture. Renaming those breaks things and renames nothing.
+
+**One-time cost worth expecting:** the prompt strings sit in the *stable* prefix of the system prompts, so the first AI call after deploy pays a full uncached prompt (CLAUDE.md rule 3). That's one call, not a regression.
 
 To regenerate the icons after changing the letter:
 
@@ -96,15 +103,17 @@ python3 scripts/generate-icons.py
 
 That rewrites all four PNGs in `public/`. Commit them — they're inputs, not build output.
 
+**If that script fails on Windows:** it did, until 2026-08-22 — its font list held only Linux paths, so it died on "No serif font found," and there is no `python` on this machine either. Windows paths (Georgia Bold, which is the app's own type face) are now first in `FONT_CANDIDATES`. The Porch icons were generated a different way entirely, which is worth knowing as a fallback: a throwaway HTML page rendered the same geometry on a `<canvas>` in the browser preview and POSTed the PNGs to a tiny local Node server that wrote them to `public/`. No Python, no image library.
+
 **Anyone who already installed the old icon will need to remove it and re-add it.** Right now that's just you, which is a good reason to not agonise over the name before installing it.
 
 ---
 
 ## Why there's no service worker (a deliberate choice)
 
-A "service worker" is the piece that lets a web app work offline. Boomer doesn't have one, on purpose.
+A "service worker" is the piece that lets a web app work offline. Porch doesn't have one, on purpose.
 
-The reasoning: Boomer can't do anything useful offline anyway — every screen reads from the database and the AI runs on a server, so an offline Boomer would be an empty shell. Meanwhile a service worker's main practical effect here would be **caching an old version of the app and serving it to you after a deploy**, which is a genuinely nasty thing to debug and would land on the one person who can't debug it.
+The reasoning: Porch can't do anything useful offline anyway — every screen reads from the database and the AI runs on a server, so an offline Porch would be an empty shell. Meanwhile a service worker's main practical effect here would be **caching an old version of the app and serving it to you after a deploy**, which is a genuinely nasty thing to debug and would land on the one person who can't debug it.
 
 So the trade is: near-zero benefit against a real footgun. Skipping it costs nothing for home-screen installation on iOS, which works without one.
 

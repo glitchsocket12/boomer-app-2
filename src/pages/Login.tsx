@@ -66,7 +66,7 @@ export default function Login({
         return
       }
       if (calculateAge(birthday) < MIN_SIGNUP_AGE) {
-        setMessage(`You must be at least ${MIN_SIGNUP_AGE} years old to use Boomer.`)
+        setMessage(`You must be at least ${MIN_SIGNUP_AGE} years old to use Porch.`)
         return
       }
     }
@@ -100,12 +100,12 @@ export default function Login({
     <div style={styles.outer}>
       <nav style={styles.nav}>
         <button onClick={() => onBack?.()} style={styles.navBrand}>
-          Boomer
+          Porch
         </button>
       </nav>
       <div style={styles.page}>
       <div style={styles.card}>
-        <h1 style={styles.title}>Boomer</h1>
+        <h1 style={styles.title}>Porch</h1>
         <p style={styles.subtitle}>Stay close to the people who matter.</p>
 
         <button type="button" onClick={handleGoogleLogin} style={styles.googleButton}>

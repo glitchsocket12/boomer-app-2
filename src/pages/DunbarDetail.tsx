@@ -90,8 +90,8 @@ export default function DunbarDetail({ onBack, backLabel }: { onBack: () => void
 
             <p style={styles.footerLine}>
               {totalPeople > DUNBAR_LIMIT
-                ? `Those ${totalPeople - DUNBAR_LIMIT} are people most brains would have quietly let fade. Boomer is keeping the thread for all of them.`
-                : "You're within the range most brains can track unaided — Boomer's still here to keep the detail sharp as that list grows."}
+                ? `Those ${totalPeople - DUNBAR_LIMIT} are people most brains would have quietly let fade. Porch is keeping the thread for all of them.`
+                : "You're within the range most brains can track unaided — Porch's still here to keep the detail sharp as that list grows."}
             </p>
           </div>
 

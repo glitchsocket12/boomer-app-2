@@ -1,6 +1,6 @@
 // Builds a full IANA time zone picklist for the Settings dropdown, each labeled with its city
 // and current UTC offset (e.g. "Denver (GMT-6)"). Uses Intl.supportedValuesOf when available
-// (Chrome 99+, Firefox 93+, Safari/iOS 15.4+ — well within Boomer's real target, see
+// (Chrome 99+, Firefox 93+, Safari/iOS 15.4+ — well within Porch's real target, see
 // PROJECT_CONTEXT.md §1/§14 on the iPhone-app goal) and falls back to a curated list of common
 // zones on older browsers so the picker never renders empty.
 const FALLBACK_ZONES = [

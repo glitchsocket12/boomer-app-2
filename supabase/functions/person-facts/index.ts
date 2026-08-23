@@ -134,7 +134,7 @@ serve(async (req) => {
         // Unique per-personId (name baked in), so caching only helps across repeated
         // regenerations for the SAME person — still cheap to include since this call already
         // only runs on a cache miss (see the DB-cache check above).
-        system: [{ type: "text", text: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Boomer. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events.
+        system: [{ type: "text", text: `You extract key relationship/background facts about a person named ${name} from notes recorded about them in a personal memory-keeping app called Porch. The notes below are a mix of standalone facts and things mentioned while recording specific memories/events.
 
 Only extract facts that are EXPLICITLY stated in the notes. Never infer, guess, or pad with generic filler. Focus specifically on these categories:
 - "spouse": who they are married to (or engaged to)

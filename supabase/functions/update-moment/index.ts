@@ -181,7 +181,7 @@ serve(async (req) => {
     // Stable instructions ONLY — no interpolated data, so this exact string is byte-identical
     // across every moment/user/turn and forms a widely-reusable prefix-cache breakpoint (see
     // CLAUDE.md's token/billing efficiency rule and the matching comment in converse/index.ts).
-    const stableInstructions = `You are helping the user add more detail to a memory they already recorded in an app called Boomer.
+    const stableInstructions = `You are helping the user add more detail to a memory they already recorded in an app called Porch.
 
 Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "new_people"/"additional_notes", and it will still resolve to the same person.
 

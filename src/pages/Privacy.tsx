@@ -7,7 +7,7 @@ export default function Privacy({ onBack, backLabel }: { onBack: () => void; bac
 
       <h1 style={styles.heading}>Privacy &amp; data policy</h1>
       <p style={styles.intro}>
-        Boomer is private by default. Nobody but you can see what's here — no public profile,
+        Porch is private by default. Nobody but you can see what's here — no public profile,
         no feed, no followers. What you put in is for you, and for helping you show up better
         for the people you care about. Nothing else.
       </p>
@@ -25,7 +25,7 @@ export default function Privacy({ onBack, backLabel }: { onBack: () => void; bac
       <section style={styles.section}>
         <h2 style={styles.sectionHeading}>How the AI uses it</h2>
         <p style={styles.body}>
-          Boomer's AI reads your notes to organize them — sorting out who's who, pulling out
+          Porch's AI reads your notes to organize them — sorting out who's who, pulling out
           key facts, writing short summaries, and answering your questions in chat. That's the
           only job it does. It's never used to build an advertising profile, and it's never
           used to train other companies' models.
@@ -35,7 +35,7 @@ export default function Privacy({ onBack, backLabel }: { onBack: () => void; bac
       <section style={styles.section}>
         <h2 style={styles.sectionHeading}>Who we share it with</h2>
         <p style={styles.body}>
-          We use a small number of outside services to run Boomer: Supabase (where your data
+          We use a small number of outside services to run Porch: Supabase (where your data
           is stored), Vercel (hosting), Anthropic (the AI that reads and organizes your notes),
           and OpenAI (voice-to-text only, when you use the microphone). Each only sees what it
           needs to do its one job. We don't sell your data, and we don't share it with

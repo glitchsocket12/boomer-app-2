@@ -47,7 +47,7 @@ serve(async (req) => {
 
     const accessToken = await refreshAccessToken(connection.refresh_token)
     if (!accessToken) {
-      // Refresh token revoked/invalid (e.g. the user disconnected Boomer from their Google
+      // Refresh token revoked/invalid (e.g. the user disconnected Porch from their Google
       // Account) — clear the stale row so the frontend's "not connected" path re-triggers the
       // full OAuth consent screen instead of retrying a dead token forever.
       await serviceClient.from("photo_connections").delete().eq("user_id", user.id)

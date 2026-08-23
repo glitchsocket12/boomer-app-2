@@ -1241,7 +1241,7 @@ export function PersonDetailView({
           </span>
           {factsFailed && !factsLoading && (
             <p style={styles.keyFactsFailed}>
-              Couldn't refresh these just now — Boomer's AI didn't answer. These are the ones it had
+              Couldn't refresh these just now — Porch's AI didn't answer. These are the ones it had
               already. Try again in a few minutes.
             </p>
           )}
@@ -1757,7 +1757,7 @@ function GenderGuessHint({ firstName }: { firstName: string }) {
   if (!guess) return null
   return (
     <span style={styles.genderGuessHint}>
-      Not set — Boomer is assuming {guess} from the first name, so it can say "son" instead of
+      Not set — Porch is assuming {guess} from the first name, so it can say "son" instead of
       "child". Pick one above if that's wrong.
     </span>
   )

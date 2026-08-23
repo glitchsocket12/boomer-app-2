@@ -397,7 +397,7 @@ export default function SettingsPage({
 
       <section style={styles.section}>
         <h2 style={styles.sectionHeading}>Chat tone</h2>
-        <p style={styles.body}>How Boomer talks with you in chat.</p>
+        <p style={styles.body}>How Porch talks with you in chat.</p>
         <div style={styles.toneGrid}>
           {TONE_OPTIONS.map((opt) => (
             <button
@@ -457,7 +457,7 @@ export default function SettingsPage({
           Import photos from Google Photos →
         </button>
         <button onClick={onOpenAbout} style={styles.linkRow}>
-          About Boomer →
+          About Porch →
         </button>
         <button onClick={onOpenPrivacy} style={styles.linkRow}>
           Privacy &amp; data policy →
