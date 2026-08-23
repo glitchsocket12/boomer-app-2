@@ -14,6 +14,10 @@ const MAX_RECORDING_SECONDS = 10 * 60
 // but pushing 60 setState calls a second through React to move five bars is waste.
 const LEVEL_UPDATE_MS = 80
 
+// Below this, the recording is a container header and nothing else — no format MediaRecorder
+// produces fits speech into a kilobyte. See the guard in handleRecordingStopped for why it matters.
+const MIN_AUDIO_BYTES = 1024
+
 function pickMimeType(): string {
   // iOS Safari doesn't support webm at all, but does support mp4 recording — checking in this
   // order means Chrome/Android gets webm (its native format) and Safari falls back to mp4.
@@ -86,6 +90,7 @@ export default function VoiceInputButton({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const elapsedRef = useRef(0)
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const startingRef = useRef(false)
 
   // The text that was in the box when recording started. Everything this component writes is
   // `anchor + what it has heard so far`, so it must be read once at the start and never re-read
@@ -178,6 +183,17 @@ export default function VoiceInputButton({
     stream.getTracks().forEach((track) => track.stop())
     teardownAudio()
     const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current || 'audio/webm' })
+
+    // A recording can come back with no audio in it — the mic muted because another app had it, an
+    // iOS audio session interrupted, or the button tapped twice in a row. Sent on regardless (which
+    // is what happened until 2026-08-22), OpenAI answers "Audio file might be corrupted", the user
+    // reads the generic "couldn't turn that into text", and goes looking for a problem with how
+    // they spoke instead of with the mic. It also spends two API calls to learn nothing.
+    if (blob.size < MIN_AUDIO_BYTES) {
+      showError("Nothing came through — make sure no other app is using the mic, then try again.")
+      return
+    }
+
     setStatus('transcribing')
 
     try {
@@ -204,6 +220,13 @@ export default function VoiceInputButton({
   }
 
   async function startRecording() {
+    // `status` can't guard this on its own: it isn't set to 'recording' until after the await
+    // below, so two taps in quick succession both pass the idle check in handleClick and start a
+    // second recorder — orphaning the first stream with the mic still live, and resetting the
+    // chunk buffer under it.
+    if (startingRef.current) return
+    startingRef.current = true
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mimeType = pickMimeType()
@@ -245,6 +268,8 @@ export default function VoiceInputButton({
     } catch {
       // microphone permission denied, or no microphone available
       showError("Couldn't access your microphone — check that this site is allowed to use it.")
+    } finally {
+      startingRef.current = false
     }
   }
 

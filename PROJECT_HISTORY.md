@@ -1750,3 +1750,57 @@ imperfect — is what keeps one session's caution from becoming another's blocke
 does have to be held, the thing to write down is not "this is held" but the reconstruction
 recipe: the note left in §10 that day listed all seven helper calls in order, which is why
 releasing it a day later cost a build, a test run, and one click-through rather than a rewrite.
+
+---
+
+## 2026-08-23 — The voice note that came through as 44 bytes
+
+**Report.** "Lately in the home page while using the mobile app, while trying to save a voice
+note it gives me an error." No error text, no screenshot — which is the normal shape of a bug
+report from someone who cannot read a console, and the reason the next paragraph matters more
+than any amount of code reading would have.
+
+**How it was found.** Guessing was available and would have been wrong. There are five distinct
+messages the mic bubble can show and a sixth that comes from `converse`, and a plausible story
+for each. Instead: the Supabase Management API token in `.env` reads the Edge Function logs, and
+one query over the last 24 hours of `function_edge_logs` filtered to `transcribe` printed the
+whole answer in four rows —
+
+    00:16:01  200  iPhone OS 18_7   len=195936
+    00:21:18  502  iPhone OS 18_7   len=44
+    00:25:43  200  iPhone OS 18_7   len=911116
+
+`function_logs` for the same isolate carried OpenAI's actual words: `Audio file might be
+corrupted or unsupported`, 400, `"param": "file"` — twice, once per keyword strategy.
+
+**Diagnosis.** A 44-byte request body is `{"audio":"…","mimeType":"audio/mp4"}` with about six
+bytes of audio in it. Not zero — zero would have hit the existing `no_audio` guard — but less
+than a container header. The recording captured nothing, and the app uploaded it anyway.
+
+Two of the three recordings that session were fine, at 196KB and 911KB, which incidentally
+settled a question §10 had been carrying open since 2026-08-18: iPhone mp4 capture and the
+streamed transcript do work on a real device. Only the empty one failed.
+
+**Fix.** Three parts, none of them clever:
+
+1. `VoiceInputButton` refuses to upload a blob under 1KB and says so — "Nothing came through —
+   make sure no other app is using the mic, then try again." The old path spent an API call to
+   be told the file was corrupt and then told the user their *diction* was the problem, which is
+   the worst possible place to point someone whose mic was busy.
+2. `transcribe` tells a file-level 400 apart from the multipart-form 400 the keyword ladder
+   exists to retry, stops the ladder on the former, and returns `audio_unreadable` (422). The
+   old code re-uploaded the identical unreadable file under a second encoding, every time.
+3. A `startingRef` latch in `startRecording`. `status` is not set until after `await
+   getUserMedia`, so two quick taps both passed the idle check and started two recorders — the
+   first orphaned with the mic still live, the second with the chunk buffer reset under it. Only
+   a candidate for the empty capture, not a proven cause, but it is a real leak either way.
+
+`isUnreadableAudio` went into `_shared/transcriptGuard.ts` next to `looksLikeKeywordEcho`, whose
+own doc comment is about exactly this genre of bug, with four tests. The narrow one matters
+most: calling the multipart rejection an audio problem would disable the retry that fixes it and
+take name-steering down, which is precisely the 2026-08-18 outage.
+
+**Lessons.** Production logs beat reasoning about which of six error paths fired — the whole
+diagnosis was two queries and no guesswork, and the payload size was the fact that cracked it.
+And a fallback ladder needs to know which failures it cannot fix: retrying a bad file in a
+different envelope is a second bill for the same answer.

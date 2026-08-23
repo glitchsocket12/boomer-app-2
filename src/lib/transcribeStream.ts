@@ -17,6 +17,7 @@ const MESSAGES: Record<string, string> = {
   not_authenticated: 'Your session has expired — log out and back in, then try again.',
   audio_too_large: "That recording is too long to send in one go — try breaking it into shorter pieces.",
   no_speech: "I didn't catch any words in that — try again, a bit closer to the mic, or type it instead.",
+  audio_unreadable: "That recording didn't come through as readable audio — try recording it again.",
   transcription_failed: "Couldn't turn that into text — try again, or type it instead.",
 }
 

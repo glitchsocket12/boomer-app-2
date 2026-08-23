@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { looksLikeKeywordEcho } from './transcriptGuard.ts'
+import { isUnreadableAudio, looksLikeKeywordEcho } from './transcriptGuard.ts'
 
 const ROSTER = ['Sherry', 'Manuel', 'Sarah Chen', 'Volin', 'Nana']
 
@@ -43,5 +43,39 @@ describe('looksLikeKeywordEcho', () => {
     // different checks both claim this case is how the 2026-08-08 bug hid for as long as it did.
     expect(looksLikeKeywordEcho('', ROSTER)).toBe(false)
     expect(looksLikeKeywordEcho('   ', ROSTER)).toBe(false)
+  })
+})
+
+describe('isUnreadableAudio', () => {
+  // Verbatim from the founder's iPhone on 2026-08-23, the report this guard was written for.
+  const CORRUPT_FILE = `{
+  "error": {
+    "message": "Audio file might be corrupted or unsupported",
+    "type": "invalid_request_error",
+    "param": "file",
+    "code": "invalid_value"
+  }
+}`
+
+  it('recognises the rejection a recording with no audio in it produces', () => {
+    expect(isUnreadableAudio(CORRUPT_FILE)).toBe(true)
+  })
+
+  it('leaves the multipart rejection to the keyword ladder', () => {
+    // The whole point of the ladder. Calling this one an audio problem would stop the retry that
+    // fixes it and take name-steering — and with it the feature — down, exactly as in 2026-08-18.
+    expect(
+      isUnreadableAudio('{"error":{"message":"Could not parse multipart form","type":"invalid_request_error","param":null,"code":null}}')
+    ).toBe(false)
+  })
+
+  it('is not fooled by a rate limit or an empty body', () => {
+    expect(isUnreadableAudio('{"error":{"message":"Rate limit reached","code":"rate_limit_exceeded"}}')).toBe(false)
+    expect(isUnreadableAudio('')).toBe(false)
+  })
+
+  it('reads the param regardless of how OpenAI spaces its JSON', () => {
+    expect(isUnreadableAudio('{"error":{"param":"file"}}')).toBe(true)
+    expect(isUnreadableAudio('{"error":{"param" : "file"}}')).toBe(true)
   })
 })

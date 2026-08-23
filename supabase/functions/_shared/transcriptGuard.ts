@@ -29,3 +29,19 @@ export function looksLikeKeywordEcho(text: string, keywords: string[]): boolean 
   const nameWords = new Set(keywords.flatMap((k) => k.toLowerCase().split(/\s+/)))
   return words.every((w) => nameWords.has(w))
 }
+
+/**
+ * True when OpenAI rejected the recording itself rather than how the roster was attached.
+ *
+ * Worth telling apart from every other 400, for two reasons. `transcribe`'s keyword ladder retries
+ * in a different encoding on any 4xx — which cannot possibly help when the complaint is about the
+ * audio, so it re-uploads the same unreadable file for nothing. And the user can then be told what
+ * actually happened instead of the catch-all "couldn't turn that into text".
+ *
+ * Narrow on purpose: the multipart-form rejection that the ladder DOES fix is also a 400, and
+ * treating that one as an audio problem would put the feature back in the state it was in before
+ * the ladder existed.
+ */
+export function isUnreadableAudio(errorBody: string): boolean {
+  return /"param"\s*:\s*"file"/.test(errorBody) || errorBody.includes("Audio file might be corrupted")
+}

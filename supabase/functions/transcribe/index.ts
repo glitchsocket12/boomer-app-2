@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
-import { looksLikeKeywordEcho } from "../_shared/transcriptGuard.ts"
+import { isUnreadableAudio, looksLikeKeywordEcho } from "../_shared/transcriptGuard.ts"
 
 // Structural rather than the real SupabaseClient type, matching userSettings.ts/selfContext.ts: the
 // generated client type is generic over its schema in a way that refuses to unify across call
@@ -200,8 +200,10 @@ async function callOpenAI(audioBytes: Uint8Array, mimeType: string, keywords: st
     // the roster is attached, so a client error is by definition about that. The first version only
     // retried on a 400 whose body mentioned "keyword", and the real rejection said "Could not parse
     // multipart form" — so it never retried, and name steering silently took the whole feature down.
-    // A 401/429/5xx is a genuine failure that a different encoding cannot fix.
+    // A 401/429/5xx is a genuine failure that a different encoding cannot fix, and neither is a
+    // complaint about the file itself.
     if (response.status === 401 || response.status === 429 || response.status >= 500) break
+    if (isUnreadableAudio(errorBody)) break
   }
 
   return lastResponse ?? new Response("keyword strategies exhausted", { status: 502 })
@@ -313,6 +315,17 @@ serve(async (req) => {
     const openAiResponse = await callOpenAI(audioBytes, mimeType, keywords)
 
     if (!openAiResponse.ok || !openAiResponse.body) {
+      const errorBody = await openAiResponse.text().catch(() => "")
+      // Reached most often by a recording that captured nothing at all — a mic held by another app,
+      // an interrupted iOS audio session, a double-tapped button. The browser now refuses to send
+      // one of those (VoiceInputButton's MIN_AUDIO_BYTES), so anything still arriving here is a
+      // genuinely unreadable file and deserves its own wording rather than the catch-all.
+      if (isUnreadableAudio(errorBody)) {
+        return jsonResponse(
+          { error: "audio_unreadable", message: "That recording didn't come through as readable audio — try recording it again." },
+          422
+        )
+      }
       return jsonResponse({ error: "transcription_failed" }, 502)
     }
 
