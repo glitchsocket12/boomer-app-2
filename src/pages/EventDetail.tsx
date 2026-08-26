@@ -26,6 +26,12 @@ import { coversWindow, weatherWindow } from '../lib/eventSpan'
 import { rankSiblingAttendees } from '../lib/siblingAttendees'
 import { ATTENDEE_PLACEHOLDER, fetchMomentParentIds, hasSomethingToSummarize } from '../lib/moments'
 import { momentDisplayName, momentPickerLabel, momentTitle } from '../lib/momentDisplayName'
+import {
+  linkEvents,
+  loadRelatedEvents as fetchRelatedEvents,
+  unlinkEvents,
+  type RelatedEventRef,
+} from '../lib/relatedEvents'
 import { findOrCreateTagId } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
@@ -96,6 +102,18 @@ export type ChildEventRef = {
   summary: string | null
   raw_description: string
   notes: { people: PersonRef | null }[]
+}
+
+// The three directions an association can go, resolved for one picked event: `blocked` is null
+// when that direction is offered as a button, and otherwise holds the sentence explaining why it
+// isn't. `caution` is a heads-up on a direction that IS allowed but moves the event out of
+// wherever it currently sits. Built by EventDetailPage's associateOptions memo — see it for the
+// rules. (2026-08-26)
+export type AssociateOptions = {
+  candidateTitle: string
+  adopt: { blocked: string | null; caution: string | null }
+  nest: { blocked: string | null; caution: string | null }
+  relate: { blocked: string | null }
 }
 
 export type MomentDetail = {
@@ -193,6 +211,15 @@ export default function EventDetail({
   const [parentEvent, setParentEvent] = useState<OtherEvent | null>(null)
   const [siblingEvents, setSiblingEvents] = useState<SiblingEventRef[]>([])
   const [childEvents, setChildEvents] = useState<ChildEventRef[]>([])
+  // Related events (2026-08-26) — links to other events that are NOT sub-events. `available`
+  // carries the same meaning it does for pets: false = moment_links isn't migrated yet, so hide
+  // the feature rather than offer a control whose writes vanish (see lib/relatedEvents.ts).
+  const [relatedEvents, setRelatedEvents] = useState<RelatedEventRef[]>([])
+  const [relatedAvailable, setRelatedAvailable] = useState(true)
+  // The event picked in the bubble's "Associate an event" flow, before its direction is chosen.
+  // Held apart from `mergeCandidate` (the Manage panel's) so the two flows can't collide — one is
+  // reachable while the other is open.
+  const [associateCandidate, setAssociateCandidate] = useState<OtherEvent | null>(null)
   const [addingSubEvent, setAddingSubEvent] = useState(false)
   const [subEventError, setSubEventError] = useState<string | null>(null)
   // "New sub-event" asks for the date up front instead of creating a shell straight away
@@ -217,6 +244,8 @@ export default function EventDetail({
     loadMoment()
     loadPickerLists()
     loadChildEvents()
+    loadRelated()
+    setAssociateCandidate(null)
     // Cleared first so navigating between events never shows the previous one's boxes.
     setEnrichment(null)
     loadEnrichment()
@@ -367,6 +396,15 @@ export default function EventDetail({
     loadParentEvent()
   }
 
+  // The other events linked to this one sideways — see lib/relatedEvents.ts. Its own isolated,
+  // fail-open query for the same reason as loadChildEvents/loadEventPets: moment_links arrives
+  // with a hand-run migration, and a missing table has to cost this one section, not the page.
+  async function loadRelated() {
+    const { events, available } = await fetchRelatedEvents(eventId)
+    setRelatedEvents(events)
+    setRelatedAvailable(available)
+  }
+
   // Memoised so the gallery below only refetches when the actual set of sub-events changes, not on
   // every unrelated reload of this page (rename, description edit, an attendee going in or out).
   const childEventIds = useMemo(() => childEvents.map((c) => c.id), [childEvents])
@@ -426,6 +464,75 @@ export default function EventDetail({
     if (moment) titles.set(moment.id, momentTitle(moment))
     return titles
   }, [otherEvents, moment])
+
+  /**
+   * Which of the three directions the picked event may go, and — when it may not — the sentence
+   * saying why, in the founder's terms rather than the schema's.
+   *
+   * Computed here rather than in the view because every reason needs the names of events that
+   * aren't on screen (the picked event's own parent, this one's), which only the roster and the
+   * parent map know. The view just renders a button or a muted line.
+   *
+   * The rules are the ones that already govern nesting elsewhere on this page — sub-events are one
+   * level deep, so neither side of a nesting may already be a parent or a child — restated here
+   * for the direction being offered. A "related" link is refused only where it would be redundant:
+   * two events already sitting in a parent/sub-event relationship are connected already.
+   */
+  const associateOptions = useMemo(() => {
+    if (!associateCandidate) return null
+    const label = (e: OtherEvent) => momentDisplayName(e, otherEventTitleById, momentParentById)
+    const candidateTitle = label(associateCandidate)
+    const candidateParentId = momentParentById.get(associateCandidate.id) ?? null
+    const candidateParentTitle = candidateParentId
+      ? otherEventTitleById.get(candidateParentId) ?? 'another event'
+      : null
+    const candidateHasChildren = [...momentParentById.values()].includes(associateCandidate.id)
+    const parentTitle = parentEvent ? momentTitle(parentEvent) : null
+    const isChildOfThis = candidateParentId === eventId
+    const isParentOfThis = parentEvent?.id === associateCandidate.id
+
+    const adoptBlocked = isChildOfThis
+      ? `"${candidateTitle}" is already a sub-event of this one.`
+      : parentEvent
+        ? `This event is itself part of "${parentTitle}", and sub-events only go one level deep — so it can't hold sub-events of its own.`
+        : candidateHasChildren
+          ? `"${candidateTitle}" has sub-events of its own, so it can't move inside this one. Separate those first.`
+          : null
+
+    const nestBlocked = isParentOfThis
+      ? `This event is already part of "${candidateTitle}".`
+      : childEvents.length > 0
+        ? `This event has sub-events of its own, so it can't sit inside another event. Separate them first.`
+        : candidateParentId
+          ? `"${candidateTitle}" is itself part of "${candidateParentTitle}", and sub-events only go one level deep — pick a top-level event instead.`
+          : null
+
+    const relateBlocked = relatedEvents.some((r) => r.id === associateCandidate.id)
+      ? 'These two are already linked as related events.'
+      : isChildOfThis
+        ? `These two are already connected — "${candidateTitle}" is a sub-event of this one.`
+        : isParentOfThis
+          ? `These two are already connected — this event is part of "${candidateTitle}".`
+          : null
+
+    return {
+      candidateTitle,
+      adopt: {
+        blocked: adoptBlocked,
+        // Nesting never destroys anything, but it does MOVE an event that was filed somewhere
+        // else — worth saying before the tap, not after.
+        caution:
+          !adoptBlocked && candidateParentId
+            ? `It moves out of "${candidateParentTitle}" to get here.`
+            : null,
+      },
+      nest: {
+        blocked: nestBlocked,
+        caution: !nestBlocked && parentEvent ? `It moves out of "${parentTitle}" to get here.` : null,
+      },
+      relate: { blocked: relateBlocked },
+    }
+  }, [associateCandidate, momentParentById, otherEventTitleById, parentEvent, childEvents, relatedEvents, eventId])
 
   function startAddSubEvent() {
     setSubEventDateInput(moment?.event_date ?? '')
@@ -522,26 +629,111 @@ export default function EventDetail({
    * another leaves the old one describing a part it no longer has. Lazy, same as everywhere else —
    * they rewrite themselves when someone next opens them (CLAUDE.md rule 3).
    */
-  async function handleNestUnderEvent() {
-    if (!mergeCandidate) return
+  async function nestThisUnder(target: OtherEvent): Promise<boolean> {
     setActionBusy(true)
     setActionError(null)
     const { error } = await supabase
       .from('moments')
-      .update({ parent_moment_id: mergeCandidate.id })
+      .update({ parent_moment_id: target.id })
       .eq('id', eventId)
     if (error) {
       setActionBusy(false)
       setActionError("Something went wrong moving this event — please try again.")
-      return
+      return false
     }
-    const staleParents = [mergeCandidate.id, ...(parentEvent ? [parentEvent.id] : [])]
+    const staleParents = [target.id, ...(parentEvent ? [parentEvent.id] : [])]
     await supabase.from('moments').update({ summary: null }).in('id', staleParents)
     setActionBusy(false)
+    loadChildEvents()
+    // The tree changed shape, so the roster's parent map is stale — and it's what decides which
+    // directions the next association may go.
+    loadEventRoster(true)
+    return true
+  }
+
+  async function handleNestUnderEvent() {
+    if (!mergeCandidate) return
+    if (!(await nestThisUnder(mergeCandidate))) return
     setMergeOpen(false)
     setMergeCandidate(null)
     setManageOpen(false)
+  }
+
+  /**
+   * "Associate an event" — the founder's ask, 2026-08-26: *"Need to be able to associate events
+   * too — either as a sub event (make it clear which direction it's going) or just as a related
+   * event."*
+   *
+   * Everything below is the second half of that. Until now the only way to connect two EXISTING
+   * events was from the Manage panel of the one that had to move ("Move this under another
+   * event…"), which is the child's-eye view — from a trip's own page there was no way to pull a
+   * day into it, and no way at all to say "these two go together" without one swallowing the
+   * other. The direction is chosen explicitly, with both event titles spelled out in the button,
+   * because "associate" on its own never says which one ends up inside which.
+   *
+   * This one files the PICKED event under the one on screen.
+   */
+  async function handleAdoptAsSubEvent(): Promise<boolean> {
+    if (!associateCandidate) return false
+    setActionBusy(true)
+    setActionError(null)
+    const previousParentId = momentParentById.get(associateCandidate.id) ?? null
+    const { error } = await supabase
+      .from('moments')
+      .update({ parent_moment_id: eventId })
+      .eq('id', associateCandidate.id)
+    if (error) {
+      setActionBusy(false)
+      setActionError("Something went wrong filing that event under this one — please try again.")
+      return false
+    }
+    // A parent's summary is a roll-up with one line per sub-event, so this event's is now missing
+    // a part and a former parent's now describes one it no longer has. The former parent's is
+    // cleared lazily as everywhere else; THIS one is also cleared in local state, which lets the
+    // existing summary effect regenerate it while the founder is still looking at the page — the
+    // Sub Events grid would otherwise show a part the paragraph above it doesn't mention.
+    const stale = [eventId, ...(previousParentId ? [previousParentId] : [])]
+    await supabase.from('moments').update({ summary: null }).in('id', stale)
+    setMoment((prev) => (prev ? { ...prev, summary: null } : prev))
+    setActionBusy(false)
+    setAssociateCandidate(null)
     loadChildEvents()
+    loadEventRoster(true)
+    return true
+  }
+
+  /** The other direction: this event becomes a part of the picked one. */
+  async function handleNestUnderAssociate(): Promise<boolean> {
+    if (!associateCandidate) return false
+    if (!(await nestThisUnder(associateCandidate))) return false
+    setAssociateCandidate(null)
+    return true
+  }
+
+  /** No hierarchy at all — a symmetric link, visible from both events. */
+  async function handleLinkRelated(): Promise<boolean> {
+    if (!associateCandidate) return false
+    setActionBusy(true)
+    setActionError(null)
+    const { error } = await linkEvents(eventId, associateCandidate.id)
+    setActionBusy(false)
+    if (error) {
+      setActionError("Something went wrong linking those events — please try again.")
+      return false
+    }
+    setAssociateCandidate(null)
+    loadRelated()
+    return true
+  }
+
+  async function handleUnlinkRelated(otherId: string) {
+    setActionError(null)
+    const { error } = await unlinkEvents(eventId, otherId)
+    if (error) {
+      setActionError("Something went wrong unlinking that event — please try again.")
+      return
+    }
+    loadRelated()
   }
 
   async function loadMoment(silent = false) {
@@ -1102,29 +1294,41 @@ export default function EventDetail({
     onBack()
   }
 
+  /**
+   * Every other event on the account, plus the child→parent map — the roster behind both event
+   * pickers (the Manage panel's merge/nest one and the bubble's "Associate an event" one).
+   *
+   * Loaded on demand rather than with the page: it's an account-wide read that most visits never
+   * need. `force` re-reads it after a write that changed the shape of the tree, since the parent
+   * map is what decides which direction an association is allowed to go — a stale one would keep
+   * offering a move that no longer makes sense.
+   */
+  async function loadEventRoster(force = false) {
+    if (otherEvents.length > 0 && !force) return
+    // The parent map rides alongside rather than being a column on the select above — same
+    // fail-open reasoning as loadParentEvent; see fetchMomentParentIds. It's what lets a
+    // sub-event show up here as "Trip / Day 2" instead of an unidentifiable "Day 2".
+    const [{ data }, parentIds] = await Promise.all([
+      fetchAllRows((from, to) =>
+        supabase
+          .from('moments')
+          .select('id, occasion, raw_description, event_date, event_end_date, created_at')
+          .neq('id', eventId)
+          .order('id')
+          .range(from, to)
+      ),
+      fetchMomentParentIds(),
+    ])
+    setOtherEvents((data as OtherEvent[]) ?? [])
+    setMomentParentById(parentIds)
+  }
+
   async function openMerge(mode: 'merge' | 'nest' = 'merge') {
     setMergeOpen(true)
     setMergeMode(mode)
     setMergeCandidate(null)
     setMergeSearch('')
-    if (otherEvents.length === 0) {
-      // The parent map rides alongside rather than being a column on the select above — same
-      // fail-open reasoning as loadParentEvent; see fetchMomentParentIds. It's what lets a
-      // sub-event show up here as "Trip / Day 2" instead of an unidentifiable "Day 2".
-      const [{ data }, parentIds] = await Promise.all([
-        fetchAllRows((from, to) =>
-          supabase
-            .from('moments')
-            .select('id, occasion, raw_description, event_date, event_end_date, created_at')
-            .neq('id', eventId)
-            .order('id')
-            .range(from, to)
-        ),
-        fetchMomentParentIds(),
-      ])
-      setOtherEvents((data as OtherEvent[]) ?? [])
-      setMomentParentById(parentIds)
-    }
+    loadEventRoster()
   }
 
   // Folds THIS event into `mergeCandidate` (the one picked from search) — the reverse of the
@@ -1293,6 +1497,20 @@ export default function EventDetail({
       canBeNested={childEvents.length === 0}
       onConfirmNest={handleNestUnderEvent}
       onMakeStandalone={handleMakeStandalone}
+      relatedEvents={relatedEvents}
+      relatedAvailable={relatedAvailable}
+      onUnlinkRelated={handleUnlinkRelated}
+      associateCandidate={associateCandidate}
+      associateOptions={associateOptions}
+      onStartAssociate={() => {
+        setAssociateCandidate(null)
+        loadEventRoster()
+      }}
+      onSelectAssociateCandidate={setAssociateCandidate}
+      onClearAssociateCandidate={() => setAssociateCandidate(null)}
+      onAdoptSubEvent={handleAdoptAsSubEvent}
+      onNestUnderAssociate={handleNestUnderAssociate}
+      onLinkRelated={handleLinkRelated}
       actionBusy={actionBusy}
       actionError={actionError}
       noteBox={<NoteWithDetection subjectType="moment" subjectId={moment.id} onSaved={handleNoteSaved} placeholder="Add a note about this event…" />}
@@ -1414,6 +1632,20 @@ export function EventDetailView({
   canBeNested = true,
   onConfirmNest = () => {},
   onMakeStandalone = () => {},
+  // Related events default to "not available", which is both the pre-migration state and what the
+  // demo twin passes (nothing) — so neither renders a section it can't fill. Same reasoning as
+  // the pets defaults above.
+  relatedEvents = [],
+  relatedAvailable = false,
+  onUnlinkRelated = () => {},
+  associateCandidate = null,
+  associateOptions = null,
+  onStartAssociate = () => {},
+  onSelectAssociateCandidate = () => {},
+  onClearAssociateCandidate = () => {},
+  onAdoptSubEvent = async () => false,
+  onNestUnderAssociate = async () => false,
+  onLinkRelated = async () => false,
   actionBusy = false,
   actionError = null,
   noteBox,
@@ -1527,6 +1759,21 @@ export function EventDetailView({
   onConfirmNest?: () => void
   /** Only ever called when `parentEvent` is set — the button is hidden otherwise. */
   onMakeStandalone?: () => void
+  relatedEvents?: RelatedEventRef[]
+  /** False before the moment_links migration (and in the demo) — the section hides itself. */
+  relatedAvailable?: boolean
+  onUnlinkRelated?: (otherId: string) => void
+  associateCandidate?: OtherEvent | null
+  /** What the picked event may become, and the reason when it may not — see the memo. */
+  associateOptions?: AssociateOptions | null
+  onStartAssociate?: () => void
+  onSelectAssociateCandidate?: (e: OtherEvent) => void
+  onClearAssociateCandidate?: () => void
+  // Resolve to whether the write actually landed, so the bubble holds its confirmation line back
+  // until it's true — same contract as the five "add something" handlers above.
+  onAdoptSubEvent?: () => Promise<boolean>
+  onNestUnderAssociate?: () => Promise<boolean>
+  onLinkRelated?: () => Promise<boolean>
   actionBusy?: boolean
   actionError?: string | null
   noteBox?: ReactNode
@@ -1535,6 +1782,11 @@ export function EventDetailView({
   // isn't reliable confirmation that an add worked. Each picker echoes its last add underneath
   // itself instead; picking a different action clears it.
   const [justAdded, setJustAdded] = useState<string | null>(null)
+  // The same idea for "Associate an event", which needs a full sentence rather than AddedLine's
+  // "✓ Added X." — the whole point of that flow is which direction the association went, so the
+  // confirmation has to say it ("This event is now part of …" reads nothing like "… is now part
+  // of this event", and both are one tap apart).
+  const [associateDone, setAssociateDone] = useState<string | null>(null)
 
   // Suggestion chips you've already acted on stay in the grid at the exact slot you clicked,
   // rendered with a tick, instead of disappearing. Dropping them out was what made working down a
@@ -1571,6 +1823,7 @@ export function EventDetailView({
   // haunts the next action you take.
   function onOpenPicker() {
     setJustAdded(null)
+    setAssociateDone(null)
     onClearActionError()
   }
   // Save sits right next to the mic in the description editor, so it has to be held shut while a
@@ -2046,6 +2299,33 @@ export function EventDetailView({
         </>
       )}
 
+      {/* A third list, deliberately named differently from both of the others (2026-08-26): "Sub
+          Events" above are the days INSIDE this one, a group's or person's "Associated Events" are
+          events they're merely tied to, and these are other events the founder has said belong
+          next to this one — neither containing nor contained. Renders on sub-event pages too,
+          unlike Sub Events: a sideways link doesn't care where either end sits in the tree.
+          Hidden entirely until the moment_links migration is run (relatedAvailable), rather than
+          showing an empty section pointing at a control whose writes would vanish. */}
+      {relatedAvailable && (
+        <>
+          <h2 style={styles.subheading}>Related Events</h2>
+          {relatedEvents.length === 0 ? (
+            <p style={styles.empty}>{readOnly ? 'No related events.' : ADD_HINT.relatedEvent}</p>
+          ) : (
+            <div style={styles.childEventGrid}>
+              {relatedEvents.map((re) => (
+                <RelatedEventTile
+                  key={re.id}
+                  event={re}
+                  onSelect={() => onSelectEvent({ id: re.id, summary: re.occasion || 'Untitled moment' })}
+                  onRemove={readOnly ? undefined : () => onUnlinkRelated(re.id)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       <h2 style={styles.subheading}>Associated Groups</h2>
       {groups.length > 0 ? (
         <>
@@ -2231,6 +2511,86 @@ export function EventDetailView({
               hint: 'Progress shows next to the photos above.',
               disabled: photosImporting,
               onSelect: onAddPhotos,
+            },
+            // "Associate an event" (founder ask, 2026-08-26). The row above creates a NEW blank
+            // sub-event; this one connects an event that already exists, which had no path at all
+            // from this page — the only tool was the OTHER event's Manage panel ("Move this under
+            // another event…"), i.e. you had to already be standing on the one that needed to
+            // move. Unlike that row, this one stays on sub-event pages too, since a "related"
+            // link works from anywhere in the tree.
+            {
+              key: 'associate-event',
+              icon: '🔗',
+              label: 'Associate an event',
+              hint: 'Connect an event you already have — as a sub-event either way round, or just related.',
+              onSelect: () => {
+                onOpenPicker()
+                onStartAssociate()
+              },
+              body: !associateCandidate || !associateOptions ? (
+                <>
+                  <SearchAddPicker
+                    items={otherEvents.map((e) => ({ id: e.id, label: eventPickerLabel(e) }))}
+                    placeholder="Search your events…"
+                    onSelect={(item) => {
+                      const picked = otherEvents.find((e) => e.id === item.id)
+                      if (picked) onSelectAssociateCandidate(picked)
+                    }}
+                    emptyText="No events match."
+                  />
+                  {/* Events already connected to this one are deliberately NOT filtered out of
+                      the list above: hiding them turns "why can't I find it?" into a dead end,
+                      where picking one explains itself in a line. */}
+                  {associateDone && <p style={styles.addedLine}>✓ {associateDone}</p>}
+                </>
+              ) : (
+                <div style={styles.associateChoices}>
+                  <p style={styles.associateLead}>
+                    How does "{associateOptions.candidateTitle}" relate to this event?
+                  </p>
+                  <AssociateChoice
+                    title={`"${associateOptions.candidateTitle}" is part of this event`}
+                    detail="It becomes a sub-event, listed under Sub Events here. It keeps its own notes, photos, attendees, groups and tags."
+                    blocked={associateOptions.adopt.blocked}
+                    caution={associateOptions.adopt.caution}
+                    busy={actionBusy}
+                    onSelect={async () => {
+                      if (await onAdoptSubEvent())
+                        setAssociateDone(`"${associateOptions.candidateTitle}" is now part of this event.`)
+                    }}
+                  />
+                  <AssociateChoice
+                    title={`This event is part of "${associateOptions.candidateTitle}"`}
+                    detail="The other way round: this event becomes a sub-event of that one, and keeps everything it has."
+                    blocked={associateOptions.nest.blocked}
+                    caution={associateOptions.nest.caution}
+                    busy={actionBusy}
+                    onSelect={async () => {
+                      if (await onNestUnderAssociate())
+                        setAssociateDone(`This event is now part of "${associateOptions.candidateTitle}".`)
+                    }}
+                  />
+                  <AssociateChoice
+                    title="They're related — neither is part of the other"
+                    detail="Both stay exactly where they are, and each one links to the other under Related Events."
+                    blocked={associateOptions.relate.blocked}
+                    caution={null}
+                    busy={actionBusy}
+                    onSelect={async () => {
+                      if (await onLinkRelated())
+                        setAssociateDone(`"${associateOptions.candidateTitle}" is now a related event.`)
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={onClearAssociateCandidate}
+                    style={styles.cancelButton}
+                    disabled={actionBusy}
+                  >
+                    Pick a different event
+                  </button>
+                </div>
+              ),
             },
             // Sub-events belong to the top-level event only — there's no row to open here when
             // you're already looking at one.
@@ -2482,6 +2842,7 @@ const ADD_HINT = {
   group: 'No groups yet — tap the + button to associate one.',
   tag: 'No tags yet — tap the + button to add one.',
   subEvent: 'No sub-events yet — tap the + button to add one.',
+  relatedEvent: 'No related events yet — tap the + button to connect one.',
 }
 
 // Echoes the most recent add back inside the bubble. The panel covers the corner of the page, so
@@ -2489,6 +2850,94 @@ const ADD_HINT = {
 function AddedLine({ name }: { name: string | null }) {
   if (!name) return null
   return <p style={styles.addedLine}>✓ Added {name}.</p>
+}
+
+/**
+ * One of the three directions in the "Associate an event" flow (2026-08-26).
+ *
+ * A direction that isn't available stays on screen as a muted line instead of disappearing:
+ * *which* one is missing, and why, is precisely what says what to do instead — usually "separate
+ * that nesting first". A vanished option just reads as the app not offering what you came for.
+ */
+function AssociateChoice({
+  title,
+  detail,
+  blocked,
+  caution,
+  busy,
+  onSelect,
+}: {
+  title: string
+  detail: string
+  /** Non-null = this direction isn't possible, and this is the sentence saying why. */
+  blocked: string | null
+  /** Allowed, but it moves the event out of where it currently sits. */
+  caution: string | null
+  busy: boolean
+  onSelect: () => void
+}) {
+  if (blocked) {
+    return (
+      <div style={styles.associateBlocked}>
+        <span style={styles.associateBlockedTitle}>{title}</span>
+        <span style={styles.associateBlockedReason}>{blocked}</span>
+      </div>
+    )
+  }
+  return (
+    <button type="button" onClick={onSelect} style={styles.associateChoiceButton} disabled={busy}>
+      <span style={styles.associateChoiceTitle}>{title}</span>
+      <span style={styles.associateChoiceDetail}>{caution ? `${detail} ${caution}` : detail}</span>
+    </button>
+  )
+}
+
+// A related event's tile — the same tile a sub-event gets, plus the hover/touch trash badge every
+// other chip on this page uses, since a link is exactly the kind of thing that gets made by
+// mistake and has to be as easy to take back. `onRemove` omitted (demo read-only mode) simply
+// never shows the badge. The tile's own title is unqualified: unlike the pickers, this list isn't
+// where you tell two same-named events apart, and the date line underneath does that job anyway.
+function RelatedEventTile({
+  event,
+  onSelect,
+  onRemove,
+}: {
+  event: RelatedEventRef
+  onSelect: () => void
+  onRemove?: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const name = summarize(event.occasion, event.raw_description)
+
+  return (
+    <div
+      style={styles.relatedEventWrapper}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button type="button" onClick={onSelect} style={{ ...styles.childEventTile, flex: 1 }}>
+        <span style={styles.childEventTileName}>{name}</span>
+        {/* "Date not set" rather than formatFullDate's created_at fallback, same as the sub-event
+            tiles: on a date-ordered row, a creation date reads as the day it happened. */}
+        <span style={styles.childEventTileMeta}>
+          {event.event_date ? formatFullDate(event) : 'Date not set'}
+        </span>
+      </button>
+      {(hovered || IS_TOUCH) && onRemove && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          aria-label={`Unlink ${name} from this event`}
+          className="touch-action"
+          style={styles.cornerBadge}
+        >
+          {TRASH_ICON}
+        </button>
+      )}
+    </div>
+  )
 }
 
 // Clicking the chip always goes to the person's profile — same as any other chip in the app.
@@ -2813,6 +3262,40 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   subEventFormHint: { margin: 0, fontSize: fontSize.label, color: colors.textFaint, maxWidth: '34rem' },
   subEventFormButtons: { display: 'flex', gap: space.md, flexWrap: 'wrap' },
+  // "Associate an event", second step: the three directions, stacked. Each is a full-width card
+  // rather than a row of buttons because the direction only reads clearly in a whole sentence
+  // ("X is part of this event" / "This event is part of X"), and those don't fit side by side.
+  associateChoices: { display: 'flex', flexDirection: 'column', gap: space.md },
+  associateLead: { margin: 0, fontSize: fontSize.body, color: colors.textBody },
+  associateChoiceButton: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: space.xxs,
+    textAlign: 'left',
+    width: '100%',
+    padding: '0.6rem 0.75rem',
+    borderRadius: radius.md,
+    border: border.default,
+    backgroundColor: colors.surface,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  associateChoiceTitle: { fontSize: fontSize.body, color: colors.inkPlain },
+  associateChoiceDetail: { fontSize: fontSize.small, color: colors.textFaint },
+  associateBlocked: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: space.xxs,
+    padding: '0.6rem 0.75rem',
+    borderRadius: radius.md,
+    border: border.light,
+  },
+  associateBlockedTitle: { fontSize: fontSize.body, color: colors.textMuted },
+  associateBlockedReason: { fontSize: fontSize.small, color: colors.textFaint },
+  // The tile itself is a button and so is its remove badge, so the badge can't live inside it —
+  // this is the positioned parent both sit in, stretched to fill its grid cell.
+  relatedEventWrapper: { position: 'relative', display: 'flex' },
   cancelButton: {
     fontSize: fontSize.body,
     padding: '0.5rem 0.9rem',
