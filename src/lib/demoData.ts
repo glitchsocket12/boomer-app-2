@@ -1148,11 +1148,14 @@ const GEN_CATEGORIES: GenCategoryConfig[] = [
   },
 ]
 
+// Bare "YYYY-MM-DD", matching the real DB's DATE-column event_date and CORE_MOMENTS above —
+// eventSortDate() (lib/dates.ts) appends its own "T00:00:00", so a trailing time/Z here produced
+// a malformed string ("...T00:00:00ZT00:00:00") that parsed as Invalid Date / NaN on the Events tab.
 function genDate(i: number, seed: number): string {
   const year = 2012 + ((i * 7 + seed) % 15)
   const month = 1 + ((i * 3 + seed) % 12)
   const day = 1 + ((i * 5 + seed) % 28)
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00Z`
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
 function buildGeneratedRoster(): { people: DemoPerson[]; notes: DemoNote[]; moments: DemoMoment[] } {
