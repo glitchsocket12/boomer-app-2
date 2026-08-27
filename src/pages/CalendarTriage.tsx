@@ -5,10 +5,18 @@ import { formatDateRange } from '../lib/dates'
 import { summarize } from '../lib/summarize'
 import { findLikelyMatch } from '../lib/likelyDuplicate'
 import { acceptCandidate, undoQuickAdd, type AcceptableCandidate } from '../lib/acceptCandidate'
-import { deferUntilIso, invalidateReviewCounts, loadRemindDays, saveRemindDays } from '../lib/reviewQueues'
+import {
+  canBulkSetAside,
+  deferUntilIso,
+  invalidateReviewCounts,
+  loadRemindDays,
+  probeTriageEnabled,
+  saveRemindDays,
+} from '../lib/reviewQueues'
 import { momentDisplayName } from '../lib/momentDisplayName'
 import SearchBox from '../components/SearchBox'
 import RemindSheet from '../components/RemindSheet'
+import UndoBanner from '../components/UndoBanner'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
 type Row = AcceptableCandidate & { calendar_source_id: string | null }
@@ -22,6 +30,17 @@ type Resolved =
   | { kind: 'detail'; label: string }
   | { kind: 'reminded'; label: string; days: number }
   | { kind: 'rejected'; label: string }
+
+// What one "Set aside the rest" did, kept just long enough to offer it back. `stamp` is the
+// reviewed_at written across the whole act, which is what makes Undo able to find precisely those
+// rows again — see applyBulkRemind.
+type BulkResult = { count: number; until: string; stamp: string }
+
+// Almost always the status CHECK constraint, i.e. the triage migration hasn't been run. Bulk
+// set-aside can't hit that — it's gated on the probe — so it carries its own wording rather than
+// telling the founder a database update is missing when it isn't.
+const ROW_WRITE_ERROR =
+  "Couldn't save that one. This screen needs a database update that hasn't been run yet — see the pending step in PROJECT_CONTEXT.md §10."
 
 const PAGE_SIZE = 50
 
@@ -59,10 +78,14 @@ export default function CalendarTriage({
   const [showTurnedDown, setShowTurnedDown] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [writeError, setWriteError] = useState(false)
+  const [writeError, setWriteError] = useState<string | null>(null)
   const [resolved, setResolved] = useState<Map<string, Resolved>>(new Map())
   const [remindTarget, setRemindTarget] = useState<Row | null>(null)
   const [defaultRemindDays, setDefaultRemindDays] = useState<number | null>(null)
+  const [triageEnabled, setTriageEnabled] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkResult, setBulkResult] = useState<BulkResult | null>(null)
 
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
@@ -97,7 +120,7 @@ export default function CalendarTriage({
   // ImportReview.tsx), the events already on file so Quick Add can refuse to create a duplicate,
   // and whether the founder has a saved "remind me in N days".
   async function loadContext() {
-    const [sourcesRes, momentsRes, remindDays] = await Promise.all([
+    const [sourcesRes, momentsRes, remindDays, enabled] = await Promise.all([
       fetchAllRows<CalendarSourceRef>((from, to) =>
         supabase.from('calendar_sources').select('id, label').order('label').order('id').range(from, to)
       ),
@@ -110,10 +133,12 @@ export default function CalendarTriage({
           .range(from, to)
       ),
       loadRemindDays(),
+      probeTriageEnabled(),
     ])
     setSources(sourcesRes.data ?? [])
     setExistingMoments(momentsRes.data ?? [])
     setDefaultRemindDays(remindDays)
+    setTriageEnabled(enabled)
   }
 
   async function loadCounts() {
@@ -191,11 +216,10 @@ export default function CalendarTriage({
       .eq('id', row.id)
     setBusyId(null)
     if (error) {
-      // Almost certainly the status CHECK constraint, i.e. the migration hasn't been run yet.
-      setWriteError(true)
+      setWriteError(ROW_WRITE_ERROR)
       return false
     }
-    setWriteError(false)
+    setWriteError(null)
     countDelta(showTurnedDown ? 'rejected' : 'pending', status)
     return true
   }
@@ -205,10 +229,10 @@ export default function CalendarTriage({
     const result = await acceptCandidate(row)
     setBusyId(null)
     if (!result) {
-      setWriteError(true)
+      setWriteError(ROW_WRITE_ERROR)
       return
     }
-    setWriteError(false)
+    setWriteError(null)
     setExistingMoments((prev) => [{ ...result.moment }, ...prev])
     countDelta('pending', 'accepted')
     markResolved(row.id, { kind: 'added', label: rowTitle(row), momentId: result.moment.id })
@@ -242,6 +266,68 @@ export default function CalendarTriage({
     markResolved(row.id, { kind: 'reminded', label: rowTitle(row), days })
   }
 
+  // "Set aside the rest" — the founder's "delay the need to accept/reject" ask applied to the whole
+  // pile instead of one row at a time. A three-year calendar can produce 1,300 candidates; at ten
+  // to a sitting that is 130 sittings, and nothing that makes a single decision cheaper fixes a
+  // queue that asks 1,300 questions.
+  //
+  // Written server-side BY FILTER, never as a list of ids: 1,300 ids is a ~48KB URL, the trap
+  // sweepImplausibleMatches chunks at 100 to avoid. `.eq('status', 'pending')` is the only thing
+  // standing between this and a very bad day — see canBulkSetAside for the rules about when the
+  // button may be offered at all.
+  //
+  // The saved "remind me in N days" is deliberately NOT applied here, unlike the one-row button:
+  // at this size the interval is the whole decision, and firing it off a preference set for single
+  // rows would make the biggest act in the app a one-tap accident.
+  async function applyBulkRemind(days: number) {
+    setBulkBusy(true)
+    const until = deferUntilIso(new Date(), days)
+    // One timestamp across the act, so Undo can match exactly these rows without a new column —
+    // and without also waking something set aside on its own an hour earlier.
+    const stamp = new Date().toISOString()
+    const count = totalPending
+    const { error } = await supabase
+      .from('moment_import_candidates')
+      .update({ status: 'deferred', deferred_until: until, reviewed_at: stamp })
+      .eq('status', 'pending')
+    setBulkBusy(false)
+    if (error) {
+      // Deliberately doesn't claim nothing was written — a dropped connection can leave that
+      // genuinely unknown, and this is the worst possible moment to guess on the founder's behalf.
+      setWriteError("Couldn't set those aside. Reload the page to see where things stand, then try again.")
+      return
+    }
+    setWriteError(null)
+    setTotalPending(0)
+    invalidateReviewCounts()
+    // Confirmations from this sitting stay put, Undo and all — only the still-undecided rows go,
+    // because those are the ones that just left the pile. Filtered in place rather than refetched:
+    // see the note on countDelta about what `loading` does to your scroll position.
+    setRows((prev) => prev.filter((r) => resolved.has(r.id)))
+    setBulkResult({ count, until, stamp })
+  }
+
+  // The immediate way back, on the page where it happened rather than two screens away. Matches on
+  // the act's own reviewed_at, so it takes back exactly what that press did.
+  async function undoBulkRemind(result: BulkResult) {
+    setBulkBusy(true)
+    const { error } = await supabase
+      .from('moment_import_candidates')
+      .update({ status: 'pending', deferred_until: null, reviewed_at: null })
+      .eq('status', 'deferred')
+      .eq('reviewed_at', result.stamp)
+    setBulkBusy(false)
+    if (error) {
+      setWriteError("Couldn't bring those back. Reload the page to see where things stand, then try again.")
+      return
+    }
+    setWriteError(null)
+    setBulkResult(null)
+    setTotalPending(result.count)
+    invalidateReviewCounts()
+    loadPage()
+  }
+
   // Undo always means "put it back to undecided", including from the turned-down list — un-rejecting
   // something is the whole point of that list, and restoring it to 'rejected' would make the button
   // do nothing.
@@ -263,7 +349,7 @@ export default function CalendarTriage({
     }
     setBusyId(null)
     if (!ok) {
-      setWriteError(true)
+      setWriteError(ROW_WRITE_ERROR)
       return
     }
 
@@ -285,6 +371,10 @@ export default function CalendarTriage({
   }
 
   const displayRows = searchResults ?? rows
+  // Reads the raw input, not the debounced `search`, so the bulk button leaves the moment the
+  // founder starts typing rather than 300ms later.
+  const filtering = Boolean(searchInput.trim() || search)
+  const offerBulk = canBulkSetAside({ triageEnabled, showTurnedDown, filtering, pending: totalPending })
   const totalForCurrentFilter = showTurnedDown ? turnedDownCount : totalPending
   const totalPages = Math.max(1, Math.ceil(totalForCurrentFilter / PAGE_SIZE))
   const sourceLabel = (id: string | null) => (sources.length > 1 ? sources.find((s) => s.id === id)?.label ?? null : null)
@@ -300,12 +390,7 @@ export default function CalendarTriage({
         and pick up where you left off.
       </p>
 
-      {writeError && (
-        <p style={styles.errorBanner}>
-          Couldn't save that one. This screen needs a database update that hasn't been run yet —
-          see the pending step in PROJECT_CONTEXT.md §10.
-        </p>
-      )}
+      {writeError && <p style={styles.errorBanner}>{writeError}</p>}
 
       <div style={styles.summaryRow}>
         {selectedCount > 0 && (
@@ -334,6 +419,25 @@ export default function CalendarTriage({
         )}
       </div>
 
+      {offerBulk && (
+        <div style={styles.bulkBar}>
+          <p style={styles.bulkText}>
+            {totalPending.toLocaleString()} still to look through — you don't have to face them all today.
+          </p>
+          <button type="button" onClick={() => setBulkOpen(true)} disabled={bulkBusy} style={styles.secondaryButton}>
+            {bulkBusy ? '…' : 'Set aside the rest →'}
+          </button>
+        </div>
+      )}
+
+      {bulkResult && (
+        <UndoBanner
+          message={`${bulkResult.count.toLocaleString()} set aside — back on ${formatDateRange(bulkResult.until, null)}.`}
+          onUndo={() => undoBulkRemind(bulkResult)}
+          busy={bulkBusy}
+        />
+      )}
+
       <SearchBox value={searchInput} onChange={setSearchInput} placeholder="Search by title…" />
 
       {loading && !searchResults ? (
@@ -345,7 +449,9 @@ export default function CalendarTriage({
             : showTurnedDown
               ? 'Nothing turned down.'
               : totalPending === 0
-                ? "Nothing left to look through — you're all caught up."
+                ? bulkResult
+                  ? "All set aside — nothing here until they come back."
+                  : "Nothing left to look through — you're all caught up."
                 : 'Nothing here.'}
         </p>
       ) : (
@@ -468,6 +574,18 @@ export default function CalendarTriage({
           if (target) applyRemind(target, days, makeDefault)
         }}
       />
+
+      <RemindSheet
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title={`Set aside all ${totalPending.toLocaleString()}?`}
+        subtitle="They leave this list now and come back on their own. Nothing is deleted — and you can bring them all back whenever you like from Things to review."
+        showDefault={false}
+        onPick={(days) => {
+          setBulkOpen(false)
+          applyBulkRemind(days)
+        }}
+      />
     </div>
   )
 }
@@ -511,6 +629,18 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   body: { fontSize: fontSize.body, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 0.75rem' },
+  bulkBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: space.md,
+    padding: '0.6rem 0.8rem',
+    backgroundColor: colors.surfaceSunk,
+    borderRadius: radius.md,
+    margin: '0 0 1rem',
+  },
+  bulkText: { fontSize: fontSize.body, color: colors.textMuted, margin: 0 },
   list: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem' },
   row: {
     display: 'flex',

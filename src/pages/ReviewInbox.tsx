@@ -63,12 +63,14 @@ export default function ReviewInbox({
   }
 
   // "Show them now" on the set-aside row: pull everything back into the queue rather than making
-  // the founder wait out a deadline they set themselves.
+  // the founder wait out a deadline they set themselves. Back to 'pending', matching
+  // wakeDueDeferrals — same reasoning, and the deadline arriving early shouldn't change where
+  // things land.
   async function wakeAllDeferred() {
     setWaking(true)
     await supabase
       .from('moment_import_candidates')
-      .update({ status: 'selected', deferred_until: null })
+      .update({ status: 'pending', deferred_until: null })
       .eq('status', 'deferred')
     await load()
     setWaking(false)

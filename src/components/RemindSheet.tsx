@@ -17,12 +17,22 @@ export default function RemindSheet({
   onClose,
   onPick,
   title = 'Remind me about this…',
+  subtitle = 'It leaves your queue now and comes back on its own.',
+  showDefault = true,
 }: {
   open: boolean
   onClose: () => void
-  /** `makeDefault` true means "don't ask me again, just use this". */
+  /** `makeDefault` true means "don't ask me again, just use this". Always false when `showDefault` is off. */
   onPick: (days: number, makeDefault: boolean) => void
   title?: string
+  subtitle?: string
+  /**
+   * Off for "Set aside the rest" (CalendarTriage.tsx). The checkbox saves a default for the
+   * ONE-ROW Remind Me button, and a founder ticking it while answering "how long for all 1,300?"
+   * would be silently answering a different question — and turning the single-row button into a
+   * one-tap act with no sheet, which they never asked for.
+   */
+  showDefault?: boolean
 }) {
   const [makeDefault, setMakeDefault] = useState(false)
 
@@ -31,24 +41,26 @@ export default function RemindSheet({
       open={open}
       onClose={onClose}
       title={title}
-      subtitle="It leaves your queue now and comes back on its own."
+      subtitle={subtitle}
       actions={REMIND_OPTIONS.map((option) => ({
         label: option.label,
         onClick: () => {
-          onPick(option.days, makeDefault)
+          onPick(option.days, showDefault && makeDefault)
           setMakeDefault(false)
         },
       }))}
       footer={
-        <label style={styles.checkboxRow}>
-          <input
-            type="checkbox"
-            checked={makeDefault}
-            onChange={(e) => setMakeDefault(e.target.checked)}
-            style={styles.checkbox}
-          />
-          <span>Use this as my default, don't ask again</span>
-        </label>
+        showDefault ? (
+          <label style={styles.checkboxRow}>
+            <input
+              type="checkbox"
+              checked={makeDefault}
+              onChange={(e) => setMakeDefault(e.target.checked)}
+              style={styles.checkbox}
+            />
+            <span>Use this as my default, don't ask again</span>
+          </label>
+        ) : undefined
       }
     />
   )

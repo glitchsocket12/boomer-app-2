@@ -27,6 +27,37 @@ export const REMIND_OPTIONS: { label: string; days: number }[] = [
   { label: 'In 6 months', days: 180 },
 ]
 
+/**
+ * Below this many undecided rows, "Set aside the rest" isn't offered.
+ *
+ * The button exists because a queue of 1,300 is a different problem from a queue of 12, not
+ * because bulk is nicer. Offering it over a handful adds a heavyweight, slightly alarming control
+ * to a list the founder could clear in a minute.
+ */
+export const BULK_SET_ASIDE_MIN = 25
+
+/**
+ * May the triage page offer "Set aside the rest" right now?
+ *
+ * Its own tested predicate because it guards the largest single write in the app — one statement
+ * that moves every undecided calendar candidate at once. Each clause is load-bearing:
+ *
+ * - `triageEnabled`: gate on the migration probe rather than the per-row fail-open banner. A bulk
+ *   button that fails *after* you press it is far worse than one that was never offered.
+ * - `filtering` / `showTurnedDown`: the write acts on the whole undecided pile, so it must never
+ *   sit beside a list that is showing something narrower. A bulk action next to a search box
+ *   invites exactly the wrong assumption about what it will touch. Search-scoped bulk actions are
+ *   a separate feature with their own wording.
+ */
+export function canBulkSetAside(o: {
+  triageEnabled: boolean
+  showTurnedDown: boolean
+  filtering: boolean
+  pending: number
+}): boolean {
+  return o.triageEnabled && !o.showTurnedDown && !o.filtering && o.pending >= BULK_SET_ASIDE_MIN
+}
+
 export type ReviewCounts = {
   /** Calendar events not yet triaged — the fast Keep / Not this one list. */
   calendarToTriage: number
@@ -134,7 +165,21 @@ export function resetTriageProbe() {
 }
 
 /**
- * Puts every set-aside calendar candidate whose date has arrived back into the review queue.
+ * Puts every set-aside calendar candidate whose date has arrived back into the queue.
+ *
+ * They come back as 'pending' — the quiet "still to look through" pile they left — and NOT as
+ * 'selected'. Waking to 'selected' drops them into the counted "ready to review" queue, and since
+ * "Set aside the rest" can defer a whole backlog in one tap (CalendarTriage.tsx), that would mean
+ * a founder who set aside 1,300 events is met six months later by "1,300 calendar events ready to
+ * review" — the exact overwhelm reviewTotal stopped shouting on 2026-08-22, redelivered on a
+ * timer. A button whose promise is "this leaves your plate" has to still be keeping it when the
+ * rows come back.
+ *
+ * The cost is one tap on the rarer path: a card set aside from the DETAILED queue
+ * (ImportReview.tsx) had already been kept in triage, and now returns to the triage list rather
+ * than the detailed one. Its row there leads with "Add More Detail", so keeping it again is a
+ * single tap and no decision is lost. Telling the two origins apart would take a column and a
+ * hand-run migration, which isn't worth one tap.
  *
  * Idempotent and near-free: it matches only rows that have actually come due (a partial index
  * covers exactly this predicate), so on most visits it updates nothing. Called on load by the
@@ -145,7 +190,7 @@ export async function wakeDueDeferrals(): Promise<void> {
   if (!(await probeTriageEnabled())) return
   await supabase
     .from('moment_import_candidates')
-    .update({ status: 'selected', deferred_until: null })
+    .update({ status: 'pending', deferred_until: null })
     .eq('status', 'deferred')
     .lte('deferred_until', todayIso())
 }

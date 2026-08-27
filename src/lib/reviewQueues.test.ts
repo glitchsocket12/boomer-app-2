@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { DEFER_DAYS, EMPTY_COUNTS, REMIND_OPTIONS, deferUntilIso, reviewTotal, todayIso } from './reviewQueues'
+import {
+  BULK_SET_ASIDE_MIN,
+  DEFER_DAYS,
+  EMPTY_COUNTS,
+  REMIND_OPTIONS,
+  canBulkSetAside,
+  deferUntilIso,
+  reviewTotal,
+  todayIso,
+} from './reviewQueues'
 
 describe('todayIso', () => {
   it('formats the browser-local calendar day, not a UTC instant', () => {
@@ -95,5 +104,40 @@ describe('reviewTotal — gender gaps', () => {
     // A few hundred blank genders would swamp a number whose whole job is "this much is waiting
     // on you". The inbox shows it on its own quiet row instead.
     expect(reviewTotal({ ...EMPTY_COUNTS, calendarToReview: 3, genderGaps: 400 })).toBe(3)
+  })
+})
+
+describe('canBulkSetAside', () => {
+  // The guard on the largest single write in the app — one statement that defers every undecided
+  // calendar candidate at once. Each clause gets its own case because dropping any one of them
+  // silently is the failure mode that matters.
+  const ok = { triageEnabled: true, showTurnedDown: false, filtering: false, pending: 1300 }
+
+  it('is offered on a big undecided pile', () => {
+    expect(canBulkSetAside(ok)).toBe(true)
+  })
+
+  it('is withheld until the triage migration has been run', () => {
+    // Gating on the probe rather than the per-row fail-open banner: a bulk button that fails after
+    // you press it is much worse than one that was never there.
+    expect(canBulkSetAside({ ...ok, triageEnabled: false })).toBe(false)
+  })
+
+  it('is withheld while a search is narrowing the list', () => {
+    // It acts on the whole pending pile, so it must never sit next to a filtered list — the
+    // founder would reasonably read it as "set aside these 23 dentist appointments".
+    expect(canBulkSetAside({ ...ok, filtering: true })).toBe(false)
+  })
+
+  it('is withheld on the turned-down list', () => {
+    // Those rows are already decided; there is nothing there for it to act on and the label would
+    // describe the wrong pile.
+    expect(canBulkSetAside({ ...ok, showTurnedDown: true })).toBe(false)
+  })
+
+  it('is withheld for a pile small enough to just do', () => {
+    expect(canBulkSetAside({ ...ok, pending: BULK_SET_ASIDE_MIN - 1 })).toBe(false)
+    expect(canBulkSetAside({ ...ok, pending: BULK_SET_ASIDE_MIN })).toBe(true)
+    expect(canBulkSetAside({ ...ok, pending: 0 })).toBe(false)
   })
 })
