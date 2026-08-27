@@ -35,6 +35,7 @@ import UndoBanner from '../components/UndoBanner'
 import ManagePanel from '../components/ManagePanel'
 import FloatingActionBubble from '../components/FloatingActionBubble'
 import SummaryText from '../components/SummaryText'
+import AddressSuggestInput from '../components/AddressSuggestInput'
 import { IS_TOUCH } from '../lib/touch'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space, subgroupPalette } from '../lib/theme'
 import { fullName } from '../lib/personLabel'
@@ -137,6 +138,17 @@ export default function GroupDetail({
   const [groupPickerSearch, setGroupPickerSearch] = useState('')
   const [membersExpanded, setMembersExpanded] = useState(false)
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(false)
+  // The group's active window (2026-08-23). `windowSupported` stays false until the migration's
+  // columns actually answer, which is what hides the whole row rather than showing empty fields
+  // that silently refuse to save.
+  const [windowSupported, setWindowSupported] = useState(false)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [groupLocation, setGroupLocation] = useState('')
+  const [savingWindow, setSavingWindow] = useState(false)
+  const [windowError, setWindowError] = useState<string | null>(null)
+  // What the database actually holds, so tabbing through a field you didn't touch writes nothing.
+  const savedWindowRef = useRef({ start_date: '', end_date: '', location: '' })
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   // Consolidates rename-adjacent-but-rare actions (type, merge/nest, delete) behind one "⋯ Manage"
   // trigger (2026-08-07 redesign) — previously the type picker sat inline on the page and
@@ -210,6 +222,7 @@ export default function GroupDetail({
     loadGroupNotes()
     loadAssociatedGroups()
     loadSuggestionsEnabled()
+    loadGroupWindow()
     loadSubgroups()
     setName(groupName)
     setNameInput(groupName)
@@ -527,6 +540,71 @@ export default function GroupDetail({
     setSuggestionsEnabled(enabled)
     const { error } = await supabase.from('groups').update({ suggestions_enabled: enabled }).eq('id', groupId)
     if (error) setSuggestionsEnabled(!enabled)
+  }
+
+  // The group's own dates and place — what lets an event tag itself to this group without anyone
+  // sharing a membership yet (founder report 2026-08-23; see lib/groupWindow.ts). Isolated query
+  // for the same reason as loadSuggestionsEnabled above: on a database where the
+  // 2026-08-23-group-active-window migration hasn't been pasted in, this fails and the row hides,
+  // instead of a `.select()` naming three missing columns taking the member list down with it.
+  async function loadGroupWindow() {
+    const { data, error } = await supabase
+      .from('groups')
+      .select('start_date, end_date, location')
+      .eq('id', groupId)
+      .single()
+    setWindowError(null)
+    if (error || !data) {
+      setWindowSupported(false)
+      return
+    }
+    setWindowSupported(true)
+    setStartDate(data.start_date ?? '')
+    setEndDate(data.end_date ?? '')
+    setGroupLocation(data.location ?? '')
+    savedWindowRef.current = {
+      start_date: data.start_date ?? '',
+      end_date: data.end_date ?? '',
+      location: data.location ?? '',
+    }
+  }
+
+  // One write per field, on blur. Empty string means "clear it" — a group that turns out not to
+  // be a bounded thing after all has to be able to go back to having no window, which is the
+  // always-relevant default every other group sits at.
+  async function handleSaveWindow(patch: { start_date?: string; end_date?: string; location?: string }) {
+    const normalized: Record<string, string | null> = {}
+    const nextSaved = { ...savedWindowRef.current }
+    for (const [key, value] of Object.entries(patch)) {
+      const trimmed = value?.trim() ?? ''
+      // Blur fires whether or not anything was typed, so an unchanged field is a no-op rather
+      // than a pointless round trip on every tab press.
+      if (trimmed === savedWindowRef.current[key as keyof typeof nextSaved]) continue
+      normalized[key] = trimmed || null
+      nextSaved[key as keyof typeof nextSaved] = trimmed
+    }
+    if (Object.keys(normalized).length === 0) return
+
+    // An end before the start isn't a window at all — matchGroupWindow would read it as
+    // open-ended and quietly stop matching on dates. Refuse it and say so, rather than storing
+    // something that looks saved and silently does nothing.
+    if (nextSaved.start_date && nextSaved.end_date && nextSaved.end_date < nextSaved.start_date) {
+      setWindowError('The end date is before the start date.')
+      return
+    }
+
+    setSavingWindow(true)
+    setWindowError(null)
+    const { error } = await supabase.from('groups').update(normalized).eq('id', groupId)
+    setSavingWindow(false)
+    if (error) {
+      // Surfaced rather than swallowed, and then re-read from the database, so a field that
+      // didn't save can't keep showing the value the founder typed as though it had.
+      setWindowError("Couldn't save that — please try again.")
+      loadGroupWindow()
+      return
+    }
+    savedWindowRef.current = nextSaved
   }
 
   // Scopes the tree to this group's own lineage (buildDescendantTree, via memberIds) rather than
@@ -1265,6 +1343,16 @@ export default function GroupDetail({
       undoBusy={undoBusy}
       suggestionsEnabled={suggestionsEnabled}
       onToggleSuggestions={handleToggleSuggestions}
+      windowSupported={windowSupported}
+      startDate={startDate}
+      endDate={endDate}
+      groupLocation={groupLocation}
+      savingWindow={savingWindow}
+      windowError={windowError}
+      onStartDateChange={setStartDate}
+      onEndDateChange={setEndDate}
+      onGroupLocationChange={setGroupLocation}
+      onSaveWindow={handleSaveWindow}
       onApproveAllSuggestions={handleApproveAllSuggestions}
       onDropAddToSubgroup={handleDropAddToSubgroup}
       onDenySuggestion={handleDenySuggestion}
@@ -1395,6 +1483,16 @@ export function GroupDetailView({
   onDropAddToSubgroup = () => {},
   suggestionsEnabled = false,
   onToggleSuggestions = () => {},
+  windowSupported = false,
+  startDate = '',
+  endDate = '',
+  groupLocation = '',
+  savingWindow = false,
+  windowError = null,
+  onStartDateChange = () => {},
+  onEndDateChange = () => {},
+  onGroupLocationChange = () => {},
+  onSaveWindow = () => {},
   onApproveAllSuggestions = () => {},
   onDenySuggestion = () => {},
   onDenyAllSuggestions = () => {},
@@ -1466,6 +1564,16 @@ export function GroupDetailView({
   onAddSubgroup?: () => void
   suggestedParentMembers?: PersonRef[]
   suggestionsEnabled?: boolean
+  windowSupported?: boolean
+  startDate?: string
+  endDate?: string
+  groupLocation?: string
+  savingWindow?: boolean
+  windowError?: string | null
+  onStartDateChange?: (value: string) => void
+  onEndDateChange?: (value: string) => void
+  onGroupLocationChange?: (value: string) => void
+  onSaveWindow?: (patch: { start_date?: string; end_date?: string; location?: string }) => void
   onToggleSuggestions?: (enabled: boolean) => void
   confirmedAssociatedGroups: GroupRef[]
   suggestedAssociatedGroups: GroupRef[]
@@ -1609,6 +1717,18 @@ export function GroupDetailView({
     [subgroups, subgroupColorPins]
   )
   const memberSubgroups = useMemo(() => subgroupsByPerson(subgroups), [subgroups])
+
+  // Places this group's own events already happened, most-used first — offered under the "Where"
+  // field, which is almost always where the answer already is. Bounded by this group's events, so
+  // no extra account-wide query.
+  const recentGroupLocations = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const m of moments) {
+      const value = m.location?.trim()
+      if (value) counts.set(value, (counts.get(value) ?? 0) + 1)
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([value]) => value)
+  }, [moments])
   // A rolled-up member is by definition in a subgroup somewhere, so they're never "unassigned" —
   // even when the subgroup they're in is a grandchild, too deep to have a colour dot of its own
   // (dots only cover this group's DIRECT subgroups).
@@ -1700,6 +1820,66 @@ export function GroupDetailView({
         <p style={styles.summary}>{summary || 'Figuring out what this group is about…'}</p>
         {!readOnly && <RefreshButton label="Refresh description" onClick={onRefreshSummary} refreshing={refreshingSummary} />}
       </div>
+
+      {/* When and where this group actually is (2026-08-23). Deliberately out here on the page
+          rather than inside "⋯ Manage": Manage is for type/merge/delete, and burying the dates is
+          how the founder ended up with a group the app couldn't recognise in the first place.
+          Hidden entirely in read-only/demo mode and on a database still missing the columns. */}
+      {!readOnly && windowSupported && (
+        <div style={styles.windowSection}>
+          <h2 style={styles.windowHeading}>When and where</h2>
+          <p style={styles.windowHint}>
+            For a group that happens at a set time and place — a course, a trip, a deployment. Grove
+            uses this to spot events that belong to it. Leave blank for a group that's always
+            around.
+          </p>
+          <div style={styles.windowFieldRow}>
+            <label style={styles.windowField}>
+              <span style={styles.windowLabel}>Starts</span>
+              <input
+                type="date"
+                value={startDate}
+                disabled={savingWindow}
+                onChange={(e) => onStartDateChange(e.target.value)}
+                onBlur={() => onSaveWindow({ start_date: startDate })}
+                style={styles.windowInput}
+              />
+            </label>
+            <label style={styles.windowField}>
+              <span style={styles.windowLabel}>Ends</span>
+              <input
+                type="date"
+                value={endDate}
+                disabled={savingWindow}
+                onChange={(e) => onEndDateChange(e.target.value)}
+                onBlur={() => onSaveWindow({ end_date: endDate })}
+                style={styles.windowInput}
+              />
+            </label>
+          </div>
+          <div style={styles.windowField}>
+            <span style={styles.windowLabel}>Where</span>
+            {/* Suggests places this group's own events already happened, which is almost always
+                the answer, before it reaches out to Geoapify at all. */}
+            <AddressSuggestInput
+              value={groupLocation}
+              onChange={onGroupLocationChange}
+              recentValues={recentGroupLocations}
+              placeholder="Pensacola, FL"
+              disabled={savingWindow}
+            />
+            <button
+              type="button"
+              onClick={() => onSaveWindow({ location: groupLocation })}
+              disabled={savingWindow}
+              style={styles.windowSaveButton}
+            >
+              {savingWindow ? 'Saving…' : 'Save place'}
+            </button>
+          </div>
+          {windowError && <p style={styles.windowErrorText}>{windowError}</p>}
+        </div>
+      )}
 
       <PhotoGallery />
 
@@ -3013,6 +3193,43 @@ const styles: { [key: string]: React.CSSProperties } = {
     marginBottom: space.xxl,
   },
   summaryRow: { display: 'flex', alignItems: 'flex-start', gap: space.md, marginBottom: space.xxxl },
+  // "When and where" (2026-08-23). Sits between the description and the member list, styled as a
+  // quiet card rather than a form so a group that has no window doesn't look like it's missing
+  // something — most groups genuinely have none.
+  windowSection: {
+    border: border.default,
+    borderRadius: radius.md,
+    padding: space.lg,
+    marginBottom: space.xxxl,
+    backgroundColor: colors.surface,
+  },
+  windowHeading: { fontSize: '1.1rem', color: colors.ink, margin: 0 },
+  windowHint: { margin: '0.35rem 0 0.9rem 0', fontSize: fontSize.small, color: colors.textFaint, fontStyle: 'italic' },
+  windowFieldRow: { display: 'flex', gap: space.lg, flexWrap: 'wrap', marginBottom: space.md },
+  windowField: { display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: '1 1 12rem', minWidth: 0 },
+  windowLabel: { fontSize: fontSize.label, color: colors.textMuted },
+  windowInput: {
+    fontSize: fontSize.label,
+    padding: '0.35rem 0.6rem',
+    borderRadius: radius.sm,
+    border: border.default,
+    fontFamily,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
+  },
+  windowSaveButton: {
+    alignSelf: 'flex-start',
+    marginTop: '0.4rem',
+    fontSize: fontSize.label,
+    padding: '0.35rem 0.8rem',
+    borderRadius: radius.sm,
+    border: border.default,
+    fontFamily,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
+    cursor: 'pointer',
+  },
+  windowErrorText: { margin: '0.6rem 0 0 0', fontSize: fontSize.label, color: colors.danger },
   summary: { margin: 0, flex: 1, fontSize: fontSize.base, color: colors.textMuted, fontStyle: 'italic' },
   membersHeading: { fontSize: '1.1rem', color: colors.ink, margin: '0 0 0.5rem 0' },
   eventOnlyLabel: { margin: '0.75rem 0 0.5rem 0', fontSize: fontSize.label, color: colors.textFaint, fontStyle: 'italic' },

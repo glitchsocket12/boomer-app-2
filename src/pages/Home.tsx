@@ -676,7 +676,7 @@ export function HomeView({
                             >
                               {groupLabel(s.groupId, s.groupName)}
                             </button>
-                            ? Everyone who was there is a member.
+                            ? {s.reason}
                           </>
                         )}
                         {s.kind === 'family_group' && (
