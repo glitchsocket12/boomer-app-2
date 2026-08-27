@@ -90,7 +90,7 @@ export default function ReviewInbox({
       key: 'calendar-triage',
       label: `${counts.calendarToTriage.toLocaleString()} calendar event${counts.calendarToTriage === 1 ? '' : 's'} to look through`,
       count: counts.calendarToTriage,
-      blurb: 'A quick pass — keep the ones that meant something, one line at a time.',
+      blurb: "No rush — they'll keep. A quick pass whenever you feel like it, one line at a time.",
       onOpen: onOpenCalendarTriage,
       quiet: true,
     })
@@ -118,7 +118,7 @@ export default function ReviewInbox({
       key: 'contacts-triage',
       label: `${counts.contactsToTriage.toLocaleString()} more contact${counts.contactsToTriage === 1 ? '' : 's'} to look through`,
       count: counts.contactsToTriage,
-      blurb: 'From your contacts file — pick the people you actually want on file.',
+      blurb: "No rush — from your contacts file, whenever you want to pick who's worth keeping.",
       onOpen: onOpenContactSelection,
       quiet: true,
     })

@@ -34,18 +34,30 @@ describe('deferUntilIso', () => {
 })
 
 describe('reviewTotal', () => {
-  it('sums every queue that is actually waiting on the founder', () => {
+  it('sums only the queues that are actually waiting on the founder', () => {
     expect(
       reviewTotal({
         ...EMPTY_COUNTS,
-        calendarToTriage: 200,
         calendarToReview: 14,
         birthdays: 3,
-        contactsToTriage: 40,
         contactsToReview: 2,
         photos: 1,
       })
-    ).toBe(260)
+    ).toBe(20)
+  })
+
+  it('leaves BOTH "still to look through" piles out, however big they get', () => {
+    // The case this exists for: a 1,300-event calendar sync made Home read "1,300 things to
+    // review", which is the overwhelm itself. An untriaged pile is a resting state, not a queue
+    // with your name on it — same reasoning ContactSelection was built with from the start.
+    expect(
+      reviewTotal({
+        ...EMPTY_COUNTS,
+        calendarToTriage: 1300,
+        contactsToTriage: 2008,
+        calendarToReview: 4,
+      })
+    ).toBe(4)
   })
 
   it('leaves set-aside out — "Not now" has to actually take it off your plate', () => {

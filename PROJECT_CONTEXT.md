@@ -486,7 +486,15 @@ src/
 │   │                            Calendar both read it, so the two can't disagree; ReviewInbox.tsx
 │   │                            shows the same numbers as a breakdown) — set-aside is deliberately
 │   │                            OUT of `total` via `reviewTotal()`, since "Not now" has to actually
-│   │                            take something off the plate. `probeTriageEnabled()` memoises a
+│   │                            take something off the plate. **So are BOTH "still to look through"
+│   │                            piles (`calendarToTriage`/`contactsToTriage`), restored 2026-08-22**
+│   │                            after a 1,300-event sync made Home read "1,300 things to review" —
+│   │                            that number IS the overwhelm. An untriaged pile is a resting state,
+│   │                            not a queue with your name on it; ContactSelection was built that way
+│   │                            from the start (Home counted only 'selected') and folding every pile
+│   │                            into one number when this module was written threw it away. The
+│   │                            nudge now counts only what you've already said yes to looking at;
+│   │                            both piles keep their own quiet rows on ReviewInbox, nothing hidden. `probeTriageEnabled()` memoises a
 │   │                            one-shot `select('id, deferred_until')` — an unknown COLUMN errors,
 │   │                            an unknown status VALUE would not, so it's the reliable test for
 │   │                            "has 2026-08-19-calendar-triage-and-defer.sql been run"; false keeps

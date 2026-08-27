@@ -81,9 +81,20 @@ export function deferUntilIso(now: Date = new Date(), days: number = DEFER_DAYS)
  * Neither is `genderGaps`. It's a one-time cleanup pass rather than something that arrived and
  * needs deciding, and a few hundred blank genders would swamp a number whose whole job is to mean
  * "this much is waiting on you". It gets its own quiet row on the inbox instead.
+ *
+ * And NEITHER "still to look through" pile — `calendarToTriage`, `contactsToTriage` — for the same
+ * reason, restored 2026-08-22 after a 1,300-event sync made Home read "1,300 things to review".
+ * That number IS the overwhelm: an untriaged pile is a resting state, not a queue with your name on
+ * it. ContactSelection was built this way from the start — Home counted only `selected`, with the
+ * undecided count in a quieter secondary line, precisely so "a founder mid-way through curating a
+ * large contacts file shouldn't feel nagged about the ones they haven't gotten to yet" — and
+ * folding every pile into one number when this module was written quietly threw that away.
+ *
+ * What's left is the honest reading of the nudge: things you have already said yes to looking at.
+ * Both piles keep their own quiet rows on ReviewInbox, so nothing is hidden and no count is lost.
  */
 export function reviewTotal(c: Omit<ReviewCounts, 'total'>): number {
-  return c.calendarToTriage + c.calendarToReview + c.birthdays + c.contactsToTriage + c.contactsToReview + c.photos
+  return c.calendarToReview + c.birthdays + c.contactsToReview + c.photos
 }
 
 // Each count is its own `head: true` query, so a table that doesn't exist yet (or a status value a
