@@ -1907,3 +1907,2819 @@ the first AI call after deploy pays one uncached prompt — one call, not a regr
 — it's the `boomer-nav` session key, the Google Photos OAuth state key, the live Vercel
 hostname, and one test fixture. This file keeps Boomer and Porch in its dated entries; that's
 what the product was called at the time.
+
+
+---
+
+## 2026-08-27 — Archive: the old §3 Frontend map (per-file rationale)
+
+_Archived verbatim from `PROJECT_CONTEXT.md` §3 when that section was compressed from 2,131 lines to a
+one-line-per-file index (founder budget directive, 2026-08-27). This is the "why" behind individual
+files: build stories, founder decisions, dated fixes, and rationale that used to hang off the file tree.
+Search it by FILENAME when you need the reasoning behind a specific file — do not read it top to bottom.
+Anything here that was still a live rule or constraint was kept in `PROJECT_CONTEXT.md`; everything
+below is history._
+
+## 3. Frontend map
+
+```
+src/
+├── main.tsx / index.css       — entry, global styles (incl. `spin` keyframe)
+├── lib/
+│   ├── supabase.ts            — shared client (reads VITE_* env)
+│   ├── theme.ts               — (2026-08-01) design tokens: `colors`/`radius`/`fontSize`/
+│   │                            `fontFamily`/`space`/`maxWidth`/`shadow`/`border`. The app has no
+│   │                            CSS framework; everything is inline `style={{}}`, so this is the
+│   │                            single source of truth for the palette.
+│   │                            **Repositioned 2026-08-07** (founder-directed, mockup-approved —
+│   │                            Airtable/Day One/Google-inspired): near-black `ink` (was forest
+│   │                            green) is now TEXT ONLY; new `colors.primary` (`#2D7FF9` blue) is
+│   │                            the accent — filled buttons, active borders, links. Every
+│   │                            `backgroundColor: colors.ink` / `border: border.ink` accent usage
+│   │                            was swept to `primary` across the codebase (mechanical rule: fills
+│   │                            and emphasis borders → primary, plain heading/body text → stays
+│   │                            ink). `suggest`/`event`/`tree`/`info` retuned to ONE shared HSL
+│   │                            recipe (same sat/lightness, hue is the only thing that varies) —
+│   │                            fixes a palette that read as "disjointed." `radius` bumped larger,
+│   │                            `shadow` softened, `fontFamily` is now system-sans (was Georgia
+│   │                            serif). `CountdownsSection.tsx` was skipped in that sweep
+│   │                            (concurrent uncommitted work at the time) and **caught up
+│   │                            2026-08-19**: its three filled controls (+ Add, Save, active
+│   │                            chip) now read `primary` like every other fill in the app.
+│   │                            This is Section 1 of a larger structural rework (Manage popups,
+│   │                            consistent page section order, floating chat, nav/avatar, calendar
+│   │                            enhancements) — see the mockup artifact for the full picture;
+│   │                            those are separate, not-yet-built sections.
+│   │                            Also exports `subgroupPalette` (2026-08-04): 8 EXISTING tokens
+│   │                            reordered by hue distance for telling subgroups apart on
+│   │                            GroupDetail — a reordering for a new job, not a new shade.
+│   ├── geoapify.ts             — (2026-07-26) fetchAddressSuggestions(): thin client for
+│   │                            Geoapify's Address Autocomplete API (key restricted by referrer,
+│   │                            safe client-side, no proxy). Reads `VITE_GEOAPIFY_API_KEY`; returns
+│   │                            [] (no error) if unset or the call fails — see §2/§10 for the
+│   │                            founder's signup step.
+│   ├── dates.ts               — eventSortDate/formatMonthYear (tested)
+│   ├── countdowns.ts          — (2026-08-06, item 83) the Calendar Countdowns section's date math
+│   │                            + write path. Pure/tested: `breakdown` (calendar-correct
+│   │                            years/months/weeks/days/h/m/s — walks real months, clamps Jan 31
+│   │                            + 1mo to Feb 28, counts days DST-safe), `displayUnits` (4 columns
+│   │                            from the largest non-zero unit; count-ups stop at Days and trim
+│   │                            trailing zeroes, countdowns run to Seconds and DON'T trim so a
+│   │                            ticking card can't reflow), `tickMs` (1s only when a visible card
+│   │                            shows minutes/seconds, else 60s), `buildCards` (derives every card
+│   │                            from moments/people/rows — no queries, so it's testable and the
+│   │                            Calendar page's existing data is reused; sorts ONE chronological
+│   │                            timeline, oldest first, which is what the Today line splits).
+│   │                            Per-card settings (2026-08-06): `breakdownIn` (the breakdown in
+│   │                            exactly the chosen units — Days alone = TOTAL days, not the
+│   │                            remainder; unselected units fold into the next one chosen),
+│   │                            `nextOccurrence` (repeat rolls the displayed date forward, clamping
+│   │                            Feb 29), `cardIdentity` (stable across a rebuild — a card's `key`
+│   │                            isn't, since saving a setting on a derived card creates a row for
+│   │                            it). DB side: `loadCountdowns` (returns
+│   │                            `{rows, available, settingsAvailable}`, same fail-open contract as
+│   │                            pets.ts — and retries without the settings columns if that second
+│   │                            migration hasn't run), `addCountdown`, `pinMoment` (un-hides rather
+│   │                            than duplicating), `dismissCountdown` (delete / hide / hide-derived,
+│   │                            never touches the underlying event or birthday; returns WHAT changed
+│   │                            so the section folds one row in instead of refetching),
+│   │                            `saveCountdownSettings` (creates the row first for a derived card).
+│   ├── moments.ts             — (2026-08-06) `createEventShell()`: the blank-event insert +
+│   │                            self-attendee note, lifted out of Events.tsx so the Countdowns
+│   │                            section's "a countdown and a real event" uses the same write path.
+│   │                            (2026-08-08) `ATTENDEE_PLACEHOLDER` ('Was there.') + tested
+│   │                            `hasSomethingToSummarize()`: the gate deciding whether a paid
+│   │                            summarize-moment call is worth firing. True for a real description
+│   │                            OR any note with real content; the auto-inserted self-attendee row
+│   │                            doesn't count, or every blank shell would burn a call per page view.
+│   ├── summarize.ts           — short title helper (tested)
+│   ├── summaryFormat.ts       — (2026-08-10, tested) parses a stored event summary into blocks for
+│   │                            SummaryText.tsx. Recognises the `<date> · <title> — <sentence>`
+│   │                            lines summarize-moment emits for a parent event's sub-events;
+│   │                            splits on the FIRST dash (sentences contain em dashes) and requires
+│   │                            a short date-shaped cell with a digit, so prose containing a "·"
+│   │                            isn't mistaken for a sub-event line. No prompt change — rendering
+│   │                            only, so no summary needs regenerating. **2026-08-17:** also parses
+│   │                            `- ` bullet lines (accepting •/*/– drift), which is what ordinary
+│   │                            events are summarized as now; requires the trailing space so a date
+│   │                            range ("2018-2019") is never read as a bullet. A trailing non-bullet
+│   │                            line stays a paragraph — the "nothing else was recorded" note.
+│   ├── people.ts              — sortByLastName
+│   ├── pets.ts                — (2026-08-01) the single write path for pets: loadPetsForPerson
+│   │                            (returns `{pets, available}` — `available:false` means the
+│   │                            migration hasn't run, which the UI must not confuse with "no
+│   │                            pets"), loadAllPets, loadPet, loadPetOwners, loadOwnersByPetId
+│   │                            (all pets' owners in ONE round trip — the People list must not
+│   │                            query per pet), createAndLinkPet, linkPet, unlinkPet, updatePet,
+│   │                            deletePet (real delete, vs unlinkPet's detach), plus pure
+│   │                            formatPetLine/formatPetDates/isMemorial/petEmoji (tested).
+│   │                            Living pets sort before memorials. `petEmoji` keyword-matches
+│   │                            species AND breed (species is free text, so "pup"/"black lab"/
+│   │                            "goldendoodle" must all reach the dog); a keyword must align with
+│   │                            a WORD BOUNDARY on at least one side — plain substring matching
+│   │                            read "wallaby" as a dog, requiring both sides would miss
+│   │                            "bulldog". Entry ORDER is load-bearing (fish before cat for
+│   │                            "catfish", dog before cow for "bulldog", snake before rodents for
+│   │                            "rattlesnake", "guinea pig" before "pig"). Unmatched falls back to
+│   │                            a paw, which reads as "this is a pet", never as a wrong guess.
+│   │                            **Pets at events (2026-08-20, founder-reported gap):**
+│   │                            loadPetsForMoments (an event + all its sub-events in ONE round
+│   │                            trip, keyed by moment id, so the Who-Was-There roll-up costs no
+│   │                            extra queries), loadEventsForPet (reverse, newest first, undated
+│   │                            last), tagPetToMoment/untagPetFromMoment (both return whether the
+│   │                            write landed). Same `available` fail-open flag as the person-side
+│   │                            loaders. Untag is detachment only, never a delete.
+│   ├── groupTypes.ts          — GROUP_TYPES fixed list (Family/Friend group/School/
+│   │                            Team/Work), shared by Groups.tsx + GroupDetail.tsx
+│   ├── qualifiedName.ts       — (2026-08-16) the "Parent / Child" chain walk itself, with the
+│   │                            cycle guard. Shared by groupDisplayName.ts and
+│   │                            momentDisplayName.ts so groups and events never drift.
+│   ├── groupDisplayName.ts    — groupDisplayName(group, nameById) → "Parent / Child" for a
+│   │                            subgroup, bare name otherwise. Always qualifies (no
+│   │                            collision check). Single source of the format.
+│   ├── momentDisplayName.ts   — (2026-08-16, tested) the events twin: momentTitle(m) bare,
+│   │                            momentDisplayName(m, titleById, parentById) → "Trip / Day 2",
+│   │                            momentPickerLabel(...) adds " — June 12, 2026". Parentage read
+│   │                            from the map first (pages fetch it separately, fail-open); date
+│   │                            only ever from a real event_date, never the created_at fallback.
+│   ├── searchRanking.ts       — (2026-08-10, tested) rankMatches()/matchScore() for
+│   │                            SearchAddPicker: orders substring matches exact-first,
+│   │                            then prefix ("98 FTS / …" descendants), then own-name
+│   │                            (text past the last "/"), ties shallowest-then-shortest.
+│   │                            Exists because full-chain labels made a parent group
+│   │                            match-collide with all its subgroups and lose. NOTE
+│   │                            (2026-08-21): decoration goes in the picker Item's
+│   │                            `prefix`, never in `label` — `label` is what this
+│   │                            scores, so a leading emoji demotes a prefix match to a
+│   │                            mid-string one (🐕 Maple lost to every "map" name).
+│   ├── globalSearch.ts        — (item 14, 2026-08-12, tested) matching for the global
+│   │                            search panel. SearchDoc = {kind, id, title, display?,
+│   │                            subtitle?, body?, target}. searchDocs() reuses matchScore
+│   │                            on `title` (0-4) and scores a `body`-only hit 5, so a name
+│   │                            finds the person, not the notes mentioning them; ties break
+│   │                            by kind, length, alpha. groupByKind() splits into sections;
+│   │                            snippet() windows a note around the match. Min query 2 chars.
+│   ├── searchCorpus.ts        — (item 14, 2026-08-12) builds that corpus from 6 paged reads
+│   │                            (people/pets/moments/groups/notes/tags) + a module cache.
+│   │                            Filters ATTENDEE_PLACEHOLDER out of notes. Stale-while-
+│   │                            revalidate: cache renders instantly, opening the panel always
+│   │                            re-reads, hover-prefetch respects a 30s floor. clearSearch-
+│   │                            Corpus() on SIGNED_OUT — it holds names and note text.
+│   ├── demoSearchCorpus.ts    — (item 14, 2026-08-12, tested) same SearchDoc[] from static
+│   │                            demoData. Separate mapper (demo uses camelCase FKs); person/
+│   │                            event/group/note/notebook — DemoShell's Crumb has no pet or
+│   │                            tag. Locked notebooks are excluded outright, name included.
+│   ├── locationGroups.ts      — (item 66, 2026-08-12, tested) the "which of these are the
+│   │                            same place?" half of ManageLocations.tsx. clusterKey():
+│   │                            a value starting with a house number keys on
+│   │                            `<number> <street>` with abbreviations expanded (so
+│   │                            "12208 Bandon Dr" and "12208 Bandon Drive, Parker CO 80134"
+│   │                            agree); anything else keys on its fully-normalized self, so
+│   │                            only case/punctuation/spacing noise clusters. Deliberately
+│   │                            will NOT pair "Denver Zoo" with "Denver, CO" — precision,
+│   │                            because a wrong proposal the founder accepts is permanent.
+│   │                            findLocationClusters() returns 2+-member groups with the
+│   │                            most-used spelling suggested; tallyLocations() counts.
+│   ├── subgroupColors.ts      — (2026-08-04, tested) subgroupColorMap() assigns a
+│   │                            `subgroupPalette` colour per subgroup, honouring a pinned
+│   │                            `groups.color_index` (item 82's manual override, 2026-08-12)
+│   │                            and otherwise BY POSITION, skipping colours a pin already
+│   │                            took so an auto colour can never collide with a deliberate
+│   │                            one (cycles only once all 8 are spoken for; position not a
+│   │                            hash of the id, because a hash collides and
+│   │                            two subgroups sharing a colour is the one failure that makes
+│   │                            the feature misleading). subgroupsByPerson() → personId →
+│   │                            subgroups they're in, built from rosters GroupDetail already
+│   │                            has; isUnassigned() drives the "Not in a subgroup" filter.
+│   │                            Structural input type (SubgroupLike), not an import from
+│   │                            pages/. Direct children only. Nothing persisted.
+│   ├── groupRollup.ts         — (2026-08-10, tested) the membership side of the group tree:
+│   │                            anyone in a subgroup is a member of every group above it,
+│   │                            at ANY depth. descendantGroupIds() (cycle-guarded),
+│   │                            mergeRolledUpMembers() → { members, rolledUpIds }, and the
+│   │                            batch rollUpMembersByGroup() for Groups.tsx, which already
+│   │                            holds every roster so its rollup costs no extra query.
+│   │                            DERIVED ONLY — nothing is written to person_groups, so the
+│   │                            row stays on the subgroup and this stays reversible. Rolls
+│   │                            UP only; parent → subgroup auto-fill remains off the table
+│   │                            (2026-07-26 lesson). Group-side twin of the sub-event
+│   │                            attendee rollup in EventDetail.tsx/Events.tsx.
+│   │                            DUPLICATED, deliberately, as supabase/functions/_shared/
+│   │                            groupRollup.ts — Deno can't import from src/. The copies are
+│   │                            pinned together by src/lib/groupRollupParity.test.ts, which
+│   │                            imports both and asserts they agree; without it the group
+│   │                            page and the AI chat could quietly disagree about who's a
+│   │                            member, with nothing erroring.
+│   ├── groupRoster.ts         — (2026-08-01) useGroupRoster() → { nameById, label(id,
+│   │                            fallbackName) }. One small `groups` select on mount, no
+│   │                            cache (converse can create a group server-side mid-chat, so
+│   │                            there's no reliable invalidation point). Fails open to the
+│   │                            bare name on error or unknown id. Used by Home/People/
+│   │                            Events/Circle/GroupDetail, which hold only {id, name} —
+│   │                            PersonDetail/EventDetail/the import-review pages already
+│   │                            load a full roster and call groupDisplayName directly.
+│   ├── relatedEvents.ts       — (2026-08-26) the `moment_links` read/write path: symmetric
+│   │                            event↔event links that are NOT sub-events. normalizeLinkPair
+│   │                            sorts every pair before read and write (same convention as
+│   │                            `relationships`) so a link is one row whichever event it was made
+│   │                            from; loadRelatedEvents is isolated and fail-open (`available`),
+│   │                            and does two round trips rather than a PostgREST embed because
+│   │                            the table has two FKs to `moments` (PGRST201). Tested:
+│   │                            relatedEvents.test.ts covers pair normalization + far-side
+│   │                            extraction.
+│   ├── relationshipsTable.ts  — browser-side upsertRelationship/getRelationshipsForPerson
+│   │                            against the `relationships` table (mirrors the Deno copy in
+│   │                            supabase/functions/_shared/). getRelationshipsMap's scoped id
+│   │                            list is URL-budgeted (2026-08-07 fix): >150 ids fetches the table
+│   │                            unscoped, below that ids go out in batches of 50. A scoped
+│   │                            `.in.()` names the list once per column (~74 chars/id), so 457
+│   │                            ids built a 35 KB URL the gateway 400'd — which read back as
+│   │                            "no relationships" and silently killed Home's family suggestions.
+│   ├── suggestConnections.ts  — (2026-07-25) loadConnectionSuggestions(): generalizes
+│   │                            GroupDetail.tsx's own per-group membership-suggestion signal
+│   │                            (event attendance on a group-tagged moment, or membership in a
+│   │                            confirmed associated group) across every group at once, for
+│   │                            Home's "Connections to make" card. Deterministic, no AI call —
+│   │                            returns a random sample (currently 4) of the full candidate
+│   │                            pool each call, so a large backlog rotates across visits rather
+│   │                            than always showing the same few. accept/dismiss write the same
+│   │                            person_groups/dismissed_person_ids GroupDetail itself writes, so
+│   │                            a suggestion acted on from Home stays consistent there too. Third
+│   │                            signal added 2026-07-26 (item 63): family — spouse of a current
+│   │                            group member, then that couple's kids once the spouse is also a
+│   │                            member, same `suggestFamilyMembers` chaining GroupDetail.tsx's own
+│   │                            "Family of a current member?" box uses, scoped to people already
+│   │                            in some group with a backfill `people` lookup for a suggested
+│   │                            spouse/child who isn't. That family signal was silently dead from
+│   │                            2026-07-26 to 2026-08-07 — see relationshipsTable.ts's URL-budget
+│   │                            note; the scoped fetch 400'd and read back as "no relationships".
+│   │                            (2026-08-08, item 85) Now also the AGGREGATOR for the card:
+│   │                            loadHomeSuggestions() pools four question types and
+│   │                            sampleAcrossKinds() round-robins between them (6 shown, was 4)
+│   │                            so one big pool can't crowd out the rest. suggestionKey() is the
+│   │                            shared identity used as the React key and to drop a row from
+│   │                            local state after a confirmed write. loadConnectionSuggestions()
+│   │                            now returns the WHOLE person→group pool; sampling moved up.
+│   │                            (2026-08-10) Every read in here is paged — person_groups was over
+│   │                            the 1000-row cap, which made already-accepted suggestions come
+│   │                            back forever. See §2's 1000-row-cap entry.
+│   ├── pagedSelect.ts         — (2026-08-10) browser twin of _shared/pagedSelect.ts.
+│   │                            fetchAllRows() pages any account-wide select and REQUIRES an
+│   │                            .order() inside the callback. Use it for every new one.
+│   ├── personLabel.ts         — (2026-08-11, tested, item 33) the only place a person becomes
+│   │                            display text. fullName() joins first + last (replaced four local
+│   │                            copies); personLabel(person, selfId, {capitalize}) returns
+│   │                            "You"/"you" for the account owner — capitalize:false for
+│   │                            mid-sentence copy, since "Is you also a parent of…" is broken
+│   │                            English. DISPLAY ONLY: linkRelationship writes the names it's
+│   │                            given into real note text, so nothing from here may reach a write.
+│   ├── suggestRelationshipGaps.ts — (2026-08-08, item 85) account-wide sweep for family links
+│   │                            that are implied but never written: a current spouse missing as
+│   │                            a parent of the other's child, and two parents of one child with
+│   │                            no couple link. deriveRelationshipGaps() is pure over the
+│   │                            familyTree Graph (unit-tested, no DB). Skips ended unions
+│   │                            (divorce OR a death) — conservative on purpose, since a permanent
+│   │                            family edge is the write. Also skips a child who already has TWO
+│   │                            parents on file (2026-08-10): a spouse would be a third adult, i.e.
+│   │                            a step-parent, and blended families were producing one un-answerable
+│   │                            question per step-child. Accept paths are copies of
+│   │                            FamilyTree.tsx's acceptCoParentSuggestion/acceptSpouseSuggestion,
+│   │                            plus a read-back check because those shared write helpers
+│   │                            return void. NOTE the cascade this can trigger — see item 86.
+│   │                            A co-parent gap also carries `parentNoun` (2026-08-16) — mother/
+│   │                            father off Graph.genderById, "parent" when it can't say — so Home
+│   │                            asks "also Sophie's mother?" not "also a parent of Sophie"
+│   ├── suggestEventGroups.ts  — (2026-08-08, item 85) untagged events whose EVERY attendee (2+)
+│   │                            belongs to one group → "Tag this event as that group?".
+│   │                            All-attendees, not most: at 2+ the real account gave 55 noisy
+│   │                            pairs, all-attendees gave ~10 good ones. Deliberately NOT gated
+│   │                            on groups.suggestions_enabled (that flag means "suggest PEOPLE
+│   │                            for this group" and is off for 63 of 68 groups). Accept copies
+│   │                            EventDetail.tsx's handleTagGroup.
+│   ├── suggestFamilyGroups.ts — (item 98, 2026-08-20, tested) a couple plus the children BOTH
+│   │                            are recorded as parents of → "Make a group for these five?".
+│   │                            The couple is what BOUNDS a household: the family graph is one
+│   │                            connected component, so "3+ people connected in the tree" taken
+│   │                            literally is the whole account. Silent when an existing group
+│   │                            already holds every member, when the union ended, or when either
+│   │                            of the couple has died. Names are assigned after every household
+│   │                            is known, so two generations of Carrolls don't both get offered
+│   │                            as "Carroll Family" (the second becomes "Ward & Heather
+│   │                            Carroll"), and never a name a group already has.
+│   ├── dismissedSuggestions.ts — (2026-08-08, item 85) shared "No" store for the newer
+│   │                            suggestion types, backed by the dismissed_suggestions table
+│   │                            (§6). FAILS CLOSED: if the table is missing the new types return
+│   │                            nothing at all, rather than showing a No button that can't save.
+│   │                            person→group still uses groups.dismissed_person_ids.
+│   ├── writeRelationship.ts   — linkRelationship/createAndLinkRelationship: the shared "+"
+│   │                            write path (relationships table row + both-sides reciprocal
+│   │                            note) used by Circle.tsx and FamilyTree.tsx. syncFamilyClique
+│   │                            (2026-07-25 fix, mirrored in `_shared/relationships.ts`): its
+│   │                            sibling-closure BFS previously only walked EXISTING `sibling`
+│   │                            rows, so two kids independently given the same parent (typical
+│   │                            when building a tree one child at a time, or from different
+│   │                            profiles) never became siblings anywhere — the exact founder
+│   │                            report ("relationships don't sync regardless of whose profile was
+│   │                            centered"). Now also seeds the closure from the anchor's own
+│   │                            recorded parents' other children (once, non-recursively — see
+│   │                            code comment for why this can't cascade into unrelated
+│   │                            half-sibling chains). New `syncSpouseParenthood`: adding a
+│   │                            `spouse` relationship now auto-links the new spouse as a parent of
+│   │                            the other's existing kids (founder decision, 2026-07-25) UNLESS
+│   │                            either side already has another spouse/partner on file (a
+│   │                            remarriage shape — item 24's step-parent concern) — that skipped
+│   │                            case surfaces instead as a new "Is X also Y's parent?" banner in
+│   │                            FamilyTree.tsx (`suggestCoParentLinks`/`coParentSuggestions`,
+│   │                            mirrors the existing reverse "are X/Y married?" banner). New
+│   │                            `invalidateKeyFacts`: nulls a touched person's cached
+│   │                            `people.key_facts`/`key_facts_updated_at` so PersonDetail's Key
+│   │                            Facts chips regenerate fresh instead of going stale after a
+│   │                            relationship change elsewhere — wired into every write site in
+│   │                            this file, `_shared/relationships.ts`, and
+│   │                            `RelationshipSuggestions.tsx` (which had its own independent
+│   │                            spouse-write path, `writeRelationshipTableEntry`, found and fixed
+│   │                            in the same pass). One-time backfill for data already on file
+│   │                            before this shipped: `migrations_manual/2026-07-25-shared-parent-
+│   │                            sibling-backfill.sql` + `2026-07-25-spouse-coparent-backfill.sql`
+│   │                            (same remarriage guard as the runtime fix) — see §10 for
+│   │                            deploy/run status. `syncParentSpouse` (2026-08-05, founder) is the
+│   │                            MIRROR-IMAGE inference: adding a PARENT auto-links that parent's
+│   │                            spouse as the child's other parent ("Linda is Alex's mother" ⇒
+│   │                            Linda's husband is Alex's father). Decision split into two pure,
+│   │                            unit-tested rules — `eligibleCoParentSpouse` (exactly one spouse,
+│   │                            no second parent already on file, 'partner' never counts) and
+│   │                            `coParentNeedsConfirmation` (another partner on file, or a divorce,
+│   │                            or the child carrying the PARENT's surname but not the candidate's
+│   │                            ⇒ ask instead of write). Death is deliberately not a blocker. A
+│   │                            "needs confirmation" verdict falls through to the same
+│   │                            "Is X also Y's parent?" banner as above.
+│   ├── nameGender.ts          — (2026-08-05) `guessGenderFromName`: confident male/female name
+│   │                            lists plus an AMBIGUOUS blocklist checked first, so the clarify
+│   │                            prompt stops asking about the obvious ones. **The lists are SSA
+│   │                            birth counts since 2026-08-19, not hand-typed** — 16,002 names in
+│   │                            `nameGender.generated.ts` (both mirrors), regenerated by
+│   │                            `scripts/build-name-gender.mjs`; a name is listed when ≥500 US
+│   │                            babies got it and ≥90% were that gender, so Jordan/Casey/Taylor are
+│   │                            in neither list and still get asked about. Only two hand-written
+│   │                            overrides remain, both in nameGender.ts: AMBIGUOUS = alex/jess/nat/
+│   │                            sam (shared short forms — a birth certificate can't see the
+│   │                            Alexandra who goes by Alex), and ALSO_MALE/ALSO_FEMALE = the ten
+│   │                            names just under the 90% cut that the old list answered (micah,
+│   │                            willie, carmen…). Hyphenated names
+│   │                            need both halves to agree (else Jean-Pierre reads female). Guesses
+│   │                            NEVER reach the database — they fill gaps in `Graph.genderById`
+│   │                            only, and a recorded gender (including non-binary/other) always wins.
+│   │                            Mirrored at supabase/functions/_shared/nameGender.ts (2026-08-16),
+│   │                            pinned by that file's nameGender.test.ts, which compares the three
+│   │                            name SETS and every lookup across both copies. The edge copy adds
+│   │                            `effectiveGender(recorded, name)` — the recorded-wins precedence as
+│   │                            one function, so callers can't get the order wrong
+│   ├── nameGender.generated.ts — (2026-08-19) AUTO-GENERATED, don't hand-edit. Two comma-joined
+│   │                            strings (6,049 male / 9,953 female) parsed into Sets by
+│   │                            nameGender.ts. A string, not an array literal, for the same TS2590
+│   │                            reason as sportsTeams.generated.ts. Byte-identical copy at
+│   │                            supabase/functions/_shared/. Own lazy chunk, ~42KB gzipped, not in
+│   │                            the entry bundle — only FamilyTree/PersonDetail/GenderFill/demo pull it
+│   ├── nameMatchStrength.ts   — (2026-08-10) `nameMatchStrength(contactFullName, personNameKeys)`
+│   │                            → strong/weak/none. Surnames decide: both sides have one and they
+│   │                            differ = not the same person. weak = first name matches but one
+│   │                            side has no surname on file, an initial against a matching
+│   │                            surname, or a 1-char typo in a 5+ char surname (Baerman/Baermann).
+│   │                            Aliases (nicknames/middle/goes-by) count as given names only,
+│   │                            never surnames — former names are the exception and take their
+│   │                            own 4th arg into `surnames` (item 101). MIRRORED verbatim in
+│   │                            `_shared/nameMatch.ts` for the import; `nameMatch.test.ts` runs
+│   │                            both and fails on drift.
+│   ├── formerNames.ts         — (item 101, 2026-08-21, tested) maiden/former SURNAMES.
+│   │                            parseFormerLastNames (split the comma column), formerFullNames
+│   │                            ("Sarah" + ["Jenkins"] → ["Sarah Jenkins"] — consumers need the
+│   │                            whole old name for search and for the name→id index, since a bare
+│   │                            surname would collide with every relative), formerNameLine
+│   │                            ("Formerly Sarah Jenkins." for the profile). Edge twin at
+│   │                            `_shared/formerNames.ts` adds the prompt clauses, the roster
+│   │                            marker, claimFormerNameKeys, and reuses nicknames.ts's additive
+│   │                            merge; `formerNames.test.ts` runs both and fails on drift.
+│   ├── treeHealth.ts          — (item 20, 2026-08-19, tested) findTreeIssues(graph): the family
+│   │                            data's own sanity check. Pure, over the already-loaded Graph —
+│   │                            no query, no AI. Six checks; two of them (a third parent, two
+│   │                            current partners) are questions, not faults, because both can be
+│   │                            real. Rendered collapsed at the bottom of FamilyTree.tsx.
+│   ├── familyTree.ts          — buildFamilyTree(personId): walks the relationships table
+│   │                            (one full-table fetch, then in-memory graph walk) into the
+│   │                            tiers/branches FamilyTree.tsx renders. `loadFamilyGraph()`
+│   │                            (2026-08-05, was the private `loadGraph`) exports the Graph
+│   │                            itself, so callers that already have it can name relationships
+│   │                            off it with no extra queries.
+│   ├── relationshipCalculator.ts — (2026-08-05) general "what is B to A" kinship engine, the
+│   │                            thing relationshipLabels.ts isn't: cousins with degree+removal,
+│   │                            great-aunts, nieces/nephews, in-laws, ex- vs. deceased spouses.
+│   │                            Pure (no supabase import) and typed on `KinGraph`, a structural
+│   │                            subtype of Graph. BFS up parentsOf from both people to the nearest
+│   │                            shared ancestor, then standard kinship math (degree =
+│   │                            min(dA,dB)-1, removal = |dA-dB|); full-vs-half comes from how many
+│   │                            common ancestors sit at the SAME (dA,dB), which is what stops
+│   │                            recorded grandparents promoting a half sibling to full. Resolution
+│   │                            order self > spouse > blood > step > in-law > sibling-row, each
+│   │                            step commented with the wrong answer it prevents. Gendered wording
+│   │                            via genderById with a neutral fallback; `describeKinPath` renders
+│   │                            the chain ("his mother Jane → her brother Bill → his son Steve").
+│   │                            `genderAlternatives(g, from, to)` (2026-08-05) returns the male and
+│   │                            female wordings behind a fallback that's only vague because gender
+│   │                            isn't on file ("son-in-law"/"daughter-in-law" under "child-in-law"),
+│   │                            null when there's nothing to ask — recomputed on a gender-forced
+│   │                            clone of the graph, never re-derived, so the question can't drift
+│   │                            from the answer. Powers ClarifyGenderPrompt.tsx.
+│   │                            Step logic is DELEGATED to relationshipLabels.ts, not copied.
+│   │                            Bounded by MAX_GENERATIONS 25 / MAX_ANCESTOR_NODES 2000; a
+│   │                            truncated walk reports "unrelated" rather than hanging.
+│   │                            Mirrored (math only) in _shared/kinship.ts for the AI — §4.
+│   ├── acceptCandidate.ts     — (2026-08-19) the ONE write path for turning a calendar-import
+│   │                            candidate into a real event. `acceptCandidate(candidate,
+│   │                            overrides)` creates the moment, attaches attendees/tags/groups and
+│   │                            marks the candidate accepted; `attachAttendees`/`attachTagsAndGroups`
+│   │                            are exported separately for ImportReview's merge-into-an-existing-
+│   │                            event path. Overrides are all optional — omitting them is "accept
+│   │                            it as the scan found it", which is what CalendarTriage's Quick Add
+│   │                            does and what an untouched review card has always saved. Every
+│   │                            write is BATCHED: the original called `auth.getUser()` INSIDE each
+│   │                            attendee loop and awaited one insert per attendee/tag/group (~15
+│   │                            serial round trips for 5 people + 3 tags); now one auth call and
+│   │                            one array statement per table. `undoQuickAdd` deletes dependents
+│   │                            BEFORE the moment, the same order as EventDetail's
+│   │                            handleDeleteEvent — see item 93's postmortem for why that order is
+│   │                            not optional. It deliberately does NOT delete profiles the accept
+│   │                            created (they may already be on other events by then).
+│   ├── likelyDuplicate.ts     — (2026-08-19) the free client-side "might already be on file" check
+│   │                            (title word-overlap + date proximity, no AI call), lifted out of
+│   │                            ImportReview.tsx because CalendarTriage needs the same answer:
+│   │                            Quick Add saves in one tap without ever showing the four-way merge
+│   │                            banner, so without this it would be the fastest way in the app to
+│   │                            create a duplicate. Two copies of the thresholds would drift on the
+│   │                            first tuning pass. Note the ratio divides by the SHORTER title, so
+│   │                            a fully-contained title scores 1.0 — pinned in the tests, and fine
+│   │                            for what it drives (both are plausible duplicates either way).
+│   ├── reviewQueues.ts        — (2026-08-19) the one owner of "what's waiting to be reviewed".
+│   │                            `loadReviewCounts()` returns every import queue's count (Home and
+│   │                            Calendar both read it, so the two can't disagree; ReviewInbox.tsx
+│   │                            shows the same numbers as a breakdown) — set-aside is deliberately
+│   │                            OUT of `total` via `reviewTotal()`, since "Not now" has to actually
+│   │                            take something off the plate. `probeTriageEnabled()` memoises a
+│   │                            one-shot `select('id, deferred_until')` — an unknown COLUMN errors,
+│   │                            an unknown status VALUE would not, so it's the reliable test for
+│   │                            "has 2026-08-19-calendar-triage-and-defer.sql been run"; false keeps
+│   │                            the whole app on its pre-triage behaviour. `wakeDueDeferrals()` is
+│   │                            an idempotent update flipping due 'deferred' rows back to
+│   │                            'selected', called on load by the inbox and the queue (no cron).
+│   │                            `todayIso`/`deferUntilIso` are browser-local calendar-day math —
+│   │                            `toISOString()` would set things aside a day early after 5pm ET.
+│   ├── resolvedCardScroll.ts  — (2026-08-17) the accept/reject landing behaviour shared by all
+│   │                            four import review queues. `useResolvedCardScroll(resolved)`
+│   │                            returns a ref to put on the card's root in BOTH its editing and
+│   │                            its confirmation branch; when it resolves, a LAYOUT effect parks
+│   │                            the collapsed card `CONFIRM_SCROLL_MARGIN` (12px) below the top of
+│   │                            the screen so the next item sits right underneath it.
+│   │                            `scrollCardToTop(el)` is the same move for callers that can't use
+│   │                            the hook (PhotoImportReview.tsx renders cards inline, off a ref
+│   │                            map). Only limit: a card can't reach the top when there isn't a
+│   │                            screen of content below it, i.e. the last 1-2 of a queue — where
+│   │                            the whole queue is on screen anyway.
+│   ├── resetOnboarding.ts     — (2026-07-22) `resetOnboardingData()`: wipes all people/moments/
+│   │                            groups (+ dependents) for the current account and clears the
+│   │                            `onboarding_complete` flag, so Onboarding.tsx can be re-tested
+│   │                            from scratch without a new signup each time. Gated by an exact
+│   │                            email constant (`ONBOARDING_RESET_TEST_EMAIL`) checked again in
+│   │                            components/DevOnboardingReset.tsx before the control even
+│   │                            renders — currently `jake.volin+onboardtest@gmail.com`, a
+│   │                            disposable signup created solely for this. Deliberately NOT
+│   │                            `jakevolin@gmail.com` — that account has 413 real people/706
+│   │                            notes, confirmed live 2026-07-22, so it's unsuitable as a wipe
+│   │                            target despite being the usual browser-verification login.
+│   ├── ensureStarterTags.ts    — (item 28 follow-up, 2026-07-22) seeds 10 generic
+│   │                            starter tags (Milestone, Vacation, Biking,
+│   │                            Weddings, Parties, Workouts, Birthdays, Holidays,
+│   │                            Reunions, Trips) so a new/existing account's tag
+│   │                            picker isn't empty on day one. Guarded by a sticky
+│   │                            `tags_seeded` auth-metadata flag (same pattern as
+│   │                            `onboarding_complete`) checked BEFORE inserting —
+│   │                            not a blind insert — so it never resurrects the
+│   │                            starter set for someone who deliberately deleted
+│   │                            all their tags later, and is safe to run against
+│   │                            an account that already has some matching names.
+│   │                            Called from App.tsx's `onAuthStateChange` on
+│   │                            `SIGNED_IN` only, same call site as
+│   │                            `ensureSelfFromSignup.ts` below. Verified live: ran
+│   │                            on the real `jakevolin@gmail.com` account's next
+│   │                            real sign-in, inserted all 10 (no prior tags
+│   │                            existed except one the AI had already created —
+│   │                            "Phone Calls" — from real production usage
+│   │                            post-deploy, correctly left untouched/not
+│   │                            duplicated).
+│   ├── ensureSelfFromSignup.ts — (2026-07-22) turns sign-up's auth user_metadata
+│   │                            (first_name/last_name/birthday) into a real self `people`
+│   │                            row + Birthday `reminders` row, so a new signup skips
+│   │                            Circle.tsx's "which profile is you?" onboarding. Called
+│   │                            from App.tsx's `onAuthStateChange` on the `SIGNED_IN`
+│   │                            event only (not the initial session restore, so it isn't
+│   │                            re-run on every page load). No-ops safely: does nothing
+│   │                            if `first_name` is absent (pre-2026-07-22 accounts, or
+│   │                            login rather than signup) or if a self person already
+│   │                            exists (checked before inserting — verified live against
+│   │                            the real `jakevolin@gmail.com` account that this correctly
+│   │                            skips rather than creating a duplicate). Errors are
+│   │                            logged, never thrown — worst case a new user just falls
+│   │                            through to the existing manual onboarding screen.
+│   ├── googlePhotosAuth.ts     — (2026-07-30) `startGooglePhotosAuth()`: builds Google's OAuth
+│   │                            authorize URL (`photospicker.mediaitems.readonly` +
+│   │                            `userinfo.email` scopes, `access_type=offline&prompt=consent`
+│   │                            so a refresh_token is always returned) and does a full-page
+│   │                            redirect — no popup. CSRF `state` nonce round-trips via
+│   │                            sessionStorage, checked by `consumeGooglePhotosOAuthState` in
+│   │                            `GooglePhotosOAuthCallback.tsx`.
+│   └── googlePhotosImport.ts   — (2026-07-30) `startGooglePhotosImport(momentId?, callbacks)`:
+│                                shared picker-session-create → open tab → poll-until-done logic
+│                                behind `PhotoImportReview.tsx`'s general import AND
+│                                `EventDetail.tsx`'s quick-add button — they differ only in
+│                                whether `momentId` is set. Returns a `{ cancel }` handle so
+│                                either caller can stop in-flight polling on unmount.
+├── pages/
+│   ├── Landing.tsx            — public marketing page (2026-07-22), now what `!session`
+│   │                            renders in App.tsx instead of bare Login.tsx: single
+│   │                            scrolling page (What is Grove? / Not another social
+│   │                            network incl. a Grove-vs-social-media/journaling-apps/
+│   │                            CRM comparison table / How it works / Who it's for /
+│   │                            Just yours (privacy) / Get started); top nav anchor-link
+│   │                            row removed 2026-07-23 (cluttered, founder call) — nav
+│   │                            is now just brand + Free demo/Log in buttons,
+│   │                            embeds Login.tsx unchanged as the Get Started section's
+│   │                            form. Reuses Login.tsx's sage/cream/Georgia styling, no
+│   │                            new visual system. Privacy copy deliberately does NOT
+│   │                            claim end-to-end encryption (incompatible with the AI
+│   │                            reading notes to do its job today, see §9) — only
+│   │                            encryption in transit/at rest, which is already true.
+│   │                            Pass 2 same day (founder feedback: headers felt noisy,
+│   │                            copy read too sales-pitchy): removed all visible section
+│   │                            `<h2>`s (sections still anchor-scrollable via `id` on the
+│   │                            `<section>` itself, nav labels are the only section
+│   │                            titles now), trimmed body copy throughout, added a
+│   │                            "150 — Dunbar's number" stat callout + a forgetting-curve
+│   │                            citation as data-backed emphasis in place of pitch prose.
+│   │                            Nav "Grove" wordmark is now a button that smooth-scrolls
+│   │                            to page top.
+│   │                            Pass 3 same day (founder: embedded login form at the
+│   │                            bottom still felt awkward, wanted a real standalone login
+│   │                            page back like pre-Landing): Get Started section no
+│   │                            longer embeds Login.tsx inline — it's two tiles ("New
+│   │                            here? Sign up" / "Already have an account? Log in") plus
+│   │                            the nav's "Log in" button (now a button, not an anchor),
+│   │                            all three calling `onAuthClick(mode)` up to App.tsx. Which
+│   │                            mode opens which screen lives in App.tsx's `authView`
+│   │                            state (`'landing' | 'login' | 'signup'`), not Landing.tsx
+│   │                            itself — Landing only fires the callback.
+│   │                            Pass 4 (2026-07-23, founder feedback — demo entry point was
+│   │                            buried as one of 3 equal tiles at the bottom): added a
+│   │                            dedicated `#try-it-now` section (between How it works and
+│   │                            Who it's for, own nav link) plus a "Free demo" button in the
+│   │                            sticky nav next to Log in, plus two more inline demo-link CTAs
+│   │                            (end of the comparison table, end of Who it's for). Removed the
+│   │                            redundant demo tile from Get Started (now just Sign up / Log
+│   │                            in). Section bg alternation re-threaded (privacy → altBg,
+│   │                            get-started → plain) to keep it after the insert.
+│   │                            Pass 5 (2026-07-30): dark-green "platform databox" banner
+│   │                            right after the hero — People/Events/Groups/Datapoints
+│   │                            totals across EVERY account (not the visitor's own, they
+│   │                            have none yet), an enterprise-scale social-proof stat.
+│   │                            First real data fetch on this otherwise-static public page:
+│   │                            reads the `platform_stats()` RPC (§6/§10) directly with the
+│   │                            anon key (function is granted to the `anon` role — no
+│   │                            session needed). Fails open (banner just doesn't render) if
+│   │                            the call errors. Originally built on Home.tsx (the logged-in
+│   │                            dashboard) by mistake, then moved here per founder
+│   │                            correction — "Landing page" (this file) vs. "Home" (the
+│   │                            logged-in dashboard) is the disambiguating terminology
+│   │                            going forward.
+│   │                            Current hero copy (2026-08-16, founder wording): headline
+│   │                            "In Fight of Forgetfulness" (replaced "Never go in cold
+│   │                            again"), sub "A life isn't a list of names…". Positioning
+│   │                            per founder: it's not about *who* — it's the people,
+│   │                            events and groups that make a life whole, with the tech
+│   │                            as scaffolding for remembering all of it. That framing
+│   │                            leads the What-is-Grove and How-it-works sections; keep
+│   │                            new landing copy consistent with it.
+│   ├── Login.tsx              — combined sign up / log in. Takes `initialSignUp` (which
+│   │                            tile/button was clicked sets the starting mode) and
+│   │                            `onBack` (returns to Landing) props, both
+│   │                            optional/undefined-safe so existing callers don't break.
+│   │                            `onBack` is now wired to a sticky top nav bar with a
+│   │                            clickable "Grove" wordmark (2026-07-22, matches
+│   │                            Landing.tsx's nav styling) instead of a small "← Back"
+│   │                            text link inside the card. Rendered full-page by App.tsx once
+│   │                            `authView !== 'landing'` — a real standalone page again,
+│   │                            not embedded in Landing's scroll flow. Sign-up mode
+│   │                            (2026-07-22) collects First/Last name, Birthday, Email,
+│   │                            Password, Confirm password (log-in mode still just
+│   │                            Email/Password). Age-gated at 13+ (industry-standard/
+│   │                            COPPA threshold): the birthday `<input type="date">`'s
+│   │                            `max` attribute blocks the native picker from selecting
+│   │                            an under-13 date at all; `calculateAge()` re-checks on
+│   │                            submit as a fallback (blocks with a message, never calls
+│   │                            `supabase.auth.signUp`). Password/confirm mismatch is
+│   │                            also blocked pre-submit with its own message. First/last
+│   │                            name + birthday are passed as `options.data` on
+│   │                            `signUp()`, landing in the Supabase auth user's metadata;
+│   │                            `lib/ensureSelfFromSignup.ts` (2026-07-22) turns that into
+│   │                            a real self person + birthday reminder on first sign-in,
+│   │                            so Circle.tsx's onboarding is skipped for new users.
+│   │                            `calculateAge()` parses the 'YYYY-MM-DD' string's parts
+│   │                            directly rather than `new Date(...)` — the latter parses
+│   │                            as UTC midnight and can misjudge the 13-cutoff by a year
+│   │                            in timezones west of UTC.
+│   ├── Onboarding.tsx         — (2026-07-22) standalone first-run "experience": full-screen,
+│   │                            no tab bar/breadcrumb, shown once instead of Home for a
+│   │                            brand-new account. App.tsx gates on it via `onboardingPending`
+│   │                            state (`checkOnboarding()`): shown only when the session's
+│   │                            auth `user_metadata.onboarding_complete` flag is unset AND
+│   │                            the account has zero non-self people yet (the second check
+│   │                            is what keeps every pre-2026-07-22 account, which has no
+│   │                            metadata flag at all, from suddenly being routed into
+│   │                            onboarding). Sequenced by the gameplan's "juice for the
+│   │                            squeeze" ranking, not alphabetically: Stage 1 (Welcome)
+│   │                            just confirms the name `ensureSelfFromSignup.ts` already
+│   │                            wrote (falls back to an inline "what's your name?" form if
+│   │                            no self person exists yet — covers pre-existing accounts
+│   │                            and the rare metadata-write race) plus a brief People/
+│   │                            Events/Groups/Notes orientation; Stage 2 embeds
+│   │                            `FamilyTree.tsx` AS-IS (no changes to that file) centered on
+│   │                            self, framed to encourage going as far out as possible
+│   │                            (grandparents, cousins, in-laws — no depth cap, item 42);
+│   │                            Stage 3 offers turning everyone just added into a Family
+│   │                            group (reuses item 41's existing Family-group/tree pairing,
+│   │                            seeded from `buildFamilyTree()`'s own output rather than
+│   │                            re-asking); Stage 4 is a closed-ended group picker (the
+│   │                            existing `GROUP_TYPES` list minus Family) walked through one
+│   │                            type at a time — name it, list members (comma/newline-
+│   │                            separated, matched against existing people case-
+│   │                            insensitively or created new, mirroring
+│   │                            `writeRelationship.ts`'s create-new logic but for plain
+│   │                            group membership — no longer auto-seeded with the
+│   │                            founder themselves, 2026-07-26, same fix as
+│   │                            Groups.tsx's own "+ Add Group"; typing your own name in
+│   │                            still works like any other member); final handoff regenerates
+│   │                            `suggest-prompts` live (`{refresh:true}`) before dropping
+│   │                            into real Home. Every stage has a "Skip" escape hatch, which
+│   │                            (like finishing normally) sets the `onboarding_complete`
+│   │                            auth metadata flag via `supabase.auth.updateUser()` so it
+│   │                            never shows again. Known gap, not a bug: `suggest-prompts`
+│   │                            only generates personalized suggestions when at least one
+│   │                            `moments` row exists (see its own source) — onboarding only
+│   │                            creates people/relationships/group membership, no moments,
+│   │                            so the Stage 4 "live payoff" regenerate call is real but
+│   │                            still falls back to the generic 3 ice-breakers until the
+│   │                            user logs an actual moment. Verified live end-to-end
+│   │                            (signup → self-confirm → tree with a spouse add → Family
+│   │                            group offer → two more groups, one saved with members, one
+│   │                            skipped → handoff → real Home showing the right counts) with
+│   │                            a disposable test account (`onboarding.verify.test@
+│   │                            example.com` — not yet deleted, needs founder cleanup via
+│   │                            the Supabase dashboard, no admin access from this session).
+│   │                            Second pass (2026-07-22, founder click-through bugs): tree-stage
+│   │                            copy now explains WHY onboarding starts with family (profiles +
+│   │                            groups are the core ideas, family is the clearest way to show
+│   │                            them). Bigger fix: `onboardingPending` used to be re-derived from
+│   │                            "zero non-self people" on every check, but Stage 2 writes a real
+│   │                            person row the moment you add one relative — so a tab getting
+│   │                            backgrounded/discarded and remounted mid-onboarding would silently
+│   │                            and permanently drop the user to Home, `onboarding_complete` never
+│   │                            set, no way back in. Fixed via a second sticky auth-metadata flag,
+│   │                            `onboarding_started` (App.tsx's `checkOnboarding`), set the first
+│   │                            time onboarding is shown and trusted on every later check instead
+│   │                            of re-deriving from the people count. Verified live against the
+│   │                            onboarding test account: added a parent mid-flow, hard-reloaded,
+│   │                            confirmed onboarding still resumed instead of dropping to Home.
+│   │                            (2026-07-23) New `guide` stage inserted between Groups and the
+│   │                            final handoff — one-paragraph-per-feature explainer (Home/People/
+│   │                            Events/Groups), shares dot-index 3 ("Done") with handoff. All
+│   │                            prior "jump to handoff" paths (empty group selection, empty group
+│   │                            queue, "Skip groups") now land here first instead.
+│   ├── Home.tsx               — MAIN SCREEN: persistent chat thread → `converse`.
+│   │                            Also: 4 count tiles, Dunbar card, "Recall assists
+│   │                            this month" card, top-3 leaderboard + "due for an
+│   │                            update" CTA, cached suggestion cards w/ refresh.
+│   │                            Chat input bar floats fixed to viewport bottom
+│   │                            (same stickyBarWrapper pattern as PersonDetail's
+│   │                            fact bar, 2026-07-20). "Connections to make" card
+│   │                            (2026-07-25, items 15/50) — right below the
+│   │                            leaderboard: a rotating few "Add {person} to
+│   │                            {group}?" suggestions from `lib/suggestConnections.ts`
+│   │                            (see that entry above), Yes writes person_groups +
+│   │                            clears the group's cached summary, No appends to
+│   │                            that group's `dismissed_person_ids`. `connectionSuggestions`/
+│   │                            `onAcceptConnection`/`onDismissConnection` are optional
+│   │                            HomeView props (default empty/no-op) so DemoHome.tsx
+│   │                            is unaffected.
+│   ├── People.tsx             — list + search, sort dropdown, count; manual "add
+│   │                            person" (blank shell, no form, 2026-07-20 — matches
+│   │                            the Events/Groups add pattern) → lands on its profile.
+│   │                            **Pets share this list** (founder, 2026-08-01: "having a pet in
+│   │                            the People list would be funny... an icon to let people see it's
+│   │                            not a person"). Purely a DISPLAY merge — the heading count stays
+│   │                            people-only, so Dunbar/tiles are untouched, and pets stay their
+│   │                            own tables. `ListRow` is a person|pet union; sortRows/filterRows
+│   │                            replaced sortPeople/filterPeople. Searching an OWNER's name
+│   │                            surfaces their pets. A pet's birthday counts for "Upcoming
+│   │                            dates"; "Most notes" always sorts pets last (they have none).
+│   │                            The pets query is SEPARATE from the people select — embedding a
+│   │                            not-yet-migrated table would fail the whole query and blank the
+│   │                            list, not just hide the pets.
+│   │                            "Fill in gender for N people →" link (2026-08-11, item 44) →
+│   │                            GenderFill.tsx. N comes from its own head-only `count: 'exact'`
+│   │                            query (same isolation reasoning as pets above); the link hides
+│   │                            when the count is 0 or the query errors.
+│   ├── GenderFill.tsx         — (2026-08-11, item 44's auto-fill half) the one-time
+│   │                            names→gender pass. Off `guessGenderFromName`: the decidable names
+│   │                            split into **"Men" and "Women" columns** (founder ask 2026-08-19 —
+│   │                            a mixed list makes you read a dropdown per row, a column headed
+│   │                            "Men" asks one question once and is a single tap if the answer is
+│   │                            yes), then "Grove can't guess these" (ambiguous or unknown) full
+│   │                            width below — and that list is DRAG-AND-DROP (founder ask
+│   │                            2026-08-19): two sticky Men/Women buckets, a ⠿ handle per row,
+│   │                            `@dnd-kit/core` with the same MouseSensor(distance 4) +
+│   │                            TouchSensor(delay 200, tolerance 8) pair as GroupDetail's subgroup
+│   │                            drag — the touch DELAY is what leaves a long list scrollable on a
+│   │                            phone. Handle, not whole-row: `touch-action: none` is read at
+│   │                            touch-start, so on the row it would kill scrolling. Single-item
+│   │                            drag, not GroupDetail's select-then-drag-a-batch — unknown names
+│   │                            are one-at-a-time judgments, so a select mode would never pay for
+│   │                            itself. Dropping outside both buckets is a no-op.
+│   │                            A name you set DISAPPEARS from that list (founder ask 2026-08-20) and the
+│   │                            heading counts down, so you always face what is still to do rather than
+│   │                            scrolling past your own answers. It reappears in a collapsed "Sorted so
+│   │                            far (n)" panel below the list, whose dropdown is also the undo — "Leave
+│   │                            blank" drops the id out of `choices`, which puts the row straight back.
+│   │                            NOT applied to the Men/Women columns: "Accept all" would empty one in a
+│   │                            single tap, and seeing what you just accepted so you can fix it is the
+│   │                            point of those. Each row is a
+│   │                            Male/Female/Non-binary/Other/Leave-blank
+│   │                            select matching PersonDetail's — kept on every row deliberately: it
+│   │                            is the only way to say non-binary/other, the keyboard path, and the
+│   │                            fallback when dragging is awkward. Each column carries its OWN counted
+│   │                            "Accept all N" and its own paging, so accepting one never touches
+│   │                            the other. CSS grid `auto-fit`, so a phone gets two stacked lists
+│   │                            rather than two squeezed half-width ones. The old per-row
+│   │                            "— looks like male" tag is gone: it only ever rendered on rows that
+│   │                            have a guess, which is now exactly the rows already sitting under a
+│   │                            heading that says so. Suggestions are deliberately NOT pre-selected —
+│   │                            "Accept all N" is one explicit counted act, which is
+│   │                            what lets the lists page at 100 without the founder ever saving
+│   │                            rows they were never shown. Nothing writes until Save; Save
+│   │                            groups by value and chunks 100 ids per `.in()` so a few hundred
+│   │                            people cost a handful of requests, not one each. WHY A REVIEWED
+│   │                            WRITE: nameGender.ts refuses to persist a guess because a saved
+│   │                            one is indistinguishable from a stated fact — a screen the
+│   │                            founder reads and presses Save on is what makes it stated.
+│   │                            Selects `gender` in the MAIN people query, unlike everywhere
+│   │                            else: this page has no other job, so failing whole and saying so
+│   │                            beats degrading silently.
+│   ├── PetDetail.tsx          — (2026-08-01) a pet's own page, crumb type `pet`, URL `/pet/:id`.
+│   │                            Founder chose this over "tapping a pet opens its owner's
+│   │                            profile," so a pet is a record you navigate TO, like a group or
+│   │                            event. Species emoji + name heading, breed/species line, dates,
+│   │                            Details rows, notes, owner PersonChips ("Belongs to"), and the
+│   │                            ONLY pet edit form in the app. Delete here is a real delete
+│   │                            (removes it from every profile) and says so — distinct from
+│   │                            PetsSection's × , which only unlinks. "Was at these events"
+│   │                            EventChips (2026-08-20, `loadEventsForPet`) — hidden entirely
+│   │                            when empty, unlike "Belongs to": an owner-less pet is worth
+│   │                            explaining, "not tagged to anything yet" isn't, and the tagging
+│   │                            happens on the event.
+│   ├── PersonDetail.tsx       — "View family tree →" link under the name heading, opens
+│   │                            FamilyTree.tsx centered on this person (item 41, any
+│   │                            profile, not just self). Key Facts (cached, clickable chips, fixed order),
+│   │                            missing-info nudges, notes (edit/delete/source
+│   │                            labels), name-edit pencil (first/last name fields,
+│   │                            matches Event/Group rename pattern, 2026-07-20 — the
+│   │                            fact bar is still how nickname/birthday/anniversary
+│   │                            get set), Associated Groups (hover-untag,
+│   │                            non-destructive) + search-and-add picker matching
+│   │                            EventDetail's Affiliated Groups (2026-07-20),
+│   │                            relationship-suggestion banners, last-name
+│   │                            nudge, delete/merge profile. All name-display text
+│   │                            (nudges, banners, fact bar) now tracks the live
+│   │                            `person` state, not the stale navigation-time prop —
+│   │                            was silently frozen at whatever name you navigated
+│   │                            in with, invisible until a same-visit rename made it
+│   │                            obvious (2026-07-20)
+│   ├── Groups.tsx             — group tiles (summary, ≤5 member chips — subgroup members
+│   │                            rolled up into every ancestor's card as of 2026-08-10, from
+│   │                            the one all-groups query already loaded, so search on a
+│   │                            member's name now finds the parent too; event chips,
+│   │                            type badge); manual "add group" (blank shell, no
+│   │                            form, 2026-07-20) → lands on its detail page to
+│   │                            rename via the pencil; type filter dropdown
+│   │                            (All/No type/Family/Friend group/School/Team/Work,
+│   │                            2026-07-20). `search`/`typeFilter` + scroll position
+│   │                            are owned by App.tsx, not this component, so a trip
+│   │                            into a group and back via the in-page arrow restores
+│   │                            both instead of resetting (item 62, 2026-07-26).
+│   │                            Creating a group no longer auto-adds the founder as a
+│   │                            member (2026-07-26 — see backlog note in §10; same fix
+│   │                            in Onboarding.tsx's Stage 4 group creation), and search
+│   │                            excludes the founder's own name from member-name
+│   │                            matching so searching your own surname only surfaces
+│   │                            groups with someone ELSE by that name, or named for it.
+│   │                            Nested tree at rest (2026-08-04): subgroups render indented
+│   │                            under their parent (was: hidden until searched), via
+│   │                            `flattenGroupTree()` — nests rows into a forest and flattens
+│   │                            back to a flat list with a `depth`, so each row keeps its own
+│   │                            drag hooks. Indent caps at INDENT_MAX_DEPTH=4 (phone width),
+│   │                            left rule on anything nested. ▸/▾ collapse per parent.
+│   │                            A row whose parent is filtered out promotes to root rather
+│   │                            than vanishing; cycles terminate (DB CHECK only blocks
+│   │                            self-as-own-parent, so A→B→A is representable).
+│   │                            Search/type-filter falls back to the FLAT list with
+│   │                            "Parent / Child" labels — filtering leaves holes in a tree.
+│   │                            Drag-and-drop nesting (2026-08-03): each card has a ⠿ grip
+│   │                            handle (@dnd-kit); drag it onto another card to make that
+│   │                            group its parent. Only the handle is a drag source — a
+│   │                            whole-card drag would swallow the member/event chip clicks.
+│   │                            Live preview replaced the drop-then-confirm banner
+│   │                            (2026-08-04, founder: the confirm made you approve something
+│   │                            you couldn't see yet) — the row indents under the hovered
+│   │                            target mid-drag and releasing keeps it; write is optimistic
+│   │                            with a silent reload, reverting on error. Mid-drag-only
+│   │                            "Drop here to make it a top-level group" strip un-nests, shown
+│   │                            only for a group that has a parent. Hovering a collapsed group
+│   │                            opens it for the drag. Cycle-guarded via isSelfOrDescendant
+│   │                            (hover over own descendant = no preview, no write, no error).
+│   │                            Summaries now auto-generate for subgroups too, since they're
+│   │                            visible at rest — still one `summarize-group` call per group
+│   │                            EVER (cached in groups.summary), pulling forward the call
+│   │                            GroupDetail would have made lazily rather than adding spend.
+│   │                            readOnly (landing demo) returns the list with no DndContext.
+│   ├── GroupDetail.tsx        — "Generate this family's tree →" button on Family-typed
+│   │                            groups (item 41), passes explicit member ids straight through
+│   │                            to FamilyTree.tsx (`memberIds` prop) which calls
+│   │                            `buildDescendantTree()` (familyTree.ts) — scoped to that
+│   │                            group's own lineage, not any one member's ego graph.
+│   │                            `pickFamilyTreeRoot()` removed 2026-07-21 (superseded by this).
+│   │                            group type picker (nullable, options come from the
+│   │                            user's editable list — see ManageGroupTypes.tsx,
+│   │                            writes on change, 2026-07-20), summary + refresh (rename now invalidates the cached
+│   │                            summary too, not just membership changes — a manually-
+│   │                            created group's summary can otherwise stay generated
+│   │                            against the "New group" placeholder forever), members
+│   │                            (explicit only, sorted, collapsible >12, hover-remove),
+│   │                            manual member add (2026-08-03): SearchAddPicker, same
+│   │                            component/shape as EventDetail.tsx's "who was there" —
+│   │                            type to filter people already on file, or create a new
+│   │                            person inline (`handleCreateAndAddMember`, first word
+│   │                            → name / rest → last_name, matching every other
+│   │                            create-a-person path); renders regardless of whether
+│   │                            the group has members yet. Followed by an UndoBanner
+│   │                            (`handleUndoAdd`) — always deletes the person_groups
+│   │                            row, ALSO deletes the person when the add created them
+│   │                            (`createdPerson` flag), else a mistyped name strands a
+│   │                            stray profile on the People page; cleared on groupId
+│   │                            change since it deletes against the current group,
+│   │                            suggestions (from events + associated groups, capped
+│   │                            20, add/deny all), per-group "Suggest new members for
+│   │                            this group" checkbox (item 57, 2026-07-25) — always
+│   │                            visible (not gated on there being any current
+│   │                            suggestions, so it stays reachable to turn back on),
+│   │                            off hides this group's own suggestion chips AND drops
+│   │                            it from Home's "Connections to make" card
+│   │                            (`suggestions_enabled` column, read by
+│   │                            `lib/suggestConnections.ts` too). Second suggestion
+│   │                            box, "Family of a current member?" (item 63,
+│   │                            2026-07-26): same `suggestFamilyMembers` chaining as
+│   │                            EventDetail.tsx's own family box, seeded from this
+│   │                            group's explicit members instead of event attendees —
+│   │                            spouse of a member suggested, then that couple's kids
+│   │                            once the spouse is also a member; shares the existing
+│   │                            add/deny handlers (same person_groups/
+│   │                            dismissed_person_ids writes) and the same
+│   │                            suggestionsEnabled gate as the box above it, Associated Groups
+│   │                            (confirmed + suggested + manual picker) unaffected —
+│   │                            different signal, not in scope, notes section, edit
+│   │                            chat, delete/merge group (item added 2026-07-26,
+│   │                            same process/design as EventDetail.tsx's own merge:
+│   │                            search-and-pick survivor, confirm, the group you're
+│   │                            standing on folds away — moves membership,
+│   │                            event tags, associated groups, and notes/
+│   │                            source_group_id attribution over, self-links dropped).
+│   │                            Subgroups section renders at EVERY depth as of 2026-08-03
+│   │                            (was gated on !parentGroup, capping the tree at one level).
+│   │                            Same 2026-08-03 pass added reparenting to the danger zone:
+│   │                            "Move this under another group…" and "Move to top level"
+│   │                            beside the merge button, plus a "Make it a subgroup
+│   │                            instead" branch on the merge confirm step — all three
+│   │                            replace the old workaround (create a blank subgroup in the
+│   │                            target, then merge the real group away into it), which
+│   │                            destroyed a group to express a one-column change. Nesting
+│   │                            moves NOTHING: members/notes/events/associations stay put,
+│   │                            the group just gains a parent, and it's reversible. One
+│   │                            shared search picker drives both outcomes (`mergeMode`);
+│   │                            nest targets exclude this group's own descendants
+│   │                            (isSelfOrDescendant) so a drop can't orphan a branch
+│   │                            (both 2026-08-03). Separate drag-and-drop, same day: on a
+│   │                            root group's own page, "Select multiple" turns member chips
+│   │                            into checkboxes (tap to toggle); drag the selection onto a
+│   │                            subgroup tile below to mass-add them to THAT subgroup only —
+│   │                            parent membership untouched (same independent-membership
+│   │                            design as above). MouseSensor + TouchSensor (not the unified
+│   │                            PointerSensor) so touch gets its own delay/tolerance and an
+│   │                            ordinary scroll swipe isn't captured as a drag. Write path is
+│   │                            a fresh handler (`handleDropAddToSubgroup`), not a reuse of
+│   │                            handleApproveAllSuggestions — that one's refresh/invalidate
+│   │                            calls are hardcoded to the page's OWN groupId, wrong target
+│   │                            here since the drop target is always a subgroup, never the
+│   │                            group being viewed. Subgroup colour coding (2026-08-04):
+│   │                            each subgroup tile gets a colour (3px left rule + dot) and
+│   │                            every parent-level member chip repeats it as a dot, so the
+│   │                            tile grid is the legend for the member list — no dot means
+│   │                            nobody's sorted that person yet. Colours are AUTO-assigned
+│   │                            by position from `theme.ts`'s `subgroupPalette` via
+│   │                            `lib/subgroupColors.ts`; nothing is persisted, no DB column
+│   │                            (a tap-to-recolour picker is item 82). Derived from the
+│   │                            subgroup rosters the page ALREADY loads for the tile member
+│   │                            counts — no extra query, no AI call. Paired "Not in a
+│   │                            subgroup (N)" filter pill above the member list (house
+│   │                            filter-chip style, Events.tsx's date chips); local state,
+│   │                            ANDs with the member search, hidden when there are no
+│   │                            subgroups or nobody's unassigned (but stays visible while
+│   │                            ON). Only DIRECT children count, matching what the tiles
+│   │                            show; a person can carry several dots (capped at 3, then
+│   │                            "+N") since subgroup memberships are independent. Chip
+│   │                            title/aria-label names the subgroups so colour isn't the
+│   │                            only carrier.
+│   │                            Subgroup member rollup (2026-08-10, founder ask): "Who was
+│   │                            there (N)" is the explicit roster PLUS everyone in a
+│   │                            subgroup at any depth (lib/groupRollup.ts), loaded by one
+│   │                            flat person_groups query over descendantIds (fail-open, PAGED —
+│   │                            PostgREST silently caps at 1000 rows and the account was already
+│   │                            at 1183 person_groups rows) and refetched when a drag-drop
+│   │                            writes into a subgroup. Rolled-up
+│   │                            chips get NO trash badge (their row lives on the subgroup —
+│   │                            tooltip says so), never count as "Not in a subgroup", and
+│   │                            are excluded from every suggestion box so nobody is offered
+│   │                            as a member they already are. Hint line appears only when
+│   │                            something actually rolled up. explicitMembers state stays
+│   │                            the narrow write-target; `members` is the merged read.
+│   ├── Events.tsx             — all moments, sorted by event_date (fallback
+│   │                            created_at), full date incl. day (e.g. "August 3,
+│   │                            2026") via formatEventWhen (2026-08-03), grouped under
+│   │                            sticky year headers (2026, 2025, ...; float at
+│   │                            top of viewport until next year's section
+│   │                            arrives, 2026-07-21); manual "add event"
+│   │                            (blank shell, no form) → lands on its detail page;
+│   │                            tag filter dropdown (item 28/34, 2026-07-22) — a
+│   │                            growing picklist computed from distinct tags
+│   │                            actually applied (`useMemo`, not a hardcoded list
+│   │                            like `GROUP_TYPES`), membership filter (`tags.
+│   │                            includes(tagFilter)`) since tags are multi-valued,
+│   │                            plus a "No tags yet" option. "Manage tags →" link
+│   │                            (item 28 follow-up, 2026-07-22) under the heading,
+│   │                            always visible (not gated on any tag being applied
+│   │                            yet) → `ManageTags.tsx`. Creating a new event now
+│   │                            auto-tags the founder under "Who was there" (2026-07-26,
+│   │                            same notes-row shape as EventDetail.tsx's manual
+│   │                            add-attendee) — the flip side of removing group
+│   │                            auto-add above; calendar-imported events and chat-
+│   │                            logged moments are NOT covered by this yet (§10).
+│   │                            Sub-events (item 35, 2026-07-30) are pulled out of
+│   │                            their own flat slot and bundled under their parent's
+│   │                            card instead, per founder-approved mockup: a
+│   │                            "N sub-events ▸/▾" toggle, collapsed by default,
+│   │                            expands to indented child cards. Migrated and
+│   │                            verified live 2026-07-30. Multi-criteria filter
+│   │                            panel (2026-08-03): the old inline tag `<select>`
+│   │                            replaced by a "Filters" button opening
+│   │                            `FilterPanel.tsx` (new generic bottom-sheet
+│   │                            component, reusable elsewhere) covering tag, date
+│   │                            range (presets + custom), attendee, group, and
+│   │                            location — all AND'd together, options are
+│   │                            distinct-in-use lists (same non-hardcoded pattern
+│   │                            as tags), active filters shown as removable
+│   │                            summary chips below search. Filter state lifted to
+│   │                            App.tsx (`eventsFilters`, same pattern as Groups'
+│   │                            search/typeFilter) so it survives navigating into
+│   │                            an event and back.
+│   ├── Calendar.tsx           — (2026-07-24, item 48 phase 1) new nav tab. Upcoming
+│   │                            list (all future moments + reminder next-occurrences,
+│   │                            soonest first; container caps at 6 visible rows with
+│   │                            internal scroll for the rest, 2026-07-26) + a real
+│   │                            month grid below (prev/
+│   │                            next nav, today highlighted, each day showing an
+│   │                            actual tile with a truncated event title, not just
+│   │                            a dot — "+N more" when a day has multiple). Reads
+│   │                            existing `moments`/`reminders`, no new tables. Tag
+│   │                            filter chips (same distinct-tags-in-use pattern as
+│   │                            Events.tsx) narrow the moment tiles/list; reminders
+│   │                            always show (no tag concept for them); chips sit
+│   │                            directly above the month grid (not above Upcoming) so
+│   │                            the thing they filter is adjacent. Month nav has a
+│   │                            "Today" button next to the next-month arrow. Tile click →
+│   │                            EventDetail; reminder click → PersonDetail. Phase 1
+│   │                            of a larger gameplanned feature (calendar-source
+│   │                            connection via pasted secret iCal URLs, AI import/
+│   │                            suggestion pipeline, review UI, Home tie-in) — see
+│   │                            plan file `i-want-to-gameplan-cuddly-wilkinson.md`
+│   │                            (not checked into the repo) for the full design;
+│   │                            those phases are NOT built yet. `nextOccurrenceDate`/
+│   │                            `daysUntilNextOccurrence` moved from People.tsx into
+│   │                            `lib/dates.ts` so both pages share one implementation.
+│   │                            (2026-08-06, item 83) `CountdownsSection` renders LAST, below the
+│   │                            month grid; people select gained `deceased_date`/`reminders.year`.
+│   │                            Future countdowns are only ones the founder adds/pins — Upcoming
+│   │                            sits right below and already lists everything coming up.
+│   ├── EventDetail.tsx        — AI summary (gated: only auto-generates once
+│   │                            raw_description has content; manual "Refresh
+│   │                            summary" button, 2026-07-25, mirrors GroupDetail's
+│   │                            own `RefreshButton` — lets an already-cached
+│   │                            summary re-synthesize on demand, e.g. after the
+│   │                            2026-07-25 chronological-ordering prompt fix),
+│   │                            editable description,
+│   │                            who-was-there (hover-untag, non-destructive; **pets share this
+│   │                            chip row as of 2026-08-20** — `PetAttendeeChip`, species emoji in
+│   │                            front so a pet never reads as a person, tap opens the pet's page,
+│   │                            same hover-untag, and the same sub-event roll-up rule with the
+│   │                            same "untag them there" tooltip. Added from the SAME picker as
+│   │                            people as of 2026-08-21 — "Add who was there", ids namespaced
+│   │                            person:/pet:; no create-a-pet path in there on purpose, since a
+│   │                            pet needs an owner and owners are picked on a profile) +
+│   │                            search-and-add picker (2026-08-07: also creates a
+│   │                            person who isn't on file yet — `+ Add "<name>" as a
+│   │                            new person` row, `handleCreateAndAddAttendee`, same
+│   │                            first-word/rest name split and inline-create pattern
+│   │                            as GroupDetail's member picker), suggested attendees from
+│   │                            group rosters AND family (2026-07-25 — "Was their
+│   │                            family there too?": spouse/partner suggested once
+│   │                            one of a couple is attending, their kids suggested
+│   │                            too once the spouse/partner is ALSO attending;
+│   │                            `lib/relationshipSuggestions.ts`'s pure
+│   │                            `suggestFamilyMembers`, fed by a `relationships`
+│   │                            query scoped to this event's current attendees —
+│   │                            same dismissed_person_ids + add/deny-all UI as the
+│   │                            group-roster suggestions; mirrored on
+│   │                            ImportReview.tsx below, see its entry. 2026-07-26
+│   │                            (item 63, founder feedback): self is always seeded
+│   │                            into the attendee set fed to `suggestFamilyMembers`,
+│   │                            even when self isn't tagged as attending — so self's
+│   │                            spouse is suggested on every event from the start,
+│   │                            not just once self has been manually added), Affiliated
+│   │                            Groups (hover-untag,
+│   │                            non-destructive) + search-and-add picker,
+│   │                            collapsed notes, maps link (+", CO"
+│   │                            hardcoded), rename, delete/merge, update chat;
+│   │                            Tags section (item 28, 2026-07-22) — manual tag/
+│   │                            untag via `SearchAddPicker`'s new `onCreateNew`
+│   │                            prop (type a name, get an inline "+ Add ... as a
+│   │                            new tag" affordance when it doesn't already exist,
+│   │                            case-insensitive reuse when it does), local
+│   │                            `TagChip` (hover-reveal-remove, non-destructive —
+│   │                            same pattern as `AffiliatedGroupChip`). Backed by
+│   │                            new `tags`/`moment_tags` tables (§6). Follow-up
+│   │                            same day: picker uses `browseAll` (shows the full
+│   │                            tag list, alphabetically, the moment you focus the
+│   │                            box — no need to already know/remember what's on
+│   │                            file) and both the picker's item list and the
+│   │                            currently-applied tag chips are explicitly
+│   │                            `.sort((a,b)=>a.name.localeCompare(b.name))`'d at
+│   │                            render time (not relied on from fetch/insert
+│   │                            order) so alphabetical holds regardless of when a
+│   │                            tag was created. The date shown at the top now goes
+│   │                            through `formatFullDate()` (2026-07-24, bug fix —
+│   │                            see §10/§12) instead of bare `new Date(event_date)`,
+│   │                            which parsed as UTC midnight and could display a day
+│   │                            off depending on the viewer's own time zone.
+│   │                            Sub-events (item 35, 2026-07-30): self-referencing
+│   │                            `parent_moment_id`, one level deep, mirrors
+│   │                            GroupDetail's subgroups pattern — "Sub-events"
+│   │                            section + "+ New Sub-event" button (inherits parent's
+│   │                            event_date) on root events; "↑ Part of X" link on
+│   │                            children; merge reparents a duplicate's sub-events
+│   │                            onto the survivor; delete-confirmation copy warns
+│   │                            children become independent top-level events.
+│   │                            Migrated and verified live 2026-07-30. Sub-event
+│   │                            attendees roll up into the parent's "Who was there"
+│   │                            (2026-08-07) — derived at render time, never written
+│   │                            back; rolled-up chips have no hover-untag badge (untag
+│   │                            on the sub-event itself) and carry a title tooltip
+│   │                            saying so. Same rollup on the Events list card, via
+│   │                            `decorateMoments(moments, childrenByParentId)`.
+│   │                            "Associated Events" tiles read chronologically
+│   │                            left-to-right via `sortSubEventsByDate()`
+│   │                            (`src/lib/subEvents.ts`, 2026-08-08): event_date, then
+│   │                            event_end_date, then created_at as last resort; undated
+│   │                            sub-events sort last and show "Date not set" rather than
+│   │                            formatFullDate's created_at fallback. "+ New Sub-event"
+│   │                            now confirms the date before creating (inline date field
+│   │                            prefilled with the parent's start date, range shown in
+│   │                            the hint when the parent has one) — the inherited default
+│   │                            stayed (founder call), but silently inheriting it is what
+│   │                            put whole trips' sub-events on day one and left them
+│   │                            tie-breaking by creation order. Pre-2026-08-08 sub-events
+│   │                            still carry the inherited date until edited by hand.
+│   │                            Nesting is editable both ways from the Manage panel
+│   │                            (2026-08-18): "Move this under another event…" reuses
+│   │                            the merge picker in 'nest' mode (mergeMode state, same
+│   │                            shape as GroupDetail) and "Separate this from X" sets
+│   │                            parent_moment_id back to null. Neither moves any data —
+│   │                            notes, photos, attendees, groups and tags stay put — and
+│   │                            each undoes the other. Both null the affected parents'
+│   │                            cached summaries (a re-parent nulls old AND new), since a
+│   │                            parent's summary is a per-sub-event roll-up; lazy, so it
+│   │                            rebuilds on next view. Cached weather needs no
+│   │                            invalidation — the span changes, coversWindow() sees the
+│   │                            stored range no longer matches and refetches itself.
+│   │                            Nest targets are top-level events only (nestableEvents
+│   │                            filters on momentParentById), and an event that HAS
+│   │                            sub-events shows a line saying it can't sit under another
+│   │                            event instead of the button — both rules keep the tree one
+│   │                            level deep, which is what the whole UI assumes.
+│   │                            "Associate an event" in the action bubble (2026-08-26):
+│   │                            pick an existing event, then choose the direction in words
+│   │                            with both titles spelled out — `"X" is part of this event`
+│   │                            (pulls X in as a sub-event; the only way to do that from
+│   │                            the PARENT's page), `This event is part of "X"` (same
+│   │                            write as the Manage panel's nest), or `They're related`
+│   │                            (a `moment_links` row, §6). A direction that isn't legal
+│   │                            stays visible as a muted line giving the reason (target
+│   │                            has sub-events, target is itself a sub-event, this event
+│   │                            has sub-events, already connected). Related events get
+│   │                            their own "Related Events" section — a third name on
+│   │                            purpose, distinct from "Sub Events" here and "Associated
+│   │                            Events" on Group/Person — with hover-unlink tiles; it
+│   │                            renders on sub-event pages too, and hides itself
+│   │                            entirely if moment_links is missing.
+│   │                            Summary regeneration (2026-08-08): the gate is
+│   │                            `hasSomethingToSummarize()` (lib/moments.ts), not
+│   │                            `raw_description.trim()` — a manually-created event has a
+│   │                            permanently-empty raw_description, so it could gain any
+│   │                            number of notes and stay stuck on "Nothing written yet"
+│   │                            forever even though summarize-moment reads notes fine.
+│   │                            Sub-event roll-up into the parent's description
+│   │                            (2026-08-10): summarize-moment reads its children's
+│   │                            SUMMARIES (never their notes — cost) and a parent with
+│   │                            sub-events gets a different output shape: 1-2 sentence
+│   │                            overview, blank line, then one `Aug 6 · Title — sentence`
+│   │                            line per sub-event in date order. Events with no
+│   │                            sub-events are unchanged (flowing narrative). The gate
+│   │                            takes childEvents as a 2nd arg, so a container parent with
+│   │                            nothing of its own still summarizes; the trigger moved from
+│   │                            loadMoment into an effect keyed on [moment, childEvents]
+│   │                            because those two load in parallel. Summarizing a
+│   │                            sub-event nulls its parent's cached summary (done in the
+│   │                            Edge Function, so every path is covered); the parent
+│   │                            rebuilds lazily on next view. `styles.description` is
+│   │                            pre-wrap so the lines survive. max_tokens 900 → 2000:
+│   │                            a 6-sub-event parent measured stop_reason "max_tokens" and
+│   │                            silently lost its last four days mid-sentence.
+│   │                            `generateSummary` is single-flight w/ one trailing rerun:
+│   │                            each note fires 2-4 onSaved calls, so this was 2-4 paid
+│   │                            calls whose writes could land out of order and overwrite a
+│   │                            newer summary with a staler one. `handleNoteSaved` fires
+│   │                            `onRenamed` when the occasion changed, so the breadcrumb
+│   │                            follows an AI auto-title the way it does a manual rename.
+│   │                            Manual date/location edit fields + manual
+│   │                            "Add a note" box (2026-07-30, founder feedback:
+│   │                            event chat was slow/inaccurate and there was no
+│   │                            non-chat fallback) — date/location previously had
+│   │                            NO manual input anywhere, only ever set by chat;
+│   │                            note box mirrors GroupDetail's own (plain
+│   │                            textarea, direct `notes` insert, `person_id:
+│   │                            null`, no AI). Verified live in browser preview.
+│   │                            Note edit/delete (2026-08-03, founder
+│   │                            feedback: AI-fabricated note text had no fix
+│   │                            short of deleting the event) — same hover
+│   │                            pencil/trash pattern as PersonDetail/
+│   │                            GroupDetail's note cards. A displayed card
+│   │                            can represent more than one underlying
+│   │                            `notes` row (everyone tagged together with
+│   │                            identical text, e.g. a bulk "Was there.") —
+│   │                            edit/delete act on every row in the group at
+│   │                            once, and both clear the cached summary so
+│   │                            it regenerates without the old text.
+│   │                            Verified live (single note + a 2-person
+│   │                            grouped note).
+│   │                            "Were they at this one too?" (2026-08-10, item 87) — on a
+│   │                            SUB-event only, suggests everyone tagged on the parent
+│   │                            event and its other sub-events, ranked by how many of them
+│   │                            each person turns up in (`src/lib/siblingAttendees.ts`).
+│   │                            Sits above the group/family suggestion boxes and its ids
+│   │                            are excluded from both, so nobody is suggested twice.
+│   │                            `loadSiblingEvents` is a separate fail-open query, same
+│   │                            reasoning as loadParentEvent.
+│   │                            (2026-08-17) Clicking a suggestion no longer moves the page,
+│   │                            in all three boxes. Two causes, both fixed. (a) The chip used
+│   │                            to leave the grid, reflowing every chip after it — it now
+│   │                            HOLDS its slot and flips to a ticked, filled chip
+│   │                            (`suggestChipAdded`, box-model identical to `suggestChip`;
+│   │                            the +/✓ sits in a fixed-width `chipGlyph` span so the chip
+│   │                            can't resize). `pinnedChips` records {person, box, index} on
+│   │                            click and `withPinnedChips` splices them back into the live
+│   │                            list at that index, ascending; it's purely positional, so
+│   │                            "added" stays derived from `attendees` and clicking a ticked
+│   │                            chip untags them and flips it back to "+" without moving.
+│   │                            Pins reset on `moment.id`. (b) Every add nulled the cached
+│   │                            summary, collapsing that block to its one-line "Putting this
+│   │                            memory into words…" placeholder — a ~100px jump per click,
+│   │                            plus one AI regeneration per name (CLAUDE.md rule 3).
+│   │                            `handleAttendeeChanged` now reloads the roster immediately
+│   │                            but debounces the invalidation by `SUMMARY_SETTLE_MS` (4s),
+│   │                            so a run of clicks costs one regeneration and the summary
+│   │                            keeps its height throughout. Measured: 5 clicks = 5
+│   │                            regenerations before, 1 after; 0px of chip movement across
+│   │                            all 37 chips. A scroll-anchor approach was tried first and
+│   │                            removed — it chased the summary collapse and double-applied
+│   │                            the correction, making the jump worse.
+│   ├── DunbarDetail.tsx       — Dunbar's-number explainer + tier progress bars
+│   ├── DueForUpdate.tsx       — people sorted oldest/no note first
+│   ├── ManageLocations.tsx    — (item 66, 2026-08-12) reached via "Manage locations →"
+│   │                            on Events.tsx beside "Manage tags →" (App.tsx
+│   │                            `manageLocations` crumb, same singleton pattern as
+│   │                            ManageTags). Every distinct `moments.location` with its
+│   │                            event count; editing one rewrites it on every event at
+│   │                            once (one `.update().in('location', […])`), so typing an
+│   │                            existing value IS the merge and clearing the box drops the
+│   │                            location without touching the events. A "Look like the
+│   │                            same place" section lists lib/locationGroups.ts's clusters
+│   │                            with radios for the winning spelling PLUS free text — the
+│   │                            right spelling is often none of the ones actually typed.
+│   │                            Reads paged (a location past row 1000 would look absent,
+│   │                            which here means a merge that silently skipped events).
+│   ├── Notebooks.tsx          — (2026-08-18) the 6th nav tab; the internal side (§1).
+│   │                            Card per notebook (name + entry count, "Private" pill
+│   │                            when ai_visible is off). Create is one named field, not a
+│   │                            blank shell — the name IS the act of creating one — then
+│   │                            navigates straight in. Exports `NotebooksView` for a
+│   │                            future demo screen. SearchBox only past 8 notebooks.
+│   │                            Renders "aren't switched on for this account yet" when
+│   │                            lib/notebooks.ts's isMissingTable matches (§10 pattern).
+│   ├── NotebookDetail.tsx     — (2026-08-18) one notebook. Composer =
+│   │                            AutoGrowTextarea + VoiceInputButton (Save held shut
+│   │                            while the mic is busy, so a dictation tail isn't lost).
+│   │                            Entries newest-first, date shown only when set; tap Edit
+│   │                            for text/date/people/delete. People attach via
+│   │                            SearchAddPicker — an explicit picker, NOT
+│   │                            NoteWithDetection, which costs an API call per note.
+│   │                            The date field pre-fills to today only if the notebook
+│   │                            already has a dated entry (a log keeps its dates, a list
+│   │                            doesn't grow them). ManagePanel holds rename, the
+│   │                            "Let Grove read this" switch, and delete.
+│   ├── ManageTags.tsx         — (item 28 follow-up, 2026-07-22) reached via "Manage
+│   │                            tags →" link on Events.tsx AND Settings → Your
+│   │                            lists (2026-08-04) (App.tsx `manageTags`
+│   │                            crumb, same simple link-launched-detail-page
+│   │                            pattern as DunbarDetail/DueForUpdate above). Full
+│   │                            alphabetical list of every tag with a live usage
+│   │                            count (`moment_tags` embed, counted client-side);
+│   │                            add (duplicate-name guarded), inline rename
+│   │                            (updates everywhere instantly — tags have no
+│   │                            denormalized copies elsewhere), delete with a
+│   │                            confirm banner that states how many events it'll
+│   │                            be removed from (cascades via the `moment_tags`
+│   │                            FK, no extra cleanup code needed)
+│   ├── ManageGroupTypes.tsx   — (2026-08-04) same page shape as ManageTags, for group
+│   │                            types; reached via Settings → Your lists (App.tsx
+│   │                            `manageGroupTypes` crumb). Group types became a
+│   │                            user-editable list that day (was a fixed 5-option
+│   │                            enum); `lib/groupTypes.ts` now exports
+│   │                            `DEFAULT_GROUP_TYPES` (the starting template, and the
+│   │                            fallback for the demo + any account whose migration
+│   │                            hasn't run) plus `loadGroupTypeNames()`, used by
+│   │                            Groups.tsx's filter and GroupDetail.tsx's picker.
+│   │                            `groups.group_type` stays plain text holding the NAME,
+│   │                            not an FK — so a rename here rewrites every matching
+│   │                            group in the same step (groups first, then the type
+│   │                            row), and a delete leaves those groups untyped. Both
+│   │                            pickers union in any type a group still carries but
+│   │                            that's off the list, so nothing goes unfilterable.
+│   │                            Seeds the 5 defaults lazily on first visit if the
+│   │                            account has none. Migration:
+│   │                            `migrations_manual/2026-08-04-editable-group-types.sql`
+│   │                            (drops the old CHECK constraint, adds the `group_types`
+│   │                            table + RLS, seeds every existing account) — applied
+│   │                            2026-08-04, verified live.
+│   ├── Circle.tsx              — "My page" (item 32, REAL as of 2026-07-20, replaced
+│   │                             CircleMock.tsx): self header (name, birthday/
+│   │                             anniversary, "Edit your profile →" into PersonDetail),
+│   │                             "Your circle" grid (spouse/kids/parents/siblings) read
+│   │                             from the `relationships` table, "+" per box writes
+│   │                             through writeRelationship.ts. "Your groups" lists the
+│   │                             self person's groups; a Family-typed one shows
+│   │                             "Tree →" into FamilyTree.tsx centered on the self
+│   │                             person (one of several entry points now — see item 41
+│   │                             for PersonDetail.tsx/GroupDetail.tsx's own links).
+│   │                             No self profile yet → onboarding: search
+│   │                             existing people to flag `is_self`, or create a blank
+│   │                             one (lands on its PersonDetail to name it). Removed
+│   │                             from the top nav (2026-08-03, founder wasn't using it,
+│   │                             will revisit on redesign) — route/component still
+│   │                             exist, just unreachable from the main menu
+│   ├── FamilyTree.tsx          — real family tree (item 32/15, REPLACED
+│                                 FamilyTreeMock.tsx 2026-07-20). Layout engine rewritten
+│                                 2026-07-21/22 (item 37): root-gen ("You") is the only tier
+│                                 still laid out naturally/independently; every other tier
+│                                 derives its position from an adjacent, already-placed tier
+│                                 via `resolveTierPositions` — Parents/Grandparents center
+│                                 each union on the midpoint of its own children's span one
+│                                 tier below (`layoutRelativeToChildren`), Kids centers each
+│                                 unit on its own parentId's position in the tier above
+│                                 (`layoutRelativeToParent`, reusing `anchorX`'s "midpoint of
+│                                 a union's members" logic). A unit with nothing to anchor to
+│                                 (e.g. a childless aunt/uncle) falls back to sitting next to
+│                                 its nearest resolved neighbor; a collision pass then pushes
+│                                 overlapping units apart symmetrically to a minimum
+│                                 clearance. One global bounding-box pass at the end picks a
+│                                 single shift + canvas width to fit everything, replacing the
+│                                 old "each tier independently guesses the canvas center"
+│                                 scheme that could clip wide trees off-screen. Underlying
+│                                 data model unchanged (branches: `{union:{a,b?}, siblings}`,
+│                                 each PERSON carries their own `parentId` so a couple's
+│                                 two partners can trace to two different branches above
+│                                 — paternal vs maternal grandparents both shown), now
+│                                 fed by buildFamilyTree() (src/lib/familyTree.ts)
+│                                 walking the real `relationships` table instead of
+│                                 hand-authored fixtures. Works for ANY person_id —
+│                                 clicking any name re-centers the whole tree on them via
+│                                 a fresh query (a family tree is a person's own
+│                                 relationship graph, not bounded by which group you
+│                                 opened it from), verified live with disposable test
+│                                 people (deleted after). Tapping a tile opens a
+│                                 `ChoiceSheet` (2026-08-04) offering "Open <name>'s
+│                                 profile" or "Center the tree on <name>" rather than
+│                                 re-centering immediately — the tree previously had no
+│                                 route to a profile. The ego-mode root is tappable too
+│                                 (profile only; re-centering on itself is a no-op) and
+│                                 keeps its chevron-less look. A ~10px pointer-movement
+│                                 guard on each tile keeps a pan drag from firing the tap.
+│                                 The canvas lives in `components/PanZoomSvg.tsx`
+│                                 (2026-08-05): drag to pan in any direction, pinch/wheel/
+│                                 +−  to zoom, "Fit" to re-frame — replaced the old
+│                                 overflow-x scroll div. Also hosts ClarifyGenderPrompt
+│                                 (2026-08-05) under the canvas, one question at a time,
+│                                 and passes `onSetGender` down to RelationshipCompare.
+│                                 `onSelectPerson`
+│                                 is optional — Onboarding has no profile view, so the
+│                                 sheet omits that action there. Grandparents tier also pulls in
+│                                 parents' siblings (aunts/uncles, riding in the same
+│                                 branch) and their kids (cousins, shown as extended in
+│                                 the root's own tier). Kids tier and cousins' kids both pair in-law
+│                                 spouses via inLawSpouses() (fixed 2026-07-21 — previously
+│                                 hardcoded spouses: [], unlike Parents/Grandparents/root-gen
+│                                 tiers). "+" writes a real relationship
+│                                 fact (relationships table row + both-sides reciprocal
+│                                 note) and reloads the tree from the server. Known gap
+│                                 carried over from the mock: "+" always targets a
+│                                 tier's first branch — no UI yet to pick which branch
+│                                 when a tier has more than one. Tier count is data-driven, not
+│                                 fixed (2026-07-21, item 42): every tier carries a signed `depth`
+│                                 (0 = root-gen/family's eldest gen, negative = ancestors, positive
+│                                 = descendants); buildFamilyTree() walks parentsOf/childrenOf
+│                                 outward from the old fixed Grandparents/Parents/Kids window as
+│                                 far as the data goes (Great-Grandparents, Great-Great-
+│                                 Grandparents, ... and Grandchildren, Great-Grandchildren, ...),
+│                                 capped at 25 generations each direction as a cycle guard only.
+│                                 buildDescendantTree() (used by GroupDetail's "Generate this
+│                                 family's tree", `mode: 'descendants'`) got the same treatment —
+│                                 its old fixed 5-label array is gone. FamilyTree.tsx's layout
+│                                 chains any number of tiers off `depth` (no more mode-specific
+│                                 branching in the layout code). Verified live: Harvey/Roberta
+│                                 Volin's tree now shows their great-grandchild Wesley Gregorian
+│                                 in a "Great-Grandchildren" section. Founder-selection fixed
+│                                 2026-07-21 (item 41 follow-up): "furthest back" is NOT "fewest
+│                                 recorded ancestors" — an in-law with no separately-recorded
+│                                 ancestry (a fiancé(e), a spouse) trivially looks like the oldest
+│                                 gen too. Now a greedy set-cover picks whichever member's own
+│                                 descendant set (blood descendants + their spouses, so an in-law
+│                                 doesn't ALSO get picked as their own spurious founder) explains
+│                                 the most of the group, repeating for any leftover members —
+│                                 then climbs every founder with a recorded parent up to their
+│                                 topmost known ancestor (2026-08-03 fix: previously only climbed
+│                                 when 2+ founders shared a parent, so a single founder with a solo
+│                                 parent/grandparent on file — e.g. The Ruskaups group, just Lisa &
+│                                 Ed — stayed capped at Lisa instead of reaching Marilee/Villis
+│                                 Berzins). Verified live: The Berzins' group
+│                                 (13 members, none of them Villis/Marilee Berzins) now correctly
+│                                 unifies under Villis & Marilee as the root couple, with Mark
+│                                 Berzins's and Lisa Ruskaup's full lines underneath — the old
+│                                 logic had picked unrelated in-laws (Jeremy Crigler, Bridget
+│                                 Dugan, Faye Higgins) as "founders" instead and dropped Mark's
+│                                 entire branch. Color coding overhauled 2026-07-21 (item 43):
+│                                 purple now means "the person this tree is centered on" (any
+│                                 root, not just the app's own `is_self` person — every ego-mode
+│                                 tree is root-focused by construction, so no flag needed);
+│                                 buildDescendantTree()'s group meta-tree never assigns purple at
+│                                 all (single green color throughout — no gender data exists to
+│                                 support true maternal/paternal, and there's no single root to
+│                                 focus on anyway). Extended family (grandparents, aunts/uncles,
+│                                 cousins, and their own further ancestors/descendants) is now
+│                                 tinted by which of the root's two parents they trace back
+│                                 through — labeled by that parent's actual name in the legend
+│                                 (e.g. "Sarah's side"), not "maternal/paternal" (no gender field
+│                                 to support that). Connector and marriage lines are tinted to
+│                                 match. `TreePerson` gained an optional `side: 'a'|'b'` carried
+│                                 through every tier-building loop, including the item-42
+│                                 arbitrary-depth ancestor/descendant extensions. Verified live
+│                                 against Jake Volin's and Mark Berzins's real trees. Layout fix
+│                                 2026-07-22 (founder click-through bugs): the whole-tree shift used
+│                                 to always pin the leftmost node to x=40 rather than center it,
+│                                 so any tree narrower than the fixed 680px canvas (the common case
+│                                 for a new/small tree, e.g. during onboarding) sat jammed against
+│                                 the left edge — now centers within the canvas whenever content
+│                                 fits, falling back to the old left-pinned/scrollable behavior only
+│                                 for trees wider than the canvas. Also removed the gray tier-label
+│                                 text ("Parents"/"Kids"/"Grandparents"/etc., drawn at a fixed x=40)
+│                                 entirely, per founder ask — it was also what a newly-added node
+│                                 visually covered, same root cause as the left-pin bug. Verified
+│                                 live: added a parent during onboarding, confirmed centered layout
+│                                 and no covered/overlapping text. Suggestion feature 2026-07-22
+│                                 (founder-reported): adding a person as a second "Parent"/
+│                                 "Grandparent" (any `category: 'parents'` add) used to leave them
+│                                 unlinked to the child's other already-known parent — no marriage
+│                                 line, since nothing ever recorded them as a couple. `addRelationship`
+│                                 now checks (`getRelationshipsForPerson`, relationshipsTable.ts) for
+│                                 any other parent of the same child not yet linked as spouse/partner
+│                                 to the new one, and offers a "suggest, don't assert" banner ("Are X
+│                                 and Y married or partners?") — accept writes a real spouse
+│                                 relationship (`linkRelationship`), decline writes nothing. Verified
+│                                 live with disposable test people (deleted after, incl. one stray
+│                                 note left on Jake Volin's own profile from a temporary test-child
+│                                 link): suggestion appeared correctly, decline left no trace, accept
+│                                 produced a real marriage line on reload. Page container widened
+2026-07-22 (founder-reported): styles.page maxWidth 600px to 1200px
+(other pages' 600px reading width is deliberate and unchanged) so the
+SVG tree canvas isn't squeezed into a narrow column on desktop; svg
+style also centers via margin 0 auto when the tree is narrower than
+the container. Death/divorce/remarriage (2026-07-24, founder ask — see PROJECT_HISTORY.md):
+deceased person renders muted grey + "†", any union with a deceased or divorced party renders
+its marriage line dashed (`isUnionEnded` in familyTree.ts) — no structural change, since a
+person having multiple spouses (remarriage) already rendered fine. PersonDetail.tsx's "Mark as
+deceased"/"Undo" control lives inside the name-edit form (pencil icon) only, not as a persistent
+row on every profile (founder feedback 2026-07-24 — a permanent prompt read as a downer).
+FamilyTree.tsx "Mark a marriage as ended" (divorce only — death is
+read off the person's own deceased_date, not a separate flag). **UX fix 2026-07-25** (founder-flagged:
+looked like an already-divorced status you'd undo via trash icon, backwards from the actual effect):
+the divorce control is now a plain text link ("Mark X's marriage to Y as ended"), not the same
+hover-trash chip used for destructive "Remove a relationship" — and a formerly-missing "Undo" link
+(no confirm step, matches PersonDetail's deceased/Undo pattern) now appears once a marriage is marked
+ended, since `ended_reason` was always nullable but had no UI path back to null. `endedByDivorce`
+(familyTree.ts, `rootDirect.spouses` only) tracks divorce specifically, separate from the
+death-inclusive `endedWithAnchor`, so a death-ended union never gets an (incorrect) undo link.
+`relationshipLabels.ts`
+(mirrored in selfContext.ts for the AI prompt) derives step-parent/step-sibling/half-sibling
+labels from the graph, no new relationship kind needed. `describeRelationship` words them by the
+subject's gender since 2026-08-16 (father/mother, brother/sister, husband/wife, stepfather/…,
+neutral when gender is unknown or is non-binary/other); `relationOf` still returns the structural
+kind and stays gender-free, which is what relationshipCalculator.ts delegates its step logic to. `buildFamilyTreeFromGraph` (familyTree.ts,
+2026-07-24 fix) infers a second ego-tree parent from a recorded parent's DECEASED spouse (not a
+still-living one, to avoid pulling in an unrelated remarriage partner) — otherwise a kid whose
+"parent" fact was recorded only against the in-law half of a couple loses the entire blood side
+(grandparents/aunts/uncles/cousins) when the blood parent later dies and the survivor remarries;
+found via Sam Volin's tree going blank-ish after Andy Volin (Sam's actual father) died and his
+widow Andi Romagnoli remarried Michael Galchinsky. That fix's fuller data exposed a second,
+pre-existing bug (2026-07-25 fix, same file): the Kids tier's `kidsBranches` array used to be
+`[...rootChildNodes, ...extraKidsBranches]` (all direct kids first, then every cousin's-kid
+appended after regardless of side) — `FamilyTree.tsx`'s `resolveTierPositions` collision sweep
+only compares array-ADJACENT units and assumes array order already matches left-to-right screen
+order, so a right-side cousin's kid sitting array-adjacent to a left-side one (or to a centered
+direct kid) got forced into the wrong side, sometimes dragging a person clear across the canvas
+from their actual family and corrupting the spacing of whoever sat at that array boundary. Now
+built as `[...leftExtraKids, ...rootChildNodes, ...rightExtraKids]`, mirroring how
+`rootGenBranches` already orders `[...leftCousinBranches, jakeBranch, ...rightCousinBranches]`.
+`buildDescendantTreeFromGraph`'s founder-picking `coveredSet` (2026-07-25 fix, same file) is now a
+full transitive closure over spouse links, not one hop — a widow(er)'s subsequent spouse (Michael
+Galchinsky, remarried to Andy Volin's widow Andi Romagnoli) was landing as their own redundant
+second "founder" of the group tree, since one hop of spouse-coverage never reached him, which
+duplicated Sam/Natalie under a disconnected second bloodline instead of leaving them as Andy's
+actual grandchildren of Roberta.
+Genuine remarriage chains (2026-07-25, `familyTree.ts`/`FamilyTree.tsx`): the Union model was
+hub-spoke (every `union.spouses` entry assumed married directly to `union.a`), so a deceased blood
+person's widow(er)'s OWN later remarriage couldn't render correctly — appending the new spouse
+would compute their ended-status against the wrong person. Replaced every `inLawSpouses` call site
+with `spouseChain` (BFS over spouse links, unbounded hops, `endedWithAnchor` computed relative to
+whichever person a given chain entry is ACTUALLY married to, not always `a`) — this is what lets
+Andy †—Andi (dashed) —Michael (solid) all render correctly in one chain now. A 2nd-hop-or-later
+chain entry also gets a `relationLabel` (e.g. "step-parent"), reusing `relationshipLabels.ts`'s
+already-computed labels relative to the blood person's own kids — surfaced as a small caption under
+the box in `FamilyTree.tsx`. Deliberately NOT extended to `rootSpouses` (the tree's own root/focal
+person's direct spouse list stays as literally their own recorded spouses) nor to
+`groupIntoBranches`'s Parents/Grandparents-tier pairing (a separate, already-correct mechanism).
+Deferred: step-sibling/half-sibling labels for sibling-GROUPS (comparing pairs within a rendered
+sibling/cousin set) are a structurally different problem, not yet built.
+**Step-parents/step-siblings, no death required (2026-08-03, `familyTree.ts`/`FamilyTree.tsx`/
+`writeRelationship.ts`):** the tree previously surfaced a step-parent only through the
+widow-remarries chain (`spouseChain` 2nd hop), so a plain divorce-and-remarry was invisible — a
+living spouse of a parent appeared nowhere. Parents tier is now built by `buildParentBranches`
+(replacing `groupIntoBranches` for that tier only): a parent's spouse/partner who isn't a parent of
+the root rides the marriage line tagged "step-parent" and flagged `TreePerson.stepOnly`. `stepOnly`
+is what keeps them out of the bloodline everywhere else — no aunts/uncles/grandparents pulled from
+their side, excluded from `anchorX`/`unionMemberIds` so the root's connector still drops from the
+real couple's marriage line, and their own kids hang off them alone. Those kids render in the
+root-gen tier tagged "step-sibling". Both are DERIVED, not stored: no new relationship kind: a
+step-parent is a `spouse` row on the parent, a step-sibling a `parent` row on the step-parent, and
+`relationshipLabels.ts` reads both back out. New `LinkOptions` (`skipSpouseParenthood`,
+`skipCliqueSync`) on `linkRelationship` turns off the two blood-inferences for these writes —
+without them `syncSpouseParenthood` would record a step-parent as a parent of the root, and
+`syncFamilyClique` would copy the root's own mother/father onto a step-sibling. The "which parent is
+biological?" question is answered by a follow-up question in the add flow, never by inference.
+**Single "Add family member" control (2026-08-03, same day, `components/AddFamilyMember.tsx`):** the
+per-relationship "+" row reached seven labelled, wrapping buttons once step relations landed and the
+founder couldn't find the step-parent one at all. Replaced with one button -> pick the relationship
+from a dropdown -> answer a follow-up only when the relationship runs THROUGH someone ("Whose parent
+are they?", "Which parent are they married to?", "Which step-parent is their own parent?"; rendered
+as static text, not a dead dropdown, when there's only one candidate) -> then the name box appears
+("Who is <root>'s grandparent?", search existing or type a new name) -> Add. Relationship-first is
+the founder's order (2026-08-04); changing the relationship clears any name already picked under it.
+Relationships whose `through` list is empty stay visible
+but disabled with the reason inline ("Step-sibling — add a step-parent first") rather than vanishing,
+which is the same discoverability problem in miniature. `RelationshipAddPicker` is untouched and
+still backs My Page's circle boxes. Also: a parent's deceased spouse is
+now only inferred as a possible second blood parent when fewer than 2 parents are on file, so a
+step-parent who later dies isn't silently reclassified as a blood parent. Remaining gap: two bio
+parents who BOTH remarried can only place one step-parent adjacent to their own spouse.
+**Centered-person-drifts-off-screen bug (2026-08-03 fix, familyTree.ts):** `sideOfParent` grouped
+root's own two parents into couples before assigning tree side — married-to-each-other parents (the
+common case) collapsed into one couple, so 100% of grandparents/aunts/uncles/cousins landed on side
+'a', dragging the root's box off-center. Side is now assigned per-parent (`buildParentSides`), not
+per-couple.
+Full story: PROJECT_HISTORY.md.
+│   ├── SettingsPage.tsx        — (2026-07-23, items 22/49) reached via "Settings" button next
+│   │                            to Log out (App.tsx `settings` crumb). Account + AI settings
+│   │                            only, not app-navigation shortcuts (a "My page" link was cut
+│   │                            for that reason) — plus a "Your lists" section (2026-08-04,
+│   │                            founder ask) linking to ManageTags + ManageGroupTypes, which
+│   │                            are account-wide vocabularies rather than navigation. Email/password change via
+│   │                            `supabase.auth.updateUser()`; chat-tone picker (4 presets,
+│   │                            `user_settings` table) upserts on click, same shape as
+│   │                            `home_suggestions`; links to About/Privacy. Time zone picker
+│   │                            (2026-07-24, bug fix — see §12) — full IANA list via
+│   │                            `lib/timezones.ts`'s `buildTimeZoneOptions()`
+│   │                            (`Intl.supportedValuesOf`, curated fallback for older
+│   │                            browsers), sorted by UTC offset, upserts `user_settings.
+│   │                            time_zone` on select, same shape as chat-tone. Auto-detected
+│   │                            on first sign-in by `lib/ensureUserTimeZone.ts` (App.tsx's
+│   │                            `onAuthStateChange`, same sticky-metadata-flag pattern as
+│   │                            `ensureStarterTags.ts` — `timezone_detected` flag, never
+│   │                            re-overwrites a later manual choice). **2026-08-02 bug fix:**
+│   │                            the flag used to get set to `true` even when the `user_settings`
+│   │                            upsert failed/never ran (e.g. mid-migration-rollout), permanently
+│   │                            stranding that account on the `'UTC'` default with no retry —
+│   │                            reproduced live on `jakevolin@gmail.com` (flag was `true`, `time_
+│   │                            zone` was `null`), which mis-dated an evening chat entry ("Emi's
+│   │                            birth", typed ~11pm Mountain) to the next day. Fixed: the flag is
+│   │                            now only set after a successful write. This account's `time_zone`
+│   │                            and the one bad `event_date` were corrected directly; other
+│   │                            accounts caught in the same window aren't yet identified.
+│   ├── About.tsx               — (2026-07-23) placeholder page reached from Settings — real
+│   │                            copy (item 23's "I don't want it to be bullshit" honesty ask)
+│   │                            still to be drafted with the founder
+│   └── Privacy.tsx             — (2026-07-23) real privacy/data policy copy (drafted with
+│                                founder, no longer a placeholder): what's collected, how the
+│                                AI uses it, named sub-processors (Supabase/Vercel/Anthropic/
+│                                OpenAI), honest security-tier framing (encrypted in transit/
+│                                at rest today; true E2E encryption is roadmap-only, in tension
+│                                with AI reading content), account deletion today = email
+│                                request (no self-serve button yet), and a specific "Coming
+│                                soon" list (self-serve delete, data export, published security
+│                                write-up, E2E research, consent-gated call-transcript import if
+│                                that ships)
+│   ├── CalendarSettings.tsx   — (2026-07-24, item 48) connect/remove calendars by pasting their
+│   │                            secret iCal URL (validated server-side via `validate-calendar-
+│   │                            source` before saving), founder-editable "Sync now" button.
+│   │                            Reached from Settings and from Calendar.tsx's own link.
+│   │                            (2026-07-26) "Regular calendar" vs "Birthdays calendar" radio
+│   │                            when adding a source (writes `calendar_sources.source_type`);
+│   │                            birthdays copy walks through connecting iPhone's iCloud
+│   │                            Birthdays calendar (Calendar app → Calendars → (i) → Share
+│   │                            Calendar → Public Calendar → Copy Link, then swap `webcal://`
+│   │                            for `https://`) since that's a real always-on Contacts sync,
+│   │                            not a one-time export. `source_type` fetched via its own
+│   │                            separate fail-open query (not the main list select) so a
+│   │                            pre-migration frontend deploy doesn't blank the whole
+│   │                            connected-calendars list — same pattern as GroupDetail.tsx's
+│   │                            `loadSuggestionsEnabled` (see §10/infra notes).
+│   ├── PhotoImportReview.tsx  — (2026-07-30, item 27) general Google Photos import flow, reached
+│   │                            from Settings. "Connect Google Photos" (OAuth) → "Import photos"
+│   │                            opens Google's picker in a new tab, polls until done — then, for
+│   │                            each date-clustered group of newly-imported photos, a card offers
+│   │                            "New event" (default) or an existing-event match (free date-range
+│   │                            heuristic, no AI call — see `_shared/photoClusters.ts`) with a
+│   │                            manual `SearchAddPicker` override, plus (2026-07-30, item 70 — fixes a
+│   │                            bug where the new event silently saved untitled) an optional title
+│   │                            text field shown only in "New event" mode, written to the new
+│   │                            moment's `occasion` on Accept instead of the old hardcoded `null`;
+│   │                            the post-accept confirmation label now shows that real title
+│   │                            (falling back to the date range only when left blank, matching
+│   │                            `momentLabel()`'s own convention) instead of always showing the
+│   │                            date range as if it had been saved as the title. Accept resolves
+│   │                            every photo in that cluster's `moment_id` (creating a blank-shell
+│   │                            event first if "new event"); reject just flips
+│   │                            `photo_clusters.status`, photos stay unattached.
+│   │                            (2026-08-17) Both actions collapse the card in place and park it at
+│   │                            the top of the screen (lib/resolvedCardScroll.ts) rather than the
+│   │                            card vanishing: accept shows `Added N photos to {event}` with
+│   │                            "View event →" + Done, "Not now" shows `Not added — {dates} · N
+│   │                            photos` with Undo (status back to `pending`) + Done. This replaced
+│   │                            the page-level "Added to X" banner above the list. Cards are
+│   │                            rendered inline here, not as a component, so the scroll runs off a
+│   │                            `cardRefs` map + `pendingScrollId` instead of the shared hook.
+│   │                            `EventDetail.tsx`'s own "Add photos" button is
+│   │                            the simpler quick-add path — same underlying picker flow
+│   │                            (`lib/googlePhotosImport.ts`) but skips clustering/review
+│   │                            entirely since the target event is already known.
+│   ├── GooglePhotosOAuthCallback.tsx — (2026-07-30) the redirect target for Google's consent
+│   │                            screen (`/oauth/google-photos/callback`, checked in App.tsx
+│   │                            before normal view/crumb routing since it isn't a real app page).
+│   │                            Exchanges the returned `code` via the `google-photos-oauth-
+│   │                            callback` Edge Function, then reloads at `/` — sessionStorage's
+│   │                            nav-restore key already reflects wherever the user was when they
+│   │                            clicked "Connect," so no return-path plumbing is needed.
+│   ├── ReviewInbox.tsx        — (2026-08-19) crumb `reviewInbox`, singleton. The one place that
+│   │                            answers "what's waiting for me?" — one row per import queue (label,
+│   │                            count, one plain line, tap to open the page that already existed),
+│   │                            with the "still to look through" piles styled quieter than the
+│   │                            ready-to-review ones. Replaced the up-to-FOUR stacked "N found"
+│   │                            nudges on Home.tsx/Calendar.tsx, which now show ONE `N things to
+│   │                            review →` into here. Also owns the set-aside row (count, when the
+│   │                            first one returns, "Show them now" = wake all) — deferral is
+│   │                            cross-cutting and shouldn't nag from inside the queue it came from.
+│   │                            Shows a quiet "a database update is pending" note while
+│   │                            `probeTriageEnabled()` is false.
+│   ├── CalendarTriage.tsx     — (2026-08-19) crumb `calendarTriage`, singleton. Fast Keep / Not
+│   │                            this one pass over `status='pending'` calendar candidates, one line
+│   │                            each (title · date · location · calendar badge when 2+ connected).
+│   │                            Structural clone of ContactSelection.tsx — 50/page, immediate
+│   │                            writes (no batch save), debounced search across ALL rows in the
+│   │                            filter, and an "N turned down — review/undo" toggle.
+│   │                            **Four answers per row (founder-directed 2026-08-19, replacing
+│   │                            Keep/Not-this-one):** `Quick Add` creates the event there and then
+│   │                            via lib/acceptCandidate.ts; `Add More Detail` writes 'selected' and
+│   │                            hands off to ImportReview.tsx; `Remind Me` writes 'deferred' with a
+│   │                            date from RemindSheet.tsx; `Reject` writes 'rejected', because that
+│   │                            is what the founder's no is (reusing 'skipped' would conflate it
+│   │                            with the machine's — see §6). Buttons sit on their own wrapping row
+│   │                            under the title: four will not fit beside text at 375px.
+│   │                            A row flagged by lib/likelyDuplicate.ts shows "Looks familiar —
+│   │                            review it" INSTEAD of Quick Add, so the one-tap path can never
+│   │                            create the duplicate the review card's merge banner exists to
+│   │                            prevent. Every answer collapses the row in place with an Undo and
+│   │                            the row does NOT leave the list — see the scroll note below. This
+│   │                            page filters nothing: it shows every candidate, just at a size a
+│   │                            person can get through (the 2026-08-12 directive stands).
+│   ├── BirthdayImportReview.tsx — (2026-07-26) accept/reject queue for
+│   │                            `birthday_import_candidates`, mirrors ImportReview.tsx's card
+│   │                            idiom but simpler (name + date only, no tags/groups/location).
+│   │                            High-confidence matches show "Goes to: {person} (change)";
+│   │                            unmatched shows a search-to-link picker with "leaving this
+│   │                            blank creates a new person" as the fallback. Accept upserts
+│   │                            `reminders` (label='Birthday', + year if the calendar carried
+│   │                            one). Reached from Home.tsx/Calendar.tsx's "N birthdays found"
+│   │                            nudges (same pending-count pattern as the events nudge).
+│   │                            Verified end-to-end live against a disposable test account
+│   │                            (`jake.volin+birthdaytest@gmail.com` — not yet deleted, needs
+│   │                            founder cleanup via the Supabase dashboard, no admin access
+│   │                            from this session), NOT the shared `jakevolin@gmail.com`
+│   │                            login (real data, never used for mutating tests).
+│   │                            (2026-08-17) Accept and reject both collapse the card in place and
+│   │                            park it at the top of the screen (lib/resolvedCardScroll.ts).
+│   │                            Reject shows `Rejected — {name}` with Undo (status back to
+│   │                            `pending`, `reviewed_at` null, original `matched_person_id`
+│   │                            restored) instead of the row vanishing, and the accept
+│   │                            confirmation — which used to sit there forever with no way to
+│   │                            clear it — now has a Done that drops the card from the list.
+│   │                            (2026-08-18) `onPersonCreated` pushes a just-created profile into
+│   │                            the page-level `allPeople` roster, so it's linkable from the other
+│   │                            cards without a page reload — see §12.
+│   └── ImportReview.tsx       — (2026-07-24, item 48; overhauled 2026-07-25; **reshaped 2026-08-19
+│                                — read this paragraph first**) accept/reject queue for
+│                                AI-extracted calendar-import candidates. Three changes:
+│                                (a) it now reads `status='selected'` (kept in CalendarTriage.tsx),
+│                                falling back to 'pending' when `probeTriageEnabled()` is false;
+│                                (b) the card list is wrapped in `ReviewDeck` — batches of 10 with a
+│                                progress line and a real ending, replacing `CARD_BATCH_SIZE`/
+│                                "Show 20 more (210 still to review)"; (c) cards open COLLAPSED
+│                                (title · date · location · who, then Accept / Not now / Reject /
+│                                Details ▾) and expand to the full editor described below on tap —
+│                                EXCEPT when `findLikelyMatch` fires, where the card opens expanded
+│                                and stays that way until the four-way duplicate question is
+│                                answered, because a collapsed Accept there would create the very
+│                                duplicate the banner warns about. Accepting collapsed saves exactly
+│                                what the scan extracted (what Accept on an untouched full card
+│                                always did). "Not now" writes `status='deferred'` +
+│                                `deferred_until` = today + 30d and confirms "Set aside — …. It'll
+│                                come back in N days" with Undo. Undo restores 'selected', not
+│                                'pending' — the founder already triaged it and shouldn't be asked
+│                                twice. (2026-08-19) "Not now" is now **Remind Me** and opens
+│                                RemindSheet.tsx, matching the triage row; accept/merge go through
+│                                lib/acceptCandidate.ts so there is one write path, not two; and the
+│                                page takes a `restoreScrollRef` from App.tsx (same handshake as
+│                                Groups.tsx) while ReviewDeck holds its batch by `persistKey`, so
+│                                "Add more details →" and back returns you to the same place in the
+│                                same ten. Everything below still describes the expanded card.
+│                                (`moment_import_candidates`). Accept no longer
+│                                auto-advances — shows a confirmation state ("Added —
+│                                {event}"/"Merged into {event}") with "Add more details →" (jumps
+│                                to EventDetail) and "Done". Free client-side heuristic (title
+│                                word-overlap + date proximity, no AI call) flags a likely existing
+│                                duplicate and offers "Merge into it" (fills only the target's
+│                                blank fields, unions attendees/tags/groups, candidate marked
+│                                accepted not deleted) or manual search-to-merge. Suggested
+│                                tags/groups (from the same scan-calendar-sources AI call, no extra
+│                                cost) render as approve-by-default chips + manual pickers; groups
+│                                are existing-only (never invented), tags may propose a new name.
+│                                No free-text "When" input — `when_text` is auto-derived from the
+│                                exact date(s) and hidden, per founder feedback that it was
+│                                confusing next to the real date. Reached from the Home/Calendar "N
+│                                events found" nudges. Each card shows a small source-calendar badge
+                                (the connected calendar's label) when the founder has 2+ calendars
+                                connected, so multi-calendar founders can tell which candidates came
+                                from which feed (2026-07-25). Manual merge-search now lists existing
+                                events immediately on open (sorted most-recent-first), narrowing as
+                                you type, instead of showing nothing until you type (2026-07-25 fix).
+                                "Save as a note instead" (both on the auto-suggested match banner and
+                                after picking a manual merge target) writes a single moment-scoped
+                                `notes` row (no person/group, `source='calendar_import'`) without
+                                merging/creating/field-filling — for calendar entries that are
+                                really just a detail of an existing event rather than their own event
+                                (2026-07-25; needed a `notes` CHECK-constraint + RLS-policy widening,
+                                see schema entry below). "+ Add someone" search-add picker (existing
+                                people, or type a new name to create) plus "Also from the associated
+                                group?" suggestions (members of any group tagged on the candidate, one-
+                                tap add/dismiss, mirrors EventDetail.tsx's group-suggestion pattern)
+                                (2026-07-25). Second suggestion box, "Was their family there too?"
+                                (2026-07-25): spouse/partner of anyone already on the candidate, then
+                                that couple's kids once the spouse/partner is ALSO on it — same
+                                `suggestFamilyMembers` helper and dismiss-chip UI as EventDetail.tsx's
+                                version (see its entry above), fed by one whole-account `relationships`
+                                fetch (`getRelationshipsMap()`, no args) shared across every card on the
+                                page rather than a per-card query. Self seeded into that candidate the
+                                same way as EventDetail.tsx (item 63, 2026-07-26) — self's spouse is
+                                suggested even before self is added to the candidate.
+                                Third disposition alongside merge/save-as-note (2026-08-03): "+ Add as
+                                a sub-event" files the candidate as its OWN new event nested under an
+                                existing one (`parent_moment_id`, item 35) — offered on the likely-match
+                                banner, as a swap from a chosen merge target, and via its own
+                                search-an-event picker. Accept button reads "Add as sub-event"; the
+                                confirmation reads `Added as a sub-event of "{parent}" — {event}`.
+                                Parent picker excludes events that are already sub-events (one level
+                                deep, same rule as EventDetail.tsx), from fetchMomentParentIds()'s
+                                isolated fail-open query so an unrun migration degrades instead of
+                                breaking the page. Both pickers' rows (and the merge/sub-event
+                                banners) are labelled "Parent / Child — date" per
+                                lib/momentDisplayName.ts, §10 `moments`.
+                                One-rule button hierarchy (2026-08-16, founder feedback that the gold
+                                box read as the whole choice and merges were being hit by mistake):
+                                the gold box only ever PICKS, the single blue button at the card's
+                                foot is the only control that writes. So (a) no option in the
+                                likely-match box is a filled/primary button — all four are equal
+                                outline buttons, including "Merge into it"; (b) "Save as a note
+                                instead" no longer fires on click, it sets `noteTarget` like
+                                mergeTarget/subEventParent and is committed by the blue button (which
+                                also keeps the note text editable after choosing); (c) the
+                                confirmation banners' change-your-mind actions are plain underlined
+                                links behind "Not what you want?", never bordered buttons, plus a
+                                `Press "<button>" below to save it` hint; (d) the blue button's label
+                                always names the outcome — Accept / Merge / Add as sub-event / Save as
+                                a note, and "Accept as a new event" while a possible duplicate is
+                                still unanswered (derived `unresolvedMatch` drives both the box and
+                                the label so they can't drift).
+                                (2026-08-17) The two picker ENTRY POINTS above Accept/Reject are
+                                outline pill buttons matching "+ Add a tag"/"+ Add a group"
+                                (`styles.addButton`), not underlined links: "Merge with an existing
+                                event" / "+ Add as a sub-event", flipping to "Cancel merge" /
+                                "Cancel sub-event" while open. This does NOT contradict (c) above —
+                                that rule covers the confirmation banners' change-your-mind links,
+                                which stay links. Notes textarea: was passing `flex: 'none'` in
+                                `styles.notesInput`, overriding AutoGrowTextarea's `flex: 1`, so it
+                                collapsed to the textarea's default ~20-col width and grew tall
+                                instead; now `flex: 1` + `minWidth: 0` like the other three queues
+                                (750px of an 800px row, mic takes the rest).
+                                (2026-08-17) Renders `CARD_BATCH_SIZE` = 20 cards at a time with a
+                                "Show 20 more (N still to review)" button and a "N events to review
+                                — showing 20." line; the queue itself is fetched WHOLE. A card is
+                                expensive (findLikelyMatch scans every moment on file, plus per-card
+                                group-roster maps and family/group suggestions), so mounting all 376
+                                took 7.5s vs 942ms for 20 — see PROJECT_HISTORY.md 2026-08-17. The
+                                candidates query is also paged now (lib/pagedSelect.ts); it was the
+                                last unpaged account-wide browser read and would have silently
+                                capped at 1000 pending events.
+                                (2026-08-17) Every disposition lands the same way, via
+                                lib/resolvedCardScroll.ts: the card collapses to its confirmation
+                                and that collapsed card is parked 12px below the top of the screen,
+                                so the next event sits right underneath it. Previously accept left
+                                the confirmation just off the top of the screen (the card shrank
+                                ~695px→109px under a fixed scroll position) and reject clamped the
+                                page to the very top. Reject now shows a confirmation too —
+                                `Rejected — {event}` with Undo (flips `status` back to `pending`,
+                                `reviewed_at` null) + Done, instead of the row silently vanishing;
+                                nothing else in the app resurfaces rejected candidates, so Undo is
+                                the only recovery from a mis-tap. Pressing Done needs no second
+                                scroll: the next card lands exactly where the confirmation was.
+                                The same treatment is on the other three queues — see their entries.
+                                (2026-08-18) `onPersonCreated` pushes a person created as a new
+                                attendee into the page-level `allPeopleList`, so the other cards'
+                                "+ Add someone" search finds them without a page reload — see §12.
+                                `suggested_people`/`suggested_group_ids` now also draw
+                                on people/relationship data already on file, not just the calendar
+                                entry's own ICS attendee list or its title's explicit group name
+                                (2026-07-25 follow-up, scan-calendar-sources): (a) names mentioned
+                                directly in the title/description (e.g. "Sid and Kate's wedding")
+                                are extracted by the same AI call and cross-matched against the
+                                people roster — a bare first name that's genuinely ambiguous (2+
+                                people share it) gets resolved via the `relationships` table if it
+                                connects to another already-resolved person in the same event (e.g.
+                                "Kate" → the one married to the already-matched "Sid"), never
+                                guessed outright; (b) a group gets suggested when 2+ resolved
+                                attendees share it, via EITHER formal `person_groups` roster
+                                membership OR having attended one past event tagged to that group
+                                (the looser, attendance-based signal exists because founders don't
+                                always formally roster every regular). Accepting a candidate now
+                                immediately adds the new event to the shared existing-events list, so
+                                the next candidate's "might already be on file" banner and manual
+                                merge-search see it right away — previously needed a page reload
+                                (2026-07-25 fix). Free-text "Your notes (optional)" box on every
+                                candidate card (2026-07-25), right under the raw calendar
+                                description — lets the founder jot memories while reviewing, before
+                                deciding accept/merge/note. Saved as a `notes` row
+                                (`source='calendar_import'`) on whichever moment results: the newly
+                                created event, the merge target, or (taking precedence over the
+                                mechanical title+description fallback) the "save as a note instead"
+                                target. Location field (2026-07-26) is now `AddressSuggestInput`
+                                (see components/ entry below) instead of a plain input — suggests
+                                addresses the founder has typed before, plus live Geoapify
+                                suggestions once a key is configured.
+├── components/
+│   ├── FloatingActionBubble.tsx — (2026-08-08, landed 2026-08-10) bottom-right "+" bubble that
+│   │                            expands into a note box (`primaryBody` — mic included, kept on
+│   │                            the first screen because voice is the primary input path) plus
+│   │                            an action list, each row opening its own panel via `‹ Back`.
+│   │                            Owns its open/closed state, so pages no longer keep their own
+│   │                            `showXPicker` flags. REPLACED FloatingNoteButton.tsx, now
+│   │                            deleted. On EventDetail (people / tag / associate a group /
+│   │                            photos / new sub-event / Manage) and GroupDetail (people /
+│   │                            associate a group / new subgroup / Manage). `secondary: true`
+│   │                            puts Manage below a divider, muted; it opens ManagePanel, which
+│   │                            still owns the delete confirm. `body` may be a render function
+│   │                            receiving `{back, close}` for panels with their own Cancel.
+│   │                            Escape is three-stage: clear the focused field's text, then back
+│   │                            to the list, then close — registered in the CAPTURE phase, since
+│   │                            the field's own React handler clears the value synchronously and
+│   │                            a bubble-phase listener would always see it empty. Hidden when
+│   │                            `readOnly`, so the demo never renders it. `error` (2026-08-11,
+│   │                            item 91) shows a failure banner under the header at BOTH levels —
+│   │                            a write started in here has nowhere else to report itself, since
+│   │                            the pages' own banner lives inside ManagePanel.
+│   ├── AddressSuggestInput.tsx — (2026-07-26) drop-in text input with a suggestion dropdown:
+│   │                            previously-typed values (instant, local, from the `recentValues`
+│   │                            prop) first, then live Geoapify address suggestions (debounced,
+│   │                            `lib/geoapify.ts`). Unlike SearchAddPicker, the input's own value IS
+│   │                            the field — picking a suggestion (click, or ↓/↑ + Enter) fills it
+│   │                            in place rather than clearing a separate query box. Currently only
+│   │                            wired to ImportReview.tsx's Location field (the only real location
+│   │                            text input in the app).
+│   ├── RelationshipAddPicker.tsx — real "add a relative" affordance shared by Circle.tsx/
+│   │                              FamilyTree.tsx (replaced MockAddPicker.tsx 2026-07-20):
+│   │                              search everyone on file, or type a name that matches no
+│   │                              one to create a brand-new person, both wired through
+│   │                              writeRelationship.ts. Enter-to-submit (2026-07-22, founder
+│   │                              ask — clicking felt too hands-on): wrapped in a `<form>`,
+│   │                              Enter commits the typed name (exact match selects the
+│   │                              existing person, otherwise creates new), same outcome as
+│   │                              clicking either option.
+│   ├── PetsSection.tsx        — (2026-08-01) collapsible "Pets" card on PersonDetail, between
+│   │                            Contact Info and Associated Groups. Own isolated query, same
+│   │                            reasoning as ContactInfoSection. Renders nothing at all when the
+│   │                            migration hasn't run — an Add box over a missing table would
+│   │                            swallow the write silently, so `available:false` hides the card
+│   │                            rather than showing an empty one. LISTS and ATTACHES only; all
+│   │                            pet editing lives on PetDetail.tsx, mirroring groups/events
+│   │                            (chips on a profile, editing on the detail page) so there's one
+│   │                            pet form, not two that drift. Add and attach are ONE gesture: the
+│   │                            SearchAddPicker searches every pet on the account, so tagging the
+│   │                            spouse's dog is the same motion as creating a new pet (and a
+│   │                            newly-created one drops you straight onto its page, like "+ Add
+│   │                            Person"). The × UNLINKS (the pet may be someone else's too).
+│   │                            Demo passes `pets={[]}` so the public demo makes zero Supabase
+│   │                            calls, and omits `onSelectPet` (no pet pages in the demo shell).
+│   ├── ErrorBoundary.tsx      — per-tab crash containment; friendly fallback
+│   │                            (reload button, raw error tucked behind a
+│   │                            "Technical details" toggle)
+│   ├── NoteWithDetection.tsx  — (2026-08-03) replaced UpdateMomentChat.tsx/UpdateGroupChat.tsx;
+│   │                            one input for EventDetail/GroupDetail (was two: a plain note box
+│   │                            + a separate AI chat). Saves the user's exact words verbatim and
+│   │                            instantly, then fires update-moment/update-group in the
+│   │                            background for attendee/relationship detection — renders the same
+│   │                            RelationshipSuggestions/MentionedPeopleSuggestions banners the old
+│   │                            chats did. A genuine disambiguating question from the model surfaces
+│   │                            as one inline follow-up (`needsClarification`), not a persistent
+│   │                            thread. `subjectType`/`subjectId` param over moment vs. group.
+│   │                            Progress panel (2026-08-08): "✓ Saved your note" the instant the
+│   │                            row lands, a pending line while the AI call runs, then one ✓ per
+│   │                            thing that actually happened, built from the function's `applied`
+│   │                            payload (never from what the model claimed) via `checklistLines()`.
+│   │                            Detection is now awaited, not fire-and-forget, and a failed call
+│   │                            says so instead of returning silently. No fake staged ticking —
+│   │                            the whole wait is one AI call, so items check off together.
+│   ├── VoiceInputButton.tsx   — mic → `transcribe`; renders null w/o MediaRecorder. Takes `value`/`onChange` (not `onTranscribed`) since 2026-08-18: it owns the text after the anchor point and rewrites it live as words stream in, so a failure keeps what arrived. Live level meter from an AnalyserNode; 10-min cap. **Refuses to upload a recording under `MIN_AUDIO_BYTES` (1KB)** — an empty capture now reads "Nothing came through — make sure no other app is using the mic" instead of a generic transcription failure (2026-08-23, founder-reported on iPhone). A `startingRef` latch stops a double-tap starting a second recorder while the first is still awaiting `getUserMedia`.
+│   │                            Optional `onBusyChange(busy)` (2026-08-02) reports
+│   │                            recording/transcribing so a caller can disable its save
+│   │                            button — accepting mid-transcription otherwise drops the audio.
+│   ├── RemindSheet.tsx        — (2026-08-19) "Remind me about this in…" — 1 week / 1 month /
+│   │                            3 months / 6 months, plus a "use this as my default, don't ask
+│   │                            again" checkbox that writes `user_settings.review_remind_days`.
+│   │                            Once a default is saved, both review screens apply it without
+│   │                            opening the sheet (a preference that still asked every time
+│   │                            wouldn't be one). A thin wrapper over ChoiceSheet, which gained an
+│   │                            optional `footer` slot for the checkbox — it can't live in
+│   │                            `actions`, where every entry closes the sheet by doing something.
+│   ├── ReviewDeck.tsx         — (2026-08-19) the finish line on an import queue. Serves `items` in
+│   │                            batches of `DECK_SIZE` (10), shows "N of 10 done · M more after it"
+│   │                            while you work, and an end-of-batch panel ("Nice — 10 events
+│   │                            reviewed. 204 to go") with `Review 10 more` / `I'm done for now`.
+│   │                            Batch membership is captured once, NOT recomputed as
+│   │                            `items.slice(0, 10)` — otherwise dismissing a card pulls the next
+│   │                            one up and the batch never ends. Cards report a decision through
+│   │                            `renderItem`'s `api.setDecided`, which is a different moment from
+│   │                            leaving the list (they collapse to a confirmation and sit until
+│   │                            "Done"). Generic on purpose: birthdays/contacts/photos are meant to
+│   │                            get the same treatment and need no rewrite here. `persistKey`
+│   │                            (2026-08-19) keeps a batch across a REMOUNT — "Add more details →"
+│   │                            navigates to the event, and coming back used to deal a fresh ten,
+│   │                            silently replacing the ten you were part-way through.
+│   ├── ReviewNoteField.tsx    — (2026-08-02) label + AutoGrowTextarea + mic, the free-text
+│   │                            "what do you actually know about them" box on all four import
+│   │                            review queues (ContactImportReview / BirthdayImportReview /
+│   │                            ImportReview / PhotoImportReview). Writes ONE note verbatim on
+│   │                            accept, `source: 'review_note'` (no badge on PersonDetail —
+│   │                            these are the founder's own words, not machine-derived). Empty
+│   │                            box writes nothing. No AI: founder ruled out a note-splitter on
+│   │                            cost (2026-08-01); Key Facts already breaks long notes into
+│   │                            bullets on the profile, DB-cached.
+│   ├── MatchCallout.tsx       — (2026-08-10) the "possible match" box on ContactImportReview /
+│   │                            BirthdayImportReview: states the claim as a question naming both
+│   │                            people ("Is X the same person as Y?") in a tinted, primary-bordered
+│   │                            box, with Yes/No as real buttons, optional `evidence` slot (the
+│   │                            match's existing groups) and children as the "or link it to someone
+│   │                            else" search. Replaced a grey one-liner + two underlined links.
+│   ├── AutoGrowTextarea.tsx   — grows to 160px then scrolls; Enter sends
+│   ├── PhotoGallery.tsx       — (2026-07-30) given a `momentId`, renders real photo thumbnails
+│   │                            (signed Storage URLs, `photos` table) once any exist; falls back
+│   │                            to the original placeholder tiles otherwise, and unchanged for
+│   │                            Person/Group pages (no `momentId` passed — a per-person/group
+│   │                            rollup across their moments is a later pass, item 66 below).
+│   │                            Thumbnails are clickable (2026-07-30, item 70) — opens a
+│   │                            full-screen lightbox (Prev/Next, Esc/backdrop/× to close) showing
+│   │                            the same stored ~1600px copy, since Google's own picker URLs are
+│   │                            session-scoped and there's no fuller-quality source to link out to
+│   │                            later. `subEventIds` (2026-08-10) makes a parent event's gallery
+│   │                            cumulative — its own photos plus every sub-event's; EventDetail
+│   │                            passes the ids it already loaded, so no extra query. Merged
+│   │                            galleries order by `taken_at` then `created_at`.
+│   ├── RefreshButton.tsx      — spinning refresh icon
+│   ├── SummaryText.tsx        — (2026-08-10) renders an event summary. A parent event's sub-event
+│   │                            lines get a hairline left rail, an italic muted date, a bold title
+│   │                            and the sentence below; an ordinary prose summary renders exactly
+│   │                            as before (one pre-wrap paragraph). Parsing in lib/summaryFormat.ts.
+│   │                            (2026-08-17) bullets render as a real list with a hanging indent, and
+│   │                            the thin-event closing line renders as muted italic below them. Also
+│   │                            now used by GroupDetail.tsx, which printed summaries as a flat <p>
+│   │                            and would have leaked raw "- " markers.
+│   ├── EventEnrichmentBoxes.tsx — (2026-08-17, item 21) the game + weather boxes under an
+│   │                            event's date/location. Pure presentation: renders what
+│   │                            EventDetail hands it, never fetches. Hidden entirely when
+│   │                            status is not_found/too_soon, so an ordinary event looks
+│   │                            exactly as before. A game that has not been played shows its
+│   │                            start time, NOT its 0-0. The weather box always names the
+│   │                            place and date it actually looked up, so a wrong guess is
+│   │                            visible rather than quietly trusted.
+│   ├── SearchBox.tsx          — client-side list filter. Optional `onFocus`/`onBlur`
+│   │                            props (item 28 follow-up, 2026-07-22, additive)
+│   │                            passed straight through to the input, so a picker
+│   │                            built on top can react to focus state. Optional
+│   │                            `inputRef`/`style` (item 14, 2026-08-12, additive):
+│   │                            GlobalSearch focuses the field itself, and overrides
+│   │                            the baked-in marginBottom that's dead space in a panel.
+│   ├── GlobalSearch.tsx       — (item 14, 2026-08-12) the global search panel. Top-anchored
+│   │                            overlay (ManagePanel's scrim/Escape/click-outside recipe),
+│   │                            results in per-kind sections capped at 5 with "Show all N".
+│   │                            Keyboard model copied from SearchAddPicker: one flat `rows`
+│   │                            array so the Ask row is just another stop, arrows CLAMPED not
+│   │                            wrapped. Focus lands via a useCallback REF, not an effect+rAF
+│   │                            — the rAF version lost the focus outright in the browser.
+│   │                            Row styles use backgroundColor longhand in BOTH base and
+│   │                            active (mixing `background`/`backgroundColor` makes React warn
+│   │                            every rerender — same trap SearchAddPicker hit with `border`).
+│   │                            `onAsk` optional: no handler, no "Ask Grove" row (the demo).
+│   ├── SearchAddPicker.tsx    — type-to-search + tap-to-add from a list (used for
+│   │                            EventDetail's attendee/group-tag pickers). Optional
+│   │                            `onCreateNew`/`createLabel` props (item 28,
+│   │                            2026-07-22, additive — existing callers unaffected)
+│   │                            add an inline "+ Add ..." create affordance,
+│   │                            borrowed from RelationshipAddPicker's create-button
+│   │                            block, for a growing vocabulary like tags. Optional
+│   │                            `browseAll` prop (2026-07-22 follow-up, default
+│   │                            false — people/group pickers unaffected): focusing
+│   │                            the input shows the FULL item list immediately
+│   │                            (not just after typing), so a bounded vocabulary
+│   │                            like tags can be browsed/recognized rather than
+│   │                            recalled from memory — caller is responsible for
+│   │                            passing `items` pre-sorted (EventDetail's tags
+│   │                            picker sorts alphabetically). Blur close is
+│   │                            delayed 150ms so a click on a result registers first.
+│   │                            Keyboard select (2026-08-03, all callers): typing
+│   │                            auto-highlights the top match so Enter commits it
+│   │                            before the name is fully typed; ↑/↓ move the
+│   │                            highlight (CLAMPED, not wrapped — overshooting at the
+│   │                            end shouldn't land on the wrong name), Enter with no
+│   │                            match creates when `onCreateNew` is set, Esc clears,
+│   │                            hover syncs the highlight so mouse and keyboard agree.
+│   │                            `browseAll` with an empty box highlights NOTHING
+│   │                            (index -1) — that list is unranked, so a stray Enter
+│   │                            must not commit whatever sorts first. Rows are
+│   │                            role=option under aria-activedescendant; the active
+│   │                            border is restated as a full `border` shorthand
+│   │                            (not `borderColor`) or React warns about mixing.
+│   │                            Results are RANKED, not just filtered (2026-08-10,
+│   │                            lib/searchRanking.ts) — a plain substring filter cut to
+│   │                            the caller's first 8 made a parent group unreachable,
+│   │                            since every descendant's full-chain label matches the
+│   │                            parent's name and outvoted it. Trimmed lists now show
+│   │                            "N more matches — keep typing" instead of dropping
+│   │                            silently. `browseAll` still bypasses ranking (unsorted
+│   │                            full list is the caller's job to order).
+│   ├── UndoBanner.tsx         — "Added X. Undo" line for actions that commit with no
+│   │                            confirm step (GroupDetail's member add, 2026-08-03).
+│   │                            Persists until replaced/dismissed rather than fading
+│   │                            on a timer — read speed shouldn't decide whether a
+│   │                            mistake stays fixable. Same visual idiom as
+│   │                            ContactImportReview/PersonDetail's inline Undo links.
+│   ├── ChoiceSheet.tsx        — generic "what do you want to do with this?" popup:
+│   │                            title, optional subtitle, a stack of full-width choice
+│   │                            buttons (one `primary`, filled ink). Second instance of
+│   │                            FilterPanel's popup pattern; separate component because
+│   │                            FilterPanel's "Clear all / Done" footer is required and
+│   │                            wrong for a chooser. Carries role=dialog and focuses the
+│   │                            first action on open (FilterPanel does neither). Used by
+│   │                            FamilyTree's tile tap (2026-08-04) and Countdowns' "+ Add"
+│   │                            (2026-08-06).
+│   ├── ClarifyGenderPrompt.tsx — (2026-08-05) "Is Mark your son-in-law or daughter-in-law?"
+│   │                            banner: one tap saves `people.gender` and re-words every label
+│   │                            that was sitting on a genderless fallback. Asked as a RELATIONSHIP
+│   │                            question (the two answers are the two words the tile could show),
+│   │                            not "what gender is this person?". Shown on FamilyTree (one at a
+│   │                            time, in-law/aunt-uncle/niece-nephew first since those fallbacks
+│   │                            have no natural English word) and inline under a
+│   │                            RelationshipCompare answer. Only ever asks about names
+│   │                            `nameGender.ts` can't decide — no prompt for a Mark or a Susan
+│   │                            (founder, 2026-08-05); Jordan and Casey still get asked. Hidden entirely when
+│   │                            `graph.genderSupported` is false — never offers a button that
+│   │                            can't save. Skip is session-only and deliberately not persisted:
+│   │                            a non-binary relative has no right answer among the two offered,
+│   │                            and their profile's Gender dropdown is the full control
+│   ├── CountdownsSection.tsx  — (2026-08-06, item 83) collapsible "Countdowns" card at the BOTTOM
+│   │                            of Calendar.tsx, under the month grid (founder preference, moved
+│   │                            from above Upcoming the same day):
+│   │                            one card per subject, title + ↑ (how long it's BEEN)
+│   │                            or ↓ (how long UNTIL), then up to four unit columns. Takes the
+│   │                            moments/people Calendar already loaded and adds exactly one query
+│   │                            (`countdowns`, isolated + fail-open — pre-migration it still shows
+│   │                            derived milestones but hides "+ Add" and the dismiss ×, rather than
+│   │                            offering writes that would silently no-op). One timer for the whole
+│   │                            section at `tickMs`'s period, stopped when collapsed; the card LIST
+│   │                            is rebuilt per day, not per tick, so ticking doesn't re-scan every
+│   │                            moment/person each second. "+ Add" → ChoiceSheet: "Just a
+│   │                            countdown" (inline label + date), "A countdown and a real event"
+│   │                            (`createEventShell` + pin, then straight to EventDetail), "An event
+│   │                            I already have" (SearchAddPicker over dated moments). Card tap →
+│   │                            EventDetail / PersonDetail; × removes from Countdowns only.
+│   │                            (2026-08-06 follow-up) The cards are ONE timeline in their own
+│   │                            scroll box: past above a "Today · Aug 6" line, upcoming below,
+│   │                            centred on that line when the section opens, with a "Today" button
+│   │                            in the header that jumps back to it (sets the box's scrollTop
+│   │                            directly — `scrollIntoView` would drag the page too). × now removes
+│   │                            optimistically (by `cardIdentity`) and folds the one changed row
+│   │                            into state; the old refetch blanked the section, shortened the page
+│   │                            and made the viewport jump to the top and back. ⚙ next to the ×
+│   │                            opens a per-card panel: rename (display-only, the event keeps its
+│   │                            own title), count in chosen units or Automatic, repeat
+│   │                            weekly/monthly/yearly, and — for a one-off still ahead — keep
+│   │                            counting up after it passes vs. take it off the list. Hidden until
+│   │                            the settings migration runs.
+│   ├── PanZoomSvg.tsx         — (2026-08-05) drag-to-pan / pinch-wheel-button-zoom viewport
+│   │                            for an SVG canvas. Content sits in a transformed <g> (stays
+│   │                            vector-crisp when zoomed, unlike a CSS-scaled <svg>). Tracks
+│   │                            live pointers itself instead of setPointerCapture, which would
+│   │                            retarget `click` to the container and break tapping a tile.
+│   │                            Pan is clamped so the content can never leave its own frame;
+│   │                            the zoom floor drops below MIN_ZOOM when a tree is too wide to
+│   │                            fit a phone otherwise. Used by FamilyTree.tsx (both modes,
+│   │                            plus the demo tree via FamilyTreeView)
+│   ├── Chips.tsx              — PersonChip (green) / GroupChip (gold) / EventChip
+│   │                            (blue) — shared visual language everywhere
+│   ├── EditButton.tsx         — pencil rename control (Event/Group headings)
+│   ├── Breadcrumb.tsx         — trail for App.tsx's navStack
+│   ├── NavIcons.tsx           — (2026-08-11) the 5 nav tab icons as hand-written inline SVG.
+│   │                            NOT an icon library on purpose — 3 deps total, 5 glyphs.
+│   │                            currentColor-stroked, so active/inactive is the parent's
+│   │                            `color`. Swapping one icon = replacing its paths, nothing else.
+│   ├── RelationshipSuggestions.tsx — shared suggestion-banner UI (all 4 surfaces);
+│   │                            exports its `styles` so other banner components match
+│   ├── MentionedPeopleSuggestions.tsx — (2026-08-02) "You mentioned Rachel at <event>… want a
+│   │                            profile for them too?" banner, Home chat + event chat. "Add a
+│   │                            profile" creates the person and re-points the already-written
+│   │                            general note at them (which also puts them in "Who was there");
+│   │                            "Just keep the note" writes nothing — the note is already saved
+│   ├── DevOnboardingReset.tsx — (2026-07-22) "Testing tools" link on Home, renders null unless
+│   │                            signed in as the onboarding test account (see lib/
+│   │                            resetOnboarding.ts); expands to a type-RESET-to-confirm panel,
+│   │                            then reloads straight into Onboarding.tsx
+│   └── FeedbackWidget.tsx     — (2026-07-22) floating "💬 Feedback" toggle, mounted in App.tsx
+│                                for any signed-in user. Click-to-pin: toggle on, hover highlights
+│                                the element under the cursor, click intercepts (capture-phase,
+│                                preventDefault/stopPropagation so the real app doesn't navigate)
+│                                and opens a small composer instead; saves to `feedback_notes`
+│                                (page label + a best-effort text description of the element +
+│                                the note) via `lib/feedback.ts`. Badge shows open-note count,
+│                                click it to list/mark-done/delete. Needs the migration in §10
+│                                run before it actually persists.
+```
+
+Every page listed above under `pages/` (Home/People/PersonDetail/Groups/GroupDetail/Events/EventDetail/FamilyTree) is split into a data-fetching container plus a pure, exported `*View` component (2026-07-23) — `src/pages/demo/` (`DemoShell.tsx` + a one-time `DemoIntro.tsx` welcome walkthrough + 10 thin containers) and `src/lib/demoData.ts` (a fictional "Gary Pemberton" persona, zero real data, zero API calls) feed that same static data into each real `*View` for the public landing-page demo (see §7's "See a live demo"), so a future UX edit to any of those `*View`s updates the demo automatically.
+
+`src/pages/demo/DemoIntro.tsx` (2026-07-23, founder feedback — a first-time visitor dropped straight into a populated fake account had zero context): full-screen 6-step reading sequence (own `Stage`/dot pattern mirroring Onboarding.tsx's, DemoShell's own color palette) shown once per `DemoShell` mount, before the tab nav — Welcome, then one pain-point-framed paragraph each for Home/People/Events/Groups/Notebooks, referencing real Gary Pemberton specifics. Skip on every step. Plain `useState` in `DemoShell` (`introSeen`), no persistence — `DemoShell` fully unmounts on "Exit demo," so re-entering shows the intro again by design.
+
+`App.tsx` is the traffic controller: auth state, first-run onboarding gate (`onboardingPending`/`checkOnboarding()` — see Onboarding.tsx above), tab nav (Home/People/Events/Groups), a generic `navStack: Crumb[]` breadcrumb stack any page can push person/group/event crumbs onto, persisted to sessionStorage (`boomer-nav`) so refresh stays put. Voice input + AutoGrowTextarea are on every conversational text box (Home, event chat, group chat, fact bar). `authView` (`'landing' | 'login' | 'signup' | 'demo'`) also gates `DemoShell` in when `!session`. **Address bar now mirrors `{view, navStack}`** (2026-07-23, founder-requested — the URL used to never change while clicking through the app): `buildPath()`/`parseNavFromPath()` turn it into `/:tab` or chained `/:crumbType/:crumbId` segments. Deliberately the LIGHTWEIGHT of two options offered (the other being a full router-library rebuild) — no new dependency, sessionStorage stays the full-fidelity same-tab-refresh mechanism (real labels/memberIds); `history.state` carries the same full-fidelity payload for Back/Forward (`popstate` reads it directly, no lossy re-parsing needed in-session); `parseNavFromPath()` is only a fallback for a fresh tab/pasted link with neither sessionStorage nor `history.state` available — it reconstructs the right page (every detail page re-fetches by id anyway) but breadcrumb/back-button TEXT falls back to showing the raw id instead of a real name in that one lossy case. Not real client-side routing — no router library, no deep architecture change, verified live (forward nav, browser Back, browser Forward, hard reload, and the no-sessionStorage fallback all confirmed working against the real account).
+
+
+
+---
+
+## 2026-08-27 — Archive: the old §6 Database section (migration histories and rationale)
+
+_Archived verbatim from `PROJECT_CONTEXT.md` §6 when that section was compressed (founder budget
+directive, 2026-08-27). Every table and column survives in `PROJECT_CONTEXT.md`; what moved here is
+the paragraph rationale, migration chronology and dated verification narrative that hung off them.
+Search by TABLE or COLUMN name when you need the "why" behind a schema decision._
+
+## 6. Database (Supabase / Postgres, RLS on everything, scoped to auth.uid())
+
+```
+people        id, user_id, name (first), last_name?, nicknames? (comma-separated
+              "goes by" list, additive, chat-only, never displayed), middle_name?,
+              goes_by_kind? ('first'/'middle'/'last'/'other', null = 'first'),
+              goes_by_other? (free-typed callsign, only set when goes_by_kind =
+              'other') — 2026-07-22, real form-edited "goes by" name shown on
+              PersonDetail (picks which of first/middle/last/other displays as
+              the person's name there — e.g. "Maverick Whitfield"; People list
+              stays name-only). middle_name/goes_by_other also fold into the same
+              nicknames-style lookup for search + AI chat resolution across
+              converse/update-moment/update-group/person-facts/add-fact. Choosing
+              "other" additionally writes a "Goes by X." note. former_last_names?
+              (2026-08-21, comma-separated, additive — maiden/former SURNAMES only;
+              unlike every other alias field it folds into the SURNAME side of name
+              matching, never givens, which is why it isn't just more nicknames —
+              see §12), key_facts jsonb?,
+              key_facts_updated_at?, is_self bool (default false, partial unique
+              index per user_id — at most one "this is me" profile; excluded from
+              People list/search/Dunbar/due-for-update, 2026-07-20), deceased_date?
+              (2026-07-24, presence = deceased; PersonDetail "Mark as deceased"
+              control lives inside the name-edit form, not a standalone row),
+              organization?, job_title?, phones/emails/urls/social_profiles jsonb
+              (arrays of {label, value}), addresses jsonb (array of {label, street,
+              city, state, zip, country}) — 2026-07-27, item 65 (contacts import).
+              Own isolated query in PersonDetail.tsx's new ContactInfoSection.tsx
+              (same "isolate a new column" pattern as gender), not folded into the
+              main person select. created_at
+contact_import_
+candidates    id, user_id, row_key (dedupe key: vCard UID, else hash of normalized-
+              name+first-email), status ('pending'/'selected'/'skipped'/'accepted'/
+              'rejected' — the extra 'pending'->'selected'/'skipped' step is
+              deliberate, see item 65), full_name, first_name?, last_name?,
+              middle_name?, nickname?, organization?, job_title?, phones/emails/
+              addresses/urls/social_profiles (same shapes as people above),
+              birthday_month/day/year?, anniversary_month/day/year?, note_text?,
+              related_names jsonb [{label, name}] (Apple's X-ABRELATEDNAMES —
+              captured/displayed only, NOT written to `relationships`, see item 65),
+              matched_person_id?, match_confidence ('high'/'none'), created_at,
+              reviewed_at? — 2026-07-27, item 65. unique(user_id, row_key).
+relationships id, user_id, person_a_id, person_b_id, kind (spouse/sibling/partner —
+              symmetric, stored once normalized person_a_id < person_b_id by uuid
+              sort; parent — directional, person_a_id IS THE PARENT of person_b_id,
+              no separate "child" kind stored), created_at, unique(person_a_id,
+              person_b_id, kind) — 2026-07-20, THE shared source of truth for family
+              links: `_shared/relationships.ts` dual-writes here alongside its
+              reciprocal notes, `person-facts` cross-references it for Key Facts
+              linking, `converse`/`update-moment`/`update-group` read it for "my
+              mom/dad" resolution, Circle.tsx/FamilyTree.tsx read AND write it
+              directly. Backfilled once from existing deterministic reciprocal-note
+              text (exact-name match only, best-effort, not exhaustive). Sibling/
+              parent links auto-propagate across the WHOLE transitive sibling group
+              on every add, not just the pair being linked (`syncFamilyClique` in
+              `_shared/relationships.ts` and `writeRelationship.ts`, 2026-07-21) —
+              adding a sibling links them to every existing sibling too and shares
+              all parents across the group; adding a parent to anyone in the group
+              gives it to the rest of the siblings as well. Retroactive backfill
+              for pre-existing data run 2026-07-21 (`migrations_manual/
+              2026-07-21-family-clique-backfill.sql`, 165 → 177 relationship rows).
+              **2026-07-25 fix (see §3 writeRelationship.ts entry):** the clique BFS above only
+              ever walked EXISTING sibling rows, so two kids given the same parent independently
+              never became siblings — now also seeds from shared parentage. Spouse relationships
+              now also auto-propagate to a co-parent role on the other's existing kids (guarded
+              against remarriage). Backfill for pre-existing data: `migrations_manual/2026-07-25-
+              shared-parent-sibling-backfill.sql` + `2026-07-25-spouse-coparent-backfill.sql` —
+              **NOT YET RUN**, see §10.
+              ended_reason? (2026-07-24, spouse/partner only, only value is
+              'divorce' — death is read off the person's own deceased_date instead,
+              so there's one place to record each fact; see FamilyTree.tsx entry
+              below for how this renders).
+moments       id, user_id, raw_description (user's words only — never assistant
+              turns), summary? (AI cache), occasion?, location?, when_text?
+              (free-text, kept verbatim), event_date? (best-guess real date —
+              exact when sourced from a calendar sync's DTSTART, AI-guessed
+              otherwise — sorting/display only, NOT ground truth; null = fall
+              back to created_at), event_end_date? (2026-07-25, date range
+              support — nullable, null = single-day/unknown; exact from a
+              calendar sync's DTEND when present, RFC5545's exclusive-end-date-
+              for-all-day-events nuance handled in `_shared/ics.ts`;
+              `formatDateRange`/`formatFullDate`/`formatEventWhen` in
+              `lib/dates.ts` render a "Mon D–D, YYYY" range when set and
+              different from event_date), details jsonb? (open-ended tags by
+              design), weather jsonb? / weather_fetched_at? / game jsonb? /
+              game_fetched_at? / game_candidates jsonb? / game_dismissed bool
+              (2026-08-17, item 21 — enrichment caches written by `enrich-event`.
+              THREE states each and the difference matters: null = never looked,
+              `{"status":"not_found"}` = looked and found nothing (never re-fetch),
+              `{"status":"ok",…}` = real data. A fourth, `{"status":"too_soon"}`,
+              parks a future-dated event — the weather archive 400s on any date
+              past today — and is the one value the function revisits, once the
+              date has passed; same for a game stored while still `Scheduled`,
+              whose 0–0 isn't a real score. game_candidates drives the "Which
+              game was this?" picker; game_dismissed is its "not a game"),
+              dismissed_person_ids jsonb [], created_at, parent_moment_id
+              uuid? (item 35, 2026-07-30 — self-referencing FK, ON DELETE SET NULL,
+              CHECK parent_moment_id != id; sub-events, e.g. a day of a multi-day
+              vacation nested under the trip — one level deep only in the UI,
+              arbitrary depth in schema, mirrors groups.parent_group_id exactly.
+              Migrated live 2026-07-30. Sub-events render as the ancestor chain
+              "Trip / Day 2" in every list an event is PICKED from, matching
+              subgroups (2026-08-16, lib/momentDisplayName.ts) — pickers add the
+              event date too ("… — June 12, 2026"), which is what separates two
+              same-titled TOP-LEVEL events a repeating calendar entry produces.
+              Covered: ImportReview merge + sub-event pickers and their banners,
+              EventDetail's merge-a-duplicate picker, PhotoImportReview's
+              attach-to-event picker, Calendar's Countdowns pin-an-event picker,
+              global search event rows. Search filters match the qualified label,
+              so typing a trip's name finds the days under it. Read-only event
+              lists (a person's/group's affiliated events) stay bare. Every page
+              gets parentage from lib/moments.ts's fetchMomentParentIds() — its
+              own fail-open query, never a column on the page's main select, so a
+              missing parent_moment_id costs the prefix and not the page)
+notes         id, person_id? , moment_id?, group_id? (CHECK: person_id OR group_id
+              OR moment_id, widened 2026-07-25 for ImportReview's "save as a note"
+              action — also needed a new RLS policy for the moment_id-only case,
+              see ImportReview.tsx entry above; existing person_id/group_id
+              policies untouched), source? ("home" = written by converse,
+              "calendar_import" = ImportReview's save-as-note action),
+              source_group_id? (fact captured via a group chat), content,
+              created_at — attendance on an event IS the existence of a note with
+              that moment_id; untagging nulls moment_id, never deletes.
+              ⚠ two FKs to groups: embeds must be qualified
+              (groups!notes_source_group_id_fkey) or PostgREST errors (PGRST201).
+dismissed_suggestions
+              id, user_id, kind ('family_coparent'/'family_couple'/'event_group'/
+              'family_group', CHECK-constrained — the 4th added 2026-08-20 by
+              migrations_manual/2026-08-20-family-group-suggestion.sql, applied),
+              subject_id, object_id, created_at; UNIQUE
+              (user_id, kind, subject_id, object_id). Item 85, 2026-08-08 — the "No"
+              store for Home's newer suggestion types (lib/dismissedSuggestions.ts).
+              NO foreign keys on subject_id/object_id: what they point at depends on
+              kind (people/moments/groups), and an orphan row after a delete is
+              harmless. family_couple and family_group both normalize subject < object so the pair matches
+              however it's generated next time. Migrated live 2026-08-08.
+              person→group dismissals still live in groups.dismissed_person_ids.
+reminders     id, person_id, label ("Birthday"/"Anniversary"), month, day,
+              year? (2026-07-26, nullable — captured when a birthday-calendar
+              import provides one; FIRST used in the UI 2026-08-06, by the Calendar
+              Countdowns section: a life date only becomes a milestone count-up once
+              the year is known) — no automatic sending exists.
+countdowns    id, user_id, label?, target_date?, moment_id? (FK moments, ON DELETE
+              CASCADE), reminder_id? (FK reminders, ON DELETE CASCADE), hidden bool
+              default false, created_at — 2026-08-06, item 83
+              (`migrations_manual/2026-08-06-countdowns.sql`). Three row shapes, one
+              CHECK (`countdowns_has_subject`): standalone (label + target_date),
+              pinned event (moment_id only), or a dismissal (moment_id/reminder_id +
+              hidden). A pinned event deliberately stores NO label/date — both are
+              read live off the `moments` row, so re-titling or re-dating the event
+              keeps its countdown right (same one-truth reasoning as notes.moment_id
+              being attendance). `hidden` exists because auto-derived cards (past
+              "Milestone"-tagged moments, dated reminders) have no row to delete and
+              dismissing one must never delete the event/birthday itself. Partial
+              unique indexes on (user_id, moment_id) and (user_id, reminder_id) make
+              a double-pin/double-dismiss a no-op. No sort_order — ordering is
+              computed (one chronological line, oldest first, split by the Today
+              line). Per-card settings, 2026-08-06,
+              `migrations_manual/2026-08-06-countdown-settings.sql` (SEPARATE, still
+              pending — see §10): custom_title? (display name only, so a pinned
+              event's own title stays the source of truth), units? text[] of
+              years/months/weeks/days/hours/minutes/seconds (NULL/empty = the
+              automatic ladder; deliberately not an enum), repeat_rule? weekly/
+              monthly/yearly (CHECK), keep_counting bool default true (false =
+              retire the card once its date passes instead of counting up). Saving
+              any of these on an auto-derived card creates its row first — same
+              insert as a pin.
+pets          id, user_id, name, species? (FREE TEXT, deliberately no CHECK —
+              contrast groups.group_type), breed?, birth_date?, adopted_date?
+              ("gotcha day"), deceased_date? (presence = passed away, mirrors
+              people.deceased_date), notes?, attributes jsonb [] ({label, value},
+              same shape as people.phones — the "customizable for the variety of
+              pets" requirement: Barn/Tank/Vet/microchip live here, not in
+              columns), created_at — 2026-08-01, migration pending (see §10).
+              Deliberately a real table, not a jsonb column on people: a household
+              pet belongs to both spouses and must be edited once (same
+              shared-identity reasoning as tags/groups). NO unique index on name —
+              two people in one account can each have a dog named Bella.
+person_pets   person_id + pet_id (PK), index on pet_id (reverse lookup: who owns
+              this pet). RLS policy is a subquery through pets (no denormalized
+              user_id), so a mistake here fails SILENTLY — verify with a
+              write-then-read-back, not a passing build. Deleting every linked
+              person leaves an orphan pets row (accepted: auto-deleting the pet
+              with its last link would destroy a shared household pet during a
+              merge). Orphans are NOT unreachable — they still list in the People
+              list, just with no owner chips, so they can be opened and deleted.
+moment_pets   moment_id + pet_id (PK), index on pet_id (reverse lookup: which
+              events this pet was at) — 2026-08-20,
+              migrations_manual/2026-08-20-moment-pets.sql, APPLIED and live-
+              verified. A pet's attendance is a row here, NOT a notes row the way a
+              person's is: reusing `notes` would mean widening its CHECK + RLS on a
+              table holding 700+ real notes and teaching every note path that an
+              attendee might not be a person. Consequence: a pet has no per-event
+              note, so tagging one deliberately does NOT null moments.summary (no
+              AI regeneration for text that never mentions the pet). RLS checks
+              BOTH sides (pets AND moments), unlike person_pets — moment_id is
+              client-supplied, so a one-sided policy would let an account tag its
+              own pet onto someone else's event. Subquery policy, so mistakes fail
+              SILENTLY: verify with write-then-read-back.
+moment_links  id, user_id, moment_a_id, moment_b_id (both FK moments ON DELETE
+              CASCADE), created_at; unique(moment_a_id, moment_b_id), CHECK
+              moment_a_id < moment_b_id, index on moment_b_id — 2026-08-26,
+              migrations_manual/2026-08-26-related-events.sql, APPLIED. "Related
+              events": a SYMMETRIC link between two events where neither is part of
+              the other (rehearsal dinner ↔ wedding) — the case parent_moment_id
+              can't express and merge would destroy. Stored ONCE with the pair
+              sorted, same convention as `relationships`; the CHECK is what makes
+              the unique index a real duplicate guard, so every caller must go
+              through lib/relatedEvents.ts's normalizeLinkPair. Two FKs to `moments`
+              means embeds would need qualifying (PGRST201) — the lib does two
+              round trips instead. RLS checks user_id AND both moments belong to
+              the caller; verified live by an insert as role `authenticated` inside
+              a rolled-back transaction (and a different sub is refused, 42501).
+groups        id, user_id, name, summary? (AI cache), group_type? (Family/Friend
+              group/School/Team/Work, nullable, fixed picker, CHECK-constrained),
+              dismissed_person_ids jsonb [], dismissed_group_ids jsonb [], created_at,
+              color_index smallint? (item 82 manual override, 2026-08-12 — index into
+              subgroupPalette in src/lib/theme.ts, NOT a hex, so the palette stays the
+              source of truth; NULL = auto-assigned by position. Read by GroupDetail.tsx
+              in its OWN isolated query, never folded into the subgroup select, so a
+              pre-migration 42703 hides the swatch instead of emptying the subgroup grid.
+              Migration pending, see §10),
+              suggestions_enabled bool (item 57, 2026-07-25 — per-group opt-out for the
+              member-suggestion signal, read by GroupDetail.tsx and
+              lib/suggestConnections.ts; migrated live 2026-07-26; default flipped
+              true→false 2026-07-26 per founder feedback — not used in practice — pending
+              founder SQL run, see §10), parent_group_id uuid? (item 19, 2026-07-26 —
+              self-referencing FK, ON DELETE SET NULL, CHECK parent_group_id != id;
+              nested subgroups, e.g. a mission under a squadron or a class year under a
+              school group — ARBITRARY DEPTH in both schema and UI as of 2026-08-03 (was
+              one level deep in the UI only, a gate on !parentGroup in GroupDetail.tsx;
+              migrated live 2026-07-26). Subgroup membership WRITES are deliberately
+              independent of the parent's — still no sync trigger, and still no downward
+              auto-population (a new subgroup starts empty). One was added by mistake
+              2026-07-26 and removed same day before ever being run. Upward, though, a
+              subgroup's members ARE the parent's members as of 2026-08-10 (founder ask):
+              DERIVED at render by lib/groupRollup.ts, at any depth, never written to
+              person_groups — the row stays on the subgroup, so removing someone there
+              removes them from every ancestor with nothing to keep in sync. A person
+              can sit in several sibling subgroups at once, which is why GroupDetail's member
+              chips carry a LIST of colour dots, not one. There is NO colour column: subgroup
+              colours are assigned in the client by position (2026-08-04, see lib/
+              subgroupColors.ts) and persist nowhere. Subgroup
+              names render as the FULL ancestor chain "A / B / C" APP-WIDE (full chain
+              2026-08-03, immediate parent only 2026-08-01, pickers-only 2026-07-30) so
+              same-named subgroups under different parents (e.g. two units each
+              with a "Pilots") stay distinguishable — lib/groupDisplayName.ts owns the format,
+              lib/groupRoster.ts's useGroupRoster() hook serves label(id, fallbackName) to any
+              site holding only {id, name}. groupDisplayName's 3rd arg (parentById) is what
+              turns on full-chain walking — callers passing only a name map still get the old
+              one-level label. Same file exports isSelfOrDescendant(), the cycle guard every
+              reparenting path uses. Two deliberate BARE exceptions: a group's own h1 on
+              GroupDetail (has "↑ Part of X" one line below, and the rename field edits the bare
+              name) and the subgroup tiles on the parent's own page. Search filters match on the
+              qualified string, so typing a parent's name finds its subgroups.
+              Groups.tsx nests subgroups under their parent AT REST as of 2026-08-03 (superseding
+              the 2026-08-01 search-only behaviour), so its summary auto-generation now covers
+              subgroups too — still one summarize-group call per group EVER, cached in
+              groups.summary (CLAUDE.md rule 3). See §3 Groups.tsx.
+person_groups person_id + group_id (PK) — THE definition of membership (explicit
+              only; event attendees are never members, only suggestions). A row is only
+              ever written for the group it was added to: what the UI shows as a group's
+              members is these rows PLUS the subgroup rollup (see groups.parent_group_id
+              above), computed at render, never stored.
+group_associations id, group_id_a, group_id_b (symmetric, normalized a<b by UUID
+              string sort), created_at
+moment_groups moment_id + group_id (PK)
+tags          id, user_id, name, created_at — item 28/34 (2026-07-22), manual + AI-
+              suggested event tags. unique index on (user_id, lower(name)) — case-
+              insensitive dedup so "Milestone"/"milestone" can't fork into two
+              filter entries. Deliberately NOT the dormant `moments.details` jsonb
+              or a `text[]` column — neither gives a canonical tag identity for
+              cross-event reuse/dedup the way a real table does (mirrors why
+              `groups`/`moment_groups` is a real table, not a text array on
+              `moments`). `details` itself untouched, still dormant for writes.
+moment_tags   moment_id + tag_id (PK), index on tag_id (reverse lookup, e.g. future
+              search/co-occurrence features) — join table, same shape as
+              moment_groups
+search_log    id, user_id, query_text, matched bool, created_at — one row per
+              genuine recall attempt in Home; powers "Recall assists this month"
+home_suggestions user_id (PK), suggestions jsonb, updated_at — suggest-prompts cache
+feedback_notes id, user_id, page_label?, element_label?, note, status ("open"/"done",
+              default "open"), created_at — click-to-comment feedback widget (§3
+              FeedbackWidget.tsx), live and confirmed working (2026-07-23: 8 real
+              founder notes captured then folded into §8's backlog as items 46-53)
+user_settings user_id (PK), chat_tone (text, CHECK-constrained to 'warm'/'direct'/
+              'playful'/'formal', default 'warm'), updated_at — 2026-07-23, items
+              22/49. Same one-row-per-account shape as home_suggestions. Read by
+              `converse` via `_shared/userSettings.ts`'s `buildChatToneInstruction`,
+              appended into the roster cache tier (never the stable tier — see §5).
+              time_zone (text, nullable, no default) — 2026-07-24, bug fix (see §12).
+              Null means "not yet detected"; `_shared/userSettings.ts`'s
+              `getUserTimeZone` defaults to 'UTC' server-side when null.
+              **Applied live 2026-07-24 — confirmed via PostgREST 200.**
+calendar_sources id, user_id, ical_url, label, last_synced_at?, last_sync_error?,
+              created_at, source_type ('events'/'birthdays', default 'events',
+              2026-07-26) — 2026-07-24, item 48. One row per connected calendar
+              (secret iCal URL, not an OAuth token — nothing to refresh/expire).
+              A 'birthdays' source is meant for iCloud's auto-generated Birthdays
+              calendar (itself derived from Contacts, so connecting it is a real,
+              always-current sync — no re-export needed as contacts change) —
+              see CalendarSettings.tsx and birthday_import_candidates below.
+moment_import_
+candidates    id, user_id, calendar_source_id, ical_uid (unique per user, dedupes
+              across re-scans), deferred_until date? (2026-08-19, set with
+              status='deferred'; a partial index covers the due-row sweep),
+              status ('pending'/'accepted'/'rejected'/'skipped'
+              — 'skipped' added 2026-08-12 and retired the same day when the
+              founder removed the AI filter; nothing writes it now, the
+              constraint value is just left in place for a possible opt-in
+              auto-filter — and 2026-08-19 deliberately did NOT reuse it for the
+              founder's own "not this one", which writes 'rejected'; keeping a
+              machine's no separate from a person's is why it exists.
+              **Two values added 2026-08-19**
+              (`migrations_manual/2026-08-19-calendar-triage-and-defer.sql`):
+              'selected' = kept in CalendarTriage.tsx's fast pass, waiting for its
+              detailed card (same word, same job as in
+              contact_import_candidates); 'deferred' = "Not now", returns to the
+              queue on `deferred_until`. So the flow is pending → selected →
+              accepted/rejected, with deferred as a loop back to selected. No rows
+              were migrated — existing 'pending' rows simply show up in triage,
+              which is where an untriaged candidate belongs), occasion?,
+              location?, when_text?, event_date?, event_end_date? (2026-07-25, both
+              exact from the ICS DTSTART/DTEND, bypassing the AI entirely — see
+              `icsEndDateToIsoDate` in `_shared/ics.ts`), raw_description?,
+              suggested_people (jsonb array: name/email/matched_person_id/
+              confidence), suggested_tags jsonb [] (2026-07-25, tag names from the
+              same extraction call, may propose new), suggested_group_ids jsonb []
+              (2026-07-25, resolved server-side, existing-groups-only — never
+              invented), source_recurrence_id?, created_at, reviewed_at? —
+              2026-07-24, item 48. AI-extracted review queue; ImportReview.tsx
+              accept copies pending/approved fields into a real `moments` row (or
+              merges into an existing one — see ImportReview.tsx entry above),
+              reject just flips status.
+birthday_import_
+candidates    id, user_id, calendar_source_id, ical_uid (unique per user — same
+              dedupe/never-re-ask pattern as moment_import_candidates), status
+              ('pending'/'accepted'/'rejected'), full_name?, birthday_month?,
+              birthday_day?, birthday_year?, matched_person_id?, match_confidence
+              ('high'/'none'), created_at, reviewed_at? — 2026-07-26. Populated
+              ONLY from 'birthdays'-type calendar_sources, parsed directly (no AI
+              call — pure ICS text, no cost) by `processBirthdaySource` inside
+              scan-calendar-sources/index.ts. BirthdayImportReview.tsx (new page,
+              crumb `birthdayReview`) is the accept/reject queue: accept upserts a
+              `reminders` row (label='Birthday', + year if present) on either an
+              existing matched person or a newly-created one (search-to-link
+              picker if the match is wrong/missing), reject just flips status.
+              Nudge banners on Home.tsx/Calendar.tsx mirror the existing "N events
+              found" ones. **Applied live 2026-07-26 — confirmed via PostgREST/
+              Management API, end-to-end accept/reject flow verified in browser
+              against a disposable test account.**
+photo_connections id, user_id (FK, unique), google_email?, refresh_token, created_at —
+              2026-07-30, item 27. One row per connected Google account. **No SELECT policy
+              for the authenticated role at all** — refresh_token is as sensitive as an API
+              key, readable only by service-role Edge Functions (same trust boundary as
+              ANTHROPIC_API_KEY never reaching the browser). The frontend instead reads a
+              sticky `google_photos_email` auth-metadata flag (same pattern as
+              onboarding_complete/tags_seeded) to know "connected" without a round trip.
+photo_clusters id, user_id, date_range_start?, date_range_end? (date), matched_moment_id?
+              (FK moments), status ('pending'/'accepted'/'rejected'), created_at, reviewed_at? —
+              2026-07-30, item 27. One row per date-clustered group from a general-import
+              picker session (see `_shared/photoClusters.ts`); the quick-add-to-one-event
+              flow never creates these. Same "review queue, nothing auto-writes" shape as
+              moment_import_candidates, but no AI call anywhere in this pipeline.
+photos        id, user_id, moment_id? (FK moments), photo_cluster_id? (FK, null once
+              resolved), storage_path, google_media_id? (unique per user — dedupes re-picking
+              the same photo), taken_at? (timestamptz, from Google's mediaMetadata), width?,
+              height?, created_at — 2026-07-30, item 27. storage_path points into the private
+              `photos` Storage bucket (resized ~1600px copies, RLS-scoped per user by folder
+              prefix `{user_id}/...` — first Storage usage in this app). A picked item's
+              access via Google expires with its picker session, so nothing here is a lazy
+              pointer back to Google — the bytes are copied in at import time.
+```
+
+```
+notebooks     — id, user_id, name, ai_visible (bool, default true), created_at.
+                2026-08-18, migrations_manual/2026-08-18-notebooks.sql. The internal
+                side (§1). ai_visible gates the Home chat ONLY — `converse` filters on
+                it in the query, not at render time; global search always reads every
+                notebook, because that's the user searching their own app.
+notebook_entries
+              — id, user_id, notebook_id (FK cascade), content, entry_date? (date),
+                created_at. entry_date is nullable and display/sort only, same as
+                moments.event_date. Its presence is the ONLY difference between a list
+                and a dated log — there is no layout column, and no mode to pick.
+notebook_entry_people
+              — (entry_id, person_id) composite PK, both FKs cascade. Two-sided subquery
+                RLS copied from moment_tags: `with check` validates BOTH sides so you
+                can't attach someone else's person. ⚠ this class of policy fails
+                SILENTLY when wrong — verified 2026-08-18 by a write-then-hard-reload,
+                not by watching the UI.
+```
+
+```
+notebook_entries.content_text
+              — 2026-08-19. `content` is editor HTML; this is the same thing flattened
+                to words. STORED, not derived, because neither reader can derive it:
+                search would match "strong" inside every bold word, and `converse` runs
+                on Deno with no DOM. Written together with `content` in lib/notebooks.ts
+                so they can't drift. Null on rows written before the editor existed —
+                readers fall back to `content`, which for those rows IS plain text.
+notebooks.locked
+              — 2026-08-19, bool default false. Enforced INDEPENDENTLY of ai_visible:
+                `converse` and searchCorpus both filter on `locked = false` in their own
+                right, so a locked notebook stays out of chat even if ai_visible is true.
+                Verified 2026-08-19 by setting locked directly in the DB with ai_visible
+                left on — Grove reported no notebook entries at all.
+notebook_pins — user_id PK, pin_hash, created_at. One PIN per ACCOUNT, not per notebook.
+                Hashed with pgcrypto `crypt()`/`gen_salt('bf')` server-side; the PIN is
+                never stored or compared in the browser. Three SECURITY DEFINER RPCs:
+                notebook_pin_status() (does one exist), set_notebook_pin(new, current)
+                (requires the current PIN once one is set), verify_notebook_pin(pin).
+                Reset path is Supabase's own password re-auth, so a forgotten PIN never
+                strands a notebook.
+```
+
+`user_settings.review_remind_days` (integer, nullable — `2026-08-19-review-remind-default.sql`): the founder's saved "remind me in N days" for the import queues, set by RemindSheet's "use this as my default" checkbox. Null = ask every time. A plain day count rather than an enum so the offered presets can change without a migration; nothing else in the schema stores a cadence (`reminders` is date-based, countdowns are target dates).
+
+`dismissed_*` columns only filter suggestion lists; conversational writes never consult them, so a denied person can still be added by name in chat.
+
+`platform_stats()` — one deliberate exception to "RLS on everything": a `SECURITY DEFINER` SQL function (`migrations_manual/2026-07-30-platform-stats.sql`) returning cross-account totals (people/moments/groups/notes) for the Landing page's platform databox (§3). Granted to anon/authenticated (public page, no session) — **confirmed live 2026-07-30**, real cross-account totals rendering on Landing.
+
+
+
+---
+
+## 2026-08-27 — Archive: the old §8 Backlog and §10 Pending sections
+
+_Archived verbatim from `PROJECT_CONTEXT.md` when both were compressed (founder budget directive,
+2026-08-27). Completed/struck-through items were deleted from `PROJECT_CONTEXT.md` outright; open
+items were cut down to a title plus what you need to act on them. The full text of both — including
+every DONE item with its build story — is below. Search by item NUMBER or feature name._
+
+## 8. Backlog — MASTER LIST (founder's priority list; work order: bugs → quick wins → bigger features)
+
+Items 1–13 (bugs + quick wins) all done 2026-07-18. Also done 2026-07-19: event delete/merge, associated groups, chat layout fix, last-name sort, note source labels, group notes. Also done: 25 (2026-07-20: sibling-group transitive linking + reciprocal-write-on-confirm fix, deployed and confirmed live — see §10); 36 (2026-07-20: manual "add an event" / "add a group" buttons, plus group delete — see §7); 35/Group Types (2026-07-20: `group_type` column + fixed picker on GroupDetail + filter/badge on Groups — see §7); **32 (2026-07-20: real `is_self` flag + `relationships` table, real "My page"/family tree, "my mom/dad" resolution — see §7, DEPLOYED and DB-migrated live, see §10)**.
+
+**Open — bigger features:**
+14. ~~Global search bar on every page~~ — **DONE 2026-08-12** (see §7 and the §3 entries for `globalSearch.ts`/`searchCorpus.ts`/`GlobalSearch.tsx`). The "text match first vs. semantic" question was the founder's call: **text first**, with a one-tap `Ask Grove about "…" →` row handing the query to Home chat. Reasoning on file: a search bar gets hit reflexively and repeatedly, there's no rate limiting anywhere (SECURITY.md item 7), and the semantic half already ships inside `converse` — so per-keystroke AI would have been both a duplicate and the most plausible route to a surprise bill (CLAUDE.md rule 3). **Item 30 is therefore not "still open" so much as deliberately routed through the chat** — revisit only if real use shows word matching missing things the chat catches. Placement was the other founder call: in the nav row (not a second full-width row), accepting that the "Grove" wordmark hides under 480px to pay for it. **Moved same day on founder report** — as a bare magnifier circle beside the account avatar it sat ~6px from the initials and opening the account menu by mistake was easy. It's now the 6th item in the TAB row, shaped like a tab (icon + "Search" label, never the active style — it opens a panel, it isn't a place you can be), and the bar's `gap` went `space.sm` → `space.xl`. Net at 375px: search target 34×34 → 47×45, gap to the avatar 6px → 16px, all six tabs 47px (still over the 44px minimum), "Calendar" 42px in 47px, zero overflow. Client-side over a ~2,400-doc corpus, no migration, no new Postgres FTS. Verified live against the real account: note-body-only matches ("skydiv" surfacing an event by its description and three notes by theirs), qualified group paths ranking correctly, zero `Was there.` placeholders, note results opening their parent record, 375px nav re-measured at zero overflow.
+15. **Relationship-aware smarts** umbrella — partially unblocked by item 32's `relationships` table: "resolve 'my parents'" is DONE (`converse`/`update-moment`/`update-group` all do it now). **Background GROUP-connection scanning + approval log on Home — DONE 2026-07-25** (see item 50/§3 Home.tsx "Connections to make" card, `lib/suggestConnections.ts`) — deliberately scoped to group membership only (deterministic, free), not person-to-person relationship inference, to avoid a recurring AI cost on every Home visit (CLAUDE.md rule 3); a richer AI-based version remains a possible future upgrade, not built. Still open: answer via family links ("Braden's dog" → spouse's note) — **the pets half of this is now unblocked by item 73's `pets`/`person_pets` tables (2026-08-01): a household pet is LINKED to both spouses, so "Braden's dog" resolves off the roster without walking the relationships graph at all — and `converse` has loaded that roster (and written pets back) since 2026-08-01 — **verified 2026-08-19**, `converse` reads `pets`/`person_pets` as two separate top-level queries and inserts/updates pets from chat, so this half is DONE**; auto-suggest links from note content beyond what already exists (person-to-person relationship scanning specifically, as opposed to the group-connection scanning now done).
+16. Auto-notes from chat for every person mentioned (events do this; extend everywhere).
+17. Long story/voice-note handling (1–2 min recording parsed into all its facts) — **partly addressed, never tested against a real long story.** Three pieces landed for other reasons: `converse` is instructed to emit ONE `moments` entry per distinct event in a single message and to capture every concrete detail (not just who attended); a reply truncated at `max_tokens` (8192) is now detected by `stop_reason` and the reply text salvaged rather than the whole turn failing; and item 18's streaming transcription means a long dictation reaches the box at all. **Still open: nobody has spoken a 1–2 minute story at it and checked what came out** — that test is the item now, not more prompt work.
+18. ~~Real-time voice transcription (words appear as you speak)~~ — **DONE 2026-08-18.** `gpt-transcribe` with `stream: true`, proxied through `transcribe` as SSE, so text lands in the box progressively instead of in one lump. Measured on the founder's account: a 71s note is fully transcribed 5.3s after you stop, first words at ~4s; a 9s note, 1.8s total. Free Web Speech captions give true words-as-you-speak on desktop/Android; **iPhone gets the streamed version only** — Web Speech exists in iOS Safari but fires `onresult` once and dies. Truly-live-on-iPhone would need `gpt-live-transcribe` at $0.017/min (~3.8x), declined by the founder for now.
+19. ~~Group hierarchy~~ — **subgroups DONE 2026-07-26, migrated and verified live.** Founder's real ask, clarified 2026-07-26: nested subgroups under an existing group (e.g. a specific mission under "22 AS", or class year/staff/role under "Wings of Blue"), each with independent membership, so events can be tagged to the specific subgroup. Shipped as a self-referencing `groups.parent_group_id` — see §3 GroupDetail.tsx/Groups.tsx entries and §6. **Extended 2026-08-03 (founder ask):** the UI's one-level cap is gone (arbitrary depth, subgroups of subgroups), and an EXISTING group can now be reparented two ways — drag its card onto another group's card on Groups.tsx, or "Move this under another group…" / "Make it a subgroup instead" in GroupDetail's danger zone. Both replace the founder's workaround of creating a blank subgroup in the target and merging the real group away into it. NOT browser-verified before pushing (founder said push; build + 79 tests green, click-through never ran — no logged-in session available that session). Because a subgroup is just a normal `groups` row, every existing group-picker (EventDetail's "Associate a Group", ImportReview, PersonDetail's "Associated Groups") already worked on it with zero extra code, confirmed live. Still open, deliberately deferred (founder feedback 2026-07-26, given the 2026-07-26 auto-add-to-groups revert): a "rules engine" auto-deriving group C from group A + group B membership — if revisited, should suggest-and-confirm rather than silently auto-write, same as item 15's connection scanning.
+20. Data viz: family tree, connection map. — **connection map is the only part still open.** Family-tree half substantially DONE 2026-08-05 (relationship calculator: compare any two people, per-tile relation labels, profile chip, AI vocabulary — see §7). Connection map still open. **Tree health check DONE 2026-08-19** — `src/lib/treeHealth.ts` (`findTreeIssues`, pure, 11 tests) + a collapsed panel at the bottom of `FamilyTree.tsx`, free and instant because it runs over the Graph the page already loaded. Six checks: a parent chain that loops, someone related to themselves, a couple who are also parent/child or siblings, a parent who is also a sibling, and — worded as questions, not faults — a third parent and two current partners. Found three real ones on the founder's account first run (Louise/Chet Schwartz as both a couple and siblings; the two Dunn boys with three parents, the known blended shape). The date-based checks from the original list (a child older than a parent) are NOT built: the Graph carries no birth years, and joining `reminders` into `loadFamilyGraph` is another whole-table read. Adjacent ideas surveyed with the founder 2026-08-05 and still NOT built, roughly in value order: birth years/lifespans on tiles (the tree never joins `reminders`, so no dates appear anywhere on it); search-and-jump within the tree; export the tree as an image (it's already SVG); zoom/fit-to-screen (the canvas is fixed-width with horizontal scroll, painful on a phone); duplicate detection + merge; GEDCOM import/export; photos on tiles (blocked — people have no photos at all, `photos` is moment-scoped); tree statistics.
+21. ~~Internet lookup for added context.~~ — **DONE 2026-08-17.** Two boxes under an event's date/location line (`src/components/EventEnrichmentBoxes.tsx`, filled by the `enrich-event` Edge Function): the game it was — score, venue, attendance, ESPN's recap headline and a link to the ESPN summary — and that day's weather (high/low, condition, precipitation, wind, plus the temperature at first pitch when a game supplied a real start time). **Zero Anthropic tokens:** "is this a sports game?" is a 1,652-team dictionary lookup (`_shared/sportsDetect.ts` + `sportsTeams.generated.ts`, regenerated by `scripts/build-sports-teams.mjs`), never a model call, so this keeps working even while `ANTHROPIC_API_KEY` is down. Pro **and** college leagues per the founder; when more than one real game matches, it never guesses — a "Which game was this?" picker appears, same accept/dismiss shape as the family suggestion boxes. Live-verified on the founder's own "Giants vs Rockies game" (Giants 8–2, 28,805 in attendance, 82°/51° in Denver, 80° at the 2:10 PM first pitch). See §12 for the three silent-failure traps this shook out.
+22. ~~Settings page~~ — **DONE 2026-07-23** (v1, see item 49 for what shipped). Of the six candidates speculated here, only chat tone/About shipped in v1; tile colors, suggestion sensitivity, and terminology library remain open (each needs new infrastructure built first — a theme layer, a suggestion-frequency concept, a centralized vocabulary module, respectively). "User's own profile/library" was considered and cut from Settings entirely — that's app navigation (already reachable via the main nav), not a setting.
+23. **Security hardening** + honest About-page writeup ("I don't want it to be bullshit") — **two of the seven done: public signup closed 2026-08-01, four browser security headers shipped 2026-08-19. Still open: CSP, AI rate limiting, email confirmation back on, account delete/export, column encryption, CORS lock-down** (SECURITY.md §5 items 6–11 — all deferred deliberately, none urgent while the founder is the only user). Start from §10's reality, audit first. **Audit half DONE 2026-08-01 → `SECURITY.md`** (repo root): full static read of functions/migrations/frontend, plus `migrations_manual/2026-08-01-rls-audit.sql` (read-only) for the founder to verify RLS on the pre-migration tables. Foundation confirmed sound (RLS pattern, JWT gate on all 12 functions, service-role queries scoped by verified `user.id` not request body, secrets server-side only, 3 deps/0 vulns). Hardening half still open, in `SECURITY.md`'s own priority order: close public signup → security headers → AI rate limiting → email confirmation back on → account delete/export → app-layer column encryption → CORS lock-down.
+24. Family-dynamic variety (half-/step-/adoptive) — **needs founder decision first**: (a) new relationship types vs. (b) qualifier field on the existing 5; qualifier also changes shared-parent inference (ask which parent, not both). Real example on file: Andy Volin (deceased) was married to Andi Volin, who's since remarried to Michael Galchinsky. **Partially superseded 2026-07-25** (see item 40 follow-up): spouse-as-co-parent auto-linking now ships, gated by a heuristic guard (skip + suggest instead when either side already has another spouse/partner on file) rather than waiting on this full qualifier-field decision — that heuristic catches the Andy/Andi/Michael shape specifically but is not the real half/step/adoptive data model this item is still tracking (e.g. it can't represent "step-parent to one sibling, blood parent to another" once the two are linked as full siblings — syncFamilyClique's existing all-parents-shared-across-the-clique behavior, unchanged, still flattens that). **Further superseded 2026-08-03:** step-parents and step-siblings are now first-class in the family tree (add, view, remove, tagged in the diagram), derived from ordinary spouse/parent rows with the blood-inferences suppressed per-write via `LinkOptions` — no qualifier field needed for those two. Adoptive, and half- vs. full-sibling within a rendered sibling group, are what's left of this item. Still open.
+26. Ratings/thumbs feedback loop (tunes suggestions; does not retrain the model).
+27. ~~Photo gallery for real~~ — **BUILT 2026-07-30; the three Edge Functions are DEPLOYED — verified 2026-08-20** (`google-photos-oauth-callback`, `-picker-session-create`, `-picker-session-import` all answer 401, not `NOT_FOUND`, which is the documented "deployed" signal). Whether the founder has ever connected a Google account and pulled photos through is a separate, still-unconfirmed question — that is the only thing left here. real import via Google Photos OAuth + Picker API (not upload — founder chose this over a raw-upload/Supabase-Storage-only approach after confirming Google's API no longer allows third-party library scanning; see PROJECT_HISTORY for the full tradeoff discussion). `EventDetail.tsx` real gallery + quick-add; `PhotoImportReview.tsx` general import with date-clustered event-matching review. Person/Group photo rollups NOT included — see item 69. True camera-roll sync still needs the native iPhone app.
+28. ~~Manual + AI-suggested tags on events~~ — **DONE 2026-07-22** (schema: new `tags`/`moment_tags` tables, see §6). Manual create-or-reuse picker + hover-remove chip on EventDetail; AI-suggested via `converse` only for v1 (capped 1-3 tags/moment, reuse-biased instruction) — `update-moment`'s chat-based `add_tags` and `suggest-prompts`'s tag signal deliberately deferred until real usage confirms the vocabulary stays clean, not scope-cut for any other reason. Verified live end-to-end against the real account (manual create/reuse/persist/untag, AI auto-tag via Home chat correctly created and applied a new "vacation" tag with no manual step), test data cleaned up after. Pairs with item 34's filter, same schema change powers both. **Same-day follow-up (founder-requested):** the tag picker now browses the full alphabetical list on focus instead of requiring you to already know a tag's exact spelling (`SearchAddPicker`'s new `browseAll` prop); 10 generic starter tags auto-seed once per account (`ensureStarterTags.ts`, guarded so it can't resurrect a deliberately-emptied list); new `ManageTags.tsx` page (linked from Events) lists every tag with usage counts and lets you add/rename/delete outside the context of any one event. Verified live: starter seed fired correctly on the real account's next sign-in (10/10 inserted, left a pre-existing AI-created "Phone Calls" tag alone rather than duplicating), rename/add/delete all confirmed against real + disposable test tags, alphabetical order holds everywhere (picker, chips, filter, Manage Tags list) regardless of creation order.
+29. ~~Search within GroupDetail~~ — **DONE 2026-07-26.** `GroupDetail.tsx`'s member list gets a `SearchBox` (same component/pattern as `People.tsx`) once a group has more than 12 members; filters by name, doesn't affect the "show all" expansion. People page's own filter already existed (`People.tsx` `filterPeople`) — no separate work needed there.
+30. AI/"fuzzy" semantic search — **resolved by routing, not by building, 2026-08-12 (see item 14).** Global search's `Ask Grove about "…" →` row hands anything word-matching can't answer to `converse`, which already reasons over the whole corpus. A dedicated semantic endpoint stays unbuilt on purpose: `converse` is a zero-tool full-dump design, so a tool-call round trip re-sends the whole ~30k-token prompt, and there is no embeddings/pgvector infrastructure in this project at all. Revisit only with evidence from real use.
+31. **"Memory lane" curated media feed** — requested 2026-07-19. A scrollable, media-driven feed surfacing curated memories (vs. today's specific-lookup mode only); best outcome likely needs real event photos, so probably sequences after item 27 (photo gallery). Already named as a target query mode in §9's product philosophy, just not built yet.
+32. ~~User's own profile~~ — **DONE 2026-07-20.** Real `is_self` flag + `relationships` table (shared source of truth for family links), real "My page" (`Circle.tsx`) + real family tree (`FamilyTree.tsx`, works for any person), `person-facts` linking and "my mom/dad" resolution both read the same table — see §3/§4/§6/§7. Full build story in PROJECT_HISTORY §15. ~~Still-open UX question (a): empty relationship categories on "Your circle" shown as invite-to-add vs. hidden until populated~~ — **RESOLVED 2026-08-12, invite-to-add.** Hiding would make the four boxes appear one at a time in a shifting layout, and prompting the links that AREN'T recorded is the page's whole job. The boxes were already always-visible; what was missing is that an empty one showed a bare "+" that doesn't say what it would add. `RelationshipAddPicker` gained an optional `emptyLabel` (the family tree's per-tier "+" is untouched) and empty boxes now read "+ Add a spouse/child/parent/sibling". **Verified live** by briefly forcing the empty state in the dev server and reverting: 390×44px at desktop, 134×44px at 375px phone width with no label wrapping and no page overflow. ~~(b) a family tree for a group you're NOT a member of~~ — **RESOLVED 2026-07-21**, see item 41. ~~(c) "+" always targets a tier's first branch when a tier has more than one~~ — **FIXED 2026-07-20**, see item 37.
+33. ~~Refer to the user as "You" instead of "User"~~ — **DONE 2026-08-11, item closed.** Requested 2026-07-19. `converse` reply text: DONE (item 53). **Extended 2026-07-26** to member/attendee chips: `EventDetail.tsx`'s `AttendeeChip` and `GroupDetail.tsx`'s `MemberChip` now show "You" instead of the founder's own name, keyed off each page's `selfId` (`is_self` lookup). **Extended 2026-08-10:** `PersonDetail.tsx`'s Key Facts chips now say "You" too (the case that reads worst — "Married to &lt;founder's name&gt;" on their spouse's profile), off an isolated `is_self` query mirroring EventDetail's. The chip still navigates to the founder's own profile; only the wording changed, and the demo (no `selfId` passed) is unaffected. **NOT browser-verified** — no login available that session. **Audit DONE 2026-08-11 — item closed.** The remaining surfaces were Home's: the "Connections to make" cards and the "Most reinforced this month" leaderboard both read the founder's own name off the roster like anyone else's. New `src/lib/personLabel.ts` (§3) now owns both "join first + last name" (four local `fullName` copies collapsed into it) and the self substitution, with a `capitalize` flag because chips want "You" and sentence copy wants "you"; `CoupleGap` gained a `childId` so the shared-child clause can say it too. Wording agrees with the sentence — "Are you also a parent of…" not "Is you", "You share a child" not "They". Everything else was already clean: `People.tsx`, `Groups.tsx`, `DunbarDetail.tsx`, `DueForUpdate.tsx` and Home's people count all filter `.eq('is_self', false)`. The family tree is deliberately untouched (your own name on your own tile in a tree diagram is correct). **Display-only by construction** — `linkRelationship` writes the names it's handed into real note text ("Married to X."), so the suggestion objects keep real names and only the rendered label changes. Verified: `npm run check` green (381 tests, 8 new on the helper), the demo Home renders names unchanged with `selfId` null, and **confirmed live 2026-08-11** on the real account — the "Most reinforced this month" list now reads "3 · JV · You · 7 updates" (avatar initials deliberately stay the real ones), and `personLabel` against the real self row returns "You"/"you"/"Amy Volin" correctly, including the pre-joined shape the cards pass. **The card sentences themselves rendered no live data** — all four suggestion types were at zero that day (3 family gaps exist but are dismissed), so the "Are you also a parent of…" wording is code-verified, not seen.
+34. ~~Filterable "View" by event category on the Events page~~ — **DONE 2026-07-22.** Shipped together with item 28: a tag filter dropdown on Events.tsx, growing from distinct tags actually applied (`useMemo`, not a fixed hardcoded set, per the founder's original ask), membership-based (a moment can carry more than one tag) rather than the single-value equality Groups.tsx's type filter uses, plus a "No tags yet" option. Verified live: option list matches tags in use, filtering narrows correctly.
+35. ~~Sub-events for multi-day events~~ — **DONE 2026-07-30, migrated and verified live.** Requested 2026-07-19, founder flagged as important. Self-referencing `moments.parent_moment_id` (mirrors item 19's subgroups pattern), one level deep in the UI: "Sub-events" section + "+ New Sub-event" on `EventDetail.tsx`, sub-events bundled/collapsible under their parent on `Events.tsx` (founder-approved mockup) rather than shown flat — see §3 entries for both files. Calendar-import's earlier "Save as a note instead" workaround (2026-07-25, ImportReview.tsx) is untouched and not migrated onto real sub-events — noted as a possible future follow-up, not done here.
+37. ~~Family tree bug scan~~ — **DONE 2026-07-20**, three wire-connection follow-ups **2026-07-21/22**, layout engine rewrite **2026-07-22** (item 39), same-day live-bug fix **2026-07-22**: Kids tier now also positions relative to its own parents' tier above (`layoutRelativeToParent`) instead of independently centering on the canvas — root-gen is now the only independently-laid-out tier — fixing left-clipping on wide trees and grandchildren rendering off-anchor. One reported "missing grandparent marriage line" turned out to be a real data gap (no `spouse` relationship on file), not a bug — flagged to founder, not auto-fixed. **2026-07-21 fix, confirmed live:** the root's own siblings were the one place in `familyTree.ts` still built as a bare name list with no spouse lookup — every other role (root's own spouse, aunts/uncles, cousins, kids) already attached in-law spouses. A married sibling's spouse now shows up with a marriage line too; verified against Jake's real tree (Josh Volin + Faith Volin).
+
+38. ~~Undo a mis-added family tree relationship~~ — **DONE 2026-07-21.** Added `removeRelationship`/`unlinkRelationship` + a "Remove a relationship" control on the family tree page, scoped to the centered person's direct relations. Verified via `npm run build` + synthetic-data harness only — not yet confirmed against live data (see §10). Full story: PROJECT_HISTORY §18. **Relabeled "View Relationships" 2026-07-26**: each chip's name is now clickable and opens that person's own profile page (`onSelectPerson`, threaded through `FamilyTree`/`FamilyTreeView`/App.tsx); the hover-reveal trash icon still removes the relationship, unchanged. Verified live against Jake's real tree. **Partner-pair fix 2026-08-01 (founder report — Gus Reynolds / Sarah, "the trash icon doesn't remove him, from either profile"):** remove AND mark-ended both hardcoded `kind='spouse'`, but the tree renders a `partner` (dating) pair in the same spouse position — on a partner pair the DELETE/UPDATE matched zero rows, returned no error, and the tree re-rendered unchanged. The real kind now flows `Graph.spouseKindByPair` → `TreePerson.spouseKind` → the remove/divorce slots, so writes hit the row that exists and the chip/confirm copy says "partner" instead of calling a dating pair spouses; `unlinkRelationship` also clears both kinds and both note phrasings ("Married to X." / "In a relationship with X."). Verified live: Gus/Sarah row deleted, tree updated.
+
+39. ~~Family tree layout engine rewrite~~ — **DONE 2026-07-22**, same day as founder-proposed. Implemented in the fresh session the founder asked for; see item 37's "Root-cause rewrite" entry for what shipped.
+
+40. ~~Full sibling/parent clique sync~~ — **DONE 2026-07-21, deployed and DB-backfilled.** Founder-requested: adding any relationship should reciprocate across everyone it touches, not just the pair directly linked (e.g. adding a 3rd sibling to a 2-sibling group should connect all 3, and share all parents across all 3 — not just sync the new pair). Replaced the old 2-person-only `syncSiblingParents` with `syncFamilyClique` (see §6), which walks the full transitive sibling closure on every sibling or parent add — wired into both the frontend "+" picker/suggestion-banner paths AND all 4 relationship-capturing edge functions (`add-fact`, `converse`, `update-moment`, `update-group`, all redeployed same day). Verified live against Jake's real sibling group (Josh/Jake/Jess/Danny Volin): a test sibling added only to Josh correctly picked up Amy/Steve as parents AND direct sibling links to Jake/Jess/Danny; a test parent added only to that new sibling correctly propagated to all four. Spouse→parent propagation (step-parent case) explicitly excluded — see item 24. One-time SQL backfill for pre-existing data run same day (165 → 177 relationship rows). **Follow-up 2026-07-25 (founder report — Lorenzo Harris tree, "relationships don't sync regardless of whose profile was centered"):** the clique closure above only ever walked EXISTING sibling rows — it never discovered "these two share a recorded parent" on its own, so kids added one at a time (the normal way of building a tree) never became siblings. Fixed: closure now also seeds from the anchor's own parents' other children. Spouse→parent propagation (item 24) also now ships — auto-links except when either side already has another spouse/partner on file (remarriage guard), which surfaces as a new suggestion banner instead (`suggestCoParentLinks`, FamilyTree.tsx). New `invalidateKeyFacts` closes a third, related gap: nothing previously invalidated a profile's cached Key Facts chips after a relationship changed elsewhere. Verified live with disposable test people (shared-parent siblings, spouse auto-coparent, remarriage-guard banner accept/decline, Key Facts regeneration) against `jakevolin@gmail.com`, cleaned up after — see §3 writeRelationship.ts entry for the full mechanism. **Not yet deployed/backfilled against production — see §10.**
+
+41. ~~Family tree entry points beyond My Page~~ — **DONE 2026-07-21.** Founder-requested: see any person's tree from their own profile, and generate a Family-typed group's tree without needing to be a member yourself. `PersonDetail.tsx` now has a "View family tree →" link (any profile, not just self). `GroupDetail.tsx` now has a "Generate this family's tree →" button on `group_type === 'Family'` groups. Shipped in two passes same day: first via `pickFamilyTreeRoot()` picking a best-covering center person, then superseded within the day by a dedicated `buildDescendantTree()` (familyTree.ts, `mode: 'descendants'`) scoped to the whole group's lineage instead of one member's ego graph — `pickFamilyTreeRoot()` removed. Verified live: The Volins (21 members) → tree centers on the family's eldest known generation, correctly fanning down through all members; a non-self profile (Steve Volin) opens its own ego tree correctly.
+
+42. ~~Family tree generation cap~~ — **DONE 2026-07-21.** Founder-reported: Harvey/Roberta's great-grandchild (Wesley Gregorian) had no section — both tree modes were hardcoded to a fixed generation window (ego mode: 2 up/1 down; descendants mode: 5 labels). Both now walk however far the relationships data actually goes in each direction (capped at 25 generations only as a cycle guard) — see §7 FamilyTree.tsx entry for the mechanism. Matters for the founder's stated use case: people using this to keep track of real family lineage, potentially recording many generations back. Verified live: Harvey Volin's tree now shows a "Great-Grandchildren" section containing Wesley Gregorian; The Volins group tree unaffected in shape, still renders correctly.
+43. ~~Family tree color coding~~ — **DONE 2026-07-21.** Founder-requested: make relationships easier to read at a glance — who's centered on whom, and which side grandparents/aunts-uncles/cousins are on. See §7 FamilyTree.tsx entry for the mechanism. Deferred (founder's own call, flagged to revisit — see item 44): a gender icon per person, not bundled into this pass. Verified live against Jake Volin's tree (purple moves correctly when re-centered on a non-self person like Amy Volin; blue/rose sides span from Great-Grandparents down through cousins' kids) and The Berzins' group meta-tree (single green color, no purple, clicking any member correctly opens their own purple-centered ego tree).
+44. ~~Gender icon on family tree tiles~~ — **DONE: manual field 2026-07-26, auto-fill 2026-08-11, dot rendering reworked 2026-08-17.** New nullable `people.gender` column (`male`/`female`/`non-binary`/`other`, migration: `supabase/migrations_manual/2026-07-26-gender.sql`, **confirmed applied 2026-08-10** — an anonymous PostgREST select of `people.gender` returns 200, not `42703`), editable dropdown on `PersonDetail.tsx` (inside the name-edit form, next to Deceased). `FamilyTree.tsx` renders a small gender dot in each tile's top-right corner — blue `#4A7BA7` male, rose `#B06A82` female, muted grey `#B5B5B5` on deceased tiles, nothing for non-binary/other/unset (**2026-08-17**, replaced a ♂/♀ glyph in front of the name the founder found too loud; the tree legend now names the dot, because the two family SIDES are also blue/rose). **`boxWidth` measures instead of estimating (2026-08-17):** tile width was `name.length * 8` + a padding constant, which undercounts wide letters and never counted the ' †'/' ›' suffixes the tile renders — it left "Emma Lerma ›" 1.1px UNDER its dot even after the constant was nudged 28→40→48. Now a cached canvas `measureText` against the tile's own font (system stack, so nothing loads late and re-measures wider), with padding as a real geometric budget: the dot owns the last 15.5px and the name is center-anchored, so `2 * (12 + 3.5 + 4)`; ceiling 190→210. Measured on the founder's tree: 42 tiles, 0 overlaps, uniform 3.5px clearance that no longer varies with name length. Don't re-tune the constant — if a name crowds the dot again, the measurement is wrong, not the padding. Fetched via its own query in `familyTree.ts`'s `loadGraph()`, separate from the main people select, so a not-yet-migrated database degrades to "no icons," not a broken tree. **Auto-fill half DONE 2026-08-11** — `GenderFill.tsx` (§3), reached from a "Fill in gender for N people →" link on the People page that hides itself once N hits 0. Runs `guessGenderFromName` over everyone with no gender on file and splits them into "Grove can fill these in" and "Grove can't guess these," one select per row, with an "Accept all N suggestions" button and a single Save. Reviewed rather than silent, because `nameGender.ts` deliberately never persists a guess (a saved guess is indistinguishable from a stated fact) — the review screen is what makes the write legitimate. Verified live against the real account (713 people: 409 guessable, 272 not, 32 already set), including a 2-person save round-tripped through a direct DB read and reverted after. **Note the display-time guess (2026-08-05, `nameGender.ts` in `loadFamilyGraph`) already fixed the "everything reads aunt/uncle" symptom for the family tree and relationship calculator** — filling the column is what carries it beyond the tree graph and makes each profile's Gender field a real, correctable value. **2026-08-19 (founder: the guess "isn't even appropriately guessing if Ben or Braden is a male name, or Bridget or Joelle are female"):** the hand-typed ~840-name list replaced with 16,002 names from SSA birth counts (see §3 `nameGender.generated.ts`). Measured on the real account: of the 315 people still with no gender on file, the old list answered **0** and the new one answers **189**, with nothing that used to be answered now unanswered. The 126 left are correct refusals (Alex, Chris, Jordan, Casey, Taylor…) or records that aren't first names ("Capt", "MSgt", "PICO"). See PROJECT_HISTORY.
+45. ~~Standalone first-run onboarding experience~~ — **DONE 2026-07-22.** Full gameplan discussed and iterated with the founder before building (plan file: `gameplan-the-onboarding-experience-lexical-parrot.md`, not checked into the repo). Built on top of the founder's own same-day signup expansion (items above: name/birthday at signup, auto-created self profile). See §3 Onboarding.tsx entry for the full mechanism — full-screen, no app chrome, sequenced by connective leverage (family tree first, then a closed-ended group picker, notes/events deliberately excluded). Verified live end-to-end with a disposable test account (`onboarding.verify.test@example.com`, deleted 2026-08-03 along with 10 other leftover test signups — see §10).
+
+**Items 46–53 came in via the click-to-comment feedback widget (§3 FeedbackWidget.tsx), founder session 2026-07-23, folded in here instead of living only in the `feedback_notes` table — marked done in the widget once captured below:**
+
+46. ~~Rename the Home "Notes" stat tile to "Datapoints"~~ — **DONE 2026-07-24.** Copy-only change (`Home.tsx`); underlying count query untouched. Broader "datapoints" reframing (what else counts, how it's computed) stays open. Verified live.
+47. ~~Dunbar's-tiers widget on Home~~ — **DONE 2026-07-24.** `DunbarDetail.tsx` now shows real names (most-recently-added first) within each cumulative tier slice, not just a count — still the existing cumulative-bucket model, not real per-person tier assignment (founder-confirmed scope). Verified live against the real account.
+48. ~~New Calendar feature~~ — **DONE 2026-07-24.** Full build story in PROJECT_HISTORY.md §21. `Calendar.tsx` (nav tab: upcoming list + fixed-height month grid over `moments`/`reminders`), `CalendarSettings.tsx` (connect calendars via secret iCal URL — not Google OAuth), `scan-calendar-sources` Edge Function (fetches/parses connected feeds, AI-extracts via Claude, matches attendees, writes to `moment_import_candidates`) on both a manual "Sync now" button and a daily `pg_cron` job, and `ImportReview.tsx` (accept/reject queue — accept writes real `moments`+`notes`, reject writes nothing). Nudges on Home/Calendar surface the pending count. New tables: `calendar_sources`, `moment_import_candidates`. Verified live end-to-end against the founder's real connected calendar. **Follow-up fix 2026-07-25:** founder reported no real events surfacing (only birthdays). Root cause: the pre-AI filter required 2+ formal Google "guest" attendees or a recurrence rule before an event ever reached Claude — most personal calendars don't use formal guest invites, so real gatherings (trips, visits, reunions) were silently dropped before classification. Removed that filter; every non-cancelled, in-range event now goes to the AI, which does the actual worth-suggesting judgment call. Also found and fixed live: batches were running sequentially and blowing past the Edge Function execution timeout on a real backlog (1,060 raw events on the founder's actual calendar) — switched to `Promise.all` concurrent batch calls plus a per-invocation batch cap, so a large backlog catches up over a few clicks instead of timing out. Verified live: full backlog processed cleanly, 232 real candidates now pending (trips, reunions, family gatherings — not just birthdays). **Overhaul 2026-07-25** (founder ask: accept-flow feedback, merge-with-existing, tag/group suggestions, real date ranges): see §3 ImportReview.tsx and §6 `moments`/`moment_import_candidates` entries for the mechanism. Verified live against the founder's real account: merge-accept ("Adrienne and Jacob Fisher's Wedding") and range-accept ("Conor & Shelly's wedding", June 17–19 2027) both round-tripped correctly through EventDetail/Events.tsx.
+49. ~~Add a "Settings" button next to Log out~~ — **DONE 2026-07-23.** Scoped down with the founder to account + AI settings only (email/password change, chat-tone preference) plus About and Privacy/data-policy links — explicitly not a place for app-interface shortcuts. `SettingsPage.tsx`/`About.tsx`/`Privacy.tsx` (see §3), `user_settings` table (see §6), `converse` roster-tier read (see §4/§5). About/Privacy are placeholder pages — real copy for both still needs to be drafted together with the founder, not invented unilaterally. Verified live against the founder's real account: email/tone sections render correctly, chat tone persists and visibly changes `converse` reply style (tested "direct"), password change round-tripped (changed, logged in with the new one, reverted to original) — email-change form intentionally not tested live against the real account (low-risk code path, same `supabase.auth.updateUser()` already proven for password, but founder chose not to risk it on the real login for this pass).
+54. ~~Email-change verification code~~ — **DONE 2026-07-23** (code side; Supabase Dashboard step still pending, see §10). `SettingsPage.tsx`: after "Update email," the page now asks for a 6-digit code (`supabase.auth.verifyOtp({ type: 'email_change' })`) sent to the **new** address only (founder decided against also codeing the old address — logging into Settings already proves identity; the new-email code just confirms it's real/reachable) before the change takes effect, with resend/cancel. UI verified live (pending state, wrong-code error, cancel) against the founder's real account using a fake address — never completed against a real inbox, so the actual code-delivery email hasn't been seen yet.
+50. ~~Home page engagement~~ — **DONE. All three of the founder's examples now ship on the "Connections to make" card**: "is this person in group X?" 2026-07-25, then "confirm this relationship" and "suggested tags for this event" as two of item 85's four question types 2026-08-08 (a fourth, item 98's household groups, 2026-08-20). Kept here rather than deleted because this was explicitly a brainstorm ask — this was explicitly a brainstorm ask, not a spec; related to item 26's ratings loop.
+51. ~~EventDetail "Affiliated Groups" section~~ — **DONE 2026-07-24.** `EventDetail.tsx`'s groups and tags pickers are now collapsed behind toggle buttons ("+ Associate a New Group" / "+ Add a Tag"), mirroring `GroupDetail.tsx`'s pattern, instead of always-visible; empty states now show "No groups/tags at this time" rather than wasting space. Standardized on "Associated Groups" terminology (matches `GroupDetail.tsx`/`PersonDetail.tsx`; `update-moment`'s prompt text updated too) — `AffiliatedGroupChip` renamed to `AssociatedGroupChip`. PersonDetail's own heading left untouched this pass to avoid colliding with a concurrent session's in-progress deceased/divorce work on that file. Verified live (VCIC Competition event): toggle opens/closes the picker correctly.
+52. ~~Event dates~~ — **DONE 2026-07-24.** `EventDetail.tsx` and `Events.tsx` now prefer the exact `event_date` over vague `when_text` when both exist (new shared helpers in `lib/dates.ts`: `formatFullDate`, `formatEventWhen`); `when_text` still shows when no exact date is on file. Verified live: VCIC Competition now shows "February 24, 2018" instead of "late February 2018."
+53. ~~`converse` chat voice bug~~ — **DONE 2026-07-24.** Added an explicit VOICE instruction to `converse`'s stable system prompt (`stableInstructions`, static/deterministic — doesn't affect the prompt cache prefix) telling the model to always address the founder as "you" in reply text, never by their own name or as "User." Deployed via `npx supabase functions deploy converse`. Verified live: re-asked about the VCIC Competition note, reply now reads "...Daniel Book allegedly shoved you and you slipped down a muddy hill" instead of naming the founder in third person.
+55. ~~`converse` MOMENT_ID tag leak~~ — **DONE 2026-07-24.** Added an instruction to `stableInstructions` telling the model the `[MOMENT_ID: ...]` tag is bookkeeping-only and must never appear in reply text. Deployed via `npx supabase functions deploy converse`. Verified live: re-asked about the VCIC Competition, reply no longer starts with the tag.
+56. ~~Calendar month-grid tile truncation + app column too narrow on desktop~~ — **DONE 2026-07-24.** Founder-reported: day tiles with long titles were stretching their whole grid column instead of truncating. Root cause: `gridTemplateColumns: repeat(7, 1fr)` has no `min-width: 0` clamp, so a child's min-content width pushes the column wider — fixed via `minmax(0, 1fr)` plus `minWidth: 0`/`overflow: hidden` on the day cells and tile buttons (Calendar.tsx). Also addressed the founder's follow-up "why is the whole app so thin on desktop": the app's page column (`maxWidth`) was hardcoded to 600px identically across every page — confirmed harmless to widen since any phone viewport is already narrower than 600px, so this only affects desktop viewing, not the eventual native-iPhone build. Bumped to 840px across all logged-in app pages + Breadcrumb.tsx (Landing.tsx's own unrelated `maxWidth` left alone — that's a marketing-page callout box, not the app shell). Verified live: tiles clip with ellipsis inside a uniform-width cell, page column measurably wider (888px including padding vs. previous ~648px) with no layout breakage.
+
+**Items 57–61 came in via the click-to-comment feedback widget (§3 FeedbackWidget.tsx), founder session 2026-07-25, folded in here instead of living only in the `feedback_notes` table — marked done in the widget once captured below:**
+
+57. ~~Per-group toggle for "connections to make" suggestions~~ — **DONE 2026-07-25** (scope confirmed with founder: Groups only, not Events — EventDetail's own attendee-suggestion boxes are a separate, not-yet-built ask). New `groups.suggestions_enabled` column (default true); checkbox on `GroupDetail.tsx` right above where the suggestion chips would render (always visible, not gated on there currently being any, so it stays reachable to re-enable); off also drops that group from Home's "Connections to make" card since both read the same column (`lib/suggestConnections.ts`). Isolated fetch/write, fails open to "on" if the column isn't there yet — doesn't risk breaking the member list or Home's card while the migration is pending. **Founder's stretch idea (proactively offer to turn suggestions off after repeated dismissals) NOT built** — out of scope for this pass. **Migration run and fully verified live 2026-07-26** against the real `jakevolin@gmail.com` account, "Air Force Academy" (113 pending suggestions at the time): unchecking the toggle immediately hid all suggestion chips + the add/remove-all buttons and showed the "Off" hint; the `false` value survived a full reload (confirmed directly against the DB, not just the UI); Home's "Connections to make" card reads the identical column so it stops surfacing that group's people too. Test toggle reverted back to on afterward (real data, not disposable).
+58. ~~Auto-load more Home suggestions without a refresh~~ — **DONE 2026-08-10.** `loadHomeSuggestions` now returns the ENTIRE pool in round-robin order instead of just the first 6; `Home.tsx` holds all of it in state and slices `SAMPLE_SIZE` for display, so answering a card filters it out and the next slides up on the same render. No refetch, no reload, and **zero extra queries** — every candidate was already computed in memory and then discarded. 2 new unit tests on the unbounded-limit path. **NOT browser-verified** (Home is behind a login; no session available) — the refill is unit-tested, the on-screen behaviour isn't.
+59. ~~EventDetail attendee suggestions missing "Add all"~~ — **DONE 2026-08-10.** "✓ Add all suggestions" now sits beside the existing remove-all on all three of `EventDetail.tsx`'s suggestion boxes (sibling sub-event, associated group, family), matching `GroupDetail.tsx`. New `handleApproveAllSuggestions` does ONE bulk `notes` insert + ONE `handleNoteSaved()` — never a loop over `handleAddAttendee`, which would spend a `summarize-moment` regeneration per person for a single click (CLAUDE.md rule 3). **NOT browser-verified before pushing** (founder said push; build + 319 tests green, but the Browser pane was hidden that session so no click-through and no login was possible) — specifically unverified: that the ✓ button renders in each of the three boxes, and the bulk-insert write path itself.
+60. ~~New-person name inputs don't stay side by side~~ — **DONE 2026-08-10.** `PersonDetail.tsx`'s `renameInput` was already `flex: '1 1 150px'` by the time this was picked up, but three 150px bases can't fit a phone's content width, so it still wrapped — now `flex: '1 1 0'` + `minWidth: 0` so the three boxes always share one row. Middle placeholder shortened to "Middle/nickname" to stay legible at a third of phone width. Known tradeoff: these inputs render at `fontSize.h2`, so long placeholder text clips on a narrow phone. **NOT browser-verified before pushing** — same hidden-pane/no-login gap as item 59; the one-row layout is CSS-reasoned, not seen.
+61. ~~First-person "my" misattributed to the wrong person~~ — **DONE. Code fix 2026-07-26, confirmed LIVE 2026-08-19** (the deployed `add-fact` was downloaded and diffed against the repo). `npx supabase functions download add-fact` came back byte-identical to the repo copy, instruction included — it went out with item 94's deploy on 2026-08-11. The one thing still not done is a behaviour re-test against the live function, which needs a real first-person note typed on someone's profile; it was left undone deliberately rather than write test text into the founder's own data overnight. Root-caused to `add-fact` (the profile-scoped quick-fact bar — matches the Ken Miller repro exactly: text typed directly on Ken's profile). Its prompt framed all captured text as "about" the profile person with no signal that a first-person pronoun means the app's signed-in user instead; added an explicit instruction (using the existing `is_self` lookup) telling it first-person text refers to the self person, never to rewrite "my X" as "&lt;profile name&gt;'s X," and to leave the pronoun as typed if unsure. `converse`/`update-moment` weren't touched — their existing `buildSelfInstruction` already resolves unqualified "my"/"our" for relationship capture; only `add-fact`'s plain-note path had the gap. A live test on Ken Miller's profile ("my scout troop leader") saved unchanged, not misattributed — but no deploy token was available this session, so that test actually ran against the OLD (undeployed) function and isn't real confirmation of the fix; re-verify after deploying.
+62. ~~Groups page lost its filter + scroll position when returning via the back arrow~~ — **DONE 2026-07-26.** Founder-reported: pick a group-type filter, click into a group, then use the in-page "← Back to Groups" arrow — landed back at an unfiltered, top-of-page list instead of where you left off. Root cause: `Groups.tsx` unmounts every time a crumb is pushed (App.tsx swaps it out for `GroupDetail`), so its local `search`/`typeFilter` state and scroll position were lost on every return trip. Fixed by lifting both into `App.tsx` (which never unmounts) and adding a scroll-position ref that's restored once the list reloads, cleared on a direct top-nav tab click so only the actual back-arrow round trip restores scroll. Verified live against the real account: "Friend group" filter + scrolled-to "Colorado Springs Friends" → back arrow correctly restored both; direct "Groups" tab click still lands at the top.
+63. ~~Spouse/family chaining should apply everywhere a person is suggested, not just events~~ — **DONE 2026-07-26.** Founder feedback: self's spouse should always be suggested for events (household events are a given, shouldn't need self manually added first), and the existing event "person added → spouse suggested → kids suggested once spouse also added" chain should apply to every suggestion surface in the app, not just EventDetail.tsx. Shipped: (1) EventDetail.tsx/ImportReview.tsx now always seed self into the attendee set fed to `suggestFamilyMembers`, so self's spouse is suggested even before self is tagged; (2) GroupDetail.tsx gained a second suggestion box, "Family of a current member?", using the same `suggestFamilyMembers` chaining seeded from the group's explicit members; (3) `suggestConnections.ts` (Home's "Connections to make" card) gained the same family signal, generalized across every group. Verified live against the real account: a blank new event immediately suggested Caroline Volin (self's spouse) with zero attendees added; a throwaway test group seeded with Jake+Steve Volin correctly suggested Amy Volin (Steve's spouse), and once added, correctly suggested Jess/Danny/Josh Volin (their kids per the `relationships` table) — test group deleted after verifying, no changes to real data.
+65. ~~iPhone Contacts import~~ — **DONE 2026-07-27.** Previously parked; founder asked to build it out, specifically calling out birthdays and addresses, then added mid-plan that nothing should auto-import wholesale (a real contact list can be 1000+ entries) and that browsing needs to be chunked with progress saved. See §3/§6/§7 for the mechanism (`ContactsImport.tsx` → `ContactSelection.tsx` curation → `ContactImportReview.tsx` accept/reject, `contact_import_candidates` table, `_shared/vcard.ts`/`_shared/nameMatch.ts`). Contact photos and auto-linking Apple's "related names" into the real `relationships` table were deliberately scoped out — flagged as separate decisions (photo storage needs a Storage bucket, same infra as the still-unbuilt item 27; relationship auto-linking risks silently writing wrong family links from free-text labels). Verified live end-to-end against the real account (`jakevolin@gmail.com`), all test data cleaned up after.
+66. ~~Clean up messy duplicate location strings~~ — **DONE 2026-08-12.** New `ManageLocations.tsx` (§3), reached from "Manage locations →" on Events beside "Manage tags →". Lists every distinct `moments.location` with its event count and rewrites one across every event at once; a "Look like the same place" section proposes clusters, with radios for which spelling wins plus free text (the right spelling is often none of the typed ones). Clustering is pure and tested (`lib/locationGroups.ts`, 15 tests): a value starting with a house number keys on `<number> <street>` with abbreviations expanded, everything else keys on its fully-normalized self — so "Denver, CO"/"denver co" merge but "Denver Zoo"/"Denver, CO" never do. Precision over volume, same call `suggestEventGroups` made: a wrong proposal the founder accepts is silent, permanent damage. The founder's lighter alternative (an "×" to stop a bad suggestion being offered) wasn't needed — `AddressSuggestInput` reads the same column, so fixing the data fixes the dropdown. **Verified live** against the real account: 99 distinct locations across 105 events, and it found the reported case — **4 spellings of 12208 Bandon Dr across 5 events** — as the ONLY cluster, i.e. zero false positives over the other 95. Merge form opened and cancelled; no merge was actually run (real data, the founder's call which spelling wins).
+
+72. **Mobile redesign — step 1 of 4 DONE (2026-08-20); the next move is step 2, which is the founder using the app on their phone.** Agreed with the founder 2026-08-01. Triggered by opening the PWA on a real iPhone: everything is sized for a mouse (body text mostly 0.85–0.9rem, 46 of 86 files styling via inline `React.CSSProperties`). The founder's own framing is that they don't want to redo work, and the thing making a redesign expensive is structural, not visual: **every colour and size is typed directly into each screen — `#2E4034` appears 226 times across 46 files, `fontSize: '0.85rem'` 127 times.** Agreed four-step order:
+    1. ~~**Extract design tokens into one shared file** (colours, text sizes, spacing, radii) that every screen reads from, so a palette change is ~8 lines instead of 46 files.~~ — **DONE 2026-08-20.** `lib/theme.ts` is that file; no colour used in more than one place is typed into a screen any more. Deliberately still inline: one-off hexes, the named data palettes (family-tree sides/genders, photo placeholders, the Google logo), and 82 off-scale `fontSize` literals across 25 files — naming those would enshrine a scale step 4 is going to replace, and that inventory IS step 4's starting point. Purely structural, zero intended visual change, which is also what makes it easy to verify: *any* visible difference means something was done wrong. Do NOT bundle visual changes into this step.
+    2. Founder uses the app on their phone for a week or two and notes what actually annoys them.
+    3. Settle the app rename (see `PWA.md` for the four places the name lives).
+    4. Redesign only the 3–4 screens really lived in (likely Home/Events/PersonDetail), **mobile-first** — the phone is now the primary surface, and designing desktop-first is exactly how the hover-only controls happened. The remaining screens can stay as-is indefinitely; the founder is the only user.
+
+    **Practical constraint to plan around (revised 2026-08-20):** this is true of REMOTE sessions — no Supabase credentials, and the proxy blocks the live site. A session running locally on the founder's machine is different: the dev-server preview carries their signed-in session, so an assistant can drive the real app and read real data (see the memory note on stashing the auth token to reach the logged-out demo). Anything visual on a PHONE is still the founder's eyes only. The founder is the eyes for anything visual (this is why *they* caught the touch bugs, not the audit). Expect to work from their screenshots.
+
+73. ~~Pets on a profile~~ — requested 2026-08-01, **DONE — UI, schema and chat wiring** (the last of those 2026-08-01, commit ffe6e6a; **verified 2026-08-19**: `converse` loads the pet roster and both inserts and updates pets, with an explicit "a pet is not a person" prompt rule so a pet never lands in `new_people`). Founder decisions taken up front: a pet is its OWN record attachable to one or more people (household dog edited once, shows on both spouses' profiles), and the Home chat should eventually both read AND write pets. "Somewhat customizable to accommodate the variety of pets" → species is free text, plus an open `{label, value}` Details list per pet (Barn/Tank/Vet), not a fixed field set. Shipped: `pets`/`person_pets` tables (§6), `lib/pets.ts`, `components/PetsSection.tsx`, `pages/PetDetail.tsx` (§3). **Follow-up shipped same day, founder's ask:** pets appear in the **People list** with a species emoji, and tapping one opens its **own page** rather than an owner's profile (both founder decisions — the alternatives offered were "just a list on one person" and "tap goes to the owner's profile"). Pets are a display merge into that list only: separate tables, and the People count/Dunbar math still counts people alone. Editing moved off the profile card onto the pet page so there's one form, not two. ~~(B) founder runs the migration~~ **DONE 2026-08-01, verified live (see §10).** ~~(D) `PersonDetail.tsx` merge/delete `person_pets` handling~~ **DONE 2026-08-01**: merge unions the duplicate's pets onto the survivor then detaches (a plain re-point would collide, since a pet can be on several profiles) and the merge confirm copy now says "pets"; delete-profile deletes `person_pets` in the same `Promise.all` as the other dependents — safe only post-migration, since that `Promise.all` aborts the whole delete on any error. Both verified live with disposable test people. ~~(C) `converse` pet roster + write path~~ and ~~(E) the "a pet is not a person" guard~~ **BOTH DONE, deployed and verified live 2026-08-01** (founder-provided token). `converse` loads pets + person_pets as two SEPARATE top-level queries (never an embed — that would take the whole people roster down pre-migration), renders them into the roster tier, and writes a turn-level `pets` field: owner-scoped resolution first, then unique bare name, additive-only updates (never overwrites the profile form), links upserted per owner, and a loud `console.error` + skip for any pet with no resolvable owner. Guards added to `add-fact`/`update-moment`/`update-group` too — all four redeployed. **Item 73 is complete.** **Deliberately deferred:** a "Pets" Key Facts category in `person-facts` (would force an AI regeneration sweep across every profile for info the Pets card already shows), pet birthdays on the Calendar (needs `reminders.pet_id` + CHECK/RLS changes), demo pet content, a `PetChip`, a global Pets page (the People list now covers it), pets on events/photos.
+
+74. ~~A place to write/dictate notes while reviewing imports~~ — **DONE 2026-08-02.** Founder ask: the review cards showed facts (name, phone, birthday, date) with nowhere to record what you actually know about the person, and that review pass is the only realistic moment anyone adds it. Shipped `components/ReviewNoteField.tsx` (see §3) on all four import review queues; ImportReview's pre-existing "Your notes (optional)" box just gained the mic and kept its `source: 'calendar_import'` tag unchanged. Two founder decisions: scope = all four queues (not just contacts), and **no AI note-splitter** — priced at ~half a cent per contact written about (Sonnet 5, no cache benefit since the prompt is per-person), ruled out as too expensive for a 1000-contact pass; Key Facts already does the splitting where it's visible. `ContactImportReview`'s `UndoInfo.noteId` became `noteIds: string[]` so Undo takes back both the vCard-derived note and the typed one; the typed text is deliberately NOT cleared on Undo (everything else on the card is candidate-derived, that isn't). Verified live against the real account: typed note → accept → appears verbatim on the profile with no import badge; empty box → accept → no note row created; accept → Undo → note gone and candidate back in the queue; per-card Accept-disable while recording. Test data cleaned up, **except** one real candidate (Tim Rose) left in `status='accepted'` — see §10.
+
+75. ~~Ask before creating a profile for someone mentioned in a journal entry~~ — **DONE 2026-08-02** (see §4 `converse`/`update-moment`, §3 `MentionedPeopleSuggestions.tsx`, §12 guard). Founder ask, from a real entry: a date night at Pup Dog with Caroline, where the couple they met (Rachel and Matt) got full profiles they didn't want — but the fact they met them there still had to be recallable. Founder decision: ask for **every** brand-new name (predictable) rather than letting the AI judge which mentions are peripheral, and apply it to the event-page chat too, not just Home.
+
+76. **Unify the two chat Edge Functions** (`converse` + `update-moment`, and arguably `update-group`/`add-fact`) — founder, 2026-08-02: *"I really wish it was one singular app — not sure why we even have two chat functions."* They're split for **cost, not design**: `converse` loads the whole roster + every moment each turn; `update-moment` loads one moment. A naive merge makes the event chat pay for the full archive on every message. A real unification means one function with one prompt and *scoped* context selection (pass the moment id → load only what that conversation needs), which also stops the current bug class where a rule fixed in one prompt silently stays broken in the other (item 75 had to be written twice; so did the pets guard, the date-phrase examples, and the general-note handling). Not scoped or estimated yet.
+77. ~~**Chat-generated notes shouldn't invent sentiment that wasn't actually said**~~ — reported via feedback widget 2026-08-03, on "Jake's birthday dinner." Founder flagged a specific line as fabricated feeling/emotion that wasn't in what she actually typed. Partially addressed by item 81 (2026-08-03): general/event-level notes on Event/Group pages are now stored 100% verbatim, no longer AI-paraphrased at all, so this bug class is structurally gone there. **Remaining scope DONE 2026-08-03** (separate same-day founder report, on "Going to be a girl dad!" — an invented ultrasound/health-markers detail never said, plus a note misattributed to the unborn baby's own profile instead of being a general note): `converse`'s stableInstructions and `update-moment`'s `additional_notes` guidance (mirrored into `update-group` too) now both explicitly forbid inventing any detail the user didn't actually state, and clarify a note only attaches to a named person when THEY did/said/experienced it — not merely because they're the sentence's topic. Related bug caught in the same pass: `summarize-moment` had no self-person anchor at all, so its cached first-person "I" voice could latch onto whichever named person's note was most detailed instead of reliably being the account owner — now explicitly grounded via the `is_self` person (see §4). Deployed and live-verified (re-summarizing the reported event produced no new invented content). **Known gap:** the two already-bad notes on that specific event (the ultrasound detail, the baby misattribution) predate the fix and are stored data, not something a prompt change retroactively cleans up — fixing them needs the founder's actual wording, not a guess.
+78/79. ~~Landing page should call out the calendar- and contacts-import features~~ — **DONE 2026-08-10.** Shipped as ONE new bullet (not two) at the top of `Landing.tsx`'s "how-it-works" list — both asks are the same promise, and the list was three bullets, so five read as a feature dump: "You don't start from scratch. Connect your calendar and Grove builds out the events you've already been to; pull in your phone contacts and it starts filling in the people — then nudges you over time to add what it doesn't know." Copy is the founder's to redline.
+80. ~~"Connections to make" Yes button not saving~~ + ~~auto-suggest Family tag on Home~~ — **DONE 2026-08-03.** Founder report: clicking "Yes" on Home's "Connections to make" card (e.g. adding Abram Woody to Air Force) repeatedly didn't stick. Root cause: `acceptConnectionSuggestion`/`dismissConnectionSuggestion` (`lib/suggestConnections.ts`) never checked `{ error }` on their Supabase calls, and `Home.tsx`'s click handler removed the suggestion from local state before the write even resolved — a failed write was invisible, and since suggestions recompute fresh from the DB every visit, the same suggestion just kept reappearing. Both now return `{ error }`, the handlers await and only clear local state on confirmed success, and a shared error banner surfaces a failure instead of silently dropping it. Verified live against `jakevolin@gmail.com`: clicked Yes on Abram Woody → Air Force, confirmed the `person_groups` row actually exists via direct query, reloaded and confirmed he no longer resurfaces as a suggestion. Second half: new `lib/suggestFamilyTag.ts` scans untagged groups (`group_type is null`) for a family-shaped name (`\bfamily\b`, or "The Xs"/"The X's"/"The Xs'") and surfaces a Yes/No "Tag as Family?" card on Home, same pattern as Connections to make. New `groups.group_type_suggestion_dismissed` column (migration `2026-08-03-group-type-suggestion-dismissed.sql`, **confirmed applied 2026-08-10** by PostgREST probe) tracks a "No"; until the migration runs the feature fails open to showing nothing (its own query, not folded into any shared groups select, per the isolation pattern in the infra notes). Regex validated against the real account's ~60 groups: matched every untagged family-shaped name, zero false positives on non-family groups (years, "Pilots", "NCOs", "Civilians", etc).
+81. ~~Two separate ways to add a note on Event/Group pages~~ — **DONE 2026-08-03.** Founder confusion (this conversation): a plain "Add a note" box sat beside a separate AI chat ("Remember something else?"/"Edit this group") on both pages — overlapping jobs, unclear which to use, and Home's chat made a third pattern. `UpdateMomentChat.tsx`/`UpdateGroupChat.tsx` replaced with one `NoteWithDetection.tsx` (see §3), matching the single-input pattern `PersonDetail`'s fact bar already used. Founder decision: attendee/relationship detection runs **automatically** on every note (not on-demand) — small added AI cost/latency accepted. `update-moment`/`update-group` prompts updated to stop re-inserting a paraphrased copy of the general note (frontend already saves it verbatim) and to stop angling for an open "anything else?" follow-up, since each call is now one discrete note rather than a multi-turn thread; `needsClarification` replaces `done` for the rare genuine disambiguation case. Home's `converse` chat is untouched — deliberately different, whole-account scope. Both edge functions deployed (persisted `SUPABASE_ACCESS_TOKEN`, see §2) and verified live: direct-invoke test confirmed `needsClarification` in the response and zero note rows written for a general-detail test message. Click-tested end-to-end on a real event and a real group (verbatim save, summary regeneration, no duplicate notes); test notes cleaned up afterward.
+82. ~~See at a glance who in a group is in a subgroup~~ — **auto-colour half DONE 2026-08-04.** Founder ask: with a 20-person group and several subgroups, working out who's already sorted meant opening each subgroup in turn. Shipped both halves of the ask together — subgroup tiles carry a colour that repeats as a dot on the parent-level member chips (so the tile grid is the legend), plus a "Not in a subgroup (N)" filter pill. See §3 GroupDetail.tsx / `lib/subgroupColors.ts`. **NOT browser-verified before pushing** (founder said push; build + 102 tests green, click-through never ran — same call as item 19). Unverified specifically: the dot/rule rendering, the pill's filter behaviour, and phone width. ~~Still open: tap-to-recolour swatches.~~ **DONE 2026-08-12; migration applied and both write paths verified live 2026-08-20 (§10) — the whole item is now closed.** A 44px swatch sits on each tile's corner (outside the tile's own `<button>` — nesting one would be invalid markup) and opens an 8-colour picker plus "Back to automatic". Stores the palette INDEX in a new nullable `groups.color_index`, not a hex, so the palette stays the source of truth. `subgroupColorMap` now takes the pins and **routes the automatic colours around them**, so a pin can never collide with an auto colour — a duplicated colour is the one failure that makes this feature misleading. Fails open pre-migration (42703 → no pins, swatch hidden), and the verdict latches per session so it's one failed probe, not one per group page. **Verified live** on the real account, with the missing column simulated by a fetch patch (no real writes — the founder's colours are untouched): swatches appear on all 8 Air Force subgroups, pinning 22 AS to palette[4] wrote `color_index: 4` and shifted every other tile to keep **8 distinct colours**, "Back to automatic" wrote null and restored position order. Pre-migration state re-confirmed after: 8 tiles coloured, 0 swatches, no failed request on the second group page. The tradeoff that motivated this is now escapable rather than gone: unpinned tiles still shift when a subgroup is added.
+
+83. ~~Countdowns on the Calendar page~~ — **DONE 2026-08-06, code pushed; `migrations_manual/2026-08-06-countdowns.sql` still needs running (§10).** Founder ask (with a screenshot of the iOS "Countdown" app): auto-add milestones so you can see how long it's been, and let them add future things they're looking forward to. Four founder decisions taken up front: (a) auto count-ups = past events tagged "Milestone" + birthdays/anniversaries with a `year` on file, NOT every past event — a curated short list beats "whatever happened lately"; (b) a section on the Calendar page, not its own page/tab; (c) adding a countdown gives a CHOICE (plain countdown / countdown + real event / pin an event already on file) rather than the app deciding which one a countdown is; (d) implied by (b): future countdowns are opt-in only, since Upcoming sits right below and already lists everything ahead. Shipped: `countdowns` table (§6), `lib/countdowns.ts` + `lib/moments.ts` + `components/CountdownsSection.tsx` (§3), 25 new unit tests on the date math. **Verified:** build/lint/181 tests green, and the real component driven in a headless Chromium at phone width against a stub REST server (derived milestones render with the right unit columns; untagged past events, year-less reminders and a deceased person's birthday all correctly absent; add-standalone, pin-existing, tap-through to Event/Person, dismiss, reload-persistence, re-add-after-dismiss, and un-pin-stays-hidden all confirmed; a 3-day-out card ticked its Seconds column). **NOT verified against the real database** — no Supabase credentials in that session, so RLS, the CHECK/partial unique indexes, and the ON DELETE CASCADE (delete a pinned event → its countdown goes with it) are unexercised until the migration runs. Deliberately deferred: drag-reordering cards, countdowns on Home, demo-account countdown content, pet birthdays as milestones (needs `reminders.pet_id`, already deferred under item 73).
+84. ~~Airtable-inspired visual/structural redesign~~ — **DONE 2026-08-07, all 5 sections** (each section still wants a real click-through; see the per-section notes below). Founder-directed 2026-08-07, mockup-approved before any code touched. **Section 1 DONE 2026-08-07** (palette/type/shape in `theme.ts`, `ink`/`primary` split — see §3 theme.ts entry). **Section 2 DONE 2026-08-07**: `App.tsx`'s plain "Settings"/"Log out" buttons replaced with an avatar circle (initials from the `is_self` person's name, falls back to email initials pre-onboarding) that opens the existing `ChoiceSheet` component (reused as-is, not a new dropdown pattern) with Settings/Log out as its two choices; nav bar itself styled for the first time (was raw unstyled buttons) with an active-tab indicator. Self-name fetch is isolated in its own effect/query (same "don't take the whole shell down over one field" pattern as PersonDetail's gender/contact-info queries) so a slow or missing self person only affects the avatar, never blocks the app shell. **Build-verified only — NOT click-tested against a real login** (no test-account credentials in this session; the demo account doesn't render this nav at all, it has its own separate `DemoShell` topbar). Founder should click through Settings + Log out on the real account before trusting this fully. **Section 3 DONE 2026-08-07**: `PetsSection.tsx`/`ContactInfoSection.tsx` now render a single quiet "+ Add pet"/"+ Add contact info" text link (no border/card) instead of a permanent bordered empty card in live mode — clicking either opens the same full card/form as before (Pets: the picker; Contact Info: goes straight into editing, since that's the only way it ever gets its first field). `PhotoGallery.tsx` gained a `personId` prop that rolls up photos from every event that person is tagged to attending (same notes.person_id/moment_id signal EventDetail already uses for attendance), with its own empty-state caption instead of the old always-shown "upcoming feature" placeholder text; wired up in `PersonDetail.tsx` (`readOnly` — i.e. the demo — deliberately still gets no `personId`, since `PhotoGallery` has no static-data override like `PetsSection`'s `pets` prop and would otherwise fire a real query from the logged-out demo). **Build-verified + demo-verified the guard holds** (demo's Gallery still shows the old placeholder caption, confirming no query fired); **the new quiet-link empty states themselves were NOT click-tested** — same no-credentials gap as Section 2, and the demo account can't exercise the live-only branch either. **Section 4 DONE 2026-08-07** — the big one, `EventDetail.tsx`/`GroupDetail.tsx` restructured to the consistent order (Title → Date/Location [Event only] → Summary → Gallery → Who was there → Associated Events → Associated Groups [Group also gets Subgroups here] → Tags [Event only] → Notes → Manage). Specifics: Event's separate rename-pencil and "Edit date & location" pencil merged into one `editingBasics` flow/form (was two states, two handlers, two forms — now one of each, one combined `moments` update). Group's inline Type `<select>` moved into Manage; a static badge near the title still shows the type in both modes. Event's "Sub-events" and Group's unlabeled moments list both relabeled "Associated Events" (same underlying data/logic, just repositioned and headed). New shared `components/ManagePanel.tsx` (modeled on the existing `FilterPanel.tsx` overlay, no baked-in footer) replaces both pages' always-visible "danger zone" — a "⋯ Manage" button at the bottom now opens it, and it holds exactly the same merge/delete (Group also: type, nest-under-another-group, move-to-top-level) logic and state as before, just relocated. New shared `components/FloatingNoteButton.tsx` (modeled on the existing `FeedbackWidget.tsx` fixed-position pattern, opposite corner so they never overlap) replaces the inline note box in both pages' Notes sections with a bottom-right bubble that expands into the same `NoteWithDetection` instance on click. `CountdownsSection.tsx` was NOT touched by this restructure (unrelated file, still on old styling per Section 1's note) — Calendar enhancements (Day One-style "On this day" hover popover, click-to-open month/year picker, Day/Week/Month toggle — only Month exists today) remain the last open piece of this item. **Build-verified + demo-verified the read-only rendering path on both a real event and a real group** (fresh browser tab, zero console errors, section order confirmed exactly as above); **the write-path UI — the combined edit form, the Manage popup, the floating chat bubble — was NOT click-tested**, same no-credentials gap as Sections 2/3, and demo mode (readOnly) hides all three by design so it can't exercise them either. *(Closed 2026-08-10: the bubble and the Manage popup were finally click-tested on the real account during the action-bubble rework — see item 90. The combined name/date/location edit form is still unverified.)* **Section 5 DONE 2026-08-07 — the last one, `Calendar.tsx`.** The gear icon (decided in Section 2's conversation but never actually wired up in code until now) replaces the "Calendar settings →" text link. "Upcoming" is now "Timeline": past events feed into the same scrollable list as upcoming ones, with a "Today" divider between them and a "Today" button that scrolls back to it (lands there automatically on load, too) — reminders stay upcoming-only since `nextOccurrenceDate` only ever resolves forward and there's no reminder-history modeled anywhere else in the app. The month label is now a click-to-open picker (year nav + a 12-month grid) instead of plain text. A new Day/Week/Month segmented control sits above the grid — Month is fully wired to the existing grid, Day/Week show an honest "coming soon" message rather than faking a view that doesn't exist. Hovering (or tapping) a day with history opens an "On this day" popover listing every year a moment has ever landed on that exact month/day — deliberately independent of the currently-viewed year, so a date with real cross-year history is still hoverable even if nothing's tagged to it in the year on screen; a small count badge on the day number hints when there's more than one. **Build-verified only.** Calendar has no demo route at all (`DemoShell.tsx` doesn't reference it — Home/People/Events/Groups are the only demo tabs), so unlike every other section this one couldn't even be read-only-verified this session — no browser check of any kind, just `npm run build` passing and a careful manual re-read of the diff. Founder should click through this page for real before trusting it. **Item 84 (the whole redesign) is now complete** — all 5 sections shipped, though every section's write-path/interactive behavior still needs a real click-through the founder hasn't been able to give it yet (see each section's own note above for exactly what's unverified).
+
+Also worth noting: a separate concurrent session was actively editing `EventDetail.tsx` (an inline "create a new attendee who isn't on file yet" feature on the attendee picker) while Section 5 was being built — untouched and left exactly as found, per the file-scoped staging discipline used throughout this whole item.
+
+84. ~~Countdowns follow-up: no page jump on delete, a Today line, per-card settings~~ — **DONE 2026-08-06, same day as item 83; `migrations_manual/2026-08-06-countdown-settings.sql` needs running before the ⚙ appears (§10).** Three founder asks off using the shipped section: (a) the × made the whole page jump to the top and back — it was the refetch (`load()` set `loading`, the section returned `null`, the page got shorter, the browser dropped the scroll position); now the card leaves optimistically by `cardIdentity` and only the one changed row is folded into state, and the list is its own scroll box so the page height never moves at all. (b) A "Today" button like the one planned for the new app: cards now sort into ONE chronological line (oldest first) with a Today line between past and upcoming, centred on open, and the button sets the box's `scrollTop` directly. (c) Per-card settings behind a ⚙ next to the ×, rather than on card tap — tap still opens the event/person, which is worth keeping. Four settings: rename (display-only via `custom_title`, so the event keeps its own title and stays synced), count in chosen units (`breakdownIn` gives the TOTAL in the largest chosen unit — Days alone reads 1,523, not 1), repeat weekly/monthly/yearly (displays at the next occurrence), and keep-counting-vs-retire once the date passes (offered only for a one-off still ahead, so nothing ever vanishes from under the founder). 13 new unit tests. **Verified:** build/lint/234 tests green, plus the real component driven in the browser against a stubbed PostgREST (throwaway harness, deleted after — no login needed): timeline order with the Today line between past and upcoming; × leaves `window.scrollY` identical before, during and after the write (1052 → 1052 → 1052, mid-page) with the right dismissal row written; Today button lands the list centred on the line without moving the page; ⚙ → "Days" on a 2022 milestone reads **Days 1,525** (creating the derived card's row first, then patching units); rename writes `custom_title` and the card re-titles while the event keeps its own name; "Every year" flips the card to ↓ 300 days and moves it below the Today line; "Take it off the list" saves without the still-future card vanishing; a 3-day-out card ticks its Seconds column; and the pre-migration path (settings select → 42703 → retry on the base columns) renders all cards with the ⚙ hidden, × and "+ Add" still working, no console errors. **One bug found and fixed in that pass:** the auto-centre marked itself done on the first render, when the section was still `loading` and both refs were null — derived cards come from props, so `cards` is already full before the query returns. Gated on `loading` and on the refs actually existing.
+
+85. ~~"Connections to make" only ever asked one kind of question~~ — **DONE 2026-08-08.** Feedback-widget note from 2026-07-27 ("this is also a great feature - we probably need to beef it up"), scoped with the founder 2026-08-08. The card only asked "add this person to this group?"; it now pools four question types (see §3 `suggestConnections.ts`, `suggestRelationshipGaps.ts`, `suggestEventGroups.ts`, `dismissedSuggestions.ts`, and §6 `dismissed_suggestions`), shows 6 instead of 4, and round-robins so no one type crowds the others out. Founder decisions: family gaps + event tagging (NOT "suggest a group for the 196 people in no group" — too close to the per-group signal switched off in item 57), and **deterministic, no AI call**, keeping the card free to recompute per visit. Measured on the real account: 7 co-parent gaps, 1 couple gap, 9 event-tag pairs, 25 person→group. Verified live end-to-end (both accept paths written and confirmed in the DB, dismissals persisted across a reload, pre-migration fail-closed path confirmed by probe before the table existed). Deliberately out of scope: item 58's auto-refill, a per-row "why" line, revisiting `suggestions_enabled` for the other 63 groups.
+86. ~~`syncFamilyClique` unions parents across a whole sibling clique — wrong for blended families.~~ — **FIXED 2026-08-10** (`inheritableParents()`, detail below). Found 2026-08-08 while verifying item 85, on real data. Accepting "Is Lisa Dunn also a parent of Liam/Cormac?" (a step-parent link, correct per the founder) made all three Dunn children one sibling clique, and the clique sync then gave every child the union of every parent — writing **Tara Dunn (Brian's ex-wife) as Elizabeth's mother**, a person she has no relationship to. Deleted manually; the two step-sibling links and Brian→Elizabeth were correct and kept. This is pre-existing behaviour shared with FamilyTree.tsx's accept buttons, NOT introduced by item 85 — but item 85 raises the odds by surfacing step-parent suggestions account-wide, and the sync can silently re-add the bad row the next time anything in that family is edited. Founder decision 2026-08-08: ship item 85 as-is and file this. **FIXED 2026-08-10.** New pure `inheritableParents()` (`src/lib/writeRelationship.ts`, exported + 8 unit tests; mirrored into `supabase/functions/_shared/relationships.ts` as a Deno twin, same no-import-across-the-boundary convention as `_shared/groupNames.ts`) replaces the blanket union. **The rule: only fill an EMPTY parent seat, and never guess which one** — two parents already recorded means inherit nothing (a third IS the blended shape, and the "three biological parents" case item 20's tree health check would flag), and more candidates than open seats means inherit nothing rather than coin-flip one in. Both refusals fail toward writing too little, fixable from the "+" picker in seconds; the old behaviour failed toward writing too much, which is silent and spreads on the next edit anywhere in that family. **The cap governs PROPAGATION only** — a step-parent added deliberately through the family tree's own picker is a direct write and still lands, third row or not. Deliberate behaviour change: propagating a THIRD parent across an already-complete sibling group (exercised by the 2026-07-21 synthetic verification) no longer happens. `migrations_manual/2026-07-25-shared-parent-sibling-backfill.sql` step 3 rewritten to the identical rule in SQL, which is what makes that file safe to run at last (see §10).
+87. ~~A new sub-event should suggest the people who were at the other sub-events~~ — **DONE 2026-08-10.** Founder ask: everyone at Day 1 of the Defenders of Freedom demo was probably at Days 2 and 3, so a fresh sub-event shouldn't start from an empty "Who was there". New "Were they at this one too?" box on sub-event pages (§3 EventDetail.tsx, `src/lib/siblingAttendees.ts`, 7 unit tests). Candidate pool = the parent event's directly-tagged attendees + every sibling sub-event's; ranked by how many of those a person appears in, ties alphabetical. Reuses the existing SuggestedAttendeeChip / `onAddAttendee` / `dismissed_person_ids` machinery unchanged, so tap-to-add and dismiss behave exactly like the group and family boxes. Verified live on the real account against Day 3 of the demo event (19 correct suggestions, Patrick Mojica ranked first on 3 sub-events; parent page correctly shows no box). **Not re-tested: the tap-to-add and dismiss writes** — shared, already-shipped handlers, and exercising them would have written wrong attendance into real data.
+88. ~~Sweep the remaining browser-side reads for the 1000-row cap.~~ — **DONE 2026-08-11.** Founder reported 2026-08-10 that "Yes" in Home's "Connections to make" never stuck; root cause was the browser reading `person_groups` (1183 rows) unpaged. The suggestion path was fixed then (`src/lib/pagedSelect.ts`); the screens were not. This entry listed 11 files — a full scan found **58 sites across 26**, all now on `fetchAllRows` with an explicit `.order()`. Where a name was the sort key a secondary `.order('id')` came with it (names aren't unique, and a non-unique sort key lets rows shuffle between pages — the same bug in a different hat). Three were doing damage beyond a short list: `PersonDetail`'s last-name suggestion decides by finding EXACTLY ONE match account-wide, so truncation could make an ambiguous name look unique and assert the wrong surname; its find-or-create group silently created a duplicate instead of finding the existing one; and `resetOnboarding` left everything past row 1000 behind. **Deliberately left unpaged:** reads bounded by ONE record's fan-out rather than account size (a person's own notes/relationships, an event's own sub-events, a group's own subgroups/associations) and the contact review queue, already paged by its own UI. `fetchAllRows` itself got its first tests the same day (`src/lib/pagedSelect.test.ts`), including the exact-multiple-of-1000 boundary.
+
+90. ~~Fold every "add something to this page" control into the floating bubble~~ — **DONE 2026-08-10.** Founder ask: on a phone you scrolled hunting for "+ Associate a New Group" / "+ Add a Tag" / the attendee picker, while the chat bubble followed you everywhere doing only one thing. The bubble is now the single action surface on EventDetail (people / tag / associate a group / photos / new sub-event / Manage) and GroupDetail (people / associate a group / new subgroup / Manage); `FloatingNoteButton.tsx` → `FloatingActionBubble.tsx` (§3). Every on-page add-button and picker was deleted, chips and suggestion chips stay put, and empty sections now say "tap the + button" (guarded on `!readOnly` — the demo has no bubble). Founder-directed specifics: name/date editing deliberately stayed on the top pencil, and Manage is a muted sub-row that hands off to ManagePanel's existing two-step delete. The note box + mic stays on the bubble's first screen rather than behind a row, since voice is the primary input path. **Click-tested on the real account, both pages** — pickers add and persist, create-new-person/tag rows work, undo banner works, Escape's three stages, delete still gated, mobile viewport fits with all rows ≥44px, zero console errors; test data added during verification was removed afterward.
+91. ~~The action bubble's writes ignore their own errors~~ — **DONE 2026-08-11.** Every write handler on `EventDetail.tsx`/`GroupDetail.tsx` now checks the `{ error }` it was discarding and reports failure; the five "add something" handlers return `Promise<boolean>` so the picker can hold its confirmation. Two holes, not one: the handlers didn't check, **and** the picker called `setJustAdded("✓ Added X")` on the same tick as the insert without awaiting it at all — so the confirmation was never gated on anything. The optimistic-then-write suggestion dismissals (`handleDeny*` on both pages, `dismissed_person_ids`/`dismissed_group_ids`) now roll their local state back on a failed write, the same fix item 80 made in `suggestConnections.ts`. Third hole closed in the same pass: `actionError` only ever rendered inside `ManagePanel`, which isn't open while you're adding someone — so the one failure message that WAS wired up (`handleCreateAndAddAttendee`) had never been visible to anyone. `FloatingActionBubble.tsx` gained an `error` prop, rendered under the header at both panel levels, cleared when a picker is opened. `handleCreateAndAddMember` also stopped conflating two writes: if the profile is created but the group link fails it now says exactly that, instead of offering an Undo for a membership that doesn't exist. **Browser-verified 2026-08-11** (later the same day, on the real account, once a logged-in session was available — closing the "NOT browser-verified" gap this item originally shipped with). Method: a disposable blank event, with `window.fetch` patched in the page to return 503 for `POST /rest/v1/{notes,moment_tags,moment_groups}` — the only way to exercise a rejected write without breaking real data. Confirmed on all three add paths (person, tag, group): the success line still appears and the chip lands when the write succeeds; on failure the red banner appears, the "✓ Added" line is withheld, and **no phantom chip is drawn** ("Who was there" held only You + the one real add). Also confirmed: the banner shows at both bubble levels (picker and action list), clears when another action is opened, and clears again on the next successful write. Zero console errors; test event deleted afterwards. Still unverified: `GroupDetail.tsx`'s half (same handlers, same shapes, not clicked), and the bulk "✓ Add all suggestions" path. One nit found, not fixed (the file was checked out by a concurrent session at the time): [EventDetail.tsx:431](src/pages/EventDetail.tsx:431)'s failure message uses `person.name` — "Couldn't add Josh…" — where the success line uses the full "Steve Volin". Cosmetic only. **Nit fixed 2026-08-11** alongside item 33, now on the shared `fullName` helper.
+92. ~~A multi-day event's summary reads as a wall of text~~ — **DONE 2026-08-10.** Founder ask, on the Defenders of Freedom demo: the per-sub-event lines "don't read well", use basic formatting. Fixed purely in rendering (`src/components/SummaryText.tsx` + tested `src/lib/summaryFormat.ts`, §3): the `<date> · <title> — <sentence>` shape summarize-moment already emits is parsed and each part styled — italic muted date, bold title, sentence below, hairline left rail grouping the rows. The Edge Function prompt and its cached prefix are untouched, so no summary regenerates and no tokens are spent. Ordinary prose summaries render byte-identically to before.
+93. ~~Merges and undo could delete data they never moved~~ — **DONE 2026-08-11.** The multi-step half of item 91, and a worse failure than a wrong message. A merge moves everything off the duplicate then deletes it, and that delete CASCADES — but every step in between was unchecked, so a notes re-point that silently failed still reached the delete and the notes went with it. All three merges (`PersonDetail`/`GroupDetail`/`EventDetail`) now check every step and bail **before** the delete: a half-merged pair is recoverable by merging again, a cascade over rows that never moved is not. No transaction is available from the browser client, so "stop at the first failure, never reach the destructive step" is the strongest guarantee this path can give; where only the final delete fails the message says so rather than implying loss. `ContactImportReview`'s Undo had the sharpest version — its confirmation card is in-memory only (§10's Tim Rose note), so a half-run undo left no way back; the candidate going back to `'selected'` is now last and checked, since without it the card never returns to the queue. `resetOnboarding` wiped in dependency order but checked nothing and cleared `onboarding_complete` regardless, reporting a clean slate over a half-wiped account; it now throws on the first failed delete (naming what it was clearing) and `DevOnboardingReset` catches it — previously that rejection was unhandled, the reload never fired, and the button sat on "…" as if still running.
+94. ~~The AI saw a different group name than the app~~ — **DONE AND DEPLOYED 2026-08-11** (`add-fact`, `converse`, `scan-calendar-sources`, `suggest-prompts`, `update-moment` — see §10 for the deploy, including the `--no-verify-jwt` incident it caused and resolved). `_shared/groupNames.ts` is the server twin of `lib/groupDisplayName.ts`. The app copy was changed 2026-08-03 to qualify through the WHOLE ancestor chain ("Squadron / Alpha Flight / Pilots") precisely because one level stops being unique past two levels of nesting; the server copy never got that change. Two same-named subgroups under two same-named parents would therefore produce the same key server-side, and `idByQualified` would keep whichever was indexed last — the wrong-subgroup TAGGING bug that file exists to close, reopened from the other side. **Measured on the real account 2026-08-11: that collision was NOT occurring** (all 21 three-deep groups have distinct immediate parents, so the old names happened to stay unique). The live damage was the other half — all 21 displayed a path the server index couldn't resolve **at all**, so asking about a group by the name shown on screen returned nothing. `qualify()` now walks the full chain (same cycle guard, same missing-ancestor truncation as the app copy) and `splitParent()` matches the LONGEST existing prefix rather than the first separator, so "Squadron / Alpha Flight / New Thing" creates New Thing under Alpha Flight instead of a group literally named "Alpha Flight / New Thing". Found by writing `src/lib/groupNamesParity.test.ts`, which failed 4 of its 7 cases on the first run.
+95. ~~Nothing checked the Edge Functions, and the linter was switched off~~ — **DONE 2026-08-11.** Three gaps in one sweep. (a) The lint config was saved as `_oxlintrc.json`; oxlint looks for `.oxlintrc.json`, so `npm run lint` had been loading NO config — including `react/rules-of-hooks`, the one rule deliberately set to `error`, never enforced. Renamed; of the 30 warnings that reappeared, all 17 `exhaustive-deps` were read individually and every one is deliberate with a comment already explaining why, so that rule and `only-export-components` are now `off` explicitly rather than burying the rules that matter. (b) `tsconfig.app.json` had no `"strict"` — it passes with zero errors, so it is now on. (c) **7,190 lines of Edge Function code had never been typechecked by anything** (`tsconfig` only includes `src/`, and they run on Deno): `npm run check:functions` does it now (`deno` is a devDependency; the glob is quoted so Deno expands it itself and it works on any shell), and the 16 errors found on the first run are fixed — none was a runtime bug (8 were the documented PostgREST cardinality lie, 3 were vitest parity tests that aren't Deno modules, 2 were narrowing lost inside nested functions where the real guard is at `converse:56`). Plus `.github/workflows/ci.yml`: lint → `check:functions` → build → test on every push, **reporting only, never blocking** — Vercel deploys off git independently of Actions, and with no staging step and nobody on hand to override, a false alarm must never be able to strand a real fix.
+
+96. ~~Somewhere to put what isn't an event~~ — **DONE 2026-08-18** (Notebooks — see §7 for what shipped, §1 for the framing, §6 for schema). Founder ask: favorite movies, quotes, feelings, thoughts to share, reminders. Checking each against the app first is what shrank it: "tell Sarah X" already works as a note on Sarah, reminders were parked (they need a due date, a done state, and somewhere to surface them), and the three real gaps — a movie list, a quote list, how a day felt — turned out to be ONE screen, since an optional date is the only thing separating a list from a log. Three tables, two pages, no new Edge Functions, no new AI calls. Design decisions the founder made along the way, all in §1/§7: the name ("notes" and "pages" were both taken), the app supplying no categories, and the per-notebook AI switch.
+97. ~~Notebooks in the landing-page demo~~ — **DONE 2026-08-19.** New `DemoNotebooks.tsx`/`DemoNotebookDetail.tsx` containers + a Notebooks tab and crumb in `DemoShell.tsx`, fed by `DEMO_NOTEBOOKS`/`DEMO_NOTEBOOK_ENTRIES` in `demoData.ts` (5 notebooks: an undated movie list, two dated logs, one private, one locked). Real components, not lookalikes: `NotebooksView` gained `readOnly` (hides the create form, same convention as `EventsView`), and `NotebookDetail.tsx` now exports `NotebookEntryCard` (the read-mode card the real page already drew, minus the Edit button when no `onEdit` is passed) plus `NotebookReadOnlyView`, which the demo page is. Entry fixtures hold plain `text` and generate their HTML via `demoEntryHtml()` — the corpus needs the words without a DOM (`htmlToPlainText` uses `DOMParser`, which the node-env test doesn't have), and one source string can't disagree with itself. Search covers notebooks, and a **locked notebook is excluded from the corpus entirely, name included**, mirroring the real query's server-side filter (3 new tests). A locked notebook ships a count but no text — `DemoNotebook.hiddenEntryCount`; its page says what the lock does rather than faking a PIN box. Also added the 6th `DemoIntro` slide. Verified click-through in the demo (list, both dated and undated notebooks, person chip out to a profile, locked page, search hit, locked name unfindable).
+98. ~~Suggest a family group when a household is on file~~ — **DONE 2026-08-20.** Feedback-widget note from 2026-08-08 ("Any time a family tree is populated with 3 or more people (i.e. husband, wife, and child), I would like to automatically suggest creating a family group based off of them"). Shipped as a fourth question type in Home's existing "Connections to make" card rather than a new surface — see §3 `suggestFamilyGroups.ts` for the household definition and the naming rules, and §6 for the one-line CHECK migration (applied). Free/deterministic, no AI, same as the rest of that card. **Measured before wiring: 24 households on the real account**, top of the list correct by eye. Accept creates a `group_type: 'Family'` group and adds everyone in one upsert; verified live end-to-end then deleted again, so which households actually become groups stays the founder's call. 15 unit tests.
+99. ~~An event's sub-events were relabelled "Associated Events"~~ — **DONE 2026-08-20.** Feedback-widget note from 2026-08-11 ("This should be called 'Sub Events', not 'Associated Events'"), reversing half of item 84 Section 4's blanket rename. `EventDetail.tsx`'s heading only — Group and Person keep "Associated Events", because those lists are a different thing (events they're tied to, not days inside them). Section ORDER is unchanged.
+
+100. ~~Pets couldn't be tagged to events~~ — **DONE 2026-08-20, migration applied and verified live.** Founder report: "app is not letting me tag pets (which have profiles under the people page?) to events". Real gap, not a bug — the 2026-08-01 pets migration says in so many words "Pets stay out of the notes/moments graph in v1", so no such control was ever built. New `moment_pets` join table (§6) + pet chips in "Who was there" + "Was at these events" on the pet's page; see §7 for the shipped behaviour. Deliberately NOT built by widening `notes` — see §6 for why. Verified on the real account by tagging Maple onto a sub-event, confirming the roll-up to the parent (tooltip + no untag badge there), the pet page's new list, and the untag, then removing the row so the account was left exactly as found. **Both follow-ups closed 2026-08-21:** the separate 🐾 row was merged into "Add who was there", and `converse` learned `moment_pets` so Home chat can tag a pet to an event.
+
+101. Maiden / former names — **DONE 2026-08-21, chat half deployed 2026-08-21** (see §7, §12). Founder ask: "need to figure out how to deal with maiden names." Scope decided with the founder: find her by either name + show the old one quietly on her profile; wording is "Former name", not "maiden name" (neutral, also covers divorce/remarriage/adoption — same reasoning that ruled out "diary"/"journal" for Notebooks). **Deliberately deferred, still open:** the family half — the tree showing which family someone was born into, `scan-calendar-sources`' `personIdsByLastName` household fan-out ("dinner with the Andersons") matching former names, and `inferLastNameFromSignals`/`coParentNeedsConfirmation` learning that a wife kept her own name. **Permanently out:** `transcribe`'s `rosterKeywords()` surname tier is already over budget (825 people → 1002 name words against 800, surnames dropped first), so adding former surnames there makes transcription worse.
+102. ~~Name the app~~ — **DONE 2026-08-22, settled on Grove.** Item 72 step 3, blocking because the iOS **bundle ID is permanent once a build is uploaded**. Went Boomer → Porch → Grove in one day: Porch shipped, then the founder rejected it and asked to redo the product's purpose first and let the name follow ("rethink entirely what the purpose is… and from THERE we can visit a name"). That repositioning is now §1. Ten names were checked against the App Store; six died on direct category neighbours — **Hearth** (*Hearth — Family App*: mood check-ins + AI suggestions for reaching out to family), **Keepsake** (*Keepsake: Bring Family Closer* — "help families say what they've always meant to say", i.e. the held-letters idea already shipping), **Homestead** (*Digital Homestead* — private invite-only family space), **Harbor** (a private AI journal, a social journal, a second brain), **Trove** (8+, two private-document vaults), **Orchard** (Epic's enterprise "App Orchard"), **Understory** (tree-themed reading tracker). Grove came through with one unrelated collision (an Australian parenting-events app); **Heartwood** was the clean runner-up. Apple requires a unique name *string*, not a unique word. Full story in `PROJECT_HISTORY.md`. **Not renamed on purpose:** lowercase `boomer` storage keys, the `boomer-app-2-eight.vercel.app` hostname, and `PROJECT_HISTORY.md`'s dated entries.
+
+**Items 103–111 came out of the 2026-08-22 repositioning session (see §1 and §9). Founder's agreed build order is 103 → 104 → 105 → 106/107.**
+
+103. **Show what the AI did** — a running log of every automatic action (matched this contact, linked these siblings, tagged this event) plus a periodic digest ("14 contacts matched, 3 events tagged this week"). Founder's own idea and the keystone of the set: it makes automation legible instead of silent, gives somewhere to catch errors, is what makes item 104's auto-accept safe to trust, and answers Home feeling empty. Founder also wants a version of it on the landing page as a selling point. **Nothing like it exists today — every automatic write is currently silent.** Mostly reads data that already exists rather than new machinery. **Next up.**
+104. **Triage relief** — founder: mass bulk import "sets a general shell, but it's an overload, very hard to work through," and "too much to triage" is one of three stated reasons for not opening the app. Three parts: auto-accept only what's certain (per §9's act-only-when-certain boundary, logged via 103), stop showing a running count of how far behind you are, and a one-action "archive the whole queue, recoverable" escape hatch. Note this partly revisits the 2026-08-19 decision NOT to build a bulk accept-all — revisited deliberately, after living with the pile. Does **not** reverse the 2026-08-12 "sync everything, let the person decide" directive: nothing here filters.
+105. **The calmer mobile shape + App Store** — see §9. Same data, phone-shaped, one thing at a time, glanceable; not a shrunken desktop app. Then Capacitor + a cloud Mac to get a real store listing. Founder: "everyone uses their phone every day, so the app needs to be mobile first," and the Chrome home-screen install "is not user friendly." Absorbs §9's long-standing "general sizing is the redesign, don't patch it piecemeal" note — this *is* that redesign.
+106. **Notebook template gallery** — pick from a library to start a notebook (films, books, letters, how work is going) instead of always facing a blank one. Founder: templates are **defaults, never fixed categories** — §1's rule that the app supplies no labels for the internal side still holds. Blank notebooks should also feel like a real word processor, since "people already know how to use one" (TipTap is in place; this is about exposing more of it).
+107. **Letters held for later** — written now, addressed to a person already on file, dated forward, sealed until then; the founder's "notes for your daughter to give her on her 18th birthday." Founder chose that these can **actually be sent** (email or link) when the date comes, not just unsealed in-app — so this needs real delivery, and a recipient address. Closest thing to a signature feature the app has. Reuses: notebook entry dates, person links, and the existing per-notebook lock/PIN machinery.
+108. **Prompted notebook entries** — the app puts a question in front of you and your answer becomes the entry. The standard fix for the blank page that kills journals.
+109. **Home as a composed daily page** — founder: Home "has been less useful than I imagined it'd be." Wants all three of: resurface something from my past unprompted, ask me one question that fills a gap, and tell me who I'm about to see this week with the one thing I'd want to know first. That third one is §9's "private pre-event briefing tool," which the doc has claimed since July but which has never had a screen — today it only happens if you think to ask the chat. Sequencing note: the resurface half wants real photos, so it trails item 27/31.
+110. **Per-user cost metering + capped free tier** — founder will not spend more than **$10–20/month total** on other people's AI usage. Measure real per-user cost first, then a hard cap that degrades gracefully to the free features (search, browsing, manual entry all still work without Claude). No rate limiting and no metering exist today (SECURITY.md item 7). Gates opening signups beyond friends and family.
+111. **Shared memories + user-generated templates** — founder raised both unprompted ("makes it feel more like a community product"): invite specific people to add photos and their side to one milestone event, and let people publish notebook templates others can start from. **Architectural, and deliberately undecided** — every table is RLS-scoped to a single `auth.uid()`, so this means invitations, per-record permissions, and a rethink of who can edit what. Per §11 it needs its own design conversation before any code. Hard bound: invite-only, never public (§9 guardrail).
+112. **Demo persona, stage 2 — replace Gary wholesale** — the founder's call 2026-08-23 was a two-stage rework, and **stage 1 is DONE**: the retirement/60s framing is gone (Gary is a working Regional Operations Manager, 30 years at Frontier this spring; the two retirement parties became a 25-year milestone and Carol's 25th year teaching, with 1985 → 1996 so the arithmetic works; Carol still teaches). The family graph, the people and the ids were deliberately left alone, so this was ~22 exact-match edits, not surgery. **Stage 2, still open:** replace the persona outright with someone mid-life — the drafted sketch is *Dana Marsh, 45: Owen (17 years), Iris 12 and Theo 9, mother in assisted living nearby, father died 2019, accounts lead 13 years, three cities, Owen has five siblings.* That needs the 44-row family graph rebuilt (young kids, no grandchildren) and the ~34 moments / 118 notes re-authored, so it is a real job with its own verification pass. **Sequence it with items 106/107** — once notebook templates and held letters exist, the demo has something new to show anyway, and a letter sealed for a 12-year-old only makes sense with the younger persona. Note the whole supporting cast still skews older by name (Carol, Peggy, Walt, Harold, Ruth, Donna, Yvonne) — stage 2 is where that gets fixed too.
+
+113. ~~Associate one existing event with another~~ — **DONE 2026-08-26, migration applied.** Founder ask from the action-bubble screenshot: *"Need to be able to associate events too — either as a sub event (make it clear which direction it's going) or just as a related event."* Two gaps: from a parent's own page there was no way to pull an EXISTING event in (only "+ New sub-event", which creates a blank one — the only re-parenting tool was the child's own Manage panel), and there was no way at all to connect two events without one containing or swallowing the other. New "🔗 Associate an event" bubble row: pick an event, then choose the direction with both titles written out. Illegal directions stay on screen as muted reasons (target has sub-events / target is itself a sub-event / this event has sub-events / already connected) rather than disappearing. "Related" writes `moment_links` (§6, symmetric, one row per pair) and shows in a new "Related Events" section with hover-unlink tiles, on sub-event pages too. **Verified:** every branch click-tested through the real `EventDetailPage` in the browser preview against a stubbed PostgREST (throwaway harness, deleted); RLS proved on the live table by an insert as role `authenticated` inside a rolled-back transaction, with a foreign `sub` refused (42501); build + 749 tests green. **Not verified against the founder's own logged-in account** — no session was available in the pane.
+
+**Flagged from feedback widget — needs founder scope decision (not filed as bounded items, left open in the widget):**
+- *(Jake's birthday dinner, 2026-08-03)* Founder: the chat didn't add the right people to the event or spell all the names correctly, and wants it to actively extract people/event details from a narrative, infer who they are from existing contacts/context, suggest adding them — and if it's fully confident, add them automatically. This overlaps with item 15's person-to-person inference thread and item 76's chat-unification effort; worth deciding whether it's its own item or folds into one of those before scoping.
+
+**Deferred with numbers behind it:**
+- *Association rule mining for suggestions* (founder asked 2026-08-08 for "an agent which routinely scans the app and figures out new ideas for connections"). The concept is link prediction over the personal knowledge graph, and the discovery mechanism is association rule mining (support + confidence) — free and deterministic, no AI. Dry-run on the real account first: at confidence ≥0.75/support ≥5 it found 24 rules and **22 had nothing to suggest** (the account is already complete where patterns are strong); loosening to ≥0.6 gave 45 suggestions but the volume came from the bad rules ("in 22 AS → also Pilots", 15 suggestions, wrong — a squadron isn't all pilots). Conclusion: it earns its keep on messy accounts, not this one. Revisit with real users. If built, run it **in-app** (Home load or a scheduled Edge Function), not as an external cloud agent — that credential path was already abandoned 2026-08-03.
+
+**Parked** (don't resurrect unprompted): automatic email reminders (table exists, nothing sends); "AI should ask deeper follow-ups" thread (feeds 17). *(Weather metadata left this list 2026-08-17 — the founder resurrected it themselves; shipped as part of item 21.)*
+
+**Small known follow-ups:** ~~align `person-facts`' category vocabulary with the shared 5-kind enum~~ — **DONE AND DEPLOYED 2026-08-12.** The shared closed enum is `spouse | partner | parent | child | sibling` (`_shared/relationships.ts`); `person-facts` had no **partner** category, so `RELATIONSHIP_CATEGORY_IDS` folded `partnerIds` in under `spouse` and the table-injection path hardcoded the label "Married to". Now a real `partner` category, defaulting to "In a relationship with", with the label table driving both instead of a `category === "spouse"` ternary; frontend gained the category, a sort slot beside spouse, and a `satisfiedBy` list so the "Is X married?" nudge stops asking about someone already recorded as dating. The three PLURAL group categories (`siblings`/`parents`/`kids`) deliberately keep their spelling — they're the stored shape of every cached `key_facts` row and the key `KEY_FACTS_CATEGORY` looks up, so renaming buys nothing visible and costs an AI regeneration sweep across every profile (CLAUDE.md rule 3). **Measured on the real account, and it revises the severity:** 4 partner rows / 8 people, and NONE currently renders "Married to" — the AI's own `relationship_label` had been carrying it ("Engaged to", "Girlfriend of", "In a relationship with"), all still filed under the wrong category. The hardcoded default only bites on the table-injection path, which is one regeneration away for the 4 of those 8 whose `key_facts` are NULL. **Deployed but NOT live-verified end-to-end** — every generation path currently returns `extraction_failed` because of §10's API-key outage, so the new chip has never actually been produced. Re-check once the key is fixed. ~~nicknames stated via `update-moment` aren't written (only lookup)~~ — **DONE and deployed 2026-08-11**: `update-moment` and `update-group` now capture `nickname_updates` like `converse` always has, off a shared `_shared/nicknames.ts` (`mergeNicknames`, additive + case-insensitive dedupe, 10 tests) with the prompt clause and JSON field as shared constants so the next fix lands in all three at once (the item 76 bug class). **The trap, worth remembering:** both new functions build their nickname LOOKUP list with `middle_name`/`goes_by_other` folded in — safe while read-only, but merging onto it would copy a middle name into the `nicknames` column, so the write merges onto a separate raw mirror (`rawNicknamesById`). One-time prompt-cache invalidation, by design (the clause sits in `stableInstructions`, never interpolated). `person-facts` deliberately untouched — it's a Key Facts extractor, not a capture path. **Live-verified 2026-08-11** against a disposable person + event on the real account: "Everyone calls him Chip" through `update-moment` wrote `nicknames: "Chip"`; a second turn ("people also call him Skipper") merged additively to `"Chip, Skipper"`; and with `middle_name: "Bartholomew"` set on that person, the middle name did NOT leak into the column — the trap above, confirmed on real infrastructure. Test data deleted after. `update-group`'s half is the same code path but wasn't separately exercised. ~~Edge Function test coverage (needs Anthropic/Supabase mocks)~~ — **DONE 2026-08-12**, 116 new tests across 7 files (suite 381 → 501). `_shared` modules that had never been tested now are: `dateValidation`, `eventDates`, `tz`, `promptCache`, `ics`, `vcard`, `selfContext`, `userSettings`. The Supabase-mock half is real but cheap — `userSettings`/`selfContext` declare their own `MinimalSupabaseClient` shape, so a ~15-line fake covers `from().select().eq().maybeSingle()` with no SDK, network or database; `buildKinInstruction` takes its rows as an argument, so its whole path runs against a stub that throws if anything tries to query. **What is still NOT covered, deliberately:** each function's `index.ts` orchestration. Those hold `serve()` and a live `fetch` to Anthropic with no seam to inject either, so testing them means refactoring for dependency injection first — a real piece of work, not a follow-up line. `npm run check:functions` (item 95) still typechecks them. ~~no retroactive group backfill for pre-2026-07-15 moments~~ — **CLOSED 2026-08-12, mostly superseded.** Item 85's `loadEventGroupSuggestions` has no date filter, so old untagged moments already surface on Home for one-tap tagging; what it can't reach is events with fewer than 2 attendees or whose attendees don't all share a group. Those are now findable by hand: Events' group filter gained a **"No group yet"** option (matching the existing "No tags yet"/"No location" sentinels), which on the real account narrows 119 events to **51**. A bulk auto-tagger was NOT built — the precision bar that makes the suggestion card trustworthy is exactly what a backfill would have to abandon.
+
+96. **Mass imports were built for a handful of cards, not a real import** — **PHASE 1 DONE 2026-08-19, MERGED AND LIVE 2026-08-21** (see §7 "Reviewing imports"). Built on branch `claude/mass-import-simplification-hj9cib` and left unmerged for two days; merged to `main` on the founder's call once the two migrations were confirmed already applied and the screens were click-tested (§10). Follow-on from the 2026-08-12 directive: removing the AI filter was right, but it moved the whole burden onto a review screen whose answer to ~230 candidates was "Show 20 more (210 still to review)", a ~695px editor per card, no answer between accept and reject, and four separate nudges on Home. Founder chose (2026-08-19) small batches + one inbox, lighter cards, "Not now" as a real state, and a triage pass for calendar events; explicitly did NOT choose a bulk "Accept all N straightforward ones". **Round 2 DONE 2026-08-19** off the founder's preview: four answers on the triage row (Quick Add / Add More Detail / Remind Me / Reject), a chosen-and-rememberable reminder interval, scroll position held on both triage lists and across the review queue's navigations, "Add to events" on the contact card, the picker closing on select, and the gender pass surfaced in the inbox. **Phase 2, still open:** port `ReviewDeck`, the collapsed cards and Remind Me to `BirthdayImportReview` / `ContactImportReview` / `PhotoImportReview` — the deck is already generic, so this is wiring, not design. Also worth doing: `CalendarTriage` and `ContactSelection` are near-identical and want a shared `TriageList` before a third fast pass copies them again.
+
+
+
+## 10. Pending manual steps, open bugs, cleanup
+
+- **Free demo Events tab fixed 2026-08-24 (scheduled verification pass):** `demoData.ts`'s `genDate()` appended `T00:00:00Z` to generated events' `event_date`, but `eventSortDate()` (lib/dates.ts) appends its own `T00:00:00` — the double suffix parsed as Invalid Date, showing literal "NaN" year headers and "Invalid Date" text on ~91 of the generated roster's events (visible on the live demo's Events tab). Fixed by making `genDate()` return a bare `YYYY-MM-DD`, matching CORE_MOMENTS and the real DB's DATE column. Second bug found alongside it: `DemoEvents.tsx` fed `DEMO_MOMENTS` into `groupMomentsByYear` unsorted (only the real Events.tsx container sorts before that call), so the same year could resurface in non-adjacent groups and collide on React's `key={year}` — fixed by sorting demo moments the same way (newest first) before mapping. Both confirmed fixed via a local browser click-through (console clean, screenshots of Home/People/Events/Groups/Notebooks + person/group/event detail pages and search all correct); `npm run build`, `npm run test` (705 passed) and `oxlint` all clean. Demo backstory content (Gary Pemberton persona, DemoIntro copy) checked against §1's current positioning — already up to date, no changes needed.
+- ~~**Founder action needed: run the two item-96 migrations**~~ — **both applied, confirmed live 2026-08-21** by reading the schema directly: `moment_import_candidates.deferred_until` exists as `date`, the status CHECK accepts 'selected' and 'deferred', the partial deferred index is present, and `user_settings.review_remind_days` exists as `integer`. `probeTriageEnabled()` therefore returns true and the triage page + "Not now" are switched on.
+- **Item 113 (Associate an event), 2026-08-26 — needs one click-through on the real account.** `moment_links` is applied and its RLS proved by a rolled-back insert as role `authenticated`, and every UI branch was click-tested through the real `EventDetailPage` against a stubbed backend — but no logged-in session was available in the pane, so no association has yet been made against real data. Worth doing once: link two real events as related, and pull one existing event under another, then undo both.
+- **Item 96 click-testing, 2026-08-21 — most of it done, three paths still unseen.** Verified against the founder's real account at merge time, each write reversed afterwards and the queue counts confirmed back at baseline (294 pending / 6 selected / 189 rejected / 176 accepted): one Home nudge reading "1,122 things to review"; all four inbox rows with counts matching the DB; Quick Add creating a real event and Undo deleting it again cleanly; Remind Me applying the saved 30-day default without a sheet, and its Undo; the gender pass saving through the dropdown, dropping the name off the can't-guess list, and the count falling 60 → 59; the contacts queue with its All / Already in Grove / New people filters; the detailed card showing a possible-duplicate warning. **Still unseen:** a batch of 10 ending with the summary panel, a collapsed **Accept** on the detailed card saving the right title/date/attendees (skipped on purpose — unlike Quick Add it has no one-tap Undo, so testing it means leaving or hand-deleting a real event), and **drag**-into-Men/Women (only the dropdown path was exercised; both call the same setter, but the drag handlers themselves have never run).
+- ~~**LIVE OUTAGE, found 2026-08-12: the project's `ANTHROPIC_API_KEY` secret is rejected — every AI feature is down.**~~ — **RESOLVED, confirmed 2026-08-19.** The key was replaced; `people.key_facts_updated_at` has rows written 2026-08-17 and twice on 2026-08-19, which only happens when an Anthropic call succeeds. (Left in place because the *shape* of this outage is the lesson: a project-wide secret with a scheduled expiry took ten functions down at once and nothing said a word.) Historical detail follows. Anthropic answers `401 {"type":"authentication_error","message":"API key is invalid."}`. **Cause confirmed 2026-08-12 by Anthropic's own "API key expiring soon" email: the key (named `boomer-app`) had a scheduled expiry date of 2026-08-12 UTC and reached it.** Not a revocation, not a leak — so the replacement is a routine reissue, and the only durable fix is to check the expiry date on the new key. The secret is project-wide (set 2026-07-13) and **10 Edge Functions read it**: `add-fact`, `converse`, `person-facts`, `scan-calendar-sources`, `suggest-prompts`, `summarize-group`, `summarize-moment`, `update-group`, `update-moment`, `google-photos-picker-session-create`. So Home chat, note detection, Key Facts, event/group summaries and calendar scanning are all failing right now. **Founder action: issue a new key at console.anthropic.com and set it** (`npx supabase secrets set ANTHROPIC_API_KEY=… --project-ref dedtnytxhzzjimkozncc`, or Dashboard → Project Settings → Edge Functions → Secrets). **It fails silently by design** — `person-facts` returns `extraction_failed` and falls back to cached facts, `suggest-prompts` returns its hardcoded fallbacks — which is why nothing surfaced an error and it went unnoticed. Found while live-verifying the item-66/partner work: four real people (Kate Tolli, Caroline Newman, Abe Leonard, Cormac Dunn) have `key_facts` NULL because generation has been failing. Start date unknown — the CLI has no `functions logs` subcommand, so it needs the Dashboard's log view to pin down. **Worth adding afterwards:** nothing anywhere alerts on this, and a silent-failure class this wide is exactly what §12 exists for. **Still open as of 2026-08-12 evening, and it is what the founder now sees as "calendars are not syncing"** — re-confirmed from the deployed functions' own logs: 8× `Anthropic extraction call failed 401` from one "Sync now" click, and `Anthropic API error 401` from the Home chat seconds later. Calendar sync fails *silently* too (the button returns success and reports "nothing new found", because a failed extraction returns `[]` and reads as "no events worth suggesting"), so the only visible trace is a `last_synced_at` that stops advancing.
+- **The calendar scan no longer decides what is worth keeping — founder directive, 2026-08-12: "just simply sync all new events, and let the person decide themselves whether or not they want to accept/reject it."** Every in-range, non-cancelled, unseen event now becomes a `pending` review card. The AI call stays, but only to extract the clean title/location/notes and suggest tags, groups and people — it no longer returns an `include` verdict, and the "skip generic solo logistics" framing is gone from both the system prompt and the tag guidance. **Why:** the filter was rejecting ~88% of what it saw — one measured sync auto-skipped 202 events and let 28 through, with the rejects being things like `AMD` ×58, `Doc Appt`, `Haircut`, `Lawn Aeration`. The 202 already buried were released by **deleting** their rows (`2026-08-12-unskip-calendar-candidates.sql`, applied), so the scan rediscovers and re-extracts them properly. **Not by flipping them to `pending`** — that was tried first and was wrong: a skip row is a bare tombstone (uid only, no title/location/notes), so flipping produced 202 blank review cards, and permanently, since the row's own uid is what keeps the event out of `seenUids`. Deleting is what makes it unseen again. **This also dissolves the re-judging bug below by construction** — every event now gets a row on the run it is first seen, so nothing can be re-sent to the API forever. `'skipped'` is retained as an allowed status but is written by nothing; an opt-in auto-filter could reuse it. **Known consequence, not yet addressed:** the queue jumped 164 → 366 pending and `ImportReview.tsx` has no bulk action, so it is one card at a time — a "reject all like this" or a multi-select is the obvious next ask if it proves tedious.
+- ~~Second calendar-sync bug, 2026-08-12: the scan re-judged the same rejected events forever~~ — **superseded the same day by the directive above, which removes the filter that caused it.** Kept because the shape is worth remembering: `scan-calendar-sources` only ever wrote a row for an event the AI approved, so an `include: false` was thrown away, the event stayed out of `seenUids`, and it was re-sent to the API on every run. Measured: **322 events (140 + 182) re-judged every run against a 240-event/8-batch cap**, so "Jake Personal" never reached the end of its own list, never got `last_synced_at` stamped, and read "Last synced Aug 4" for 9 days. The **least-recently-synced-first source ordering** added alongside it is still in place and still earns its keep (the batch budget is per-run and shared, so an unordered list let one calendar spend it every time).
+- ~~Founder action needed: `migrations_manual/2026-08-20-family-group-suggestion.sql` (item 98)~~ — **applied 2026-08-20 via the Management API, no founder step**; `pg_get_constraintdef` confirms `family_group` is in the `dismissed_suggestions` kind CHECK, and a real dismissal wrote and was cleaned up.
+- ~~Founder action needed: run `migrations_manual/2026-08-12-subgroup-color.sql` (item 82's manual-override half)~~ — **APPLIED 2026-08-20 via the Management API, no founder step.** `information_schema` confirms `groups.color_index` (smallint); the swatch controls now render on subgroup tiles (3 on the Volin group), and a pin was written (`MogulTool` → index 4) and cleared again through "Back to automatic", so both write paths work on real data. The account is left with zero pins, i.e. every tile still auto-coloured.
+
+- ~~NEEDS DEPLOY: 5 Edge Functions for item 94's group-name fix~~ — **DONE 2026-08-11.** `add-fact`, `converse`, `scan-calendar-sources`, `suggest-prompts`, `update-moment` deployed with the persisted `SUPABASE_ACCESS_TOKEN` and confirmed live via the token-free check. **Incident during this deploy, fully resolved:** the first attempt passed `--no-verify-jwt`, which switched OFF the platform auth gate on all five. Caught within minutes by the token-free check answering with each function's own 401 instead of `UNAUTHORIZED_NO_AUTH_HEADER`. A plain redeploy did NOT put it back — the setting persists server-side — so it took `PATCH /v1/projects/{ref}/functions/{slug}` with `{"verify_jwt": true}`. Re-verified: all 15 functions now report `verify_jwt: true` and all five answer `UNAUTHORIZED_NO_AUTH_HEADER`. **No exposure:** every one of the five checks `auth.getUser()` and 401s on its own, and `suggest-prompts` (the only one that returned a body) returns hardcoded `FALLBACK_SUGGESTIONS` before any Anthropic call — so no user data was readable and no API spend was reachable. New §12 guard added.
+- ~~Not yet click-tested against real data~~ — **VERIFIED LIVE 2026-08-11** against `jakevolin@gmail.com`, measured through the app's own client (not a SQL reconstruction). **Item 88, measured:** the old unpaged `notes` read returned exactly 1000 of 1369 rows, so `DueForUpdate` saw 347 people with notes instead of 430 — **83 real people were being listed as "No updates yet" when the founder had written about them.** `person_groups` likewise 1000 of 1204 (204 memberships invisible account-wide). **Item 94, measured — and the severity was narrower than first written:** the account has 21 groups nested 3 deep, but every one has a distinct immediate parent, so the old one-level names were unique and **no wrong-subgroup tagging actually occurred.** What WAS live: all 21 of those groups displayed a path in the app (e.g. "Air Force / 98 FTS / Pilots") that the old server index **could not resolve at all** — not to the wrong group, to nothing. Confirmed fixed end-to-end against the deployed function: asking `converse` for "Air Force / 98 FTS / Pilots" now returns the correct 19-member roster. **Item 93 / the `.order()` fix:** Air Force's 29-group subtree is 852 rows, under the cap, so its 302-member count was already correct and matches the page — that fix is preventative here, not a live repair. Pages checked: Home, Due for an update, Groups, People (712), Events, Calendar — all render, zero console errors.
+- **Backlog verification sweep 2026-08-11 (second pass, `jakevolin@gmail.com`)** — cleared most of the "pushed but never clicked" pile. **Item 84 §5 (Calendar), which had had NO browser check of any kind:** gear icon, Timeline (past + future in one list) with a Today button that scrolls 0 → 7854, tag filter pills, month picker (August → December 2026), Day/Week showing the honest "coming soon — Month is fully built for now", the month grid, the day-count badge (Aug 3 renders `3` + a 13px blue `2`), the "On this day" popover opening on tap with real cross-year history ("On August 3 — Going to be a girl dad! 2026, Casa Bonita outing 2025") and closing on a second tap, and Countdowns with a live-ticking seconds column under the TODAY · AUG 11 divider. **Item 84 §4:** the combined name/date/location form — all three edited in one Save, one `moments` update, header re-rendered "September 15, 2026 · New Place, Denver". **Item 84 §2:** the avatar opens the sheet with Settings + Log out. **Item 84 §3:** the quiet "+ Add pet" link renders (the contact-info branch wasn't exercised — the profile used already had contact info, so it correctly showed the full card instead). **Item 82:** 53 subgroup dots in 8 colours on the member chips, and the "Not in a subgroup (6)" pill filters 132 members down to exactly those 6 and restores. **Item 91's GroupDetail half:** with `POST /rest/v1/person_groups` forced to 503, the banner read "Couldn't add Harvey Volin to this group — please try again." (full name, per item 33's nit fix), the "✓ Added" line was withheld, no phantom chip was drawn, and the DB stayed at 132 members with no row for him. **Item 60:** at phone width the three name inputs share one row (same y, x 24/136/247, 104px each). **Still not clicked:** item 59's bulk "✓ Add all suggestions", item 19's group reparenting, and item 61's first-person "my X" re-test.
+- ~~NEW BUG, found 2026-08-11: the top nav bar overflows a phone screen~~ — **FIXED 2026-08-11, founder-directed from mockups.** Founder ruled out sideways scrolling entirely ("I dont want to scroll sideways on the app at all"), so the scrolling-tabs option was dropped; they picked icons-with-labels in the top bar over a bottom tab bar, keeping phone and desktop on one layout. New `src/components/NavIcons.tsx` — five hand-written inline SVGs, deliberately NOT an icon library (this repo runs on 3 deps; adding a fourth for five glyphs isn't worth it, and hand-drawn means swapping one is a one-line edit). Icon logic: People is one figure and Groups is two, so the pair reads singular/plural; Events is a photograph, not a date, to stay distinct from Calendar. **The load-bearing fix is `minWidth: 0` on the bar and the tab row** — a flex row's default min-width is its content, so the tabs pushed the bar wider than the screen instead of sharing it; `flex: 1 1 0` with `maxWidth: 76px` lets them share on a phone without stretching across a desktop bar. Verified at 375px: `scrollWidth` 375 = `clientWidth` 375, zero overflowing elements anywhere on the page, all five tabs 44×45px (the touch-target minimum), no label clipped ("Calendar" is tightest at 42px in 44px), avatar right edge at 359. Screenshot-confirmed at both phone and desktop width. **Founder has NOT signed off on the specific drawings** — they said the icons were "an interesting idea" but disliked the mockup's set, and these are a second attempt.
+- **~~NEW BUG~~, found 2026-08-11, not fixed: the top nav bar overflows a phone screen.** At a 375px viewport the nav (`Grove / Home / People / Events / Calendar / Groups / JV`) measures 421px, so the page scrolls sideways and the Groups tab and the account avatar sit partly off-screen — `document.documentElement.scrollWidth` 472 vs `clientWidth` 375. Found incidentally while checking the email form at phone width; the email form itself fits (290px boxes). This is item 84 §2's nav styling, which was build-verified only and never seen on a phone. It matters more than most layout nits because the phone is the founder's primary surface (item 72) and this is the app's main navigation. Left unfixed deliberately — the fix is a visual decision (scroll the tabs, shrink them, or drop to icons) and the founder iterates on those via mockups.
+
+- **"Sign in with Google" — Cloud Console + Supabase setup done 2026-08-03, final live confirmation still needed.** Founder completed both steps (redirect URI on the existing Google Photos OAuth Client; Google enabled as a Supabase provider with that Client ID/Secret) — first attempt 400'd with `redirect_uri_mismatch` (URI hadn't saved/was on the wrong client), retested after the founder fixed it and it now reaches Google's real sign-in screen (`accounts.google.com`, scoped to `email profile`, correct client_id/redirect_uri) with no error. Verified as far as possible without real Google credentials in this session — the founder still needs to actually complete a sign-in on the live site to confirm two things: (1) it lands them back in Grove logged in, and (2) since public signup is closed (below), it logs into their *existing* account by matching email rather than erroring or creating a new one. Also still true: while the OAuth consent screen stays in Testing mode, only accounts added as test users can get through this (same limitation as Google Photos) — basic sign-in scopes shouldn't need Google's full verification review to publish beyond that, but not yet checked.
+- ~~Founder action needed: run `migrations_manual/2026-08-06-countdown-settings.sql` (item 84)~~ — **run by the founder and confirmed live 2026-08-08**: an anonymous PostgREST select of `custom_title, units, repeat_rule, keep_counting` returns 200, not `42703`. The per-card ⚙ is live. Still worth one pass on the real account: rename a card (the event's own title must be untouched), pick "Days" on an old milestone (a total in the thousands), set something to repeat, and reload to confirm it all stuck — the settings were verified against a stubbed backend, not against real rows under RLS.
+- ~~Founder action needed: run `migrations_manual/2026-08-06-countdowns.sql` (item 83)~~ — **run by the founder, confirmed live 2026-08-08** (the table answers PostgREST). **The file is re-runnable** (2026-08-06 fix): the founder's first paste hit `42710: policy "Users manage their own countdowns" already exists` on a second run, because `create policy` has no IF NOT EXISTS while every other statement in the file does — a `drop policy if exists` now precedes it, same as `2026-07-20-relationships-table.sql`. Worth remembering for any future migration that creates a policy. Still unexercised against real data: deleting a pinned event should take its countdown with it via ON DELETE CASCADE.
+- ~~Founder action needed: run `migrations_manual/2026-08-03-group-type-suggestion-dismissed.sql` (item 80)~~ — **confirmed applied 2026-08-10** (anonymous PostgREST select of `groups.group_type_suggestion_dismissed` returns 200, not `42703`), so Home's "Tag as Family?" card can remember a "No". Not yet click-tested against real groups.
+- ~~Deploy the 4 edge functions for item 86's blended-family fix~~ — **DONE 2026-08-10.** `add-fact`/`converse`/`update-moment`/`update-group` (the four that call `applyFamilySignals`/`syncFamilyClique`) redeployed with the corrected `_shared/relationships.ts`, using the persisted `SUPABASE_ACCESS_TOKEN`; all four confirmed live via the token-free check (`UNAUTHORIZED_NO_AUTH_HEADER`, not Supabase's `NOT_FOUND`). `person-facts` imports the same file but never calls the clique sync, so it was deliberately left alone.
+- **Schema-migration sweep 2026-08-10 — every pending SQL file in the docs was already run.** Probed PostgREST anonymously for `people.gender` (item 44), `groups.group_type_suggestion_dismissed` (80), `groups.suggestions_enabled` (57), `feedback_notes`, `dismissed_suggestions` (85) and `countdowns` (83): all 200. **Method worth reusing** — a missing column/table returns 400 `42703`/`42P01`, so this distinguishes applied from pending in one read-only pass with just the anon key, no dashboard and no service role. What this does NOT cover is the remaining **data** migrations (below), whose effects are invisible to an anonymous read under RLS.
+- ~~Founder action needed: run `migrations_manual/2026-08-01-pets.sql` (item 73)~~ — **run by the founder and confirmed live 2026-08-01.** `pets`, `person_pets`, every column the app selects, and the `person_pets → pets` embed all return 200 via PostgREST. Full end-to-end click-through done against the real account with disposable test data (create pet → lands on its page → edit/save → persists across reload → appears in the People list with 🐕 and owner chips → attach to a second person → edit from one side shows on the other → mark deceased shows "In memory · 2019–2024" → merge carries the pet to the survivor → delete-profile succeeds with no error). All test data deleted after (verified 0 pets, 0 links, 0 test people).
+
+- ~~Founder action needed: run `migrations_manual/2026-07-30-platform-stats.sql`~~ — **run and confirmed live 2026-07-30**: Landing page's platform databox (§3/§6) shows real cross-account totals, verified in browser preview.
+- **Founder action needed: add the Geoapify key to Vercel's production env vars (2026-07-26)** — key created, verified working live in local dev/browser preview (real Denver, CO address suggestions returned and selectable on ImportReview's Location field). Local `.env` already has `VITE_GEOAPIFY_API_KEY` set. Still needs adding to the Vercel project's Environment Variables (Settings → Environment Variables) — `.env` isn't committed, so the deployed build has no key yet and only shows previously-typed-address suggestions in production until this is done. Also worth restricting the key to the production domain + localhost under "Referrer restrictions" in the Geoapify dashboard (currently unrestricted).
+- ~~Founder action needed: run `migrations_manual/2026-07-26-group-suggestions-default-off.sql`~~ — **CONFIRMED RUN 2026-08-11.** Measured through the app's own client while logged in: 0 of 68 groups have `suggestions_enabled = true`. Original note kept below.
+- ~~Redeploy 4 edge functions for the family tree relationship-sync fix~~ — **DONE 2026-07-25.** `add-fact`/`converse`/`update-moment`/`update-group` all redeployed with the fixed `_shared/relationships.ts` (founder-provided token, confirmed success on all 4).
+- ~~Founder action needed: run the family-tree backfill SQL by hand (2026-07-25, item 40 follow-up)~~ — **BOTH FILES CONFIRMED RUN 2026-08-11**, measured against the real graph (713 people) through `loadFamilyGraph`, not a SQL reconstruction. **Sibling backfill:** ZERO pairs of distinct children who share a recorded parent but lack a sibling row — the exact condition its steps 1–2 exist to eliminate, and the dry run had predicted "at least 24" before it ran. **Spouse-coparent backfill:** only 2 co-parent gaps remain account-wide, both `Michael Galchinsky → Sam Volin / Natalie Gregorian` — precisely the Andy Volin / Andi / Michael Galchinsky remarriage case that file is *designed to exclude* (he's a step-parent, not a missing biological one). So it ran AND correctly skipped the one case it was supposed to skip. **Method worth reusing for any data migration:** schema probes can't see these (§10's 2026-08-10 sweep says so), but the app's own graph loader can — re-derive the condition the migration was meant to remove and count it. Original note kept below.
+- **~~Founder action needed~~: run the family-tree backfill SQL by hand (2026-07-25, item 40 follow-up)** — code deployed everywhere (frontend + all 4 edge functions), verified live with disposable test people, but the actual backfill against real data (fixes the reported Lorenzo Harris tree, and everyone else's already-built trees) needs to be run **by the founder, in the Supabase Dashboard's SQL Editor** — both the Management API and the browser-client fallback were tried and both got blocked by the auto-mode safety classifier for a write at this scale (a bulk backfill across many real relationship rows, not a narrow single-row fix — see `project_boomer_infra.md` memory for the refined understanding). Run `migrations_manual/2026-07-25-spouse-coparent-backfill.sql` FIRST, then `2026-07-25-shared-parent-sibling-backfill.sql` (each file's own header explains why). **Do not run a copy of the sibling file older than 2026-08-10** — its step 3 unioned parents across each whole clique, which is item 86's bug applied to every blended family in the database at once, additive and irreversible. It now carries the same open-seat rule as the app code, and its header explains how to dry-run it. Dry-run preview already done this session (read-only queries aren't blocked): the spouse-coparent file will add 35 new parent links across ~20 different families (including the reported Jamie/Leanne/Lorenzo case) and correctly excludes the Andy Volin/Andi/Michael Galchinsky remarriage case; the sibling file will add at least 24 new direct sibling pairs before its own transitive-closure step runs. Both are `ON CONFLICT DO NOTHING`/additive-only — safe to re-run, nothing gets deleted or overwritten.
+- ~~Needs deploy: `scan-calendar-sources` family-surname matching (2026-07-25)~~ — **deployed 2026-08-01** alongside the subgroup-name fix below. `mentioned_family_names` is now live, so entries like "Meal train for the Mojica family" scan under the new prompt. The founder cleanup noted below (the already-accepted Mojica moment) is now available to do.
+- **Founder cleanup available once deployed above:** the real "Meal train for Mojica family" calendar entry was already accepted into a real `moments` row (id `f62ca5f8-…`) under the old logic, so Patrick Mojica/his "98 FTS" group were never attached to it — confirmed live 2026-07-25 (Patrick Mojica *is* on file, *is* in "98 FTS"). Not auto-fixed (this session only verified the gap, didn't touch the real moment). Once the redeploy above ships, the founder can either add Patrick + 98 FTS to that event by hand, or delete just that one `moment_import_candidates` row (`ical_uid` `r3rv0mmoc1c9lhc827928k4oso@google.com`) and re-run "Sync now" to regenerate it under the new logic, then merge it into the existing event.
+- ~~`summarize-group` member-conflation prompt fix~~ — **deployed 2026-07-19** (confirmed live: 401, not Supabase's not-found). Still worth regenerating the Sam/Jordan test group's summary (refresh button) to confirm it no longer calls Jordan a member.
+- ~~`person-facts` exact-match confidence fix~~ — **deployed 2026-07-19** (confirmed live: 401, not Supabase's not-found). Gus Reynolds's cached Key Facts will still show the stale "Dating: Olivia Gillingham" chip until his profile's Key Facts are refreshed (button, or edit/delete a note).
+- ~~Bad data cleanup: wrong "Dating" notes on Gus Reynolds's/Olivia Gillingham's profiles~~ — checked live 2026-07-19, nothing to clean up; confirms the `person-facts` exact-match rule (§12 guard) is working as intended.
+- ~~Remaining cleanup: test person "Zzztest CacheCheck" + test event~~ — **checked live 2026-07-20, already gone** (a People search for "Zzztest" returns no matches). Founder must have deleted it since the original note; not this session's doing.
+- ~~Julia Lacy's "Wyatt" Key Fact showing as text, not a button~~ — fixed 2026-07-19, no code change; her note used a bare first name, correctly declined per the exact-full-name-match rule (§12 guard). Fixed by editing the note to the full name and letting Key Facts regenerate.
+- ~~`search_log` table~~ — **confirmed live**: PostgREST returns 200 for `search_log`, `converse` returns 401 (deployed, not platform-not-found), and the production Home dashboard's "Recall assists this month" card shows a real nonzero count (4).
+- **Tim Rose's contact-import candidate is `status='accepted'` (2026-08-02)** — accepted during item 74's live verification and not reversible afterwards (navigating away drops the in-memory Undo). His cell `+12086482849` merged onto his profile, which is what accepting that high-confidence match would have done anyway; the test note written alongside it was deleted. Net effect: he won't reappear in the review queue. Nothing to fix unless the founder wanted to review him by hand.
+- **Birthday + photo review note boxes are code-verified only** — both queues were empty on the real account at build time (and Google Photos isn't connected), so `ReviewNoteField` on `BirthdayImportReview.tsx`/`PhotoImportReview.tsx` compiles and is wired identically to the two screens that WERE click-tested, but was never exercised end-to-end. Same caveat for `MatchCallout` on `BirthdayImportReview.tsx` (2026-08-10) — click-tested on the contacts queue only. Worth a look the next time either queue has something in it.
+- **Voice mic button**: the audio→transcript→text round trip is confirmed end-to-end as of 2026-08-18, against the deployed function with real synthesized speech (Windows SAPI WAV → deployed `transcribe` → streamed SSE), including auth, the roster keywords, and correct spelling of real roster names. What remains unexercised is only the browser's own microphone capture: the assistant's browser pane still blocks mic hardware (`NotAllowedError`), so `getUserMedia`/`MediaRecorder`/the level meter have never run on a real device. **Founder is still the only one who can confirm that hop, and iOS is where it is most likely to differ** (mp4 recording, AudioContext resume, no live captions). **First real-device data 2026-08-23** (iPhone, iOS 18.7 Safari, from the Edge Function logs): mp4 capture and the streamed transcript both work — two of three recordings that session were fine at 196KB and 911KB. The third arrived as a 44-byte request body, i.e. a capture with no audio in it, and OpenAI rejected it as "Audio file might be corrupted"; both the client floor and the `audio_unreadable` code came from that. What produced the empty capture on the device is still unknown.
+- ~~Cache-tiering + relationship-fanout dedupe (2026-07-20) needs deploying~~ — **deployed and confirmed live 2026-07-20** (`converse`/`update-moment`/`update-group`/`add-fact`, via `npx supabase functions deploy` with a founder-provided token; all 4 return 401, not Supabase's not-found). The same-day message-thread-caching fix (`_shared/promptCache.ts`) landed on disk before this redeploy ran, so it went out in the same batch. See PROJECT_HISTORY §14.
+- ~~Sibling-linking fixes need redeploy~~ — all 3 rounds deployed and confirmed live 2026-07-20 (`add-fact`/`converse`/`update-group`/`update-moment`); Sucre and Berzins family data hand-repaired live. Full 3-bug story: PROJECT_HISTORY §13.
+- ~~Database-wide scrub for the same asymmetric-relationship-note bug~~ — done 2026-07-20, found and bulk-fixed asymmetric pairs across the whole database (not just the two reported families); zero gaps remained on re-scan. Full story: PROJECT_HISTORY §13.
+- **Founder cleanup needed: likely duplicate person "David" (no last name) vs. "David Adelstein"** — both have the identical single note "Married to Jill Tullman.", the signature of an accidental duplicate profile rather than two facts. Left unmerged deliberately (found during the scrub above) — merge via the app's own People search + merge-profile feature rather than guessed at.
+- **Founder action needed: enable Supabase email-change codes** (item 54) — in the Supabase Dashboard, turn on "Secure email change" (Authentication → Providers → Email) and add `{{ .Token }}` to the "Change Email Address" template (Authentication → Emails → Templates) so it emails a 6-digit code instead of only a link. Until this is flipped on, the new Settings code-entry UI has nothing real to verify against. **"Secure email change" confirmed ON by the founder 2026-08-11 — and that turned out to CONTRADICT the one-code UI shipped under item 54.** With it on, Supabase mails a confirmation to the CURRENT address as well as the new one and only moves the account once both are confirmed; Settings verified the new address alone and then announced "Email updated." while the account still sat on the old address — a silent success of exactly the §12 class. **Fixed 2026-08-11:** two labelled code boxes (one per address), each failure naming the address whose code was wrong, and success claimed only after re-reading `auth.getUser()` and seeing the address actually changed, never off the absence of an error. The founder chose to keep the toggle ON rather than match the old behaviour — it's what stops someone with a hijacked session from changing the email and locking them out. **Note this reverses item 54's original "new address only" decision**, which was made before the toggle's both-addresses semantics were understood. **Still unverified end-to-end** — the `{{ .Token }}` template edit is unconfirmed, and testing for real means putting the founder's only account into a pending email change, which they have twice declined; the pending-state UI itself was verified by temporarily forcing `pendingEmail` in the dev server (two stacked labelled boxes, Confirm disabled until both are filled and on whitespace-only input, "Resend codes", clean at phone width), and the hack reverted.
+- **Founder cleanup needed: two separate "Amy Volin" profiles exist** — found 2026-07-20 while verifying the relationships-table build (see PROJECT_HISTORY §15). Not this session's doing and not touched — merge via People search + merge-profile once confirmed which one should survive.
+- ~~Founder cleanup needed: two separate "Barbara Bach" profiles exist~~ — **founder confirmed 2026-07-21 only one Barbara Bach profile exists now**; the duplicate noted 2026-07-20 (PROJECT_HISTORY §16) was either already merged or the original finding was wrong. Not the cause of the Bill/Lisa mis-wiring below.
+- **Founder cleanup needed: Barbara Bach's relationships are wrong** — found 2026-07-21. On her tree, Bill shows as her father and Lisa as her sister; the real facts are Bill=husband, Lisa=daughter. Item 38's new "Remove a relationship" control (family tree page, centered on Barbara) is the tool to fix this: remove Bill-as-parent and Lisa-as-sibling, then re-add Bill as spouse and Lisa as child via the existing "+" pickers. Not done yet — needs the live app, which this session couldn't reach (see note below).
+- **2026-07-21/22 family tree fixes (items 37/38) not verified against live data** — this session had no Supabase credentials (no `.env` in the remote container), so it couldn't load Jake's real tree. All verified instead with `npm run build` and temporary synthetic-data harnesses (deleted before commit) shaped like the reported bugs, rendered through the real code and screenshotted in-browser. Worth a live click-through against the real account to confirm, and to actually fix Barbara/Bill/Lisa per the item above. **Verification lesson (founder-caught 2026-07-22):** checking only the tree centered on the self/root person isn't enough — a fix can look right from one person's view and still be wrong (or just visually ambiguous) from someone else's, since being centered on a different person changes who's a "direct" relation vs. an "extended" one/how tiers stack. Click into a few other people's own tree views too, not just the one that was reported broken.
+- **Possible second cause for a "wrong wire" report, not yet ruled out**: on Jake's tree, David/Laura's wire was reported connecting to Jake + his sibling instead of down to Noah/Aaron. The 2026-07-22 bar-extension fix (item 37) plausibly explains this on its own — but if it's still wrong after that deploys, check whether David or Laura is *also* recorded as one of Jake's own parents (same bad-data pattern as Barbara/Bill/Lisa above); fixable with item 38's "Remove a relationship" tool, no code change needed.
+- **How bad relationship data can appear without touching the family tree page**: confirmed 2026-07-22 — `add-fact`, `converse`, `update-moment`, and `update-group` all call `_shared/relationships.ts`'s `applyFamilySignals`, which writes directly to the `relationships` table (plus reciprocal notes) with **no confirmation banner**, whenever the AI extracts a spouse/sibling/parent/child/partner signal naming someone whose full name matches *exactly* one person on file (deliberate founder-approved exception to "suggest, don't assert" — siblings named together link with no banner). The one concrete risk: if two different people share an identical full name, this "confident exact match" could resolve to the wrong one of the two — worth keeping in mind if another mis-wired relationship turns up with no clear manual cause.
+- ~~Siblings now inherit shared parents (2026-07-20, see PROJECT_HISTORY §16)~~ — fixed the bug where adding a sibling via the family tree "+" picker never copied an existing sibling's parents onto the new person. **Deployed and confirmed live 2026-07-20**: frontend fix (`writeRelationship.ts`) via Vercel, edge-function mirror (`add-fact`/`converse`/`update-group`/`update-moment`) via `npx supabase functions deploy` with a founder-provided token — all 4 returned 401 (not platform-not-found) post-deploy, no Cloudflare retries needed this round.
+- ~~Relationships table + `is_self` migration + 5 Edge Function redeploy (item 32, 2026-07-20)~~ — **applied and deployed live 2026-07-20** via the Management API + `npx supabase functions deploy` with a founder-provided token (`add-fact`/`converse`/`update-group`/`update-moment`/`person-facts`, 3 of the 5 needed a retry after a transient Cloudflare 502). Backfill landed 75 relationship rows from existing notes. Click-tested end-to-end (My Page onboarding/circle/`+`, family tree render + re-center + `+`) against the real `jakevolin@gmail.com` account with disposable test data, cleaned up after — see PROJECT_HISTORY §15 for the full verification story, including a self-inflicted name-collision near-miss that was fully cleaned up.
+- ~~Self missing from groups created before the 2026-07-20 auto-add-self fix~~ — **backfilled 2026-07-20**: one-off script (authenticated as the real `jakevolin@gmail.com` account, RLS-respecting) added the self person to all 22 pre-existing groups that were missing them (only "Volin Family" already had self as a member). Cached group summaries were deliberately NOT invalidated by this backfill, to avoid a 22-call regeneration cost spike (CLAUDE.md rule 3) — a summary will just read as slightly stale until it's naturally refreshed. **Reverted 2026-07-26** (founder feedback: being auto-added to every group — including ones not really about them — polluted their own Groups search): the 2026-07-20 auto-add-on-create fix and this backfill's effect are both undone; see the new item below.
+- ~~Founder needs to run a SQL migration: remove self from all existing groups (2026-07-26)~~ — **CONFIRMED RUN 2026-08-11:** the self person now has 0 rows in `person_groups`. Note the file's own warning still applies going forward — re-add yourself by hand to any group genuinely yours. Original note kept below.
+- **~~Founder needs to run a SQL migration~~: remove self from all existing groups (2026-07-26)** — `supabase/migrations_manual/2026-07-26-remove-self-from-existing-groups.sql`, paste into the Supabase SQL Editor (preview SELECT first, then the DELETE). Until this runs, "Your groups" on Circle.tsx and the Groups list still show the founder as a member of nearly every group from the 2026-07-20 backfill above — only NEW groups are unaffected. Re-add yourself afterward to whichever groups are genuinely yours (e.g. your real family group) the same way you'd add anyone else.
+- **Auto-add-founder-to-events (2026-07-26) only covers the manual "+ Add Event" shell** — calendar-imported events (`ImportReview.tsx`'s `applyAttendees`) still don't tag the founder as an attendee; deferred because the merge-into-existing-moment path needs a dedup guard (no unique constraint on `notes`) that's only really testable against a live calendar import, not a quick click-test. Separately, whether Home's AI chat (`converse`) already tags the founder when they narrate their own presence in first person ("I went to Kate's wedding") is unconfirmed — that's prompt behavior, not touched by this fix, worth checking empirically before assuming it's covered.
+- Email confirmation must be re-enabled (with a proper redirect URL) before real users.
+- ~~Founder cleanup needed: disposable test account `onboarding.verify.test@example.com`~~ — **deleted 2026-08-03**, along with 10 other leftover test/QA signups (`claude-test-*`, `boomer.qa.*`, `test@test.com`/`test@testt.com`, etc.), via the Management API directly (no dashboard access needed after all — `people`/`moments`/`groups` deleted first per their FK gotcha, then `auth.users`). Only 3 accounts remain: `jakevolin@gmail.com` (real), `+onboardtest`, `+birthdaytest` (kept per founder's call — not actually a test-cleanup target).
+- ~~Founder needs to run a SQL migration: `feedback_notes` table (click-to-comment feedback widget, 2026-07-22)~~ — **confirmed applied 2026-08-10** (PostgREST returns 200). Consistent with the widget having captured every note folded into §8's items 46–61.
+- ~~Founder needs to run a SQL migration + redeploy 3 Edge Functions: time zone bug fix (2026-07-24, item — "today" mis-dating evening events)~~ — **migration applied and all 3 functions (`converse`/`update-moment`/`scan-calendar-sources`) deployed live 2026-07-24**, via the Management API + `npx supabase functions deploy` with a founder-provided token. Confirmed live: `user_settings.time_zone` returns 200 via PostgREST (not a 400 undefined-column error), Settings time-zone picker's save round-trip verified end-to-end in a real browser session against `jakevolin@gmail.com`. A second, separate display-only bug found in the same investigation and fixed same day: [EventDetail.tsx:604](../src/pages/EventDetail.tsx) parsed `event_date` with bare `new Date(...)` (UTC-midnight parsing, same bug CLASS as the regression guard below) instead of `formatFullDate()` — this one didn't affect what was SAVED, only what EventDetail showed, and in negative-UTC zones it happened to shift the display back a day, partially masking the real bug rather than causing it. Both fixes verified together live: "Tulas & Jackass The End" (previously mis-dated to 2026-07-25 by the pre-fix `converse` deploy) corrected to 2026-07-24 via its own update-chat, confirmed matching on both EventDetail and the Calendar month grid. **Side finding, not caused by this fix:** that correction cleared the event's cached `summary` (EventDetail's normal behavior on any change) and it couldn't auto-regenerate because the event's `raw_description` was already empty — `update-moment` never writes `raw_description` (only `converse` does, at moment-creation time), so this looks like a pre-existing data gap on this one event, not something introduced here. The individual notes are all intact; only the AI-generated prose blurb needs retyping via "Edit description" if wanted back.
+~~67. Tag people to groups/subgroups at entry time~~ — **done 2026-07-30**: `ContactImportReview.tsx`'s "Review contacts" cards now have an "Add to groups" picker (`SearchAddPicker`, browse-all + inline "+ Create group" using the same find-or-create logic as `PersonDetail.tsx`'s `confirmSuggestedGroup`) on every card; selected groups are upserted into `person_groups` on Accept. `+ Add Person` on People.tsx still routes straight to `PersonDetail.tsx` (already has its own group tagger there) — not touched.
+~~68. Sort "Review Contacts" list: high-confidence matches first~~ — **done 2026-07-30**, same pass as item 67: query now orders `match_confidence` ascending (`'high'` before `'none'`) then `full_name`.
+~~71. "View profile" link after accepting a contact~~ — **done 2026-07-31**: `ContactImportReview.tsx`'s post-Accept confirmation ("Saved contact info for X") now shows a "View profile →" button alongside Undo, pushing the same `person` crumb (`App.tsx`) the rest of the app uses — jumps straight into the just-accepted/merged person's profile without leaving the review queue via People search. Verified live against the real account (`jakevolin@gmail.com`): accepted a real matched duplicate ("Austin Neurighter" → existing "Austin Gula"), clicked through to the profile with correct breadcrumbs, "← Back to Review contacts" returned to the queue. Note: since it was a genuine duplicate whose phone/groups already matched Austin Gula's existing data, the accept itself was a real (harmless, no-op) merge — not a disposable test row, left as-is rather than un-mergeable after leaving the component.
+69. **Photo gallery for Person/Group pages** — deferred from item 27's Google Photos build (2026-07-30). `PhotoGallery.tsx` only shows real photos when passed a `momentId` (EventDetail); Person/Group pages still show the original placeholder. Would mean aggregating photos across everything a person/group is tagged to (their moments) rather than one moment's own `photos` rows — not scoped yet.
+70. **`ContactImportReview.tsx` paginated + name-editable (2026-07-30)** — founder was facing all 1300+ `selected` candidates rendered on one page at once (unusable) with no way to fix a parsed-vCard name before it became a real profile. Now paginated at 20/card (mirrors `ContactSelection.tsx`'s pattern, smaller page since these cards are heavier); unmatched (new-person) candidates get editable First/Middle/Last inputs prefilled from the parsed name. Accept keeps its existing in-place "Saved contact info for X" confirmation (only refreshes the footer count); Reject refetches the page so the next candidate slides in. Verified live against the founder's real queue (1304 real selected candidates) with a temporary synthetic batch, fully cleaned up after — see PROJECT_HISTORY.md for that story. **Extended same day:** matched cards now show the linked person's current groups ("Already in: X, Y") fetched per-card on `linkedPersonId` change, so a match comes with visible proof it's really them (and those groups are excluded from the "Add to groups" picker to avoid offering a duplicate tag); a 3-way "All / Already in Grove / New people" filter (keyed on `matched_person_id` being set, not `match_confidence`) lets the founder batch through quick confirms separately from the new-person decisions that need real attention. **Match legibility pass (2026-08-10, founder ask):** the suggested person used to appear only inside a small grey "X is already in:" line under a generic "Confirm who this belongs to:", so you couldn't tell the app was proposing a specific person or which name was the incoming one. Now `components/MatchCallout.tsx` (shared with `BirthdayImportReview.tsx`) — "Is X the same person as Y?" at `bodyLg` in a `inkWash`/`border.primary` box, groups as evidence beneath, "Yes — same person" / "No — add as new person" as real buttons (replacing the `cancel` and "Not the same person" underlined links), search demoted to "Or link it to someone else". Confirmed state reads "✓ Goes to Y" instead of a muted "Goes to:". `BirthdayImportReview` gains the "No — add as new person" escape it never had.
+- ~~Google Photos import (item 27) is BUILT but NOT LIVE~~ — **backend fully deployed 2026-07-30**: founder completed Google Cloud Console setup (OAuth consent screen + Client ID/Secret), ran the migration, and created the private `photos` Storage bucket directly; `GOOGLE_PHOTOS_CLIENT_ID`/`GOOGLE_PHOTOS_CLIENT_SECRET` set as Supabase Edge Function secrets and all 3 Edge Functions (`google-photos-oauth-callback`/`google-photos-picker-session-create`/`google-photos-picker-session-import`) deployed via founder-provided access token — confirmed live via the token-free check (each returns `UNAUTHORIZED_NO_AUTH_HEADER`, not Supabase's `NOT_FOUND`), and `photo_connections`/`photo_clusters`/`photos` + all RLS policies (including `storage.objects`) confirmed present via a direct Management-API read. Vercel env var + Google Cloud client wiring done by the founder same day. **Bug found and fixed 2026-07-30 during live testing:** `App.tsx`'s mount-time history-state-sync effect called `window.history.replaceState(state, '', window.location.pathname)` — passing only the pathname (no search string) silently stripped any `?query` on every page load, including Google's `?code=...&state=...` on the OAuth callback redirect, so `GooglePhotosOAuthCallback.tsx` always saw an empty URL and failed with a false "That connection link looks invalid or expired" — 100% reproducible, not a flaky/stale-state issue as first suspected. Fixed by omitting the `url` argument entirely (`replaceState(state, '')`), which correctly leaves the current URL untouched — matching what the effect's own comment already said it was supposed to do. Verified locally: a callback URL with real query params now correctly reaches the token-exchange call instead of failing at the pre-check. **Known limitation, not a bug:** while the OAuth consent screen stays in Google's Testing mode, only Google accounts explicitly added as test users can connect — not real end users — until Google's app verification review completes.
+- ~~Deploy the 4 AI functions for subgroup-aware group names~~ — **DONE 2026-08-01, all four deployed and verified live.** `converse`/`add-fact`/`update-moment`/`scan-calendar-sources` used to build their group rosters from BARE names and resolve the model's answer by lowercase name match, so two subgroups sharing a name collapsed to whichever row won the index — a wrong-subgroup TAGGING bug, not just display. Now all four use `_shared/groupNames.ts` (server twin of `lib/groupDisplayName.ts`): qualified "Parent / Child" names into the prompt, resolved back to ids by that form, and an ambiguous bare name resolves to NOTHING rather than a guess (drop-the-tag is recoverable; wrong-group is silent). `splitParent` turns a model-written "&lt;existing group&gt; / New Thing" into a real subgroup instead of a group literally named that; the " / " separator has spaces so "98 FTS/Wings of Blue" isn't mistaken for a hierarchy. Verified against the real account: "Who is in the Pilots subgroup?" → "There are two Pilots subgroups on record — one under 22 AS and one under 98 FTS/Wings of Blue. Which one did you mean?", then "The one under 22 AS" → the correct 25-member roster. Same deploy also shipped the previously-pending `add-fact` first-person fix (item 61) and `scan-calendar-sources` family-surname matching.
+- Not production-hardened generally: no 2FA/access-control story, minimal tests.
+- ~~**RLS unverified on the pre-migration tables**~~ — **VERIFIED LIVE 2026-08-01, all clean.** Founder ran `migrations_manual/2026-08-01-rls-audit.sql`: all 23 tables (incl. `storage.objects`) have RLS on, every read policy scoped to `auth.uid()` or an ownership check through the parent table, nothing evaluating to a bare `true`. **Why the undocumented dashboard-made tables were covered anyway: `rls_auto_enable`**, an event trigger from the original Bolt/StackBlitz scaffold that auto-enables RLS on every `CREATE TABLE` in `public` — correctly written (`SECURITY DEFINER` with a pinned `search_path`). **Leave it in place.** §6's "RLS on everything" is now evidence, not a claim. **Writes verified clean in a second pass the same day** — every WITH CHECK either names `auth.uid()` or inherits the USING expression (Postgres's automatic behavior for `FOR ALL`/`FOR UPDATE`; a blank write condition on those is normal, NOT a hole — the audit script now labels this explicitly so it isn't misread). Two first-pass concerns both closed: `group_associations`' read rule only checks `group_id_a`, but its WITH CHECK requires **both** sides be yours, so the cross-account row that asymmetry appeared to permit can't be created; and the four blank-looking INSERT policies (`home_suggestions`/`notes_group_insert`/`photo_connections`/`relationships_insert_own`) are all correctly scoped. Nothing outstanding. Structural note: `notes` has six overlapping policies (person/moment/group-hung notes) — correct today, most intricate rule set in the DB, re-audit if a fourth note type is ever added.
+- ~~**Founder security actions (2026-08-01)**~~ — **ALL DONE 2026-08-01, founder-confirmed:** public signup closed (Supabase Auth → Sign In / Providers → Email), RLS audit run twice and clean, 2FA enabled on Google/GitHub/Supabase/Vercel. **Anthropic, OpenAI and Google Cloud sign in via Google** — no separate password, so they inherit Gmail's 2FA; nothing further needed there, but it makes the Google account the single key to 5 of the 8 services, so its *recovery* path (SIM-swappable phone number? recovery codes stored inside Google?) matters more than adding another factor anywhere else. Only unconfirmed item left from `SECURITY.md`: whether Supabase backups have ever been test-restored (the 4th of the four things that actually prevent a breach). Original instructions kept below for reference / re-running:
+- **~~Founder action needed~~ (2026-08-01, security audit — see `SECURITY.md`), in this order:** (1) **close public signup** — Supabase Dashboard → Authentication → Sign In / Providers → Email → disable new sign-ups; highest-value single action while the founder is the sole real user (removes the AI-billing abuse vector and the other tenants at once). (2) **Run `migrations_manual/2026-08-01-rls-audit.sql`** in the SQL Editor (read-only, safe to re-run) — the pre-migration tables (`people`/`moments`/`notes`/`groups`/`person_groups`/`reminders`/`home_suggestions`) were made by hand in the dashboard, so §6's "RLS on everything" is an unverified claim for exactly the tables holding all the real content. Any table with `rls_enabled = false`, or a policy whose expression is literally `true`, is a live cross-account leak and outranks everything else in §8. (3) **2FA on Google/GitHub/Supabase first, then Vercel/Anthropic/OpenAI/Google Cloud/Geoapify** — `SECURITY.md` §2 has the blast-radius table. Note GitHub sits in the top tier *because* pushes to `main` auto-deploy to production with no review step. This session could not verify any of it live: no credentials in the container and the environment's proxy blocks outbound access to both the app and Supabase.
+- ~~Founder action needed: deploy `add-fact` (item 61 fix)~~ — **deployed 2026-08-01** alongside the subgroup-name fix below, so the first-person ("my X") misattribution fix is finally live. Item 61's own live re-test still hasn't been run against the deployed version — worth one pass on a real profile next session.
+- ~~Founder action needed: run `migrations_manual/2026-07-26-gender.sql`~~ (item 44) — **APPLIED. Re-confirmed live 2026-08-11** (anonymous PostgREST select of `people.gender` returns 200, not `42703`), agreeing with §8 item 44 and the 2026-08-10 migration sweep above. This entry previously read "Confirmed still not run as of 2026-08-05" and contradicted both of them; it was simply never updated, and left as-is it would send a future session chasing a migration that has already run. **If in-laws still read "child-in-law" and no tile shows ♂/♀, the cause is now the DATA, not the column** — nobody's gender is filled in yet. That is what item 44's `GenderFill.tsx` pass (2026-08-11) exists to fix.
+- ~~Founder action needed: run `migrations_manual/2026-07-30-moment-sub-events.sql`~~ — **run and confirmed live 2026-07-30** (founder-provided token): `moments.parent_moment_id` column/constraint/index all present. Verified end-to-end in browser preview against the real account — created a sub-event on "Conor & Shelly's wedding" (inherited parent's start date), confirmed the parent/child tiles and "↑ Part of X" link, confirmed the Events.tsx collapse/expand toggle and indented child card, deleted the disposable test sub-event after.
+- ~~Founder action needed: run `migrations_manual/2026-07-26-subgroup-member-parent-sync.sql`~~ — **never shipped.** This trigger was added by mistake (not part of the reviewed subgroups plan) and removed same day, before it was ever run — it contradicted the deliberate design that subgroup membership stays independent of the parent's. No founder action needed; adding someone to a subgroup intentionally does NOT also add them to the parent group.
+- ~~Founder action needed: run `migrations_manual/2026-07-26-group-subgroups.sql`~~ (item 19, subgroups) — **migration run and fully verified live 2026-07-26.** Full click-through against the real account with disposable test groups: create a subgroup, rename, parent link navigation, parent-roster suggestion chip (add via chip), event tagging via EventDetail's existing "Associate a Group" (zero new code, confirmed), merging a group with 2 subgroups into another root group (subgroups correctly reparent to the survivor), deleting a parent with subgroups (they correctly survive as independent root groups, confirmation copy correctly pluralized). All test groups/events cleaned up after.
+- ~~Subgroups showing up as "Associated Groups" of their own parent (and vice versa)~~ — **fixed 2026-07-26.** The Associated Groups suggestion/confirm/manual-picker logic in [GroupDetail.tsx](../src/pages/GroupDetail.tsx) only excluded the current group itself, not its parent or its own subgroups — so a subgroup's roster overlapping the parent's roster made them suggest each other as "associated," duplicating the hierarchy already shown via the Subgroups section. Now excludes parent/subgroup ids from all three (suggestions, confirmed display, and the manual picker). Verified live: 98 FTS/Wings of Blue's "2019" subgroup no longer suggests or lists its parent as an associated group.
+- **Before assuming a local diff is unfinished work: check what's actually deployed** — Edge Functions have been deployed from the dashboard without commits before (see §2's token-free checks). Also check `git status` for another concurrent session's work before editing.
+
