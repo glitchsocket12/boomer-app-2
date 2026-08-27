@@ -45,7 +45,7 @@ The founder is non-technical, building hands-on; the product's value is the qual
 
 ## 3. Frontend map
 
-_One line per file: path — what it does. **Detailed per-file rationale is archived in PROJECT_HISTORY.md — search it by filename when you need the "why" behind a specific file.** Budget: this section stays under 250 lines (§11)._
+_One line per file: path — what it does. No dates, no history (§11 budget). **Detailed per-file rationale is archived in PROJECT_HISTORY.md — search it by filename when you need the "why" behind a specific file.**_
 
 **Shape:** no CSS framework — everything is inline `style={{}}` reading tokens from `lib/theme.ts`. Every page is `lazy()`-loaded in `App.tsx` (§2). Ten pages (Home, People, PersonDetail, Groups, GroupDetail, Events, EventDetail, FamilyTree, Notebooks, NotebookDetail) split into a data-fetching container plus a pure exported `*View`; `src/pages/demo/` feeds `lib/demoData.ts` into those same `*View`s, so a UX edit updates the public demo automatically. Pure helpers in `lib/` have a colocated `*.test.ts` (42 of them, Vitest); `src/lib` ↔ `supabase/functions/_shared` twins each need a parity test (§12).
 
@@ -528,7 +528,7 @@ _Open items only — everything resolved is deleted from this file and archived 
 6. This is a working prototype, not a production system (§10).
 7. Demo data is fake — don't infer patterns from it.
 8. **Token/billing efficiency is a standing rule** — CLAUDE.md rule 3 + §5 here. Never downgrade the model to save money (founder decision only).
-9. **HARD BUDGET on this file** (founder directive, 2026-08-27 — this doc is read at the start of every session, so its length is a recurring bill): **PROJECT_CONTEXT.md stays under 1,000 lines, and §3 stays under 250.** One line per fact. Present-tense facts, rules, constraints and open items live here; anything with a date, or that narrates how something came to be, was verified, or was decided, is a STORY and goes to `PROJECT_HISTORY.md`; anything struck through or done gets DELETED (git has it). **If adding a fact would break the budget, something else gets cut or archived in the SAME edit** — never leave it over.
+9. **HARD BUDGET on this file** (founder directive, 2026-08-27 — this doc is read at the start of every session, so its size is a recurring bill): **PROJECT_CONTEXT.md stays under 200KB** (≈ 50,000 tokens — check with `wc -c PROJECT_CONTEXT.md`, the number must stay under 200000). **Bytes, not lines** — a line count isn't a real limit when one bullet can carry twenty lines' worth. §3 stays at one line per file. Present-tense facts, rules, constraints and open items live here; anything with a date, or that narrates how something came to be, was verified, or was decided, is a STORY and goes to `PROJECT_HISTORY.md`; anything struck through or done gets DELETED (git has it). **If adding a fact would break the budget, something else gets cut or archived in the SAME edit** — never leave it over.
 10. **Hand over SQL as the actual `.sql` file, not pasted into chat** (founder directive, 2026-08-08). Any migration the founder has to run goes out as the file itself, so it can be opened, select-all'd and pasted straight into the Supabase SQL Editor without re-copying out of a chat bubble. Say in one line what it does, that it's safe to run twice, and how they'll know it worked. Same for anything else destined for another tool.
 
 ## 12. Regression guards (hard-won one-liners — full stories in PROJECT_HISTORY.md §9)
