@@ -92,7 +92,10 @@ export default function ReviewInbox({
       key: 'calendar-triage',
       label: `${counts.calendarToTriage.toLocaleString()} calendar event${counts.calendarToTriage === 1 ? '' : 's'} to look through`,
       count: counts.calendarToTriage,
-      blurb: "No rush — they'll keep. A quick pass whenever you feel like it, one line at a time.",
+      blurb:
+        counts.calendarRecommended > 0
+          ? `${counts.calendarRecommended.toLocaleString()} of them look like they mattered — those come first. No rush on the rest.`
+          : "No rush — they'll keep. A quick pass whenever you feel like it, one line at a time.",
       onOpen: onOpenCalendarTriage,
       quiet: true,
     })

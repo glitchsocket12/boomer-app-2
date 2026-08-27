@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { RECOMMENDED_KINDS } from './candidateInterest'
 
 // One source of truth for "what's waiting for me to review".
 //
@@ -58,11 +59,40 @@ export function canBulkSetAside(o: {
   return o.triageEnabled && !o.showTurnedDown && !o.filtering && o.pending >= BULK_SET_ASIDE_MIN
 }
 
+/**
+ * May the triage page offer "Set aside the ones that don't look memorable"?
+ *
+ * A second, narrower predicate rather than another argument on `canBulkSetAside`: this one acts on
+ * a DIFFERENT set (only rows the AI called routine) and has a different safety story, and folding
+ * two meanings into one boolean is how a guard on a large write quietly stops guarding.
+ *
+ * - `scoringComplete`: never offered while any pending row is still unscored. Acting on a partial
+ *   classification would set aside events purely because the backfill hadn't reached them yet.
+ * - It is safe beside a narrowed list, unlike the generic button, because the risk that rule
+ *   guards against is ambiguity about SCOPE — and this button names its scope in its own label and
+ *   confirms the exact count before writing. It is still withheld while a search is running, since
+ *   a bulk control sitting under search results reads as acting on them whatever it says.
+ */
+export function canBulkSetAsideRoutine(o: {
+  significanceEnabled: boolean
+  scoringComplete: boolean
+  filtering: boolean
+  routine: number
+}): boolean {
+  return o.significanceEnabled && o.scoringComplete && !o.filtering && o.routine >= BULK_SET_ASIDE_MIN
+}
+
 export type ReviewCounts = {
   /** Calendar events not yet triaged — the fast Keep / Not this one list. */
   calendarToTriage: number
   /** Calendar events kept in triage, waiting for their detailed card. */
   calendarToReview: number
+  /** Untriaged events the AI read as worth a look first. Always a subset of calendarToTriage. */
+  calendarRecommended: number
+  /** Untriaged events the AI read as routine. The rest of calendarToTriage, once scored. */
+  calendarRoutine: number
+  /** Untriaged events not yet scored at all — what the "sort these" button acts on. */
+  calendarUnscored: number
   /** Calendar events the founder pressed "Not now" on, whatever their return date. */
   calendarSetAside: number
   /** The soonest date a set-aside calendar event comes back (ISO), if any are set aside. */
@@ -80,6 +110,9 @@ export type ReviewCounts = {
 export const EMPTY_COUNTS: ReviewCounts = {
   calendarToTriage: 0,
   calendarToReview: 0,
+  calendarRecommended: 0,
+  calendarRoutine: 0,
+  calendarUnscored: 0,
   calendarSetAside: 0,
   calendarSetAsideNext: null,
   birthdays: 0,
@@ -159,9 +192,29 @@ export function probeTriageEnabled(): Promise<boolean> {
   return triageProbe
 }
 
-/** Test seam — the memo would otherwise leak between cases. */
+/**
+ * Has `2026-08-27-candidate-significance.sql` been run?
+ *
+ * Same shape and same reasoning as the triage probe above — the COLUMN is the reliable signal, and
+ * until it exists the triage page simply has no Recommended list, no "sort these" button and no
+ * routine bulk control, behaving exactly as it does today.
+ */
+let significanceProbe: Promise<boolean> | null = null
+
+export function probeSignificanceEnabled(): Promise<boolean> {
+  if (!significanceProbe) {
+    significanceProbe = (async () => {
+      const { error } = await supabase.from('moment_import_candidates').select('id, significance').limit(1)
+      return !error
+    })()
+  }
+  return significanceProbe
+}
+
+/** Test seam — the memos would otherwise leak between cases. */
 export function resetTriageProbe() {
   triageProbe = null
+  significanceProbe = null
 }
 
 /**
@@ -230,6 +283,20 @@ async function fetchReviewCounts(): Promise<ReviewCounts> {
       countRows('people', (q) => q.is('gender', null)),
     ])
 
+  // Only meaningful once BOTH migrations are in: the recommended split lives on pending rows, which
+  // is the pile the triage stage created. Each is its own isolated count, so a missing column can
+  // only zero that one number rather than taking the whole summary down.
+  let recommended = 0
+  let routine = 0
+  let unscored = 0
+  if (triageEnabled && (await probeSignificanceEnabled())) {
+    ;[recommended, routine, unscored] = await Promise.all([
+      countRows('moment_import_candidates', (q) => q.eq('status', 'pending').in('significance', RECOMMENDED_KINDS)),
+      countRows('moment_import_candidates', (q) => q.eq('status', 'pending').eq('significance', 'routine')),
+      countRows('moment_import_candidates', (q) => q.eq('status', 'pending').is('significance', null)),
+    ])
+  }
+
   let setAside = 0
   let setAsideNext: string | null = null
   if (triageEnabled) {
@@ -248,6 +315,9 @@ async function fetchReviewCounts(): Promise<ReviewCounts> {
   const counts = {
     calendarToTriage: triageEnabled ? calendarPending : 0,
     calendarToReview: triageEnabled ? calendarSelected : calendarPending,
+    calendarRecommended: recommended,
+    calendarRoutine: routine,
+    calendarUnscored: unscored,
     calendarSetAside: setAside,
     calendarSetAsideNext: setAsideNext,
     birthdays,

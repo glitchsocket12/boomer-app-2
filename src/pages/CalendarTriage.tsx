@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { formatDateRange } from '../lib/dates'
@@ -7,19 +7,27 @@ import { findLikelyMatch } from '../lib/likelyDuplicate'
 import { acceptCandidate, undoQuickAdd, type AcceptableCandidate } from '../lib/acceptCandidate'
 import {
   canBulkSetAside,
+  canBulkSetAsideRoutine,
   deferUntilIso,
   invalidateReviewCounts,
   loadRemindDays,
+  probeSignificanceEnabled,
   probeTriageEnabled,
   saveRemindDays,
 } from '../lib/reviewQueues'
+import {
+  KIND_LABEL,
+  RECOMMENDED_KINDS,
+  compareCandidates,
+  type Significance,
+} from '../lib/candidateInterest'
 import { momentDisplayName } from '../lib/momentDisplayName'
 import SearchBox from '../components/SearchBox'
 import RemindSheet from '../components/RemindSheet'
 import UndoBanner from '../components/UndoBanner'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
 
-type Row = AcceptableCandidate & { calendar_source_id: string | null }
+type Row = AcceptableCandidate & { calendar_source_id: string | null; significance: Significance | null }
 type CalendarSourceRef = { id: string; label: string }
 type ExistingMoment = { id: string; occasion: string | null; event_date: string | null; event_end_date: string | null; raw_description: string }
 
@@ -44,8 +52,24 @@ const ROW_WRITE_ERROR =
 
 const PAGE_SIZE = 50
 
-const SELECT_COLUMNS =
+// Hard ceiling on the scoring loop. The Edge Function scores up to 400 per call, so this covers
+// 20,000 events — far past any real calendar — while making it impossible for a backend that keeps
+// reporting work left to bill in a loop nobody is watching.
+const MAX_SCORING_CALLS = 50
+
+// `significance` is appended only once the probe says the column exists — selecting an unknown
+// column is a hard PostgREST error, not a null.
+const BASE_COLUMNS =
   'id, occasion, location, event_date, event_end_date, raw_description, calendar_source_id, suggested_people, suggested_tags, suggested_group_ids'
+
+/**
+ * Which slice of the queue is on screen.
+ *
+ * Replaced a `showTurnedDown` boolean when Recommended arrived: a mode of the SAME list rather than
+ * a second list stacked above it, so the pagination, search, four-answer rows, resolved/Undo
+ * machinery and both bulk controls are shared instead of duplicated.
+ */
+type TriageView = 'recommended' | 'all' | 'turnedDown'
 
 // The fast pass over calendar-import candidates — one line each, four answers, no 695px editor
 // unless you ask for one. A real 3-year calendar produces ~230 candidates and most of them only
@@ -75,7 +99,7 @@ export default function CalendarTriage({
   const [totalPending, setTotalPending] = useState(0)
   const [selectedCount, setSelectedCount] = useState(0)
   const [turnedDownCount, setTurnedDownCount] = useState(0)
-  const [showTurnedDown, setShowTurnedDown] = useState(false)
+  const [view, setView] = useState<TriageView>('all')
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
@@ -86,19 +110,34 @@ export default function CalendarTriage({
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkResult, setBulkResult] = useState<BulkResult | null>(null)
+  const [significanceEnabled, setSignificanceEnabled] = useState(false)
+  // The probes decide which COLUMNS the page may even ask for, so the first fetch has to wait for
+  // them — selecting a column that doesn't exist is a hard error, not a null.
+  const [ready, setReady] = useState(false)
+  const [recommendedCount, setRecommendedCount] = useState(0)
+  const [routineCount, setRoutineCount] = useState(0)
+  const [unscoredCount, setUnscoredCount] = useState(0)
+  const [scoring, setScoring] = useState(false)
+  const [scoringError, setScoringError] = useState<string | null>(null)
+  const stopScoringRef = useRef(false)
+  const [routineBulkOpen, setRoutineBulkOpen] = useState(false)
+
+  // Selecting a column that doesn't exist is a hard PostgREST error, so the column list itself has
+  // to wait on the probe.
+  const selectColumns = significanceEnabled ? `${BASE_COLUMNS}, significance` : BASE_COLUMNS
 
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState<Row[] | null>(null)
 
   useEffect(() => {
-    loadCounts()
+    loadCounts(true)
     loadContext()
   }, [])
 
   useEffect(() => {
-    loadPage()
-  }, [page, showTurnedDown])
+    if (ready) loadPage()
+  }, [page, view, ready])
 
   // Same small debounce as ContactSelection — this searches across ALL rows in the current filter,
   // not just the page on screen, since finding one event without paging through 200 is the point.
@@ -108,19 +147,19 @@ export default function CalendarTriage({
   }, [searchInput])
 
   useEffect(() => {
-    if (!search) {
+    if (!search || !ready) {
       setSearchResults(null)
       return
     }
     runSearch(search)
-  }, [search, showTurnedDown])
+  }, [search, view, ready])
 
   // Everything the rows need that isn't the rows themselves: the calendar labels for the per-row
   // badge (only shown when there's more than one calendar to tell apart — same rule as
   // ImportReview.tsx), the events already on file so Quick Add can refuse to create a duplicate,
   // and whether the founder has a saved "remind me in N days".
   async function loadContext() {
-    const [sourcesRes, momentsRes, remindDays, enabled] = await Promise.all([
+    const [sourcesRes, momentsRes, remindDays, enabled, scored] = await Promise.all([
       fetchAllRows<CalendarSourceRef>((from, to) =>
         supabase.from('calendar_sources').select('id, label').order('label').order('id').range(from, to)
       ),
@@ -134,22 +173,51 @@ export default function CalendarTriage({
       ),
       loadRemindDays(),
       probeTriageEnabled(),
+      probeSignificanceEnabled(),
     ])
     setSources(sourcesRes.data ?? [])
     setExistingMoments(momentsRes.data ?? [])
     setDefaultRemindDays(remindDays)
     setTriageEnabled(enabled)
+    setSignificanceEnabled(scored)
+    setReady(true)
   }
 
-  async function loadCounts() {
+  // `landing` is only honoured on the first load: after that the founder has chosen a view and
+  // re-counting (which every write does) must not yank them out of it.
+  async function loadCounts(landing = false) {
+    const head = () => supabase.from('moment_import_candidates').select('id', { count: 'exact', head: true })
     const [pendingRes, selectedRes, rejectedRes] = await Promise.all([
-      supabase.from('moment_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('moment_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'selected'),
-      supabase.from('moment_import_candidates').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
+      head().eq('status', 'pending'),
+      head().eq('status', 'selected'),
+      head().eq('status', 'rejected'),
     ])
     setTotalPending(pendingRes.count ?? 0)
     setSelectedCount(selectedRes.count ?? 0)
     setTurnedDownCount(rejectedRes.count ?? 0)
+
+    if (!(await probeSignificanceEnabled())) return
+    const [recRes, routineRes, unscoredRes] = await Promise.all([
+      head().eq('status', 'pending').in('significance', RECOMMENDED_KINDS),
+      head().eq('status', 'pending').eq('significance', 'routine'),
+      head().eq('status', 'pending').is('significance', null),
+    ])
+    const recommended = recRes.count ?? 0
+    setRecommendedCount(recommended)
+    setRoutineCount(routineRes.count ?? 0)
+    setUnscoredCount(unscoredRes.count ?? 0)
+    // Land on Recommended once there IS one — the 1,300 was the founder's whole complaint, and
+    // the point of this list is that it stops being the first thing they see. Everything is one
+    // chip away, and an unscored or empty Recommended falls back to today's behaviour exactly.
+    if (landing && recommended > 0) setView('recommended')
+  }
+
+  // Recommended reads the same pending pile as Everything, narrowed to the kinds the AI flagged.
+  // It never reads a different table or a different status — it is a lens, not a queue.
+  function scopeToView<T extends { eq: any; in: any }>(query: T): T {
+    if (view === 'turnedDown') return query.eq('status', 'rejected')
+    const pending = query.eq('status', 'pending')
+    return view === 'recommended' ? pending.in('significance', RECOMMENDED_KINDS) : pending
   }
 
   async function loadPage() {
@@ -159,20 +227,21 @@ export default function CalendarTriage({
     const to = from + PAGE_SIZE - 1
     // Undecided reads newest-event-first (the ones you actually remember are the recent ones);
     // turned-down reads most-recently-decided first, because that's where a mis-tap will be.
-    const query = supabase.from('moment_import_candidates').select(SELECT_COLUMNS)
-    const { data } = showTurnedDown
-      ? await query.eq('status', 'rejected').order('reviewed_at', { ascending: false, nullsFirst: false }).range(from, to)
-      : await query.eq('status', 'pending').order('event_date', { ascending: false, nullsFirst: false }).range(from, to)
-    setRows((data as unknown as Row[]) ?? [])
+    const query = scopeToView(supabase.from('moment_import_candidates').select(selectColumns))
+    const { data } =
+      view === 'turnedDown'
+        ? await query.order('reviewed_at', { ascending: false, nullsFirst: false }).range(from, to)
+        : await query.order('event_date', { ascending: false, nullsFirst: false }).range(from, to)
+    const loaded = (data as unknown as Row[]) ?? []
+    // Ranked in the browser rather than by the database: the signals are inside jsonb columns and
+    // a span comparison, and one page of 50 is nothing to sort. Only Recommended is re-ordered —
+    // everywhere else newest-first is the promise the pagination makes.
+    setRows(view === 'recommended' ? [...loaded].sort(compareCandidates) : loaded)
     setLoading(false)
   }
 
   async function runSearch(query: string) {
-    const status = showTurnedDown ? 'rejected' : 'pending'
-    const { data } = await supabase
-      .from('moment_import_candidates')
-      .select(SELECT_COLUMNS)
-      .eq('status', status)
+    const { data } = await scopeToView(supabase.from('moment_import_candidates').select(selectColumns))
       .ilike('occasion', `%${query}%`)
       .order('event_date', { ascending: false, nullsFirst: false })
       .limit(25)
@@ -220,7 +289,7 @@ export default function CalendarTriage({
       return false
     }
     setWriteError(null)
-    countDelta(showTurnedDown ? 'rejected' : 'pending', status)
+    countDelta(view === 'turnedDown' ? 'rejected' : 'pending', status)
     return true
   }
 
@@ -307,6 +376,86 @@ export default function CalendarTriage({
     setBulkResult({ count, until, stamp })
   }
 
+  // Every view change resets the page and clears the search, because both describe a list that is
+  // about to be replaced. Same handshake the turned-down toggle always did.
+  function switchView(next: TriageView) {
+    if (next === view) return
+    setView(next)
+    setPage(0)
+    setSearchInput('')
+    setSearch('')
+  }
+
+  // "Find the ones worth keeping" — the founder's chosen shape for the backfill: a button they
+  // press, with progress. The Edge Function scores a bounded slice per call (its own timeout
+  // ceiling), so the loop lives here where the count can be redrawn between calls.
+  //
+  // Two guards, because this loop spends real money: a Stop the founder can press at any point,
+  // and a hard iteration cap so a backend that always reports work remaining can't bill forever.
+  async function runScoring() {
+    setScoring(true)
+    setScoringError(null)
+    stopScoringRef.current = false
+    let guard = 0
+    try {
+      while (guard < MAX_SCORING_CALLS) {
+        guard++
+        const { data, error } = await supabase.functions.invoke('score-candidates', { body: {} })
+        if (error || data?.error) {
+          setScoringError(
+            "Couldn't sort these right now — nothing was lost, and anything already sorted stayed sorted. Worth trying again in a minute."
+          )
+          break
+        }
+        await loadCounts()
+        invalidateReviewCounts()
+        if ((data?.remaining ?? 0) === 0) break
+        // A run that scored nothing but still reports work left would otherwise spin: stop and say
+        // so rather than calling again with the same input.
+        if ((data?.scored ?? 0) === 0) {
+          setScoringError("Some of these couldn't be read this time. Try again in a few minutes.")
+          break
+        }
+        if (stopScoringRef.current) break
+      }
+    } finally {
+      setScoring(false)
+      stopScoringRef.current = false
+      if (ready) loadPage()
+    }
+  }
+
+  function stopScoring() {
+    stopScoringRef.current = true
+  }
+
+  // "Set those aside" — same act as the generic bulk button, narrowed to what the AI read as
+  // routine. Deferred, never rejected: the founder's own decision (2026-08-22) was explicitly for
+  // a reversible set-aside rather than a bulk reject, which is the thing that got removed in
+  // August. The extra `.eq('significance', 'routine')` is the whole difference.
+  async function applyRoutineBulk(days: number) {
+    setBulkBusy(true)
+    const until = deferUntilIso(new Date(), days)
+    const stamp = new Date().toISOString()
+    const count = routineCount
+    const { error } = await supabase
+      .from('moment_import_candidates')
+      .update({ status: 'deferred', deferred_until: until, reviewed_at: stamp })
+      .eq('status', 'pending')
+      .eq('significance', 'routine')
+    setBulkBusy(false)
+    if (error) {
+      setWriteError("Couldn't set those aside. Reload the page to see where things stand, then try again.")
+      return
+    }
+    setWriteError(null)
+    setRoutineCount(0)
+    setTotalPending((n) => Math.max(0, n - count))
+    invalidateReviewCounts()
+    setRows((prev) => prev.filter((r) => resolved.has(r.id) || r.significance !== 'routine'))
+    setBulkResult({ count, until, stamp })
+  }
+
   // The immediate way back, on the page where it happened rather than two screens away. Matches on
   // the act's own reviewed_at, so it takes back exactly what that press did.
   async function undoBulkRemind(result: BulkResult) {
@@ -323,8 +472,11 @@ export default function CalendarTriage({
     }
     setWriteError(null)
     setBulkResult(null)
-    setTotalPending(result.count)
     invalidateReviewCounts()
+    // Re-counted rather than added back by arithmetic: the two bulk acts restore into different
+    // buckets (all pending vs. just the routine ones), and one shared Undo shouldn't have to know
+    // which one it is undoing.
+    await loadCounts()
     loadPage()
   }
 
@@ -359,7 +511,7 @@ export default function CalendarTriage({
     setTotalPending((n) => n + 1)
     invalidateReviewCounts()
 
-    if (showTurnedDown) {
+    if (view === 'turnedDown') {
       // It isn't turned down any more, so it leaves this list rather than sitting here as a row the
       // filter no longer describes. Dropped locally, not refetched — see setStatus on why.
       const drop = (rows: Row[]) => rows.filter((r) => r.id !== row.id)
@@ -370,14 +522,42 @@ export default function CalendarTriage({
     }
   }
 
+  // Pulled out of the JSX: with three views, a bulk result and a scoring state, this had become
+  // five levels of nested ternary, and the wrong branch firing here is how a founder concludes
+  // their data vanished.
+  function emptyMessage(): string {
+    if (search) return 'No matches.'
+    if (view === 'turnedDown') return 'Nothing turned down.'
+    if (view === 'recommended') {
+      if (!scoringComplete) return "These haven't been sorted yet — try “Find the ones worth keeping” above."
+      return "Nothing recommended left — you've answered all of them. Everything shows the rest."
+    }
+    if (totalPending > 0) return 'Nothing here.'
+    return bulkResult
+      ? 'All set aside — nothing here until they come back.'
+      : "Nothing left to look through — you're all caught up."
+  }
+
   const displayRows = searchResults ?? rows
   // Reads the raw input, not the debounced `search`, so the bulk button leaves the moment the
   // founder starts typing rather than 300ms later.
   const filtering = Boolean(searchInput.trim() || search)
-  const offerBulk = canBulkSetAside({ triageEnabled, showTurnedDown, filtering, pending: totalPending })
-  const totalForCurrentFilter = showTurnedDown ? turnedDownCount : totalPending
+  const scoringComplete = unscoredCount === 0
+  const offerRoutineBulk =
+    view !== 'turnedDown' &&
+    canBulkSetAsideRoutine({ significanceEnabled, scoringComplete, filtering, routine: routineCount })
+  // The routine button supersedes the blanket one rather than sitting beside it: two grey bars
+  // offering near-identical acts is a choice the founder shouldn't have to parse, and once the AI
+  // has sorted the pile "set aside the ones that look routine" is strictly the better version of
+  // "set aside everything".
+  const offerBulk =
+    !offerRoutineBulk &&
+    canBulkSetAside({ triageEnabled, showTurnedDown: view !== 'all', filtering, pending: totalPending })
+  const totalForCurrentFilter =
+    view === 'turnedDown' ? turnedDownCount : view === 'recommended' ? recommendedCount : totalPending
   const totalPages = Math.max(1, Math.ceil(totalForCurrentFilter / PAGE_SIZE))
   const sourceLabel = (id: string | null) => (sources.length > 1 ? sources.find((s) => s.id === id)?.label ?? null : null)
+  const chipStyle = (v: TriageView) => (v === view ? { ...styles.chip, ...styles.chipActive } : styles.chip)
 
   return (
     <div style={styles.page}>
@@ -398,26 +578,74 @@ export default function CalendarTriage({
             <strong>{selectedCount}</strong> waiting for detail
           </span>
         )}
-        {(turnedDownCount > 0 || showTurnedDown) && (
-          <button
-            type="button"
-            onClick={() => {
-              setShowTurnedDown(!showTurnedDown)
-              setPage(0)
-              setSearchInput('')
-              setSearch('')
-            }}
-            style={styles.linkButton}
-          >
-            {showTurnedDown ? '← Back to undecided' : `${turnedDownCount} turned down — review/undo`}
-          </button>
-        )}
         {selectedCount > 0 && (
           <button type="button" onClick={onReviewSelected} style={styles.reviewButton}>
             Review {selectedCount} in detail →
           </button>
         )}
       </div>
+
+      {/* One list, three lenses. Recommended and Everything read the SAME pending pile — nothing
+          is filtered away, it is only shown in a different order (the 2026-08-12 directive
+          stands). The counts are on the chips so the full pile is never out of sight. */}
+      <div style={styles.chipRow}>
+        {significanceEnabled && (recommendedCount > 0 || view === 'recommended') && (
+          <button type="button" onClick={() => switchView('recommended')} style={chipStyle('recommended')}>
+            Recommended ({recommendedCount.toLocaleString()})
+          </button>
+        )}
+        <button type="button" onClick={() => switchView('all')} style={chipStyle('all')}>
+          {significanceEnabled && recommendedCount > 0 ? 'Everything' : 'To look through'} (
+          {totalPending.toLocaleString()})
+        </button>
+        {(turnedDownCount > 0 || view === 'turnedDown') && (
+          <button type="button" onClick={() => switchView('turnedDown')} style={chipStyle('turnedDown')}>
+            Turned down ({turnedDownCount.toLocaleString()})
+          </button>
+        )}
+      </div>
+
+      {view === 'recommended' && (
+        <p style={styles.viewNote}>
+          Guesses at what mattered, read from the titles — not a filter. Every one of your{' '}
+          {totalPending.toLocaleString()} is still under “Everything”.
+        </p>
+      )}
+
+      {significanceEnabled && unscoredCount > 0 && view !== 'turnedDown' && (
+        <div style={styles.bulkBar}>
+          <p style={styles.bulkText}>
+            {scoring
+              ? `Sorting… ${(totalPending - unscoredCount).toLocaleString()} of ${totalPending.toLocaleString()} done.`
+              : `${unscoredCount.toLocaleString()} of these haven't been sorted yet.`}
+          </p>
+          <button
+            type="button"
+            onClick={() => (scoring ? stopScoring() : runScoring())}
+            style={scoring ? styles.skipButton : styles.secondaryButton}
+          >
+            {scoring ? 'Stop' : 'Find the ones worth keeping →'}
+          </button>
+        </div>
+      )}
+
+      {scoringError && <p style={styles.errorBanner}>{scoringError}</p>}
+
+      {offerRoutineBulk && (
+        <div style={styles.bulkBar}>
+          <p style={styles.bulkText}>
+            {routineCount.toLocaleString()} of these look like appointments and errands rather than memories.
+          </p>
+          <button
+            type="button"
+            onClick={() => setRoutineBulkOpen(true)}
+            disabled={bulkBusy}
+            style={styles.secondaryButton}
+          >
+            {bulkBusy ? '…' : 'Set those aside →'}
+          </button>
+        </div>
+      )}
 
       {offerBulk && (
         <div style={styles.bulkBar}>
@@ -443,17 +671,7 @@ export default function CalendarTriage({
       {loading && !searchResults ? (
         <p style={styles.body}>Loading…</p>
       ) : displayRows.length === 0 ? (
-        <p style={styles.body}>
-          {search
-            ? 'No matches.'
-            : showTurnedDown
-              ? 'Nothing turned down.'
-              : totalPending === 0
-                ? bulkResult
-                  ? "All set aside — nothing here until they come back."
-                  : "Nothing left to look through — you're all caught up."
-                : 'Nothing here.'}
-        </p>
+        <p style={styles.body}>{emptyMessage()}</p>
       ) : (
         <div style={styles.list}>
           {displayRows.map((r) => {
@@ -493,7 +711,7 @@ export default function CalendarTriage({
             // Quick Add saves in one tap and never shows the four-way merge banner, so without this
             // it would be the fastest way in the app to create a duplicate. Free client-side check,
             // no AI call — see lib/likelyDuplicate.ts.
-            const duplicate = showTurnedDown ? null : findLikelyMatch(r, existingMoments)
+            const duplicate = view === 'turnedDown' ? null : findLikelyMatch(r, existingMoments)
             const busy = busyId === r.id
 
             return (
@@ -505,6 +723,9 @@ export default function CalendarTriage({
                     {r.location && ` · ${r.location}`}
                     {badge && ` · ${badge}`}
                   </p>
+                  {view === 'recommended' && r.significance && (
+                    <p style={styles.kindNote}>{KIND_LABEL[r.significance]}</p>
+                  )}
                   {duplicate && (
                     <p style={styles.duplicateNote}>
                       Looks like "{momentDisplayName(duplicate, new Map(), new Map())}", already on file.
@@ -515,7 +736,7 @@ export default function CalendarTriage({
                     them will not fit next to text at phone width, and the phone is the primary
                     surface (§8 item 72). */}
                 <div style={styles.rowActions}>
-                  {showTurnedDown ? (
+                  {view === 'turnedDown' ? (
                     <button type="button" onClick={() => handleUndo(r, { kind: 'rejected', label: rowTitle(r) })} disabled={busy} style={styles.quickAddButton}>
                       {busy ? '…' : 'Undo'}
                     </button>
@@ -557,7 +778,7 @@ export default function CalendarTriage({
           </button>
           <span style={styles.pageLabel}>
             Page {page + 1} of {totalPages} — {totalForCurrentFilter.toLocaleString()}{' '}
-            {showTurnedDown ? 'turned down' : `event${totalForCurrentFilter === 1 ? '' : 's'}`}
+            {view === 'turnedDown' ? 'turned down' : `event${totalForCurrentFilter === 1 ? '' : 's'}`}
           </span>
           <button type="button" onClick={() => setPage((p) => p + 1)} disabled={page + 1 >= totalPages} style={styles.pageButton}>
             Next →
@@ -572,6 +793,18 @@ export default function CalendarTriage({
           const target = remindTarget
           setRemindTarget(null)
           if (target) applyRemind(target, days, makeDefault)
+        }}
+      />
+
+      <RemindSheet
+        open={routineBulkOpen}
+        onClose={() => setRoutineBulkOpen(false)}
+        title={`Set aside the ${routineCount.toLocaleString()} that look routine?`}
+        subtitle="Appointments, errands and meetings leave this list now and come back on their own. Nothing is deleted, nothing is turned down — and if one of them mattered after all, it's still there when they return."
+        showDefault={false}
+        onPick={(days) => {
+          setRoutineBulkOpen(false)
+          applyRoutineBulk(days)
         }}
       />
 
@@ -641,6 +874,21 @@ const styles: { [key: string]: React.CSSProperties } = {
     margin: '0 0 1rem',
   },
   bulkText: { fontSize: fontSize.body, color: colors.textMuted, margin: 0 },
+  chipRow: { display: 'flex', flexWrap: 'wrap', gap: '0.4rem', margin: '0 0 0.75rem' },
+  chip: {
+    fontSize: fontSize.label,
+    padding: '0.4rem 0.8rem',
+    borderRadius: radius.pill,
+    border: border.default,
+    backgroundColor: colors.surface,
+    color: colors.textBody,
+    cursor: 'pointer',
+    fontFamily,
+    whiteSpace: 'nowrap',
+  },
+  chipActive: { backgroundColor: colors.primary, color: colors.onFill, border: border.primary },
+  viewNote: { fontSize: fontSize.small, color: colors.textMuted, lineHeight: 1.5, margin: '0 0 0.75rem' },
+  kindNote: { fontSize: fontSize.small, color: colors.suggest, margin: '0.2rem 0 0' },
   list: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem' },
   row: {
     display: 'flex',

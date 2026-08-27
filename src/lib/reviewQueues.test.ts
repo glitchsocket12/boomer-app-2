@@ -5,6 +5,7 @@ import {
   EMPTY_COUNTS,
   REMIND_OPTIONS,
   canBulkSetAside,
+  canBulkSetAsideRoutine,
   deferUntilIso,
   reviewTotal,
   todayIso,
@@ -139,5 +140,36 @@ describe('canBulkSetAside', () => {
     expect(canBulkSetAside({ ...ok, pending: BULK_SET_ASIDE_MIN - 1 })).toBe(false)
     expect(canBulkSetAside({ ...ok, pending: BULK_SET_ASIDE_MIN })).toBe(true)
     expect(canBulkSetAside({ ...ok, pending: 0 })).toBe(false)
+  })
+})
+
+describe('canBulkSetAsideRoutine', () => {
+  // The narrower of the two bulk guards: this one acts only on rows the AI called routine.
+  const ok = { significanceEnabled: true, scoringComplete: true, filtering: false, routine: 1120 }
+
+  it('is offered once everything has been sorted', () => {
+    expect(canBulkSetAsideRoutine(ok)).toBe(true)
+  })
+
+  it('is withheld while any pending row is still unsorted', () => {
+    // The failure this prevents: setting events aside because the backfill hadn't reached them
+    // yet, which reads to the founder as the AI deciding they were unimportant.
+    expect(canBulkSetAsideRoutine({ ...ok, scoringComplete: false })).toBe(false)
+  })
+
+  it('is withheld until the significance migration has been run', () => {
+    expect(canBulkSetAsideRoutine({ ...ok, significanceEnabled: false })).toBe(false)
+  })
+
+  it('is withheld while a search is narrowing the list', () => {
+    // Unlike the generic button it is safe beside the Recommended view, because its label and its
+    // confirmation both name exactly what it acts on. A search box is different: a bulk control
+    // sitting under search results reads as acting on them whatever it says.
+    expect(canBulkSetAsideRoutine({ ...ok, filtering: true })).toBe(false)
+  })
+
+  it('is withheld for a handful', () => {
+    expect(canBulkSetAsideRoutine({ ...ok, routine: BULK_SET_ASIDE_MIN - 1 })).toBe(false)
+    expect(canBulkSetAsideRoutine({ ...ok, routine: 0 })).toBe(false)
   })
 })

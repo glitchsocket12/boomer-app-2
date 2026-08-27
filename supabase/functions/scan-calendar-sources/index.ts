@@ -7,6 +7,7 @@ import { formatEventDateText } from "../_shared/eventDates.ts"
 import { buildGroupNameIndex } from "../_shared/groupNames.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { claimFormerNameKeys } from "../_shared/formerNames.ts"
+import { normalizeSignificance, type Significance } from "../_shared/significance.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -37,10 +38,12 @@ Don't guess at dates — the exact start/end date is already known from the cale
 
 "mentioned_people": specific individuals named directly in the title or description (e.g. "Sid and Kate's wedding" → ["Sid", "Kate"]; "Catching up with Connor Chavez" → ["Connor Chavez"]) — first name alone is fine if that's all the title gives. Don't include the calendar owner, generic roles ("the team", "family"), or places/things that aren't a person's name. These get cross-checked separately against the founder's own people — you don't need the roster for this field, just pull out whatever names are actually written in the text. Empty array if no one is named.
 
+"significance": what KIND of thing this is, exactly one of: "trip" (travel, a vacation, a stay away from home), "celebration" (a wedding, a birthday, a party, a holiday gathering), "milestone" (a graduation, a retirement, a funeral, a first or last of something), "holiday" (a named public or religious holiday), "gathering" (a get-together with people named in the text — dinner with friends, a visit, a reunion), or "routine" (everything else: appointments, errands, work meetings, recurring commitments, flights booked as logistics rather than the trip itself, reminders, chores). This is used ONLY to decide what to show the person FIRST. Nothing is ever filtered, hidden or rejected on the strength of it — they see every event either way, so when it is genuinely a toss-up prefer "routine" and let the event take its turn in the full list.
+
 "mentioned_family_names": surnames referenced as a family/household unit, distinct from "mentioned_people" above (e.g. "Meal train for the Mojica family" → ["Mojica"]; "Dinner with the Andersons" → ["Anderson"], singular form). Only when the text clearly frames it as a family/household ("the X family", "the Xs", "X family reunion") — not just any capitalized word or business name that happens to look like a surname (e.g. "Mojica's Bakery" is a place, not a family reference). Empty array if none.
 
 Respond with ONLY a JSON array, one object per input event in the same order, in this exact shape and nothing else — no preamble, no markdown fences:
-[{"index": 0, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"], "mentioned_family_names": ["Surname"]}]`
+[{"index": 0, "occasion": "short 3-6 word title", "location": "string or null", "notes": "1-2 factual sentences describing what this event is, based on the summary/description given", "significance": "trip", "suggested_tags": ["tag name"], "suggested_group": "Existing Group Name or null", "mentioned_people": ["name"], "mentioned_family_names": ["Surname"]}]`
 
 type Candidate = {
   user_id: string
@@ -57,6 +60,7 @@ type Candidate = {
   suggested_tags: string[]
   suggested_group_ids: string[]
   source_recurrence_id: string | null
+  significance?: Significance
 }
 
 type ExtractionResult = {
@@ -64,6 +68,7 @@ type ExtractionResult = {
   occasion: string
   location: string | null
   notes: string
+  significance?: string
   suggested_tags: string[]
   suggested_group: string | null
   mentioned_people: string[]
@@ -235,7 +240,7 @@ async function scanUser(
   userId: string,
   accountEmail: string | null
 ): Promise<{ sourcesScanned: number; candidatesAdded: number; birthdayCandidatesAdded: number; extractionFailures: number }> {
-  const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes, existingBirthdayRes] = await Promise.all([
+  const [sourcesRes, peopleRes, tagsRes, groupsRes, existingRes, existingBirthdayRes, significanceRes] = await Promise.all([
     // Least-recently-synced first (never-synced sorts first of all). The batch budget below is
     // per-invocation and shared across sources, so an unordered list let whichever source happened
     // to come back first spend it every single run — the founder's third calendar had never once
@@ -260,7 +265,17 @@ async function scanUser(
     supabase.from("groups").select("id, name, parent_group_id").eq("user_id", userId),
     supabase.from("moment_import_candidates").select("id, ical_uid, status, event_date, event_end_date").eq("user_id", userId),
     supabase.from("birthday_import_candidates").select("ical_uid").eq("user_id", userId),
+    // Has 2026-08-27-candidate-significance.sql been run? Writing an unknown column fails the
+    // WHOLE batch upsert, so this has to be known before any row is built. Probes for the COLUMN,
+    // not a value — PostgREST errors on an unknown column but happily returns zero rows for a
+    // value the CHECK doesn't allow. Same fail-open shape as the frontend's probeTriageEnabled().
+    supabase.from("moment_import_candidates").select("significance").limit(1),
   ])
+
+  // Until the migration is run the field is simply left off every row and the scan behaves exactly
+  // as it does today. The extraction still ASKS for it (a handful of output tokens) rather than
+  // maintaining two prompts — and asking keeps the cached prefix identical either way.
+  const canStoreSignificance = !significanceRes.error
 
   const sources = sourcesRes.data ?? []
   if (sources.length === 0) return { sourcesScanned: 0, candidatesAdded: 0, birthdayCandidatesAdded: 0, extractionFailures: 0 }
@@ -662,6 +677,7 @@ async function scanUser(
             suggested_tags: Array.isArray(r.suggested_tags) ? r.suggested_tags.slice(0, 3) : [],
             suggested_group_ids: suggestedGroupIds,
             source_recurrence_id: event.isRecurring ? event.uid : null,
+            ...(canStoreSignificance ? { significance: normalizeSignificance(r.significance) } : {}),
           })
         }
       }
