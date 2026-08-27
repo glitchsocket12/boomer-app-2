@@ -1,8 +1,18 @@
 import { useState } from 'react'
 import { EventsView, DEFAULT_EVENT_FILTERS, type EventFilters, type Moment } from '../Events'
 import { DEMO_MOMENTS, DEMO_PEOPLE, DEMO_GROUPS, DEMO_TAGS } from '../../lib/demoData'
+import { eventSortDate } from '../../lib/dates'
 
-const ALL_MOMENTS: Moment[] = DEMO_MOMENTS.map((m) => ({
+// groupMomentsByYear (Events.tsx) only merges CONSECUTIVE same-year entries — safe for the real
+// container, which always sorts by event_date before rendering (see Events.tsx's own fetch sort),
+// but DEMO_MOMENTS is just CORE_MOMENTS followed by the generated roster in category order. Left
+// unsorted, the same year resurfaces in separate non-adjacent groups, so React sees two `key={year}`
+// siblings. Sort here the same way (newest first) so the demo matches production's grouping.
+const SORTED_DEMO_MOMENTS = [...DEMO_MOMENTS].sort(
+  (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
+)
+
+const ALL_MOMENTS: Moment[] = SORTED_DEMO_MOMENTS.map((m) => ({
   id: m.id,
   occasion: m.occasion,
   location: m.location,
