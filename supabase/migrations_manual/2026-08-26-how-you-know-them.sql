@@ -1,0 +1,16 @@
+-- "How you know them" — one short line of the user's own words placing a person, shown wherever
+-- their name alone can't ("Manuel's friend", "barista at Rosetta", "Gus's girlfriend").
+--
+-- Why a column and not more nicknames: everything in nicknames/middle_name/goes_by_other is a
+-- name the person ANSWERS TO, and all of it is folded into name RESOLUTION (personNameKeys() in
+-- _shared/nameMatch.ts). This is the opposite — it is never something you'd call them, and it must
+-- never resolve a name, or "Manuel's friend" would start matching Manuel. Display and prompt
+-- context only.
+--
+-- The need, measured on the founder's account 2026-08-26: 561 of 896 people share a first name
+-- with someone else, across 149 colliding first names (16 Alex, 15 David, 9 Sarah, 7 Julia). The
+-- founder had already been hand-rolling this into the name field itself — "Capt Manrique",
+-- "Coach Gadeken", "Bnb Paolina", "Amber h" — which corrupts the name to carry the context.
+-- Free text, deliberately not a link to another person: the connection often can't be named
+-- ("Bnb Paolina"), and an optional link can be layered on later without changing this column.
+alter table people add column if not exists how_you_know_them text;

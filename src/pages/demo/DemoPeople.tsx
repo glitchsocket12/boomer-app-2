@@ -21,6 +21,7 @@ function toPerson(id: string): Person {
     middle_name: p.middle_name,
     goes_by_other: p.goes_by_other,
     former_last_names: p.former_last_names ?? null,
+    how_you_know_them: (p as { how_you_know_them?: string | null }).how_you_know_them ?? null,
     created_at: p.created_at,
     person_groups: groups,
     notes,

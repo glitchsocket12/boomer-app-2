@@ -10,6 +10,7 @@ import ContactInfoSection from '../components/ContactInfoSection'
 import PetsSection from '../components/PetsSection'
 import type { Pet } from '../lib/pets'
 import RefreshButton from '../components/RefreshButton'
+import RetractFactPanel from '../components/RetractFactPanel'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
 import EditButton from '../components/EditButton'
@@ -47,6 +48,7 @@ export type PersonRow = {
   goes_by_kind: 'first' | 'middle' | 'last' | 'other' | null
   goes_by_other: string | null
   former_last_names?: string | null
+  how_you_know_them?: string | null
   deceased_date?: string | null
 }
 
@@ -82,6 +84,16 @@ const KEY_FACT_CATEGORY_ORDER: Partial<Record<KeyFact['category'], number>> = {
   siblings: 3,
   kids: 4,
 }
+/** The chip as plain text, so the retraction panel can quote back the exact thing being cleared
+ *  ("Dating Olivia") instead of asking about "this fact". Mirrors KeyFactItem's own rendering —
+ *  the real names, never the "You" substitution, since this is a question about stored data. */
+export function keyFactLabel(fact: KeyFact): string {
+  if (fact.people && fact.people.length > 0) {
+    return [fact.relationshipLabel, fact.people.map((p) => p.name).join(', ')].filter(Boolean).join(' ')
+  }
+  return fact.text ?? ''
+}
+
 export function sortKeyFacts(facts: KeyFact[]): KeyFact[] {
   return facts
     .map((fact, index) => ({ fact, index }))
@@ -163,6 +175,7 @@ export default function PersonDetail({
   const [goesByKind, setGoesByKind] = useState<'first' | 'middle' | 'last' | 'other'>('first')
   const [goesByOtherInput, setGoesByOtherInput] = useState('')
   const [formerNameInput, setFormerNameInput] = useState('')
+  const [howYouKnowInput, setHowYouKnowInput] = useState('')
   const [savingName, setSavingName] = useState(false)
   const [newFact, setNewFact] = useState('')
   const [saving, setSaving] = useState(false)
@@ -173,6 +186,10 @@ export default function PersonDetail({
   const [relationshipSuggestions, setRelationshipSuggestions] = useState<RelationshipSuggestion[]>([])
   const [newPersonSuggestions, setNewPersonSuggestions] = useState<NewPersonSuggestion[]>([])
   const [keyFacts, setKeyFacts] = useState<KeyFact[]>([])
+  // Which Key Fact the user has opened the "that's not right" panel on, by its index in the
+  // rendered list. Index rather than a fact id because key_facts is a cached jsonb blob with no
+  // stable ids, and it is re-sorted deterministically on load.
+  const [retractingFactIndex, setRetractingFactIndex] = useState<number | null>(null)
   const [factsLoading, setFactsLoading] = useState(true)
   // Only ever set by an explicit refresh. A passive visit that hits a failed extraction still has
   // the cached facts to show and nothing useful to say about it; a refresh the user asked for and
@@ -364,7 +381,7 @@ export default function PersonDetail({
       supabase.from('person_groups').select('groups(id, name, parent_group_id)').eq('person_id', personId),
       supabase
         .from('people')
-        .select('name, last_name, middle_name, goes_by_kind, goes_by_other, former_last_names, deceased_date')
+        .select('name, last_name, middle_name, goes_by_kind, goes_by_other, former_last_names, how_you_know_them, deceased_date')
         .eq('id', personId)
         .single(),
     ])
@@ -436,6 +453,15 @@ export default function PersonDetail({
     loadFacts(true)
   }
 
+  // The retraction panel has already done the deleting; this is the cleanup that makes it stick.
+  // The Key Facts refresh is the load-bearing half: the chip is a cached jsonb column, so without
+  // a regeneration the fact stays on screen even after every note behind it is gone.
+  async function handleRetracted() {
+    setRetractingFactIndex(null)
+    await loadData()
+    loadFacts(true)
+  }
+
   async function handleDeleteNote(noteId: string) {
     await supabase.from('notes').delete().eq('id', noteId)
     await loadData()
@@ -467,6 +493,7 @@ export default function PersonDetail({
     // for the column: the additive merge belongs on the chat paths, where a stray capture must
     // never wipe what an earlier conversation recorded. Here the user is looking at the whole list.
     const trimmedFormer = parseFormerLastNames(formerNameInput).join(', ') || null
+    const trimmedHowYouKnow = howYouKnowInput.trim() || null
 
     // Fall back to 'first' (stored as null) if the chosen slot has since gone empty — e.g. the
     // dropdown was left on "middle" but the middle name field was then cleared.
@@ -483,7 +510,8 @@ export default function PersonDetail({
       trimmedMiddle === person.middle_name &&
       finalGoesByKind === person.goes_by_kind &&
       trimmedGoesByOther === person.goes_by_other &&
-      trimmedFormer === (person.former_last_names ?? null)
+      trimmedFormer === (person.former_last_names ?? null) &&
+      trimmedHowYouKnow === (person.how_you_know_them ?? null)
     if (unchanged) {
       setEditingName(false)
       return
@@ -499,6 +527,7 @@ export default function PersonDetail({
         goes_by_kind: finalGoesByKind,
         goes_by_other: trimmedGoesByOther,
         former_last_names: trimmedFormer,
+        how_you_know_them: trimmedHowYouKnow,
       })
       .eq('id', personId)
     setSavingName(false)
@@ -519,6 +548,7 @@ export default function PersonDetail({
       goes_by_kind: finalGoesByKind,
       goes_by_other: trimmedGoesByOther,
       former_last_names: trimmedFormer,
+      how_you_know_them: trimmedHowYouKnow,
       deceased_date: person.deceased_date,
     }
     setPerson(updatedPerson)
@@ -775,6 +805,9 @@ export default function PersonDetail({
       groups={groups}
       allGroupsList={allGroupsList}
       keyFacts={keyFacts}
+      retractingFactIndex={retractingFactIndex}
+      onStartRetractFact={setRetractingFactIndex}
+      onRetracted={handleRetracted}
       factsLoading={factsLoading}
       factsFailed={factsFailed}
       selfId={selfId}
@@ -793,6 +826,9 @@ export default function PersonDetail({
       goesByKind={goesByKind}
       goesByOtherInput={goesByOtherInput}
       formerNameInput={formerNameInput}
+      howYouKnowInput={howYouKnowInput}
+      onHowYouKnowInputChange={setHowYouKnowInput}
+      howYouKnowThem={person?.how_you_know_them ?? null}
       savingName={savingName}
       onStartEditName={() => {
         setFirstNameInput(person?.name ?? '')
@@ -801,6 +837,7 @@ export default function PersonDetail({
         setGoesByKind(person?.goes_by_kind ?? 'first')
         setGoesByOtherInput(person?.goes_by_other ?? '')
         setFormerNameInput(person?.former_last_names ?? '')
+        setHowYouKnowInput(person?.how_you_know_them ?? '')
         setDeceasedDateInput(person?.deceased_date ?? '')
         setEditingName(true)
       }}
@@ -882,6 +919,9 @@ export function PersonDetailView({
   groups,
   allGroupsList,
   keyFacts,
+  retractingFactIndex = null,
+  onStartRetractFact,
+  onRetracted,
   factsLoading,
   factsFailed = false,
   selfId = null,
@@ -900,6 +940,9 @@ export function PersonDetailView({
   goesByKind = 'first',
   goesByOtherInput = '',
   formerNameInput = '',
+  howYouKnowInput = '',
+  onHowYouKnowInputChange = () => {},
+  howYouKnowThem = null,
   savingName = false,
   onStartEditName = () => {},
   onFirstNameInputChange = () => {},
@@ -972,6 +1015,9 @@ export function PersonDetailView({
   groups: GroupRef[]
   allGroupsList: GroupRef[]
   keyFacts: KeyFact[]
+  retractingFactIndex?: number | null
+  onStartRetractFact?: (index: number | null) => void
+  onRetracted?: () => void
   factsLoading: boolean
   factsFailed?: boolean
   selfId?: string | null
@@ -990,6 +1036,9 @@ export function PersonDetailView({
   goesByKind?: 'first' | 'middle' | 'last' | 'other'
   goesByOtherInput?: string
   formerNameInput?: string
+  howYouKnowInput?: string
+  onHowYouKnowInputChange?: (v: string) => void
+  howYouKnowThem?: string | null
   savingName?: boolean
   onStartEditName?: () => void
   onFirstNameInputChange?: (v: string) => void
@@ -1124,6 +1173,18 @@ export function PersonDetailView({
             marriage, divorce or adoption. It makes them findable under the old name instead of
             being added twice. Separate several with commas.
           </p>
+          <input
+            type="text"
+            value={howYouKnowInput}
+            onChange={(e) => onHowYouKnowInputChange(e.target.value)}
+            placeholder="How you know them"
+            style={styles.howYouKnowInput}
+          />
+          <p style={styles.goesByCaption}>
+            One short line placing them, in your words — "Manuel's friend", "barista at Rosetta",
+            "Gus's girlfriend". It shows next to their name anywhere someone else shares it, and
+            it's what lets the app ask "which {firstNameInput.trim() || 'one'}?" instead of guessing.
+          </p>
           <div style={styles.goesByRow}>
             <span style={styles.goesByLabel}>Goes by</span>
             <select
@@ -1202,12 +1263,13 @@ export function PersonDetailView({
           </div>
         </form>
       ) : (
-        <div style={formerLine ? styles.headingRowTight : styles.headingRow}>
+        <div style={formerLine || howYouKnowThem ? styles.headingRowTight : styles.headingRow}>
           <h1 style={styles.heading}>{fullName}</h1>
           {!readOnly && <EditButton label="Edit name" onClick={onStartEditName} />}
         </div>
       )}
       {!editingName && formerLine && <p style={styles.formerNameLine}>{formerLine}</p>}
+      {!editingName && howYouKnowThem && <p style={styles.howYouKnowLine}>{howYouKnowThem}</p>}
 
       {kinToSelf && (
         <button
@@ -1250,7 +1312,33 @@ export function PersonDetailView({
           ) : (
             <ul style={styles.keyFactsList}>
               {keyFacts.map((f, i) => (
-                <KeyFactItem key={i} fact={f} selfId={selfId} onSelectPerson={onSelectPerson} />
+                <li key={i} style={styles.keyFactsEntry}>
+                  <KeyFactItem
+                    fact={f}
+                    selfId={selfId}
+                    onSelectPerson={onSelectPerson}
+                    // Only offered on facts that name someone. Those are the ones that fan out —
+                    // a mirror note on the other profile, a relationships row, a cached chip on
+                    // both sides — and so the ones a single note deletion can't actually retract.
+                    // A plain text fact is already fixable by editing its note in the list below.
+                    onDispute={
+                      !readOnly && onStartRetractFact && (f.people ?? []).length > 0
+                        ? () => onStartRetractFact(retractingFactIndex === i ? null : i)
+                        : undefined
+                    }
+                  />
+                  {retractingFactIndex === i && (
+                    <RetractFactPanel
+                      personId={personId}
+                      subjectName={fullName}
+                      factLabel={keyFactLabel(f)}
+                      category={f.category}
+                      linkedPeople={f.people ?? []}
+                      onCancel={() => onStartRetractFact?.(null)}
+                      onRetracted={() => onRetracted?.()}
+                    />
+                  )}
+                </li>
               ))}
             </ul>
           )}
@@ -1602,13 +1690,21 @@ function KeyFactItem({
   fact,
   selfId = null,
   onSelectPerson,
+  onDispute,
 }: {
   fact: KeyFact
   selfId?: string | null
   onSelectPerson: (person: { id: string; name: string }) => void
+  /** Omitted (demo read-only, or a fact with nobody linked) simply never shows the control. */
+  onDispute?: () => void
 }) {
+  const [hovered, setHovered] = useState(false)
   return (
-    <li style={styles.keyFactsItem}>
+    <div
+      style={styles.keyFactsItem}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {fact.people && fact.people.length > 0 ? (
         <>
           <span>{fact.relationshipLabel}</span>
@@ -1631,7 +1727,19 @@ function KeyFactItem({
       ) : (
         <span>{fact.text}</span>
       )}
-    </li>
+      {onDispute && (
+        // Kept mounted and merely faded rather than conditionally rendered, so revealing it can't
+        // reflow the bullet under the cursor — the same reason NoteCard's hover badges are a
+        // corner overlay. Always visible to a keyboard/touch user, who gets no hover at all.
+        <button
+          type="button"
+          onClick={onDispute}
+          style={{ ...styles.disputeButton, opacity: hovered ? 1 : 0.35 }}
+        >
+          That's not right
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -1843,6 +1951,19 @@ const styles: { [key: string]: React.CSSProperties } = {
     flex: '0 0 auto',
   },
   goesByCaption: { fontSize: '0.78rem', color: colors.textFaintest, margin: 0 },
+  // Full width on its own row rather than a fourth box in nameInputRow: this holds a phrase, not
+  // a name, and sharing that row would squeeze all four below a readable width on a phone.
+  howYouKnowInput: {
+    fontSize: fontSize.body,
+    fontFamily,
+    color: colors.ink,
+    padding: '0.35rem 0.5rem',
+    borderRadius: radius.md,
+    border: border.default,
+    width: '100%',
+    boxSizing: 'border-box' as const,
+  },
+  howYouKnowLine: { fontSize: fontSize.body, color: colors.textFaint, margin: `0 0 ${space.xl} 0` },
   nameButtonRow: { display: 'flex', gap: space.md },
   deceasedRow: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: space.lg, flexWrap: 'wrap' },
   deceasedLabel: { fontSize: fontSize.label, color: colors.textFaint },
@@ -1940,6 +2061,18 @@ const styles: { [key: string]: React.CSSProperties } = {
   keyFactsHeading: { fontSize: fontSize.tiny, textTransform: 'uppercase', letterSpacing: '0.04em', color: neutral.sage, fontWeight: 700 },
   keyFactsLoading: { margin: 0, fontSize: fontSize.body, color: colors.textFaintest, fontStyle: 'italic' },
   keyFactsFailed: { margin: `0 0 ${space.sm}`, fontSize: fontSize.label, color: colors.danger, lineHeight: 1.5 },
+  keyFactsEntry: { listStyle: 'disc' },
+  disputeButton: {
+    fontSize: fontSize.label,
+    fontFamily,
+    color: colors.textFaintest,
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    transition: 'opacity 0.12s ease',
+  },
   keyFactsList: { margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' },
   keyFactsItem: { fontSize: '0.98rem', color: colors.inkPlain, lineHeight: 1.4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: space.md },
   subheading: { fontSize: '1.2rem', color: colors.ink, margin: '1.5rem 0 0.5rem 0' },

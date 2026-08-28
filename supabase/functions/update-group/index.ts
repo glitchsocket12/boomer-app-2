@@ -17,6 +17,13 @@ import {
   FORMER_NAME_PROMPT_CLAUSE,
   FORMER_NAME_JSON_FIELD,
 } from "../_shared/formerNames.ts"
+import {
+  HOW_YOU_KNOW_CREATE_CLAUSE,
+  HOW_YOU_KNOW_JSON_FIELD,
+  HOW_YOU_KNOW_ROSTER_CLAUSE,
+  howYouKnowMarker,
+  parseNewPersonEntry,
+} from "../_shared/howYouKnow.ts"
 import { mergeNicknames, parseNicknames, NICKNAME_PROMPT_CLAUSE, NICKNAME_JSON_FIELD } from "../_shared/nicknames.ts"
 
 const corsHeaders = {
@@ -63,7 +70,7 @@ serve(async (req) => {
     const { data: allPeople } = await fetchAllRows((from, to) =>
       supabaseClient
         .from("people")
-        .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self")
+        .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, how_you_know_them, is_self")
         .order("id")
         .range(from, to)
     )
@@ -154,6 +161,7 @@ serve(async (req) => {
         const marks = [
           nicknamesById[p.id] ? `also goes by: ${nicknamesById[p.id].join(", ")}` : null,
           formerNameMarker(rawFormerById[p.id] ?? []),
+          howYouKnowMarker(p.how_you_know_them),
         ].filter(Boolean)
         return marks.length > 0 ? `${fullName(p)} (${marks.join(", ")})` : fullName(p)
       })
@@ -175,13 +183,17 @@ CRITICAL — never invent, assume, or add a concrete detail the user did not act
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user", "needs_clarification": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1"], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${NICKNAME_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, "rename": "New Name or null if not renamed this turn", "add_people": ["Name1", {"name": "Name2", "how_you_know_them": "how the user places them — REQUIRED when Name2's first name is already in the roster"}], "remove_people": ["Name2"], "add_event_ids": ["exact MOMENT_ID from the list of other events"], "remove_event_ids": ["exact MOMENT_ID of an already-tagged event"], "notes": [{"person": "exact name from the roster provided in this prompt", "content": "the fact, written as a short standalone sentence"}], ${NICKNAME_JSON_FIELD}, ${HOW_YOU_KNOW_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 
 This is saved immediately after every single turn, so only include in "rename"/"add_people"/"remove_people"/"add_event_ids"/"remove_event_ids"/"notes"/"nickname_updates" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this group.
 
 ${NICKNAME_PROMPT_CLAUSE}
 
 ${FORMER_NAME_PROMPT_CLAUSE}
+
+${HOW_YOU_KNOW_ROSTER_CLAUSE}
+
+${HOW_YOU_KNOW_CREATE_CLAUSE}
 
 A PET IS NOT A PERSON. If the user mentions someone's animal, never put the animal's name in "add_people" — that would create a fake human profile in their People list and Dunbar count, and make it a member of this group. Record it as ordinary note text instead. Pets have their own place in the app, recorded from the Home chat or a profile's Pets section, not here.`
 
@@ -282,17 +294,29 @@ ${otherEvents || "(none)"}`
       changed = true
     }
 
-    for (const name of parsed.add_people ?? []) {
+    for (const entry of parsed.add_people ?? []) {
+      const parsedEntry = parseNewPersonEntry(entry)
+      if (!parsedEntry) continue
+      const { name, howYouKnowThem } = parsedEntry
       const key = name.trim().toLowerCase()
       if (!key) continue
       let personId = idByName[key]
       if (!personId) {
+        // See _shared/howYouKnow.ts: ambiguousKeys unmapped this name a few lines up so it could
+        // never resolve to the wrong person, which also makes "add Sarah" look like "no Sarah
+        // exists" and mint another one. Refused unless something is supplied to tell her apart.
+        if (ambiguousKeys.has(key) && !howYouKnowThem) {
+          console.error(
+            `add_people refused: "${name}" collides with people already on file and arrived with no how_you_know_them to tell them apart`
+          )
+          continue
+        }
         const [first, ...rest] = name.trim().split(" ")
         const lastName =
           rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
         const { data: newPerson } = await supabaseClient
           .from("people")
-          .insert({ user_id: user.id, name: first, last_name: lastName })
+          .insert({ user_id: user.id, name: first, last_name: lastName, how_you_know_them: howYouKnowThem })
           .select()
           .single()
         if (newPerson) {
@@ -356,6 +380,19 @@ ${otherEvents || "(none)"}`
 
     // Applied after add_people so someone just added to the group can also be given a nickname in
     // the same message. Merged onto rawNicknamesById, NOT nicknamesById — see its declaration.
+    // Stated outright ("that Sarah is Manuel's friend"), rather than alongside a create. Additive
+    // only: the profile form owns this field, and a passing chat remark must never clobber a line
+    // the user typed there themselves.
+    for (const update of parsed.how_you_know_updates ?? []) {
+      const id = idByName[update.person?.trim().toLowerCase()]
+      const value = update.how_you_know_them?.trim()
+      if (!id || !value) continue
+      const { data: existing } = await supabaseClient.from("people").select("how_you_know_them").eq("id", id).single()
+      if (existing && !existing.how_you_know_them) {
+        await supabaseClient.from("people").update({ how_you_know_them: value }).eq("id", id)
+      }
+    }
+
     for (const update of parsed.nickname_updates ?? []) {
       const id = idByName[String(update?.person ?? "").trim().toLowerCase()]
       if (!id) continue

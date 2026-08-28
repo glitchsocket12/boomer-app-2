@@ -18,6 +18,14 @@ import { rollUpGroupMemberIds } from "../_shared/groupRollup.ts"
 import { fetchAllRows } from "../_shared/pagedSelect.ts"
 import { mergeNicknames, parseNicknames } from "../_shared/nicknames.ts"
 import {
+  HOW_YOU_KNOW_CREATE_CLAUSE,
+  HOW_YOU_KNOW_JSON_FIELD,
+  HOW_YOU_KNOW_ROSTER_CLAUSE,
+  NEW_PEOPLE_JSON_FIELD,
+  howYouKnowMarker,
+  parseNewPersonEntry,
+} from "../_shared/howYouKnow.ts"
+import {
   claimFormerNameKeys,
   formerNameMarker,
   mergeFormerLastNames,
@@ -107,7 +115,7 @@ serve(async (req) => {
       fetchAllRows((from, to) =>
         supabaseClient
           .from("people")
-          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self, deceased_date")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, how_you_know_them, is_self, deceased_date")
           .order("id")
           .range(from, to)
       ),
@@ -401,6 +409,11 @@ serve(async (req) => {
           g ? (g === "male" ? "m" : "f") : null,
           altNames ? `also goes by: ${altNames.join(", ")}` : null,
           formerNameMarker(formerById[p.id] ?? []),
+          // The user's own one-line placement of this person. Only present on the few people who
+          // needed it, and it is the ONLY thing that lets a question like "which Sarah — Manuel's
+          // friend, or your cousin?" be asked at all. Never a name: it must not be echoed back as
+          // one, which HOW_YOU_KNOW_ROSTER_CLAUSE spells out.
+          howYouKnowMarker(p.how_you_know_them),
         ]
           .filter(Boolean)
           .join(", ")
@@ -428,7 +441,9 @@ ${FORMER_NAME_ROSTER_CLAUSE}
 
 Some people in the roster provided in this prompt have a nickname or "goes by" name shown in parentheses (e.g. "Joseph Smith (also goes by: Grandpa Joe)") — if the user refers to someone by that nickname, you can use either their real name or the nickname when writing them into "notes", "relevant_people", "person_group_tags", etc., and it will still resolve to the same person.
 
-IMPORTANT — disambiguating people who share a first name or nickname: check the roster provided in this prompt for any other recorded person with the same first name or nickname as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", or "nickname_updates". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name or nickname — a bare shared name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
+IMPORTANT — disambiguating people who share a first name or nickname: check the roster provided in this prompt for any other recorded person with the same first name or nickname as whoever you're about to write into "notes", "relevant_people", "person_group_tags", "renames", "last_name_updates", "nickname_updates", or "new_people". If there's a collision (e.g. two different people both named "Bob", or both going by "Bob"), you MUST use that person's full name (first + last) in every field, never just the bare first name or nickname — a bare shared name cannot be resolved automatically and risks attaching new information to the wrong person entirely. If you can't tell which same-named person the user means from context, ask a quick clarifying question instead of guessing.
+
+${HOW_YOU_KNOW_ROSTER_CLAUSE}
 
 A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, military unit, workplace, club, or friend circle the user was part of over a stretch of time. It is NOT a one-off event, and it is NOT the same thing as a moment. A single group can have many moments tagged to it over time (e.g. many stories from "the Air Force Academy") and many people tagged to it as members (e.g. teammates, classmates).
 
@@ -485,7 +500,7 @@ How to use it:
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, "new_people": ["Name1"], "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], ${FORMER_NAME_JSON_FIELD}, "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"], "moment_pets": ["Biscuit"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, ${NEW_PEOPLE_JSON_FIELD}, "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], ${HOW_YOU_KNOW_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"], "moment_pets": ["Biscuit"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
 
 IMPORTANT — capture EVERY concrete detail the user gives about an event, not just who attended. A "notes" entry doesn't have to be about a specific person: anything the user says about the event itself — what was done, eaten, said, how it went, the weather, an activity, a gift, a reaction — belongs in its own "notes" entry with "person" set to null, UNLESS it's naturally about one specific attendee (in which case attach it to that person's own note instead). Never let a real detail the user typed disappear just because it wasn't about a named person — the event's own page shows these general notes alongside the per-person ones. Don't pad a note with filler if the user gave no detail (that's what "Was there." is for — see below); but when they DID give detail, capture it, even if it means several separate notes entries for one event.
@@ -507,6 +522,7 @@ IMPORTANT — name spelling: when writing a person's name anywhere (in "reply", 
 CRITICAL — the "Who was there" list on an event's own page is driven ENTIRELY by that moment entry's own "notes": a person only shows up as having attended if they have at least one note linked to that specific moment. So whenever the user is describing or adding to an event and mentions that someone ALREADY IN THE ROSTER (or someone they explicitly asked you to add via "new_people") was AT it — even in passing, even with no other detail about them — you MUST still include an entry for them in that moment's own "notes" (e.g. {"person": "Name1", "note": "Was there."}). Do not just add them to "new_people"/"relevant_people" and stop — a person with no note attached to the moment will silently NOT appear as having attended it, even if your own "reply" text mentions them by name. If several events are being captured at once, make sure each person is attached to the RIGHT event's "notes", not lumped into just one of them. But "Was there." is a LAST RESORT for someone the user named with zero detail — if the user actually described what that person did, said, or brought, put THAT in their note instead of flattening it to "Was there." (e.g. user says "my brother Jake came and brought his new girlfriend" → Jake's note should say he brought his new girlfriend, not just "Was there.").
 
 CRITICAL — NEVER create a profile for someone just because they came up in a story. Not everyone the user mentions is someone they want a contact for: a couple they got talking to at a bar, a waiter, a friend-of-a-friend, someone's colleague who came up once. Creating profiles for those clutters their People list and their Dunbar count, and it is annoying to undo.
+${HOW_YOU_KNOW_CREATE_CLAUSE}
 - "new_people" is ONLY for someone the user EXPLICITLY asked you to add — "add Jim as a contact", "make a profile for my new neighbor Dave", "save Sarah's sister". If they didn't ask, it doesn't go here.
 - EVERYONE ELSE who is brand-new (not already in the roster provided in this prompt) goes in "mentioned_names" instead — on the entry in "moments" for the event they came up at, or in the top-level "mentioned_names" if this turn isn't about an event at all. No profile is created; the user is asked separately whether they want one.
 - Someone already in the roster is NOT brand-new. Use them normally in "notes"/"relevant_people" exactly as before — never put an existing person in "mentioned_names".
@@ -660,7 +676,7 @@ ${notebooksContext || "(none written yet)"}`
 
     let parsed: any = { reply: ranOutThinking
       ? "That one took more thinking than I had room for. Try asking about a smaller group, or narrowing the question."
-      : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], former_name_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
+      : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], how_you_know_updates: [], former_name_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
     let rawText = ""
     try {
       rawText = textBlock?.text ?? ""
@@ -702,21 +718,68 @@ ${notebooksContext || "(none written yet)"}`
       }
     }
 
-    for (const name of parsed.new_people ?? []) {
+    // An entry is either a bare name (as it always was) or {name, how_you_know_them} — the second
+    // shape is how a person whose first name is already taken gets created at all. See the guard
+    // below for why a bare colliding name is refused.
+    for (const entry of parsed.new_people ?? []) {
+      const parsedEntry = parseNewPersonEntry(entry)
+      if (!parsedEntry) continue
+      const { name, howYouKnowThem } = parsedEntry
       const key = name.toLowerCase()
       if (!idByName[key]) {
+        // ambiguousKeys holds every bare name that more than one person already answers to, and
+        // those keys were deleted from idByName above so they can never resolve to the wrong
+        // person. The side effect, unnoticed until 2026-08-26: "add Sarah" then reads as "no Sarah
+        // exists" and mints a TENTH one. That is exactly how this account ended up holding both
+        // "Amber" and "Amber h", and 26 duplicate name pairs in total.
+        //
+        // So a colliding bare name is not created blind. It is created only when the model also
+        // supplies something to tell her apart by — which is what the user was asked for. The
+        // refusal is loud rather than silent: a skipped create with a confident reply is the same
+        // class of quiet lie the dropped notes above were.
+        if (ambiguousKeys.has(key) && !howYouKnowThem) {
+          console.error(
+            `new_people refused: "${name}" collides with people already on file and arrived with no how_you_know_them to tell them apart`
+          )
+          continue
+        }
         const [first, ...rest] = name.trim().split(" ")
         const lastName =
           rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
         const { data: newPerson } = await supabaseClient
           .from("people")
-          .insert({ user_id: user.id, name: first, last_name: lastName })
+          .insert({ user_id: user.id, name: first, last_name: lastName, how_you_know_them: howYouKnowThem })
           .select()
           .single()
         if (newPerson) {
           idByName[key] = newPerson.id
           nameById[newPerson.id] = name.trim()
         }
+      } else if (howYouKnowThem) {
+        // Names someone already on file: treat it as filling in the blank rather than a no-op, the
+        // same way last_name_updates fills in a surname learned later. Never overwrites — the
+        // profile form is the editor for this field, and a passing chat remark must not clobber it.
+        const existingId = idByName[key]
+        const { data: existing } = await supabaseClient
+          .from("people")
+          .select("how_you_know_them")
+          .eq("id", existingId)
+          .single()
+        if (existing && !existing.how_you_know_them) {
+          await supabaseClient.from("people").update({ how_you_know_them: howYouKnowThem }).eq("id", existingId)
+        }
+      }
+    }
+
+    // Stated outright ("that Sarah is Manuel's friend"), rather than alongside a create. Additive
+    // for the same reason as above: the profile form owns this field, chat only fills a blank.
+    for (const update of parsed.how_you_know_updates ?? []) {
+      const id = idByName[update.person?.trim().toLowerCase()]
+      const value = update.how_you_know_them?.trim()
+      if (!id || !value) continue
+      const { data: existing } = await supabaseClient.from("people").select("how_you_know_them").eq("id", id).single()
+      if (existing && !existing.how_you_know_them) {
+        await supabaseClient.from("people").update({ how_you_know_them: value }).eq("id", id)
       }
     }
 
@@ -1016,9 +1079,15 @@ ${notebooksContext || "(none written yet)"}`
       // Each note is an independent insert (no dedup/lookup state to race on), so they're fired
       // together instead of one round-trip at a time. A note with no "person" (or one the model
       // didn't tie to a specific attendee) is a general event-level detail — same "notes" table,
-      // same moment_id, just person_id: null — rather than being silently dropped. A note that DOES
-      // name a person but fails to resolve (typo, ambiguous shared name) is still dropped, same as
-      // before: that's a resolution failure, not an intentional general note.
+      // same moment_id, just person_id: null — rather than being silently dropped.
+      //
+      // A note that DOES name a person but fails to resolve used to be dropped outright, on the
+      // reasoning that a resolution failure isn't an intentional general note. Measured on the
+      // founder's account 2026-08-26, that reasoning cost real content: 561 of 896 people share a
+      // first name with someone else, so "Sarah just got a new job" resolves to nobody (nine
+      // Sarahs, all unmapped by ambiguousKeys) and the sentence was thrown away while the reply
+      // cheerfully confirmed it. It lands on the EVENT now, carrying the name the user actually
+      // said, so the words survive and the person can be corrected later.
       await Promise.all(
         (momentEntry.notes ?? []).map((note: any) => {
           const rawPerson = note.person?.trim()
@@ -1031,7 +1100,18 @@ ${notebooksContext || "(none written yet)"}`
             })
           }
           const personId = idByName[rawPerson.toLowerCase()]
-          if (!personId) return null
+          if (!personId) {
+            // Prefixed with the name as said, so "which Sarah?" stays answerable later — without it
+            // a general note reading "Was there." is unattributable to anyone. Skipped when the note
+            // already opens with that name, which would just stutter it.
+            const alreadyNamed = note.note?.trim().toLowerCase().startsWith(rawPerson.toLowerCase())
+            return supabaseClient.from("notes").insert({
+              person_id: null,
+              moment_id: momentId,
+              content: alreadyNamed ? note.note : `${rawPerson}: ${note.note}`,
+              source: "home",
+            })
+          }
           return supabaseClient.from("notes").insert({
             person_id: personId,
             moment_id: momentId,

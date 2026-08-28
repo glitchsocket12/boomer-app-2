@@ -21,6 +21,14 @@ import {
   FORMER_NAME_PROMPT_CLAUSE,
   FORMER_NAME_JSON_FIELD,
 } from "../_shared/formerNames.ts"
+import {
+  HOW_YOU_KNOW_CREATE_CLAUSE,
+  HOW_YOU_KNOW_JSON_FIELD,
+  HOW_YOU_KNOW_ROSTER_CLAUSE,
+  NEW_PEOPLE_JSON_FIELD,
+  howYouKnowMarker,
+  parseNewPersonEntry,
+} from "../_shared/howYouKnow.ts"
 import { mergeNicknames, parseNicknames, NICKNAME_PROMPT_CLAUSE, NICKNAME_JSON_FIELD } from "../_shared/nicknames.ts"
 
 const corsHeaders = {
@@ -78,7 +86,7 @@ serve(async (req) => {
       fetchAllRows((from, to) =>
         supabaseClient
           .from("people")
-          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, is_self")
+          .select("id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, how_you_know_them, is_self")
           .order("id")
           .range(from, to)
       ),
@@ -158,6 +166,7 @@ serve(async (req) => {
         const marks = [
           nicknamesById[p.id] ? `also goes by: ${nicknamesById[p.id].join(", ")}` : null,
           formerNameMarker(rawFormerById[p.id] ?? []),
+          howYouKnowMarker(p.how_you_know_them),
         ].filter(Boolean)
         return marks.length > 0 ? `${nameById[p.id]} (${marks.join(", ")})` : nameById[p.id]
       })
@@ -196,7 +205,7 @@ Each call covers exactly one note the user just submitted — there's no back-an
 ${familySignalPromptMultiSubject()}
 
 At the end of EVERY turn (not just the final one), respond with ONLY a JSON object in this exact shape and nothing else — no preamble, no commentary, no markdown code fences, just the raw JSON object starting with { and ending with }:
-{"reply": "the natural conversational text to show the user", "needs_clarification": false, "new_people": ["Name1"], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${NICKNAME_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user", "needs_clarification": false, ${NEW_PEOPLE_JSON_FIELD}, "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "additional_notes": [{"person": "Name1", "note": "short new fact"}], "moment_field_updates": {"occasion": null, "location": null, "when_text": null, "event_date": null, "event_end_date": null}, "add_groups": ["Group Name"], ${NICKNAME_JSON_FIELD}, ${HOW_YOU_KNOW_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 This applies even when the user's message covers a sensitive topic like a health event — stay warm and human in the "reply" text itself, but the message as a whole must still be nothing but that one JSON object.
 
 This is saved immediately after every single turn, so only include in "new_people"/"mentioned_names"/"additional_notes"/"moment_field_updates"/"add_groups"/"nickname_updates" whatever is newly given in the user's latest message — never repeat something already reflected in what's already known about this moment.
@@ -204,6 +213,10 @@ This is saved immediately after every single turn, so only include in "new_peopl
 ${NICKNAME_PROMPT_CLAUSE}
 
 ${FORMER_NAME_PROMPT_CLAUSE}
+
+${HOW_YOU_KNOW_ROSTER_CLAUSE}
+
+${HOW_YOU_KNOW_CREATE_CLAUSE}
 
 CRITICAL — NEVER create a profile for someone just because they came up in the story. Not everyone the user mentions is someone they want a contact for: a couple they got talking to, a waiter, a friend-of-a-friend. Creating profiles for those clutters their People list and their Dunbar count, and it is annoying to undo.
 - "new_people" is ONLY for someone the user EXPLICITLY asked you to add — "add Jim as a contact", "make a profile for Dave". If they didn't ask, it doesn't go here.
@@ -361,15 +374,27 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
     const groupsAdded: string[] = []
     const fieldsSet: string[] = []
 
-    for (const name of parsed.new_people ?? []) {
+    for (const entry of parsed.new_people ?? []) {
+      const parsedEntry = parseNewPersonEntry(entry)
+      if (!parsedEntry) continue
+      const { name, howYouKnowThem } = parsedEntry
       const key = name.toLowerCase()
       if (!idByName[key]) {
+        // See _shared/howYouKnow.ts: ambiguousKeys unmapped this name a few lines up so it could
+        // never resolve to the wrong person, which also makes "add Sarah" look like "no Sarah
+        // exists" and mint another one. Refused unless something is supplied to tell her apart.
+        if (ambiguousKeys.has(key) && !howYouKnowThem) {
+          console.error(
+            `new_people refused: "${name}" collides with people already on file and arrived with no how_you_know_them to tell them apart`
+          )
+          continue
+        }
         const [first, ...rest] = name.trim().split(" ")
         const lastName =
           rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
         const { data: newPerson } = await supabaseClient
           .from("people")
-          .insert({ user_id: user.id, name: first, last_name: lastName })
+          .insert({ user_id: user.id, name: first, last_name: lastName, how_you_know_them: howYouKnowThem })
           .select()
           .single()
         if (newPerson) {
@@ -382,6 +407,19 @@ Here are the OTHER events/moments already recorded in the app (not this one), by
 
     // Applied after new_people so someone the user just asked to add can also be given a nickname
     // in the same message. Merged onto rawNicknamesById, NOT nicknamesById — see its declaration.
+    // Stated outright ("that Sarah is Manuel's friend"), rather than alongside a create. Additive
+    // only: the profile form owns this field, and a passing chat remark must never clobber a line
+    // the user typed there themselves.
+    for (const update of parsed.how_you_know_updates ?? []) {
+      const id = idByName[update.person?.trim().toLowerCase()]
+      const value = update.how_you_know_them?.trim()
+      if (!id || !value) continue
+      const { data: existing } = await supabaseClient.from("people").select("how_you_know_them").eq("id", id).single()
+      if (existing && !existing.how_you_know_them) {
+        await supabaseClient.from("people").update({ how_you_know_them: value }).eq("id", id)
+      }
+    }
+
     for (const update of parsed.nickname_updates ?? []) {
       const id = idByName[String(update?.person ?? "").trim().toLowerCase()]
       if (!id) continue

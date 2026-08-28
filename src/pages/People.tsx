@@ -22,6 +22,7 @@ export type Person = {
   middle_name: string | null
   goes_by_other: string | null
   former_last_names: string | null
+  how_you_know_them: string | null
   created_at: string
   person_groups: { groups: GroupRef | null }[]
   notes: { moment_id: string | null; moments: { id: string; occasion: string | null; raw_description: string } | null }[]
@@ -113,6 +114,7 @@ export function filterRows(rows: ListRow[], search: string): ListRow[] {
       // Both forms, so a name change is findable either as the bare old surname or whole
       // ("Jenkins" and "Sarah Jenkins" both reach Sarah Mitchell).
       (person.former_last_names ?? '').toLowerCase().includes(query) ||
+      (person.how_you_know_them ?? '').toLowerCase().includes(query) ||
       formerFullNames(person.name, parseFormerLastNames(person.former_last_names)).some((n) =>
         n.toLowerCase().includes(query)
       )
@@ -175,7 +177,7 @@ export default function People({
       supabase
         .from('people')
         .select(
-          'id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
+          'id, name, last_name, nicknames, middle_name, goes_by_other, former_last_names, how_you_know_them, created_at, person_groups(groups(id, name)), notes(moment_id, moments(id, occasion, raw_description)), reminders(month, day)'
         )
         .eq('is_self', false)
         .order('name')
@@ -411,6 +413,7 @@ function PersonCard({
       <button onClick={() => onViewPerson(person)} style={styles.titleButton}>
         {fullName}
       </button>
+      {person.how_you_know_them && <p style={styles.howYouKnowLine}>{person.how_you_know_them}</p>}
 
       {(groups.length > 0 || events.length > 0) && (
         <div style={styles.affiliations}>
@@ -554,6 +557,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: 'left',
     cursor: 'pointer',
   },
+  // Sits directly under the name, tighter than the affiliation chips below it — it reads as part
+  // of the name, which is the whole job: telling this Sarah from the other eight.
+  howYouKnowLine: { fontSize: fontSize.label, color: colors.textFaint, margin: `${space.xs} 0 0 0` },
   petEmoji: { fontStyle: 'normal' },
   memorialTitle: { color: colors.textMuted },
   memorialTag: { fontSize: fontSize.label, color: colors.textFaint, fontStyle: 'italic' },
