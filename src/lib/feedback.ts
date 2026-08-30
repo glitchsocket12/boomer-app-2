@@ -60,3 +60,68 @@ export async function markFeedbackDone(id: string) {
 export async function deleteFeedbackNote(id: string) {
   await supabase.from('feedback_notes').delete().eq('id', id)
 }
+
+/** Local calendar day (YYYY-MM-DD) for a stored timestamp — dates only, no clock time. */
+function noteDay(when: string | Date): string {
+  const d = when instanceof Date ? when : new Date(when)
+  if (Number.isNaN(d.getTime())) return 'undated'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+const UNLABELLED_PAGE = 'Unlabelled page'
+
+/**
+ * Every open note as one block of plain text, ready to paste into a Claude Code session.
+ *
+ * Why this exists: `feedback_notes` is RLS-scoped to the account that wrote the note, so the only
+ * reader that can ever see them is the signed-in founder's own browser. A Claude Code session
+ * running in the cloud has neither a login nor (under the sandbox's network policy) any route to
+ * the app, so "read my feedback and turn it into todos" had no path at all — the notes had to be
+ * retyped from memory. One click here and one paste is that path.
+ *
+ * Grouped by page and oldest-first within a page, because the paste is read as a punch list: notes
+ * on the same screen get worked together, and the order they were left in is the order the founder
+ * hit the problems.
+ */
+export function formatFeedbackNotesForExport(notes: FeedbackNote[], exportedOn: Date = new Date()): string {
+  if (notes.length === 0) return 'No open feedback notes.'
+
+  const byPage = new Map<string, FeedbackNote[]>()
+  for (const note of notes) {
+    const page = note.page_label?.trim() || UNLABELLED_PAGE
+    const bucket = byPage.get(page)
+    if (bucket) bucket.push(note)
+    else byPage.set(page, [note])
+  }
+
+  const pages = [...byPage.keys()].sort((a, b) => {
+    // The catch-all bucket sorts last however it's spelled — it's the least useful group to read.
+    if (a === UNLABELLED_PAGE) return b === UNLABELLED_PAGE ? 0 : 1
+    if (b === UNLABELLED_PAGE) return -1
+    return a.localeCompare(b, undefined, { sensitivity: 'base' })
+  })
+
+  const noteCount = notes.length
+  const lines: string[] = [
+    `Grove feedback notes — ${noteCount} open, exported ${noteDay(exportedOn)}`,
+  ]
+
+  for (const page of pages) {
+    const pageNotes = [...(byPage.get(page) ?? [])].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    )
+    lines.push('', `## ${page} (${pageNotes.length})`)
+    for (const note of pageNotes) {
+      // A note is free text from a textarea, so it can be several lines; continuation lines are
+      // indented to keep one note reading as one bullet.
+      const [first = '', ...rest] = note.note.trim().split('\n')
+      lines.push(`- [${noteDay(note.created_at)}] ${first}`)
+      for (const line of rest) lines.push(`  ${line}`)
+      const element = note.element_label?.trim()
+      if (element) lines.push(`  on: ${element}`)
+    }
+  }
+
+  return lines.join('\n')
+}

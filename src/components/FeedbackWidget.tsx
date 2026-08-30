@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import type { FeedbackNote } from '../lib/feedback'
 import {
   describeElement,
+  formatFeedbackNotesForExport,
   saveFeedbackNote,
   listOpenFeedbackNotes,
   markFeedbackDone,
@@ -26,6 +27,8 @@ export default function FeedbackWidget({ pageLabel }: { pageLabel: string }) {
   const [savedFlash, setSavedFlash] = useState(false)
   const [notes, setNotes] = useState<FeedbackNote[]>([])
   const [openCount, setOpenCount] = useState(0)
+  const [copied, setCopied] = useState(false)
+  const [copyFallback, setCopyFallback] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setSignedIn(!!user))
@@ -99,18 +102,42 @@ export default function FeedbackWidget({ pageLabel }: { pageLabel: string }) {
 
   async function openList() {
     setNotes(await listOpenFeedbackNotes())
+    setCopied(false)
+    setCopyFallback(null)
     setMode('list')
+  }
+
+  // Hands the whole open punch list over as one block of text (see `formatFeedbackNotesForExport`
+  // for why a copy button is the only route these notes have out of the browser).
+  async function handleCopyAll() {
+    const text = formatFeedbackNotesForExport(notes)
+    try {
+      // `navigator.clipboard` is undefined outside a secure context, and even inside one Safari
+      // rejects a write it doesn't tie to the click. Either way the text still has to reach the
+      // founder, so a failure falls back to a box they can select by hand.
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(text)
+      setCopyFallback(null)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopyFallback(text)
+      setCopied(false)
+    }
   }
 
   async function handleMarkDone(id: string) {
     await markFeedbackDone(id)
     setNotes((n) => n.filter((x) => x.id !== id))
+    // Whatever was copied a moment ago still lists this note — don't leave stale text on screen.
+    setCopyFallback(null)
     refreshCount()
   }
 
   async function handleDelete(id: string) {
     await deleteFeedbackNote(id)
     setNotes((n) => n.filter((x) => x.id !== id))
+    setCopyFallback(null)
     refreshCount()
   }
 
@@ -167,7 +194,26 @@ export default function FeedbackWidget({ pageLabel }: { pageLabel: string }) {
 
       {mode === 'list' && (
         <div style={styles.panel}>
-          <p style={styles.listTitle}>Open feedback ({notes.length})</p>
+          <div style={styles.listHeader}>
+            <p style={styles.listTitle}>Open feedback ({notes.length})</p>
+            {notes.length > 0 && (
+              <button onClick={handleCopyAll} style={styles.smallButton}>
+                {copied ? 'Copied ✓' : 'Copy all'}
+              </button>
+            )}
+          </div>
+          {copyFallback !== null && (
+            <>
+              <p style={styles.copyHint}>Couldn't reach the clipboard — select this and copy it.</p>
+              <textarea
+                readOnly
+                autoFocus
+                value={copyFallback}
+                onFocus={(e) => e.currentTarget.select()}
+                style={styles.exportBox}
+              />
+            </>
+          )}
           <div style={styles.listScroll}>
             {notes.length === 0 && <p style={styles.empty}>Nothing open.</p>}
             {notes.map((n) => (
@@ -282,7 +328,26 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.textBody,
     cursor: 'pointer',
   },
-  listTitle: { fontSize: fontSize.body, fontWeight: 'bold', margin: '0 0 0.5rem' },
+  listHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+    marginBottom: '0.5rem',
+  },
+  listTitle: { fontSize: fontSize.body, fontWeight: 'bold', margin: 0 },
+  copyHint: { fontSize: fontSize.micro, color: colors.textFaint, margin: '0 0 0.3rem' },
+  exportBox: {
+    width: '100%',
+    height: '110px',
+    fontSize: fontSize.micro,
+    padding: space.md,
+    borderRadius: radius.sm,
+    border: border.default,
+    fontFamily,
+    marginBottom: space.md,
+    boxSizing: 'border-box',
+  },
   listScroll: { maxHeight: '260px', overflowY: 'auto', marginBottom: space.md },
   listItem: { borderBottom: `1px solid ${neutral.grey50}`, padding: '0.4rem 0' },
   listNote: { fontSize: fontSize.label, margin: '0 0 0.2rem' },
