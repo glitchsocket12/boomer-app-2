@@ -109,6 +109,7 @@ serve(async (req) => {
       { data: genderRows },
       { data: notebooks },
       { data: notebookEntries },
+      { data: groupWindows },
     ] = await Promise.all([
       // Paged for the same reason person_groups is (see fetchAllPersonGroups): 700 people already,
       // and the 1000th person onward would just stop existing as far as the model is concerned.
@@ -121,10 +122,10 @@ serve(async (req) => {
       ),
       supabaseClient
         .from("moments")
-        .select("id, occasion, location, when_text, details, created_at, notes(content, person_id)")
+        .select("id, occasion, location, when_text, event_date, event_end_date, details, created_at, notes(content, person_id)")
         .order("id")
         .order("created_at", { foreignTable: "notes" }),
-      supabaseClient.from("groups").select("id, name, parent_group_id").order("id"),
+      supabaseClient.from("groups").select("id, name, parent_group_id, group_type").order("id"),
       fetchAllPersonGroups(supabaseClient),
       supabaseClient
         .from("moment_groups")
@@ -170,6 +171,14 @@ serve(async (req) => {
           .order("id")
           .range(from, to)
       ),
+      // A group's active window (2026-08-23) — the dates and place it actually covers, which is
+      // what lets the model connect "just landed in Pensacola" on Aug 23 to a group running a
+      // course there that week. Its OWN query, deliberately not three more columns on the groups
+      // select above: a `.select()` naming a column that doesn't exist yet fails the WHOLE query,
+      // so folding them in would take the entire groups roster — and with it this function — down
+      // on any database where the migration hasn't been pasted in. Same split as pets, gender and
+      // notebooks above; separate queries fail independently.
+      supabaseClient.from("groups").select("id, start_date, end_date, location").order("id"),
     ])
 
     const nameById: Record<string, string> = {}
@@ -334,7 +343,16 @@ serve(async (req) => {
           .join("; ")
         const recordedOn = new Date(m.created_at).toDateString()
         const momentGroupNames = momentGroupNamesById[m.id] ?? []
-        return `[MOMENT_ID: ${m.id}] Occasion: ${m.occasion ?? "unknown"} | Location: ${m.location ?? "unknown"} | When (as described): ${m.when_text ?? "unknown"} | Recorded on: ${recordedOn} | People: ${[...new Set(notePeople)].join(", ")} | Groups: ${momentGroupNames.join(", ") || "none"} | Notes: ${noteLines}`
+        // The real calendar date, not just the user's own words for it — without it the model
+        // can't tell whether an already-recorded event falls inside a group's window (2026-08-23).
+        // A range collapses to one date when there's no end, and to "unknown" when there's no date
+        // at all, so this stays byte-stable for every moment that isn't re-dated.
+        const dated = m.event_date
+          ? m.event_end_date && m.event_end_date !== m.event_date
+            ? `${m.event_date} to ${m.event_end_date}`
+            : m.event_date
+          : "unknown"
+        return `[MOMENT_ID: ${m.id}] Occasion: ${m.occasion ?? "unknown"} | Location: ${m.location ?? "unknown"} | Date: ${dated} | When (as described): ${m.when_text ?? "unknown"} | Recorded on: ${recordedOn} | People: ${[...new Set(notePeople)].join(", ")} | Groups: ${momentGroupNames.join(", ") || "none"} | Notes: ${noteLines}`
       })
       .join("\n")
 
@@ -372,8 +390,33 @@ serve(async (req) => {
       })
       .join("\n")
 
+    // A group's own dates and place, keyed by id. Empty on a database where the 2026-08-23
+    // migration hasn't run, which simply leaves every roster line in its old shape.
+    const windowById: Record<string, { start: string | null; end: string | null; location: string | null }> = {}
+    for (const w of groupWindows ?? []) {
+      windowById[w.id] = { start: w.start_date ?? null, end: w.end_date ?? null, location: w.location ?? null }
+    }
+
+    // "CRM School (School; Pensacola, FL; active 2026-08-23 to 2026-08-27; members: none yet)".
+    // Every clause is omitted when it has no value, so a group with no type, window or place
+    // renders exactly the line it rendered before this existed.
+    //
+    // ⚠ CACHE TRAP (CLAUDE.md rule 3): these are the STORED dates, printed verbatim. Never write
+    // anything computed against today here — "active now", "day 2 of 5", "ends tomorrow". This
+    // block lives in the 1-hour roster tier, and a value that changes at midnight would rewrite
+    // the whole tier at full price every single day. Relative reasoning is the model's job, off
+    // the `todayContext` tier at the very end of the prompt, which is uncached precisely so that
+    // today's date can change without costing anything.
     const groupsContext = (groups ?? [])
-      .map((g: any) => `${groupNameById[g.id]} (members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"})`)
+      .map((g: any) => {
+        const w = windowById[g.id]
+        const parts: string[] = []
+        if (g.group_type) parts.push(g.group_type)
+        if (w?.location) parts.push(w.location)
+        if (w?.start) parts.push(w.end ? `active ${w.start} to ${w.end}` : `active from ${w.start}, ongoing`)
+        parts.push(`members: ${(groupMemberNamesById[g.id] ?? []).join(", ") || "none yet"}`)
+        return `${groupNameById[g.id]} (${parts.join("; ")})`
+      })
       .join("\n")
 
     const tagsContext = (tags ?? []).map((t: any) => t.name).join(", ")
@@ -451,6 +494,12 @@ A GROUP is a recurring, ongoing affiliation — a school, academy, sports team, 
 - If the user explicitly says a specific person belongs to one of these same affiliations — e.g. "he was on my Pop Warner team too," "she went through the Academy with me" — tag that person into the group via "person_group_tags" (this is turn-level, not tied to any one moment entry).
 - Don't invent a group from a passing mention of a place or a single unaffiliated event. Only tag a group when the user's own framing is about a recurring school/team/unit/organization, not a one-time location.
 - Pay special attention to a proper name or acronym the user leads with as a label for the update itself (e.g. "AMIC update from today...") or repeatedly refers back to (e.g. "the class," "the program," "the team") — that is a strong signal it names a recurring group, even the very first time it's mentioned. Tag it in that entry's "moment_groups" rather than waiting for a second, more explicit mention.
+- GROUP WINDOWS — a group in the roster shown as "active <start> to <end>" (or "active from <start>, ongoing") is a thing that happens at a set time, and one shown with a place is a thing that happens somewhere specific. Compare those against today's date, given at the end of this prompt, and against the date you worked out for the moment you're capturing:
+  - When a new moment's date falls INSIDE a group's active window, tag that group in the entry's "moment_groups" — do not wait to be asked, and do not wait for the user to name the group. This is the single most useful thing you can do with a window. If the group's place ALSO matches where the moment happened, treat it as certain.
+  - Say so plainly in your "reply" whenever you tag a group this way (e.g. "Saved — I put this under CRM School since you're there this week."). The user needs to see it to correct it, and a silent tag they disagree with is worse than no tag at all.
+  - Do NOT tag on the dates alone when the moment clearly has nothing to do with that group — a phone call with a sibling, a bill paid, a workout — just because it happened during the window. A window makes the group PLAUSIBLE; the content still has to be consistent with it. When you genuinely can't tell, ask a short question in your reply instead of tagging.
+  - A group with no window shown is unaffected by any of this — most groups (a family, a friend group, a squadron) have none, and they keep working exactly as described above.
+- When the user tells you a group's dates or where it is — "I'm at CRM school in Pensacola from the 23rd through the 27th", "the reunion is in Tahoe that first week of June" — record it in the top-level "group_details" array: {"group": "<the group's name, exactly as in the roster if it already exists>", "start_date": "YYYY-MM-DD or null", "end_date": "YYYY-MM-DD or null", "location": "<place> or null"}. Resolve relative phrasing against today's date the same way you do for a moment's event_date. This is what lets everything above work for that group from then on, so record it the FIRST time they mention it, even in passing, and even if you're also creating the group in the same turn. Leave "group_details" as an empty array when nothing about a group's dates or place came up.
 - SUBGROUPS: a group in the roster written "Parent / Child" (e.g. "22 AS / Pilots") is a subgroup of "22 AS". When you mean an existing group, copy its name from the roster EXACTLY, including the "Parent / Child" form — a bare "Pilots" when the roster has two of them cannot be resolved and the tag will be dropped. Two different parents can each have a subgroup with the same short name, so if the user's phrasing doesn't make clear which one they mean, ask a quick clarifying question instead of guessing. When you're deliberately creating a NEW subgroup under an existing parent, write it in that same "Parent / Child" form; for any other new group, just give its plain name with no prefix. Membership rolls UPWARD: a parent group's member list in the roster already includes everyone from its subgroups, so answer "who's in the parent?" straight from that list and never add the subgroups up yourself. It does not roll downward — being in the parent does not put someone in any particular subgroup, so to record that someone is in a subgroup you must tag the subgroup by name.
 
 A PET is an animal belonging to one or more people — a dog, cat, horse, fish, bird, reptile, anything. Pets are recorded in their own "pets" field, and the roster provided in this prompt lists every pet already on file with its owner(s).
@@ -500,7 +549,7 @@ How to use it:
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
 At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
-{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, ${NEW_PEOPLE_JSON_FIELD}, "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], ${HOW_YOU_KNOW_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"], "moment_pets": ["Biscuit"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
+{"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, ${NEW_PEOPLE_JSON_FIELD}, "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], ${HOW_YOU_KNOW_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "group_details": [{"group": "Group Name", "start_date": "YYYY-MM-DD or null", "end_date": "YYYY-MM-DD or null", "location": "Place or null"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"], "moment_pets": ["Biscuit"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
 
 IMPORTANT — capture EVERY concrete detail the user gives about an event, not just who attended. A "notes" entry doesn't have to be about a specific person: anything the user says about the event itself — what was done, eaten, said, how it went, the weather, an activity, a gift, a reaction — belongs in its own "notes" entry with "person" set to null, UNLESS it's naturally about one specific attendee (in which case attach it to that person's own note instead). Never let a real detail the user typed disappear just because it wasn't about a named person — the event's own page shows these general notes alongside the per-person ones. Don't pad a note with filler if the user gave no detail (that's what "Was there." is for — see below); but when they DID give detail, capture it, even if it means several separate notes entries for one event.
@@ -1202,6 +1251,56 @@ ${notebooksContext || "(none written yet)"}`
       }).catch((e) => console.error("Background summarize-moment kickoff failed", String(e)))
       // @ts-ignore -- EdgeRuntime is a Supabase Edge Runtime global, not in the Deno std lib types
       if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(summarizePromise)
+    }
+
+    // A group's dates and place, straight out of the conversation (2026-08-23). Only ever FILLS
+    // IN a field that is currently null — never overwrites one, because a value the founder typed
+    // on the group's own page is a stated fact and a value inferred from a passing sentence is a
+    // guess, and the guess must not win.
+    //
+    // Position in the turn doesn't matter: every tagging decision was made by the model before any
+    // of these writes ran, so a window recorded here first shows up in the NEXT turn's roster,
+    // which is the intent — this is about the group being recognisable from now on.
+    for (const detail of parsed.group_details ?? []) {
+      if (!detail?.group) continue
+      const groupId = await findOrCreateGroupId(detail.group)
+      if (!groupId) continue
+
+      // Read back what's already there. On a database without the migration this errors, and the
+      // whole block becomes a no-op rather than failing the turn.
+      const { data: current, error: readError } = await supabaseClient
+        .from("groups")
+        .select("start_date, end_date, location")
+        .eq("id", groupId)
+        .single()
+      if (readError || !current) continue
+
+      // The model is told "YYYY-MM-DD or null" but writes prose for a living, so anything that
+      // isn't literally an ISO date is dropped rather than handed to a `date` column — a stray
+      // "null"/"unknown"/"the 23rd" would fail the whole update and lose the other two fields
+      // with it. Same reason `location` is checked for the string "null".
+      const isoDate = (value: unknown): string | null =>
+        typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? value.trim() : null
+      const cleanText = (value: unknown): string | null => {
+        if (typeof value !== "string") return null
+        const trimmed = value.trim()
+        return trimmed && trimmed.toLowerCase() !== "null" ? trimmed : null
+      }
+
+      const start = isoDate(detail.start_date)
+      const end = isoDate(detail.end_date)
+      const patch: Record<string, string> = {}
+      if (!current.start_date && start) patch.start_date = start
+      // An end with no start is not a window (nothing reads it), and an end BEFORE the start would
+      // read as open-ended and quietly stop matching on dates — drop both rather than store either.
+      const effectiveStart = current.start_date ?? patch.start_date ?? null
+      if (!current.end_date && end && effectiveStart && end >= effectiveStart) patch.end_date = end
+      const location = cleanText(detail.location)
+      if (!current.location && location) patch.location = location
+      if (Object.keys(patch).length === 0) continue
+
+      const { error: writeError } = await supabaseClient.from("groups").update(patch).eq("id", groupId)
+      if (writeError) console.error("group_details update failed", groupId, writeError.message)
     }
 
     for (const tag of parsed.person_group_tags ?? []) {
