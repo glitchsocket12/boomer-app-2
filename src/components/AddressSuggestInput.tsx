@@ -25,9 +25,10 @@ export default function AddressSuggestInput({
   disabled?: boolean
   /**
    * Merged over the default input styling, for callers whose field has to line up with siblings
-   * it didn't design (EventDetail's name/date/location row is a flex row aligned at flex-end, so
-   * a taller box there reads as a misalignment). Affects the text box only — the dropdown keeps
-   * its own look everywhere.
+   * it didn't design. EventDetail's name/date/location row passes its own `metaEditInput` so the
+   * Location box carries the same padding as the Date box beside it — the two read as one set of
+   * meta fields, and this component's roomier default would break that. Affects the text box
+   * only; the dropdown keeps its own look everywhere.
    */
   inputStyle?: React.CSSProperties
 }) {
