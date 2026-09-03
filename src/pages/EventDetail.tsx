@@ -9,6 +9,7 @@ import ManagePanel from '../components/ManagePanel'
 import FloatingActionBubble, { type BubbleNav } from '../components/FloatingActionBubble'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
+import AddressSuggestInput from '../components/AddressSuggestInput'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import VoiceInputButton from '../components/VoiceInputButton'
 import SummaryText from '../components/SummaryText'
@@ -45,6 +46,7 @@ import {
   untagPetFromMoment,
   type Pet,
 } from '../lib/pets'
+import { tallyLocations } from '../lib/locationGroups'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
 import { fullName } from '../lib/personLabel'
 
@@ -84,6 +86,9 @@ export type OtherEvent = {
   event_date?: string | null
   event_end_date?: string | null
   created_at?: string
+  // Not shown in either event picker — it feeds AddressSuggestInput's "you've typed this before"
+  // list on the location field, which is why the roster is also loaded when editing basics.
+  location?: string | null
 }
 // The parent event and this sub-event's siblings, stripped down to just who was tagged on each —
 // the pool the "were they at this one too?" suggestions are ranked from (lib/siblingAttendees.ts).
@@ -454,6 +459,19 @@ export default function EventDetail({
   const nestableEvents = useMemo(
     () => otherEvents.filter((e) => !momentParentById.has(e.id)),
     [otherEvents, momentParentById]
+  )
+
+  // Every place already on the account, most-used first, for the location field's local
+  // suggestions. Reuses ManageLocations' tally rather than a second dedupe, so the vocabulary
+  // offered here is the same one that screen cleans up. Most-used-first (not alphabetical) because
+  // AddressSuggestInput only shows the top 5 matches — a place you go constantly should win over a
+  // one-off that happens to sort earlier. Empty until the roster loads; see startEditingBasics.
+  const recentLocations = useMemo(
+    () =>
+      tallyLocations(otherEvents.map((e) => e.location))
+        .sort((a, b) => b.count - a.count)
+        .map((row) => row.value),
+    [otherEvents]
   )
 
   // Titles behind the merge picker's "Parent / Child" row labels. THIS event is added on top of the
@@ -1228,6 +1246,11 @@ export default function EventDetail({
     setDateInput(moment?.event_date ?? '')
     setLocationInput(moment?.location ?? '')
     setEditingBasics(true)
+    // Populates the location field's "you've typed this before" suggestions. Deliberately not
+    // awaited: Geoapify's live suggestions work from the first keystroke either way, and the
+    // local ones simply appear once this lands. Guarded internally, so reopening the form or
+    // having used a picker first costs nothing.
+    void loadEventRoster()
   }
 
   // Name, date, and location saved together as one write (2026-08-07 — previously two separate
@@ -1312,7 +1335,7 @@ export default function EventDetail({
       fetchAllRows((from, to) =>
         supabase
           .from('moments')
-          .select('id, occasion, raw_description, event_date, event_end_date, created_at')
+          .select('id, occasion, raw_description, event_date, event_end_date, created_at, location')
           .neq('id', eventId)
           .order('id')
           .range(from, to)
@@ -1423,6 +1446,7 @@ export default function EventDetail({
       titleInput={titleInput}
       dateInput={dateInput}
       locationInput={locationInput}
+      recentLocations={recentLocations}
       savingBasics={savingBasics}
       onStartEditBasics={startEditingBasics}
       onTitleInputChange={setTitleInput}
@@ -1553,6 +1577,7 @@ export function EventDetailView({
   titleInput = '',
   dateInput = '',
   locationInput = '',
+  recentLocations = [],
   savingBasics = false,
   onStartEditBasics = () => {},
   onTitleInputChange = () => {},
@@ -1677,6 +1702,7 @@ export function EventDetailView({
   titleInput?: string
   dateInput?: string
   locationInput?: string
+  recentLocations?: string[]
   savingBasics?: boolean
   onStartEditBasics?: () => void
   onTitleInputChange?: (v: string) => void
@@ -1976,14 +2002,18 @@ export function EventDetailView({
               style={styles.metaEditInput}
             />
           </label>
-          <label style={styles.metaEditLabel}>
+          {/* minWidth because AddressSuggestInput's box is width:100% of this label — without a
+              floor it collapses to nothing in this flex row, where the plain input it replaced
+              got a browser default width. Also what the suggestion dropdown spans. */}
+          <label style={{ ...styles.metaEditLabel, minWidth: '16rem' }}>
             Location
-            <input
-              type="text"
+            <AddressSuggestInput
               value={locationInput}
-              onChange={(e) => onLocationInputChange(e.target.value)}
+              onChange={onLocationInputChange}
+              recentValues={recentLocations}
               placeholder="Where was this?"
-              style={styles.metaEditInput}
+              disabled={savingBasics}
+              inputStyle={styles.metaEditInput}
             />
           </label>
           <button type="submit" disabled={savingBasics} style={styles.saveButton}>

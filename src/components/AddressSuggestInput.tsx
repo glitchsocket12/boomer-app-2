@@ -16,12 +16,21 @@ export default function AddressSuggestInput({
   recentValues,
   placeholder,
   disabled,
+  inputStyle,
 }: {
   value: string
   onChange: (value: string) => void
   recentValues: string[]
   placeholder?: string
   disabled?: boolean
+  /**
+   * Merged over the default input styling, for callers whose field has to line up with siblings
+   * it didn't design. EventDetail's name/date/location row passes its own `metaEditInput` so the
+   * Location box carries the same padding as the Date box beside it — the two read as one set of
+   * meta fields, and this component's roomier default would break that. Affects the text box
+   * only; the dropdown keeps its own look everywhere.
+   */
+  inputStyle?: React.CSSProperties
 }) {
   const [focused, setFocused] = useState(false)
   const [highlighted, setHighlighted] = useState(-1)
@@ -93,7 +102,7 @@ export default function AddressSuggestInput({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         disabled={disabled}
-        style={styles.input}
+        style={{ ...styles.input, ...inputStyle }}
       />
       {showList && (
         <div style={styles.resultsList}>
