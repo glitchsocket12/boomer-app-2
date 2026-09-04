@@ -13,3 +13,24 @@ export function withMessageCacheBreakpoint(messages: any[]): any[] {
     { ...last, content: [{ type: "text", text: last.content, cache_control: { type: "ephemeral" } }] },
   ]
 }
+
+/**
+ * Where to cut a growing, append-ordered list so the cached half stays byte-identical across writes.
+ *
+ * Two things are going on, and both are load-bearing (learned the hard way 2026-09-04, in two
+ * rounds — see PROJECT_HISTORY):
+ *
+ * 1. `recentCount` items are always held back from the cached half, so a newly written item lands
+ *    in the volatile tail rather than inside the cached prefix.
+ * 2. The boundary is QUANTISED to `chunk`. Without this, appending one item slides the boundary
+ *    forward and pushes the oldest held-back item onto the END of the cached block — which makes
+ *    that block longer, so it no longer matches its own cached prefix. The archive would then be
+ *    re-created on the turn after every single write, which is exactly the cost the split exists to
+ *    avoid. Quantised, the boundary moves once per `chunk` writes instead of once per write.
+ *
+ * Returns the index to slice at: `items.slice(0, i)` is cacheable, `items.slice(i)` is the tail.
+ */
+export function archiveSplitIndex(total: number, recentCount: number, chunk: number): number {
+  if (chunk <= 0) return Math.max(0, total - recentCount)
+  return Math.max(0, Math.floor((total - recentCount) / chunk) * chunk)
+}

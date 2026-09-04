@@ -7,6 +7,7 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { readAnthropicSse } from "../_shared/replyStream.ts"
+import { archiveSplitIndex } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction, buildKinInstruction } from "../_shared/selfContext.ts"
 import { fetchAllRelationshipRows } from "../_shared/relationshipsTable.ts"
 import { buildFamilyRoster } from "../_shared/familyRoster.ts"
@@ -389,9 +390,23 @@ serve(async (req) => {
     // archive itself is a separate, accuracy-losing trade the founder has declined — don't
     // conflate the two.)
     const RECENT_MOMENT_COUNT = 20
-    const splitAt = Math.max(0, momentLines.length - RECENT_MOMENT_COUNT)
-    const archiveMomentLines = momentLines.slice(0, splitAt).join("\n")
-    const recentMomentLines = momentLines.slice(splitAt).join("\n")
+
+    // ...but a split taken at a FIXED DISTANCE FROM THE END is not enough on its own, and this is
+    // the second half of the bug. Measured 2026-09-04, after the first fix was already live: a
+    // capture still re-created 57,528 tokens on the following turn. Appending a moment grows the
+    // list, which slides the boundary forward, which pushes the oldest of the held-out moments ONTO
+    // THE END of the archive — and a block that grew by one line no longer matches the cached
+    // prefix that ends at its breakpoint. The archive was stable against everything except the one
+    // action this whole change exists to make cheap.
+    //
+    // So the boundary is quantised: it only moves when the count crosses a multiple of
+    // ARCHIVE_CHUNK, leaving the archive byte-identical across the other 24 saves out of 25. The
+    // cost is a slightly larger uncached tail (20-44 moments instead of exactly 20) in exchange for
+    // ~1 archive rebuild per 25 captures instead of one per capture.
+    const ARCHIVE_CHUNK = 25
+    const archiveCount = archiveSplitIndex(momentLines.length, RECENT_MOMENT_COUNT, ARCHIVE_CHUNK)
+    const archiveMomentLines = momentLines.slice(0, archiveCount).join("\n")
+    const recentMomentLines = momentLines.slice(archiveCount).join("\n")
 
     // Notebook entries fed to the model, newest first. Capped because this block has no natural
     // ceiling — a notebook someone writes in daily grows forever, and every entry would ride along
@@ -750,9 +765,22 @@ ${recentMomentLines}`
         // Omitting the block runs adaptive thinking anyway on this model, which is the behaviour
         // this function was tuned against. The status line isn't worth the envelope.
         //
-        // Also deliberately NO output_config: effort defaults to "high", and turning it down is a
-        // real quality trade the founder has reserved for themselves once the timings show what it
-        // would actually buy (CLAUDE.md rule 3 — don't silently downgrade).
+        // NO output_config — effort stays at its "high" default. DO NOT set this to "medium"
+        // without re-reading what happened when it was tried.
+        //
+        // Tried live 2026-09-04, at the founder's request, with the measured split in hand (thinking
+        // was 15.8s of a 20.4s real save). It was fast: thinking fell from 138-754 tokens to 0-30,
+        // and a lookup went from 5.5s to 3.3s. It was also UNSAFE. Across two test captures on the
+        // founder's real account, one wrote correctly and one silently wrote nothing at all while
+        // replying "Noted — logged as a moment on September 4, 2026 at home, just you." Confirmed
+        // against the database: the moment does not exist. Both of the failing turns had
+        // thinking_tokens: 0.
+        //
+        // The mechanism is the prose-vs-envelope split this function has always had (see the
+        // salvage path below): a turn that doesn't think tends not to emit the JSON envelope, and
+        // without the envelope every write field is dropped while the reply still reads perfectly.
+        // On a memory archive, "told the user it saved and didn't" is the worst failure available,
+        // and it costs the one thing the app exists to protect. Speed is not worth it here.
         // Four tiers ordered stable-to-volatile so a write only invalidates its own tier and
         // everything after it, never what comes before: instructions (never changes) -> roster +
         // notebooks (rare writes) -> moment archive (now append-only, so ordinary captures leave
