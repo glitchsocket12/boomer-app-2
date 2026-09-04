@@ -6,7 +6,7 @@ import {
   FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT,
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
-import { withMessageCacheBreakpoint } from "../_shared/promptCache.ts"
+import { readAnthropicSse } from "../_shared/replyStream.ts"
 import { findSelfPerson, buildSelfInstruction, buildKinInstruction } from "../_shared/selfContext.ts"
 import { fetchAllRelationshipRows } from "../_shared/relationshipsTable.ts"
 import { buildFamilyRoster } from "../_shared/familyRoster.ts"
@@ -60,6 +60,15 @@ serve(async (req) => {
   }
 
   try {
+    // Latency instrumentation (2026-09-04). Counts only, no PII — logged as one `timing` line at
+    // the end of the turn. The split these three produce is what the thinking-effort decision gets
+    // priced from, so it exists to answer a specific open question rather than as general telemetry.
+    const startedAt = Date.now()
+    let modelStartedAt = startedAt
+    // Milliseconds from sending the request to the first WORD of the reply — i.e. how long the
+    // model spent thinking before it said anything. Stays null if the reply never streamed.
+    let ttftMs: number | null = null
+
     const { messages } = await req.json()
 
     const supabaseClient = createClient(
@@ -120,9 +129,20 @@ serve(async (req) => {
           .order("id")
           .range(from, to)
       ),
+      // Ordered by created_at ASCENDING, not by id, and that choice is load-bearing for the prompt
+      // cache rather than cosmetic. `id` is a random UUID, so ordering by it scatters moments into
+      // an arbitrary sequence: measured on the founder's account 2026-09-04, the rank correlation
+      // between id-order and created_at-order was -0.038, and only 2 of 204 moments sat in the same
+      // position under both. That meant every newly saved moment landed at a RANDOM point in the
+      // middle of the rendered block, so the archive tier's cached prefix was destroyed on every
+      // capture. Ordered by creation time the block is append-only: a new moment lands at the end,
+      // after the archive breakpoint, and everything before it still matches. `id` stays on as the
+      // tiebreak so two moments created in the same millisecond can't swap places between calls and
+      // silently bust the tier anyway (see the .order() note above).
       supabaseClient
         .from("moments")
         .select("id, occasion, location, when_text, event_date, event_end_date, details, created_at, notes(content, person_id)")
+        .order("created_at")
         .order("id")
         .order("created_at", { foreignTable: "notes" }),
       supabaseClient.from("groups").select("id, name, parent_group_id, group_type").order("id"),
@@ -324,7 +344,7 @@ serve(async (req) => {
       ;(momentGroupNamesById[mg.moment_id] ??= []).push(groupName)
     }
 
-    const context = (moments ?? [])
+    const momentLines = (moments ?? [])
       .map((m: any) => {
         // A note with no person_id is a general detail about the event itself, not an attendee —
         // it must not show up in "People" as a phantom guest called "someone", and its text reads
@@ -354,7 +374,24 @@ serve(async (req) => {
           : "unknown"
         return `[MOMENT_ID: ${m.id}] Occasion: ${m.occasion ?? "unknown"} | Location: ${m.location ?? "unknown"} | Date: ${dated} | When (as described): ${m.when_text ?? "unknown"} | Recorded on: ${recordedOn} | People: ${[...new Set(notePeople)].join(", ")} | Groups: ${momentGroupNames.join(", ") || "none"} | Notes: ${noteLines}`
       })
-      .join("\n")
+
+    // How many of the newest moments are held OUT of the cached archive tier below.
+    //
+    // This function writes to the very moments it puts in its own prompt, so the tier covering
+    // them is self-invalidating: capture something, and the next message re-pays for the whole
+    // block. Splitting the list at a fixed distance from the end fixes that for the common case —
+    // a capture lands in the volatile tail, and the archive prefix in front of it still matches.
+    // 20 is comfortably more than a single session's captures while staying a small fraction of
+    // the ~200 moments on file, so the archive keeps almost all of the tokens.
+    //
+    // Nothing is dropped or shortened here: every moment still reaches the model, in the same
+    // order, in the same format. This is purely where the cache breakpoint falls. (Bounding the
+    // archive itself is a separate, accuracy-losing trade the founder has declined — don't
+    // conflate the two.)
+    const RECENT_MOMENT_COUNT = 20
+    const splitAt = Math.max(0, momentLines.length - RECENT_MOMENT_COUNT)
+    const archiveMomentLines = momentLines.slice(0, splitAt).join("\n")
+    const recentMomentLines = momentLines.slice(splitAt).join("\n")
 
     // Notebook entries fed to the model, newest first. Capped because this block has no natural
     // ceiling — a notebook someone writes in daily grows forever, and every entry would ride along
@@ -627,21 +664,38 @@ Here are the pets already recorded, and who each one belongs to:
 ${petsRoster || "(none yet)"}
 
 Here is the family tree already recorded, one line per person who has family on file:
-${familyRoster || "(none yet)"}${selfInstruction}${kinInstruction}${chatToneInstruction}`
-
-    // Moments tier — changes on every new capture, the most frequent write in the app, so it's
-    // kept on the default 5-minute cache (a 1-hour write costs 2x instead of 1.25x, and this tier
-    // busts often enough that the cheaper write usually wins).
-    //
-    // Notebooks ride along in THIS tier rather than getting a breakpoint of their own: the API
-    // allows a maximum of 4, and all four are already spoken for (three system blocks plus the one
-    // on messages below). A fifth would silently cost the cache on everything after it. They also
-    // belong here on their own merits — they're written about as often as moments are.
-    const momentsContext = `Here are the moments already recorded, each tagged with [MOMENT_ID: ...]:
-${context || "(none recorded yet)"}
+${familyRoster || "(none yet)"}${selfInstruction}${kinInstruction}${chatToneInstruction}
 
 Here are the notebook entries, one per line, prefixed with the notebook they are in:
 ${notebooksContext || "(none written yet)"}`
+
+    // Moment archive — everything except the newest RECENT_MOMENT_COUNT, on a 1-hour breakpoint.
+    //
+    // This is the tier the 2026-09-04 latency work was really about. Measured on the founder's
+    // account, this content was ~61,000 tokens and was re-created (never read) on every sampled
+    // call, because a capture landed at a random midpoint of an id-ordered list and because it sat
+    // on the default 5-minute TTL. Both causes are now gone: the list is append-only (see the
+    // .order("created_at") note on the moments query) and the newest moments are held out in the
+    // volatile tail below, so an ordinary capture leaves this prefix byte-identical.
+    //
+    // 1h rather than the default 5m: the whole point is surviving the gap between messages, and a
+    // founder who pauses to think used to lose the tier to expiry alone. A 1h write costs 2x
+    // instead of 1.25x, which only pays off if the tier actually survives to be read — which is
+    // exactly what the two fixes above buy.
+    //
+    // Notebooks moved OUT of here and up into the roster tier: they're written far less often than
+    // moments, so riding the volatile tier cost them cache hits for no reason.
+    const momentArchiveContext = `Here are the moments already recorded, each tagged with [MOMENT_ID: ...]:
+${archiveMomentLines || "(none recorded yet)"}`
+
+    // The newest moments, deliberately uncached. This is where a capture lands, so anything with a
+    // breakpoint after it would be re-created on the next message — the cost this split exists to
+    // avoid. Small enough (20 moments) that paying full input price for it is the cheap side of
+    // the trade.
+    const recentMomentsContext = recentMomentLines
+      ? `Here are the most recent moments, continuing the list above:
+${recentMomentLines}`
+      : ""
 
     // Truly per-turn: changes once a day, and previously sat at the FRONT of one combined dynamic
     // block, which invalidated the whole thing daily for no reason. Kept last and uncached — it's
@@ -651,6 +705,11 @@ ${notebooksContext || "(none written yet)"}`
     // the evening gets resolved to tomorrow's date.
     const now = new Date()
     const todayContext = `Today's date is ${fullDateInTimeZone(now, userTimeZone)} (${isoDateInTimeZone(now, userTimeZone)}).`
+
+    // Everything before this point is context assembly (the 12 parallel reads and the prompt
+    // build); everything after is the model. Splitting the clock here is what tells us which of
+    // the two a slow turn actually spent its time in.
+    modelStartedAt = Date.now()
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -672,20 +731,39 @@ ${notebooksContext || "(none written yet)"}`
         // actually need the room bill for it. It replaces spend that currently buys nothing.
         // Same fix, same reasoning as update-moment's 1500 → 3000 (2026-08-08).
         max_tokens: 8192,
+        // Streamed (2026-09-04). Not a token or quality change — the model does exactly the same
+        // work — but without it nothing reaches the browser until the entire ~1,000-token JSON
+        // envelope is finished, which measured as a 7-17 second blank wait on the Home page. The
+        // reply text is now relayed to the client as it's written; see streamConverse below.
+        stream: true,
+        // display: "summarized" is FREE — thinking happens and bills identically under every
+        // display setting; the default ("omitted") just returns empty thinking blocks. Since
+        // ~60% of this call's output tokens are thinking, and all of it lands BEFORE the first
+        // word of the reply, the default is precisely what makes the wait read as a dead pause.
+        // Surfacing it gives the UI something true to show while the model works.
+        //
+        // Deliberately NO output_config here: effort defaults to "high", and turning it down is a
+        // real quality trade the founder has reserved for themselves once the streamed timings
+        // show what it would actually buy (CLAUDE.md rule 3 — don't silently downgrade).
+        thinking: { type: "adaptive", display: "summarized" },
         // Four tiers ordered stable-to-volatile so a write only invalidates its own tier and
-        // everything after it, never what comes before: instructions (never changes) -> roster
-        // (rare writes) -> moments (frequent writes) -> today's date (uncached, see above). See
-        // CLAUDE.md's token/billing efficiency rule, which calls this function out by name.
+        // everything after it, never what comes before: instructions (never changes) -> roster +
+        // notebooks (rare writes) -> moment archive (now append-only, so ordinary captures leave
+        // it untouched) -> the newest moments and today's date, uncached. See CLAUDE.md's
+        // token/billing efficiency rule, which calls this function out by name.
         system: [
           { type: "text", text: stableInstructions, cache_control: { type: "ephemeral", ttl: "1h" } },
           { type: "text", text: rosterContext, cache_control: { type: "ephemeral", ttl: "1h" } },
-          { type: "text", text: momentsContext, cache_control: { type: "ephemeral" } },
-          { type: "text", text: todayContext },
+          { type: "text", text: momentArchiveContext, cache_control: { type: "ephemeral", ttl: "1h" } },
+          { type: "text", text: `${recentMomentsContext}\n\n${todayContext}`.trim() },
         ],
-        // Own breakpoint on the last message — see _shared/promptCache.ts. This is the 4th and
-        // last available breakpoint (max 4 per request), so the whole growing conversation
-        // thread gets cached too, not just the archive tiers above.
-        messages: withMessageCacheBreakpoint(messages),
+        // The 4th and last breakpoint (max 4 per request) now goes to the moment archive above
+        // rather than to the message thread. Deliberate trade, measured 2026-09-04: the archive is
+        // ~55,000 tokens and the thread is a few thousand, so caching the archive is worth roughly
+        // an order of magnitude more — and the archive is the tier that was being re-created on
+        // every single turn. update-moment/update-group still use withMessageCacheBreakpoint; only
+        // this function has an archive big enough to outweigh its thread.
+        messages,
       }),
     })
 
@@ -703,655 +781,731 @@ ${notebooksContext || "(none written yet)"}`
       )
     }
 
-    const data = await response.json()
-    // Cache-health check required whenever this function is touched (CLAUDE.md rule 3): on a repeat
-    // turn with no writes between, cache_read_input_tokens must be non-zero. If it's zero, some
-    // per-request value is leaking into a cached tier — check the .order() clauses on the roster
-    // queries first. No PII: counts only.
-    console.log("usage", JSON.stringify(data.usage ?? null))
-    const textBlock = data.content?.find((b: any) => b.type === "text")
-
-    // No text block at all. The usual cause is the reply budget being spent entirely on thinking
-    // (see max_tokens above) — distinguishable from every other failure by stop_reason, and worth
-    // telling apart because the honest advice differs: this one is "ask something narrower", not
-    // "try again", which would just burn another full budget on the identical question.
-    const ranOutThinking = !textBlock && data.stop_reason === "max_tokens"
-    if (!textBlock) {
-      console.error(
-        "Anthropic response had no text block",
-        JSON.stringify({ stop_reason: data.stop_reason, usage: data.usage })
-      )
-    }
-
-    let parsed: any = { reply: ranOutThinking
-      ? "That one took more thinking than I had room for. Try asking about a smaller group, or narrowing the question."
-      : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], how_you_know_updates: [], former_name_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
-    let rawText = ""
-    try {
-      rawText = textBlock?.text ?? ""
-      // Pull out just the JSON object, even if there's stray text before/after it
-      const start = rawText.indexOf("{")
-      const end = rawText.lastIndexOf("}")
-      const jsonSlice = rawText.slice(start, end + 1)
-      parsed = { ...parsed, ...JSON.parse(jsonSlice) }
-    } catch (parseError) {
-      console.error("Failed to parse AI reply as JSON", String(parseError), "raw text was:", rawText)
-      // The JSON was likely truncated mid-generation (hit max_tokens) — pull just the "reply" text
-      // out with a regex so the user sees a normal sentence instead of a raw JSON fragment.
-      const replyMatch = rawText.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
-      if (replyMatch) {
-        parsed.reply = replyMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n")
-      } else if (rawText.trim()) {
-        // No JSON envelope at all — the model sometimes just answers in plain prose despite the
-        // instruction. That prose is usually a perfectly good, correct answer; showing a generic
-        // "couldn't process that" apology instead of it is strictly worse than showing the raw
-        // text, so use it as-is rather than discarding a real response the user already got.
-        parsed.reply = rawText.trim()
+    // From here the response headers are already on the wire, so the rest of the turn — the whole
+    // write pass below — runs INSIDE the stream, and a late failure has to travel as an event
+    // rather than as a status code. This is what buys the user words at ~4s instead of a blank
+    // wait until every database write has finished.
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
+    const writer = writable.getWriter()
+    const encoder = new TextEncoder()
+    // Deliberately swallows write failures. If the user closes the tab mid-reply the writer
+    // rejects, and letting that propagate would abort the write pass — losing the note they
+    // just dictated because they looked away. The stream is a nicety; the save is not.
+    const send = async (payload: unknown) => {
+      try {
+        // The blank line is the SSE frame terminator, not formatting — see sseTranscript.ts, which
+        // splits on exactly this on the way back in.
+        await writer.write(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+      } catch {
+        // Client is gone. Keep going — the writes below still matter.
       }
     }
 
-    // Drop any hallucinated/malformed date before it reaches an insert — see dateValidation.ts.
-    for (const momentEntry of parsed.moments ?? []) {
-      if (!momentEntry.moment_fields) continue
-      momentEntry.moment_fields.event_date = sanitizeIsoDate(momentEntry.moment_fields.event_date)
-      momentEntry.moment_fields.event_end_date = sanitizeIsoDate(momentEntry.moment_fields.event_end_date)
-    }
+    const streamTask = (async () => {
+      try {
+        // Relays the reply to the browser as the model writes it, while still accumulating the whole
+        // envelope for the write pass below — which is unchanged and still runs against the complete
+        // text. `status` carries the summarized thinking that precedes the reply; it's most of the
+        // wait, so the UI shows it instead of an idle spinner.
+        const streamed = await readAnthropicSse(response.body!, {
+          onReplyDelta: (text) => {
+            if (ttftMs === null) ttftMs = Date.now() - modelStartedAt
+            return send({ type: "reply_delta", text })
+          },
+          onThinkingDelta: (text) => send({ type: "status", text }),
+        })
+        const modelDoneAt = Date.now()
+        // Cache-health check required whenever this function is touched (CLAUDE.md rule 3): on a repeat
+        // turn with no writes between, cache_read_input_tokens must be non-zero. If it's zero, some
+        // per-request value is leaking into a cached tier — check the .order() clauses on the roster
+        // queries first. No PII: counts only.
+        console.log("usage", JSON.stringify(streamed.usage ?? null))
+        // Shaped as the old `content.find(b => b.type === "text")` result so every check below reads
+        // the same as it did before streaming — readAnthropicSse already concatenated the text blocks.
+        const textBlock = streamed.text ? { text: streamed.text } : null
 
-    for (const rename of parsed.renames ?? []) {
-      const oldKey = rename.old_name.toLowerCase()
-      const existingId = idByName[oldKey]
-      if (existingId) {
-        await supabaseClient.from("people").update({ name: rename.new_name }).eq("id", existingId)
-        idByName[rename.new_name.toLowerCase()] = existingId
-        nameById[existingId] = rename.new_name
-      }
-    }
-
-    // An entry is either a bare name (as it always was) or {name, how_you_know_them} — the second
-    // shape is how a person whose first name is already taken gets created at all. See the guard
-    // below for why a bare colliding name is refused.
-    for (const entry of parsed.new_people ?? []) {
-      const parsedEntry = parseNewPersonEntry(entry)
-      if (!parsedEntry) continue
-      const { name, howYouKnowThem } = parsedEntry
-      const key = name.toLowerCase()
-      if (!idByName[key]) {
-        // ambiguousKeys holds every bare name that more than one person already answers to, and
-        // those keys were deleted from idByName above so they can never resolve to the wrong
-        // person. The side effect, unnoticed until 2026-08-26: "add Sarah" then reads as "no Sarah
-        // exists" and mints a TENTH one. That is exactly how this account ended up holding both
-        // "Amber" and "Amber h", and 26 duplicate name pairs in total.
-        //
-        // So a colliding bare name is not created blind. It is created only when the model also
-        // supplies something to tell her apart by — which is what the user was asked for. The
-        // refusal is loud rather than silent: a skipped create with a confident reply is the same
-        // class of quiet lie the dropped notes above were.
-        if (ambiguousKeys.has(key) && !howYouKnowThem) {
+        // No text block at all. The usual cause is the reply budget being spent entirely on thinking
+        // (see max_tokens above) — distinguishable from every other failure by stop_reason, and worth
+        // telling apart because the honest advice differs: this one is "ask something narrower", not
+        // "try again", which would just burn another full budget on the identical question.
+        const ranOutThinking = !textBlock && streamed.stopReason === "max_tokens"
+        if (!textBlock) {
           console.error(
-            `new_people refused: "${name}" collides with people already on file and arrived with no how_you_know_them to tell them apart`
+            "Anthropic response had no text block",
+            JSON.stringify({ stop_reason: streamed.stopReason, usage: streamed.usage })
           )
-          continue
         }
-        const [first, ...rest] = name.trim().split(" ")
-        const lastName =
-          rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
-        const { data: newPerson } = await supabaseClient
-          .from("people")
-          .insert({ user_id: user.id, name: first, last_name: lastName, how_you_know_them: howYouKnowThem })
-          .select()
-          .single()
-        if (newPerson) {
-          idByName[key] = newPerson.id
-          nameById[newPerson.id] = name.trim()
-        }
-      } else if (howYouKnowThem) {
-        // Names someone already on file: treat it as filling in the blank rather than a no-op, the
-        // same way last_name_updates fills in a surname learned later. Never overwrites — the
-        // profile form is the editor for this field, and a passing chat remark must not clobber it.
-        const existingId = idByName[key]
-        const { data: existing } = await supabaseClient
-          .from("people")
-          .select("how_you_know_them")
-          .eq("id", existingId)
-          .single()
-        if (existing && !existing.how_you_know_them) {
-          await supabaseClient.from("people").update({ how_you_know_them: howYouKnowThem }).eq("id", existingId)
-        }
-      }
-    }
 
-    // Stated outright ("that Sarah is Manuel's friend"), rather than alongside a create. Additive
-    // for the same reason as above: the profile form owns this field, chat only fills a blank.
-    for (const update of parsed.how_you_know_updates ?? []) {
-      const id = idByName[update.person?.trim().toLowerCase()]
-      const value = update.how_you_know_them?.trim()
-      if (!id || !value) continue
-      const { data: existing } = await supabaseClient.from("people").select("how_you_know_them").eq("id", id).single()
-      if (existing && !existing.how_you_know_them) {
-        await supabaseClient.from("people").update({ how_you_know_them: value }).eq("id", id)
-      }
-    }
-
-    for (const update of parsed.last_name_updates ?? []) {
-      const id = idByName[update.person.toLowerCase()]
-      if (id) await supabaseClient.from("people").update({ last_name: update.last_name }).eq("id", id)
-    }
-
-    for (const update of parsed.nickname_updates ?? []) {
-      const id = idByName[update.person?.trim().toLowerCase()]
-      if (!id) continue
-      // Additive merge (see _shared/nicknames.ts) — a nickname mentioned mid-conversation should
-      // land in the same searchable field a profile-page edit would, not just in the note text.
-      const existing = nicknamesById[id] ?? []
-      const merged = mergeNicknames(existing, update.nicknames)
-      if (merged) {
-        await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
-        nicknamesById[id] = merged
-      }
-    }
-
-    // Same additive contract, against the RAW column: a maiden name mentioned in one conversation
-    // must not wipe one recorded months ago from a different screen.
-    for (const update of parsed.former_name_updates ?? []) {
-      const id = idByName[update.person?.trim().toLowerCase()]
-      if (!id) continue
-      const existing = formerById[id] ?? []
-      const merged = mergeFormerLastNames(existing, update.former_last_names)
-      if (merged) {
-        await supabaseClient.from("people").update({ former_last_names: merged.join(", ") }).eq("id", id)
-        formerById[id] = merged
-      }
-    }
-
-    // Applied after renames/new_people/nickname_updates so a relationship's subject or named
-    // relative can resolve even if this same turn just created or renamed them.
-    const familyResult = await applyFamilySignals(
-      supabaseClient,
-      Deno.env.get("ANTHROPIC_API_KEY") ?? "",
-      parsed.family_signals ?? [],
-      { idByName, nameById, lastNameById },
-      user.id
-    )
-
-    // Pets are written AFTER new_people/renames/applyFamilySignals so an owner created earlier in
-    // this same turn resolves — same ordering reasoning as the group tags below.
-    for (const entry of parsed.pets ?? []) {
-      const petName = String(entry?.name ?? "").trim()
-      if (!petName) continue
-
-      const ownerIds = [
-        ...new Set(
-          (Array.isArray(entry.owners) ? entry.owners : [])
-            .map((n: any) => idByName[String(n).trim().toLowerCase()])
-            .filter(Boolean)
-        ),
-      ] as string[]
-
-      // A pet with no resolvable owner shows on nobody's profile — it would be a silent orphan
-      // write while the reply cheerfully claims it saved. The roster is complete and new_people has
-      // already run, so this should be unreachable; log loudly rather than write junk.
-      if (ownerIds.length === 0) {
-        console.error("Pet skipped: no owner resolved", petName, JSON.stringify(entry.owners ?? null))
-        continue
-      }
-
-      const key = petName.toLowerCase()
-      // Owner-scoped first, so two dogs named Bella stay distinct; then a unique bare name.
-      let petId: string | null = null
-      for (const ownerId of ownerIds) {
-        const scoped = idByOwnerAndPetName[`${ownerId}|${key}`]
-        if (scoped) {
-          petId = scoped
-          break
-        }
-      }
-      if (!petId && !ambiguousPetKeys.has(key)) petId = idByPetName[key] ?? null
-
-      const incoming: Record<string, any> = {
-        species: entry.species ? String(entry.species).trim() : null,
-        breed: entry.breed ? String(entry.breed).trim() : null,
-        birth_date: sanitizeIsoDate(entry.birth_date),
-        adopted_date: sanitizeIsoDate(entry.adopted_date),
-        deceased_date: sanitizeIsoDate(entry.deceased_date),
-      }
-      const incomingAttributes = (Array.isArray(entry.attributes) ? entry.attributes : [])
-        .filter((a: any) => a && a.label && a.value)
-        .slice(0, 5)
-        .map((a: any) => ({ label: String(a.label).trim(), value: String(a.value).trim() }))
-
-      if (petId) {
-        // ADDITIVE ONLY: fill fields that are currently blank, never overwrite what's already on
-        // file. Chat is a lossy channel and the profile form is the deliberate one — same
-        // never-lose-existing-data rule the contacts import merge follows.
-        const existing = (pets ?? []).find((p: any) => p.id === petId) as Record<string, any> | undefined
-        const patch: Record<string, any> = {}
-        for (const [field, value] of Object.entries(incoming)) {
-          if (value && !existing?.[field]) patch[field] = value
-        }
-        if (incomingAttributes.length > 0) {
-          const merged = Array.isArray(existing?.attributes) ? [...existing.attributes] : []
-          for (const attr of incomingAttributes) {
-            if (!merged.some((m: any) => String(m.label).toLowerCase() === attr.label.toLowerCase())) merged.push(attr)
+        let parsed: any = { reply: ranOutThinking
+          ? "That one took more thinking than I had room for. Try asking about a smaller group, or narrowing the question."
+          : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], how_you_know_updates: [], former_name_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
+        let rawText = ""
+        try {
+          rawText = textBlock?.text ?? ""
+          // Pull out just the JSON object, even if there's stray text before/after it
+          const start = rawText.indexOf("{")
+          const end = rawText.lastIndexOf("}")
+          const jsonSlice = rawText.slice(start, end + 1)
+          parsed = { ...parsed, ...JSON.parse(jsonSlice) }
+        } catch (parseError) {
+          console.error("Failed to parse AI reply as JSON", String(parseError), "raw text was:", rawText)
+          // The JSON was likely truncated mid-generation (hit max_tokens) — pull just the "reply" text
+          // out with a regex so the user sees a normal sentence instead of a raw JSON fragment.
+          const replyMatch = rawText.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/)
+          if (replyMatch) {
+            parsed.reply = replyMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n")
+          } else if (rawText.trim()) {
+            // No JSON envelope at all — the model sometimes just answers in plain prose despite the
+            // instruction. That prose is usually a perfectly good, correct answer; showing a generic
+            // "couldn't process that" apology instead of it is strictly worse than showing the raw
+            // text, so use it as-is rather than discarding a real response the user already got.
+            parsed.reply = rawText.trim()
           }
-          if (merged.length !== (existing?.attributes?.length ?? 0)) patch.attributes = merged
         }
-        if (Object.keys(patch).length > 0) {
-          const { error } = await supabaseClient.from("pets").update(patch).eq("id", petId)
-          if (error) console.error("Pet update failed", petName, error.message)
+
+        // Drop any hallucinated/malformed date before it reaches an insert — see dateValidation.ts.
+        for (const momentEntry of parsed.moments ?? []) {
+          if (!momentEntry.moment_fields) continue
+          momentEntry.moment_fields.event_date = sanitizeIsoDate(momentEntry.moment_fields.event_date)
+          momentEntry.moment_fields.event_end_date = sanitizeIsoDate(momentEntry.moment_fields.event_end_date)
         }
-      } else {
-        const { data: newPet, error } = await supabaseClient
-          .from("pets")
-          .insert({ user_id: user.id, name: petName, ...incoming, attributes: incomingAttributes })
-          .select("id")
-          .single()
-        if (error || !newPet) {
-          console.error("Pet insert failed", petName, error?.message)
-          continue
-        }
-        petId = newPet.id as string
-        idByPetName[key] = petId
-        petNameById[petId] = petName
-      }
 
-      const resolvedPetId: string = petId
-      for (const ownerId of ownerIds) {
-        const { error } = await supabaseClient
-          .from("person_pets")
-          .upsert({ person_id: ownerId, pet_id: resolvedPetId }, { onConflict: "person_id,pet_id", ignoreDuplicates: true })
-        if (error) console.error("Pet link failed", petName, error.message)
-        idByOwnerAndPetName[`${ownerId}|${key}`] = resolvedPetId
-      }
-    }
-
-    async function findOrCreateGroupId(name: string): Promise<string | null> {
-      const existing = groupIndex.resolve(name)
-      if (existing) return existing
-      // Nothing matched. If the model wrote "<existing group> / Something", it's asking for a
-      // subgroup under that parent — create it as one rather than as a group literally named
-      // "22 AS / Something". A bare name with two existing owners resolves to null above and
-      // lands here too; splitParent leaves it alone, so we'd create a genuinely new group rather
-      // than guess which of the two the user meant.
-      const { parentId, childName } = groupIndex.splitParent(name)
-      const { data: newGroup } = await supabaseClient
-        .from("groups")
-        .insert({ user_id: userId, name: childName, parent_group_id: parentId })
-        .select()
-        .single()
-      if (newGroup) {
-        groupIndex.add(newGroup)
-        return newGroup.id
-      }
-      return null
-    }
-
-    // Same find-by-name-or-create pattern as findOrCreateGroupId, but tags have a real
-    // case-insensitive unique index (unlike groups.name), so a same-name insert can genuinely
-    // fail on a concurrent create — fall back to looking the winner up by name instead of
-    // silently dropping this tag.
-    async function findOrCreateTagId(name: string): Promise<string | null> {
-      const key = name.toLowerCase()
-      if (idByTagName[key]) return idByTagName[key]
-      const { data: newTag, error } = await supabaseClient
-        .from("tags")
-        .insert({ user_id: userId, name })
-        .select()
-        .single()
-      if (newTag) {
-        idByTagName[key] = newTag.id
-        tagNameById[newTag.id] = newTag.name
-        return newTag.id
-      }
-      if (error) {
-        const { data: existing } = await supabaseClient.from("tags").select("id, name").ilike("name", name).maybeSingle()
-        if (existing) {
-          idByTagName[key] = existing.id
-          tagNameById[existing.id] = existing.name
-          return existing.id
-        }
-      }
-      return null
-    }
-
-    // Any group tagged or created this turn — shown to the user as a clickable chip,
-    // same as a new/updated moment or person, so they can jump straight to it.
-    const taggedGroups = new Map<string, string>()
-    // Any tag applied or created this turn — same "shown back to the user" reasoning as groups.
-    const taggedTags = new Map<string, string>()
-    // Every moment touched this turn (created or updated) — a single message can now describe
-    // several distinct events at once, so this is a list rather than one moment ID.
-    const touchedMomentIds = new Set<string>()
-    // Every moment whose cached AI summary (moments.summary) is now stale and needs regenerating in
-    // the background — a brand-new moment, or an EXISTING one that just gained a note (from its own
-    // "notes" entry or a mentioned-name note below). Deduped so a moment touched twice in one turn
-    // only regenerates once. See the single kickoff loop after the moments loop below.
-    const momentIdsNeedingResummary = new Set<string>()
-    const rawDescription = messages.filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n")
-
-    // A name the founder merely MENTIONED in a story never becomes a profile on its own — see the
-    // "NEVER create a profile for someone just because they came up in a story" block in the
-    // instructions above. Two things have to be true at once: the detail must never be lost (so the
-    // archive can still answer "what was the name of that couple we met at Pup Dog?"), and their
-    // People list must not fill up with strangers. So the note is written immediately as a general
-    // note on the event (person_id: null — the same shape as any other event-level detail), and the
-    // profile is offered afterward as a one-tap banner which, if accepted, just re-points that same
-    // note at the newly created person. Ignoring the banner loses nothing.
-    const mentionedPeopleSuggestions: {
-      name: string
-      note: string
-      noteId: string | null
-      momentId: string | null
-      momentLabel: string | null
-    }[] = []
-    // Names already spoken for this turn: anyone the family-signal path is already asking about via
-    // its own banner, plus anyone collected earlier in this same turn. Two banners for one person
-    // reads as a bug, not as thoroughness.
-    const suggestedNameKeys = new Set<string>(
-      (familyResult.newPersonSuggestions ?? []).map((s: any) => String(s.rawName ?? "").trim().toLowerCase())
-    )
-
-    async function collectMentionedNames(entries: any, momentId: string | null, momentLabel: string | null) {
-      for (const entry of Array.isArray(entries) ? entries : []) {
-        const name = String(entry?.name ?? "").trim()
-        const note = String(entry?.note ?? "").trim()
-        // A mentioned name with no note would be a banner offering to create a profile for someone
-        // with nothing recorded about them — worse than useless. Drop it.
-        if (!name || !note) continue
-
-        const key = name.toLowerCase()
-        // Only brand-new names belong here, but if the model hands back someone already on file the
-        // right move is the ordinary one: attach the note to them, and don't ask about a profile
-        // they already have.
-        const existingId = idByName[key]
-        if (existingId) {
-          if (momentId) {
-            await supabaseClient
-              .from("notes")
-              .insert({ person_id: existingId, moment_id: momentId, content: note, source: "home" })
-            momentIdsNeedingResummary.add(momentId)
+        for (const rename of parsed.renames ?? []) {
+          const oldKey = rename.old_name.toLowerCase()
+          const existingId = idByName[oldKey]
+          if (existingId) {
+            await supabaseClient.from("people").update({ name: rename.new_name }).eq("id", existingId)
+            idByName[rename.new_name.toLowerCase()] = existingId
+            nameById[existingId] = rename.new_name
           }
-          continue
         }
-        if (suggestedNameKeys.has(key)) continue
-        suggestedNameKeys.add(key)
 
-        // Written NOW rather than on confirm: the note is the whole point, and it has to survive the
-        // founder never answering the banner (or closing the tab before they do).
-        let noteId: string | null = null
-        if (momentId) {
-          const { data: newNote, error } = await supabaseClient
-            .from("notes")
-            .insert({ person_id: null, moment_id: momentId, content: note, source: "home" })
-            .select("id")
+        // An entry is either a bare name (as it always was) or {name, how_you_know_them} — the second
+        // shape is how a person whose first name is already taken gets created at all. See the guard
+        // below for why a bare colliding name is refused.
+        for (const entry of parsed.new_people ?? []) {
+          const parsedEntry = parseNewPersonEntry(entry)
+          if (!parsedEntry) continue
+          const { name, howYouKnowThem } = parsedEntry
+          const key = name.toLowerCase()
+          if (!idByName[key]) {
+            // ambiguousKeys holds every bare name that more than one person already answers to, and
+            // those keys were deleted from idByName above so they can never resolve to the wrong
+            // person. The side effect, unnoticed until 2026-08-26: "add Sarah" then reads as "no Sarah
+            // exists" and mints a TENTH one. That is exactly how this account ended up holding both
+            // "Amber" and "Amber h", and 26 duplicate name pairs in total.
+            //
+            // So a colliding bare name is not created blind. It is created only when the model also
+            // supplies something to tell her apart by — which is what the user was asked for. The
+            // refusal is loud rather than silent: a skipped create with a confident reply is the same
+            // class of quiet lie the dropped notes above were.
+            if (ambiguousKeys.has(key) && !howYouKnowThem) {
+              console.error(
+                `new_people refused: "${name}" collides with people already on file and arrived with no how_you_know_them to tell them apart`
+              )
+              continue
+            }
+            const [first, ...rest] = name.trim().split(" ")
+            const lastName =
+              rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
+            const { data: newPerson } = await supabaseClient
+              .from("people")
+              .insert({ user_id: user.id, name: first, last_name: lastName, how_you_know_them: howYouKnowThem })
+              .select()
+              .single()
+            if (newPerson) {
+              idByName[key] = newPerson.id
+              nameById[newPerson.id] = name.trim()
+            }
+          } else if (howYouKnowThem) {
+            // Names someone already on file: treat it as filling in the blank rather than a no-op, the
+            // same way last_name_updates fills in a surname learned later. Never overwrites — the
+            // profile form is the editor for this field, and a passing chat remark must not clobber it.
+            const existingId = idByName[key]
+            const { data: existing } = await supabaseClient
+              .from("people")
+              .select("how_you_know_them")
+              .eq("id", existingId)
+              .single()
+            if (existing && !existing.how_you_know_them) {
+              await supabaseClient.from("people").update({ how_you_know_them: howYouKnowThem }).eq("id", existingId)
+            }
+          }
+        }
+
+        // Stated outright ("that Sarah is Manuel's friend"), rather than alongside a create. Additive
+        // for the same reason as above: the profile form owns this field, chat only fills a blank.
+        for (const update of parsed.how_you_know_updates ?? []) {
+          const id = idByName[update.person?.trim().toLowerCase()]
+          const value = update.how_you_know_them?.trim()
+          if (!id || !value) continue
+          const { data: existing } = await supabaseClient.from("people").select("how_you_know_them").eq("id", id).single()
+          if (existing && !existing.how_you_know_them) {
+            await supabaseClient.from("people").update({ how_you_know_them: value }).eq("id", id)
+          }
+        }
+
+        for (const update of parsed.last_name_updates ?? []) {
+          const id = idByName[update.person.toLowerCase()]
+          if (id) await supabaseClient.from("people").update({ last_name: update.last_name }).eq("id", id)
+        }
+
+        for (const update of parsed.nickname_updates ?? []) {
+          const id = idByName[update.person?.trim().toLowerCase()]
+          if (!id) continue
+          // Additive merge (see _shared/nicknames.ts) — a nickname mentioned mid-conversation should
+          // land in the same searchable field a profile-page edit would, not just in the note text.
+          const existing = nicknamesById[id] ?? []
+          const merged = mergeNicknames(existing, update.nicknames)
+          if (merged) {
+            await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
+            nicknamesById[id] = merged
+          }
+        }
+
+        // Same additive contract, against the RAW column: a maiden name mentioned in one conversation
+        // must not wipe one recorded months ago from a different screen.
+        for (const update of parsed.former_name_updates ?? []) {
+          const id = idByName[update.person?.trim().toLowerCase()]
+          if (!id) continue
+          const existing = formerById[id] ?? []
+          const merged = mergeFormerLastNames(existing, update.former_last_names)
+          if (merged) {
+            await supabaseClient.from("people").update({ former_last_names: merged.join(", ") }).eq("id", id)
+            formerById[id] = merged
+          }
+        }
+
+        // Applied after renames/new_people/nickname_updates so a relationship's subject or named
+        // relative can resolve even if this same turn just created or renamed them.
+        const familyResult = await applyFamilySignals(
+          supabaseClient,
+          Deno.env.get("ANTHROPIC_API_KEY") ?? "",
+          parsed.family_signals ?? [],
+          { idByName, nameById, lastNameById },
+          user.id
+        )
+
+        // Pets are written AFTER new_people/renames/applyFamilySignals so an owner created earlier in
+        // this same turn resolves — same ordering reasoning as the group tags below.
+        for (const entry of parsed.pets ?? []) {
+          const petName = String(entry?.name ?? "").trim()
+          if (!petName) continue
+
+          const ownerIds = [
+            ...new Set(
+              (Array.isArray(entry.owners) ? entry.owners : [])
+                .map((n: any) => idByName[String(n).trim().toLowerCase()])
+                .filter(Boolean)
+            ),
+          ] as string[]
+
+          // A pet with no resolvable owner shows on nobody's profile — it would be a silent orphan
+          // write while the reply cheerfully claims it saved. The roster is complete and new_people has
+          // already run, so this should be unreachable; log loudly rather than write junk.
+          if (ownerIds.length === 0) {
+            console.error("Pet skipped: no owner resolved", petName, JSON.stringify(entry.owners ?? null))
+            continue
+          }
+
+          const key = petName.toLowerCase()
+          // Owner-scoped first, so two dogs named Bella stay distinct; then a unique bare name.
+          let petId: string | null = null
+          for (const ownerId of ownerIds) {
+            const scoped = idByOwnerAndPetName[`${ownerId}|${key}`]
+            if (scoped) {
+              petId = scoped
+              break
+            }
+          }
+          if (!petId && !ambiguousPetKeys.has(key)) petId = idByPetName[key] ?? null
+
+          const incoming: Record<string, any> = {
+            species: entry.species ? String(entry.species).trim() : null,
+            breed: entry.breed ? String(entry.breed).trim() : null,
+            birth_date: sanitizeIsoDate(entry.birth_date),
+            adopted_date: sanitizeIsoDate(entry.adopted_date),
+            deceased_date: sanitizeIsoDate(entry.deceased_date),
+          }
+          const incomingAttributes = (Array.isArray(entry.attributes) ? entry.attributes : [])
+            .filter((a: any) => a && a.label && a.value)
+            .slice(0, 5)
+            .map((a: any) => ({ label: String(a.label).trim(), value: String(a.value).trim() }))
+
+          if (petId) {
+            // ADDITIVE ONLY: fill fields that are currently blank, never overwrite what's already on
+            // file. Chat is a lossy channel and the profile form is the deliberate one — same
+            // never-lose-existing-data rule the contacts import merge follows.
+            const existing = (pets ?? []).find((p: any) => p.id === petId) as Record<string, any> | undefined
+            const patch: Record<string, any> = {}
+            for (const [field, value] of Object.entries(incoming)) {
+              if (value && !existing?.[field]) patch[field] = value
+            }
+            if (incomingAttributes.length > 0) {
+              const merged = Array.isArray(existing?.attributes) ? [...existing.attributes] : []
+              for (const attr of incomingAttributes) {
+                if (!merged.some((m: any) => String(m.label).toLowerCase() === attr.label.toLowerCase())) merged.push(attr)
+              }
+              if (merged.length !== (existing?.attributes?.length ?? 0)) patch.attributes = merged
+            }
+            if (Object.keys(patch).length > 0) {
+              const { error } = await supabaseClient.from("pets").update(patch).eq("id", petId)
+              if (error) console.error("Pet update failed", petName, error.message)
+            }
+          } else {
+            const { data: newPet, error } = await supabaseClient
+              .from("pets")
+              .insert({ user_id: user.id, name: petName, ...incoming, attributes: incomingAttributes })
+              .select("id")
+              .single()
+            if (error || !newPet) {
+              console.error("Pet insert failed", petName, error?.message)
+              continue
+            }
+            petId = newPet.id as string
+            idByPetName[key] = petId
+            petNameById[petId] = petName
+          }
+
+          const resolvedPetId: string = petId
+          for (const ownerId of ownerIds) {
+            const { error } = await supabaseClient
+              .from("person_pets")
+              .upsert({ person_id: ownerId, pet_id: resolvedPetId }, { onConflict: "person_id,pet_id", ignoreDuplicates: true })
+            if (error) console.error("Pet link failed", petName, error.message)
+            idByOwnerAndPetName[`${ownerId}|${key}`] = resolvedPetId
+          }
+        }
+
+        async function findOrCreateGroupId(name: string): Promise<string | null> {
+          const existing = groupIndex.resolve(name)
+          if (existing) return existing
+          // Nothing matched. If the model wrote "<existing group> / Something", it's asking for a
+          // subgroup under that parent — create it as one rather than as a group literally named
+          // "22 AS / Something". A bare name with two existing owners resolves to null above and
+          // lands here too; splitParent leaves it alone, so we'd create a genuinely new group rather
+          // than guess which of the two the user meant.
+          const { parentId, childName } = groupIndex.splitParent(name)
+          const { data: newGroup } = await supabaseClient
+            .from("groups")
+            .insert({ user_id: userId, name: childName, parent_group_id: parentId })
+            .select()
             .single()
-          if (error) console.error("Mentioned-name note insert failed", name, error.message)
-          noteId = newNote?.id ?? null
-          if (!error) momentIdsNeedingResummary.add(momentId)
+          if (newGroup) {
+            groupIndex.add(newGroup)
+            return newGroup.id
+          }
+          return null
         }
-        mentionedPeopleSuggestions.push({ name, note, noteId, momentId, momentLabel })
-      }
-    }
 
-    for (const momentEntry of parsed.moments ?? []) {
-      let momentId: string | null = momentEntry.moment_id ?? null
+        // Same find-by-name-or-create pattern as findOrCreateGroupId, but tags have a real
+        // case-insensitive unique index (unlike groups.name), so a same-name insert can genuinely
+        // fail on a concurrent create — fall back to looking the winner up by name instead of
+        // silently dropping this tag.
+        async function findOrCreateTagId(name: string): Promise<string | null> {
+          const key = name.toLowerCase()
+          if (idByTagName[key]) return idByTagName[key]
+          const { data: newTag, error } = await supabaseClient
+            .from("tags")
+            .insert({ user_id: userId, name })
+            .select()
+            .single()
+          if (newTag) {
+            idByTagName[key] = newTag.id
+            tagNameById[newTag.id] = newTag.name
+            return newTag.id
+          }
+          if (error) {
+            const { data: existing } = await supabaseClient.from("tags").select("id, name").ilike("name", name).maybeSingle()
+            if (existing) {
+              idByTagName[key] = existing.id
+              tagNameById[existing.id] = existing.name
+              return existing.id
+            }
+          }
+          return null
+        }
 
-      if (momentEntry.new_moment) {
-        const { data: newMoment } = await supabaseClient
-          .from("moments")
-          .insert({
-            user_id: user.id,
-            raw_description: rawDescription,
-            occasion: momentEntry.moment_fields?.occasion ?? null,
-            location: momentEntry.moment_fields?.location ?? null,
-            when_text: momentEntry.moment_fields?.when_text ?? null,
-            event_date: momentEntry.moment_fields?.event_date ?? null,
-            event_end_date: momentEntry.moment_fields?.event_end_date ?? null,
+        // Any group tagged or created this turn — shown to the user as a clickable chip,
+        // same as a new/updated moment or person, so they can jump straight to it.
+        const taggedGroups = new Map<string, string>()
+        // Any tag applied or created this turn — same "shown back to the user" reasoning as groups.
+        const taggedTags = new Map<string, string>()
+        // Every moment touched this turn (created or updated) — a single message can now describe
+        // several distinct events at once, so this is a list rather than one moment ID.
+        const touchedMomentIds = new Set<string>()
+        // Every moment whose cached AI summary (moments.summary) is now stale and needs regenerating in
+        // the background — a brand-new moment, or an EXISTING one that just gained a note (from its own
+        // "notes" entry or a mentioned-name note below). Deduped so a moment touched twice in one turn
+        // only regenerates once. See the single kickoff loop after the moments loop below.
+        const momentIdsNeedingResummary = new Set<string>()
+        const rawDescription = messages.filter((m: any) => m.role === "user").map((m: any) => m.content).join("\n")
+
+        // A name the founder merely MENTIONED in a story never becomes a profile on its own — see the
+        // "NEVER create a profile for someone just because they came up in a story" block in the
+        // instructions above. Two things have to be true at once: the detail must never be lost (so the
+        // archive can still answer "what was the name of that couple we met at Pup Dog?"), and their
+        // People list must not fill up with strangers. So the note is written immediately as a general
+        // note on the event (person_id: null — the same shape as any other event-level detail), and the
+        // profile is offered afterward as a one-tap banner which, if accepted, just re-points that same
+        // note at the newly created person. Ignoring the banner loses nothing.
+        const mentionedPeopleSuggestions: {
+          name: string
+          note: string
+          noteId: string | null
+          momentId: string | null
+          momentLabel: string | null
+        }[] = []
+        // Names already spoken for this turn: anyone the family-signal path is already asking about via
+        // its own banner, plus anyone collected earlier in this same turn. Two banners for one person
+        // reads as a bug, not as thoroughness.
+        const suggestedNameKeys = new Set<string>(
+          (familyResult.newPersonSuggestions ?? []).map((s: any) => String(s.rawName ?? "").trim().toLowerCase())
+        )
+
+        async function collectMentionedNames(entries: any, momentId: string | null, momentLabel: string | null) {
+          for (const entry of Array.isArray(entries) ? entries : []) {
+            const name = String(entry?.name ?? "").trim()
+            const note = String(entry?.note ?? "").trim()
+            // A mentioned name with no note would be a banner offering to create a profile for someone
+            // with nothing recorded about them — worse than useless. Drop it.
+            if (!name || !note) continue
+
+            const key = name.toLowerCase()
+            // Only brand-new names belong here, but if the model hands back someone already on file the
+            // right move is the ordinary one: attach the note to them, and don't ask about a profile
+            // they already have.
+            const existingId = idByName[key]
+            if (existingId) {
+              if (momentId) {
+                await supabaseClient
+                  .from("notes")
+                  .insert({ person_id: existingId, moment_id: momentId, content: note, source: "home" })
+                momentIdsNeedingResummary.add(momentId)
+              }
+              continue
+            }
+            if (suggestedNameKeys.has(key)) continue
+            suggestedNameKeys.add(key)
+
+            // Written NOW rather than on confirm: the note is the whole point, and it has to survive the
+            // founder never answering the banner (or closing the tab before they do).
+            let noteId: string | null = null
+            if (momentId) {
+              const { data: newNote, error } = await supabaseClient
+                .from("notes")
+                .insert({ person_id: null, moment_id: momentId, content: note, source: "home" })
+                .select("id")
+                .single()
+              if (error) console.error("Mentioned-name note insert failed", name, error.message)
+              noteId = newNote?.id ?? null
+              if (!error) momentIdsNeedingResummary.add(momentId)
+            }
+            mentionedPeopleSuggestions.push({ name, note, noteId, momentId, momentLabel })
+          }
+        }
+
+        for (const momentEntry of parsed.moments ?? []) {
+          let momentId: string | null = momentEntry.moment_id ?? null
+
+          if (momentEntry.new_moment) {
+            const { data: newMoment } = await supabaseClient
+              .from("moments")
+              .insert({
+                user_id: user.id,
+                raw_description: rawDescription,
+                occasion: momentEntry.moment_fields?.occasion ?? null,
+                location: momentEntry.moment_fields?.location ?? null,
+                when_text: momentEntry.moment_fields?.when_text ?? null,
+                event_date: momentEntry.moment_fields?.event_date ?? null,
+                event_end_date: momentEntry.moment_fields?.event_end_date ?? null,
+              })
+              .select()
+              .single()
+            if (newMoment) {
+              // Through a local const so the non-null type survives into the Set.add below —
+              // assigning to the outer `momentId` (declared string | null) doesn't narrow it.
+              const newMomentId: string = newMoment.id
+              momentId = newMomentId
+              // Summary regeneration is kicked off once, after the loop below, for every moment in
+              // momentIdsNeedingResummary — covers both a brand-new moment (added here) and an existing
+              // one that just gained a note (added further down), so a background call is never fired
+              // twice for the same moment in one turn.
+              if (rawDescription.trim()) momentIdsNeedingResummary.add(newMomentId)
+            }
+          }
+
+          if (!momentId) continue
+          touchedMomentIds.add(momentId)
+
+          // Each note is an independent insert (no dedup/lookup state to race on), so they're fired
+          // together instead of one round-trip at a time. A note with no "person" (or one the model
+          // didn't tie to a specific attendee) is a general event-level detail — same "notes" table,
+          // same moment_id, just person_id: null — rather than being silently dropped.
+          //
+          // A note that DOES name a person but fails to resolve used to be dropped outright, on the
+          // reasoning that a resolution failure isn't an intentional general note. Measured on the
+          // founder's account 2026-08-26, that reasoning cost real content: 561 of 896 people share a
+          // first name with someone else, so "Sarah just got a new job" resolves to nobody (nine
+          // Sarahs, all unmapped by ambiguousKeys) and the sentence was thrown away while the reply
+          // cheerfully confirmed it. It lands on the EVENT now, carrying the name the user actually
+          // said, so the words survive and the person can be corrected later.
+          await Promise.all(
+            (momentEntry.notes ?? []).map((note: any) => {
+              const rawPerson = note.person?.trim()
+              if (!rawPerson) {
+                return supabaseClient.from("notes").insert({
+                  person_id: null,
+                  moment_id: momentId,
+                  content: note.note,
+                  source: "home",
+                })
+              }
+              const personId = idByName[rawPerson.toLowerCase()]
+              if (!personId) {
+                // Prefixed with the name as said, so "which Sarah?" stays answerable later — without it
+                // a general note reading "Was there." is unattributable to anyone. Skipped when the note
+                // already opens with that name, which would just stutter it.
+                const alreadyNamed = note.note?.trim().toLowerCase().startsWith(rawPerson.toLowerCase())
+                return supabaseClient.from("notes").insert({
+                  person_id: null,
+                  moment_id: momentId,
+                  content: alreadyNamed ? note.note : `${rawPerson}: ${note.note}`,
+                  source: "home",
+                })
+              }
+              return supabaseClient.from("notes").insert({
+                person_id: personId,
+                moment_id: momentId,
+                content: note.note,
+                source: "home",
+              })
+            })
+          )
+          // This moment's cached summary depends on its notes (see summarize-moment), so any new one —
+          // whether this moment is brand-new or already existed — makes the cache stale. Previously only
+          // a brand-new moment ever regenerated (see momentIdsNeedingResummary above): adding detail to
+          // an ALREADY-recorded event via Home chat left the summary stale until someone opened the event
+          // page and hit the manual refresh button (CLAUDE.md rule 3 — a DB-cached output must be
+          // invalidated when the underlying data actually changes).
+          if ((momentEntry.notes ?? []).length > 0) momentIdsNeedingResummary.add(momentId)
+
+          // After this moment's own notes, so a name the model put in BOTH places (against
+          // instructions) has already been handled once and gets deduped rather than double-written.
+          const momentLabel =
+            momentEntry.moment_fields?.occasion ??
+            (moments ?? []).find((m: any) => m.id === momentId)?.occasion ??
+            null
+          await collectMentionedNames(momentEntry.mentioned_names, momentId, momentLabel)
+
+          for (const groupName of momentEntry.moment_groups ?? []) {
+            const groupId = await findOrCreateGroupId(groupName)
+            if (groupId) {
+              await supabaseClient
+                .from("moment_groups")
+                .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
+              taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
+            }
+          }
+
+          for (const tagName of momentEntry.moment_tags ?? []) {
+            const tagId = await findOrCreateTagId(tagName)
+            if (tagId) {
+              await supabaseClient
+                .from("moment_tags")
+                .upsert({ moment_id: momentId, tag_id: tagId }, { onConflict: "moment_id,tag_id", ignoreDuplicates: true })
+              taggedTags.set(tagId, tagNameById[tagId] ?? tagName)
+            }
+          }
+
+          // Pets at this event (2026-08-20). Unlike groups and tags there is deliberately no
+          // find-or-CREATE here: a pet needs an owner, and one invented from a bare name at an event
+          // would be an ownerless orphan showing on nobody's profile — the exact silent write the
+          // top-level pets loop refuses to make. A name that isn't already on file (or created earlier
+          // this same turn, which is why that loop runs first) is dropped and logged.
+          //
+          // Ambiguity is resolved the same way as everywhere else: `idByPetName` has already had every
+          // shared bare name deleted out of it, so two dogs called Bella resolve to NEITHER rather than
+          // to whichever was indexed last. The prompt tells the model to ask which one instead.
+          for (const rawPetName of momentEntry.moment_pets ?? []) {
+            const petName = String(rawPetName ?? "").trim()
+            if (!petName) continue
+            const key = petName.toLowerCase()
+            const petId = ambiguousPetKeys.has(key) ? null : idByPetName[key] ?? null
+            if (!petId) {
+              console.error("Pet event tag skipped: name not resolved", petName)
+              continue
+            }
+            const { error } = await supabaseClient
+              .from("moment_pets")
+              .upsert({ moment_id: momentId, pet_id: petId }, { onConflict: "moment_id,pet_id", ignoreDuplicates: true })
+            if (error) console.error("Pet event tag failed", petName, error.message)
+          }
+        }
+
+        // A new name that came up outside any event ("I should call my new neighbor Dave"). There's no
+        // moment to hang a note on, so nothing is written unless the founder accepts the banner — the
+        // frontend writes it as a plain profile note at that point.
+        await collectMentionedNames(parsed.mentioned_names, null, null)
+
+        // Fire every moment's summary regeneration now, once each, in the background — after all notes
+        // for all moments this turn have landed above. Doesn't block this response (the frontend already
+        // re-fetches the moment when its event page opens); see momentIdsNeedingResummary's declaration
+        // above for why this covers both new and already-existing moments.
+        for (const momentId of momentIdsNeedingResummary) {
+          const summarizePromise = fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/summarize-moment`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: req.headers.get("Authorization")!,
+              apikey: Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+            },
+            body: JSON.stringify({ momentId }),
+          }).catch((e) => console.error("Background summarize-moment kickoff failed", String(e)))
+          // @ts-ignore -- EdgeRuntime is a Supabase Edge Runtime global, not in the Deno std lib types
+          if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(summarizePromise)
+        }
+
+        // A group's dates and place, straight out of the conversation (2026-08-23). Only ever FILLS
+        // IN a field that is currently null — never overwrites one, because a value the founder typed
+        // on the group's own page is a stated fact and a value inferred from a passing sentence is a
+        // guess, and the guess must not win.
+        //
+        // Position in the turn doesn't matter: every tagging decision was made by the model before any
+        // of these writes ran, so a window recorded here first shows up in the NEXT turn's roster,
+        // which is the intent — this is about the group being recognisable from now on.
+        for (const detail of parsed.group_details ?? []) {
+          if (!detail?.group) continue
+          const groupId = await findOrCreateGroupId(detail.group)
+          if (!groupId) continue
+
+          // Read back what's already there. On a database without the migration this errors, and the
+          // whole block becomes a no-op rather than failing the turn.
+          const { data: current, error: readError } = await supabaseClient
+            .from("groups")
+            .select("start_date, end_date, location")
+            .eq("id", groupId)
+            .single()
+          if (readError || !current) continue
+
+          // The model is told "YYYY-MM-DD or null" but writes prose for a living, so anything that
+          // isn't literally an ISO date is dropped rather than handed to a `date` column — a stray
+          // "null"/"unknown"/"the 23rd" would fail the whole update and lose the other two fields
+          // with it. Same reason `location` is checked for the string "null".
+          const isoDate = (value: unknown): string | null =>
+            typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? value.trim() : null
+          const cleanText = (value: unknown): string | null => {
+            if (typeof value !== "string") return null
+            const trimmed = value.trim()
+            return trimmed && trimmed.toLowerCase() !== "null" ? trimmed : null
+          }
+
+          const start = isoDate(detail.start_date)
+          const end = isoDate(detail.end_date)
+          const patch: Record<string, string> = {}
+          if (!current.start_date && start) patch.start_date = start
+          // An end with no start is not a window (nothing reads it), and an end BEFORE the start would
+          // read as open-ended and quietly stop matching on dates — drop both rather than store either.
+          const effectiveStart = current.start_date ?? patch.start_date ?? null
+          if (!current.end_date && end && effectiveStart && end >= effectiveStart) patch.end_date = end
+          const location = cleanText(detail.location)
+          if (!current.location && location) patch.location = location
+          if (Object.keys(patch).length === 0) continue
+
+          const { error: writeError } = await supabaseClient.from("groups").update(patch).eq("id", groupId)
+          if (writeError) console.error("group_details update failed", groupId, writeError.message)
+        }
+
+        for (const tag of parsed.person_group_tags ?? []) {
+          const personId = idByName[tag.person?.trim().toLowerCase()]
+          const groupId = tag.group ? await findOrCreateGroupId(tag.group) : null
+          if (personId && groupId) {
+            await supabaseClient
+              .from("person_groups")
+              .upsert({ person_id: personId, group_id: groupId }, { onConflict: "person_id,group_id", ignoreDuplicates: true })
+            taggedGroups.set(groupId, groupNameById[groupId] ?? tag.group)
+          }
+        }
+
+        const relevantPeople = (parsed.relevant_people ?? [])
+          .map((name: string) => {
+            const id = idByName[name.trim().toLowerCase()]
+            // Always render the canonical profile spelling on the button, never whatever the AI
+            // typed — guarantees the button is spelled correctly even if the reply prose isn't.
+            return id ? { id, name: nameById[id] } : null
           })
-          .select()
-          .single()
-        if (newMoment) {
-          // Through a local const so the non-null type survives into the Set.add below —
-          // assigning to the outer `momentId` (declared string | null) doesn't narrow it.
-          const newMomentId: string = newMoment.id
-          momentId = newMomentId
-          // Summary regeneration is kicked off once, after the loop below, for every moment in
-          // momentIdsNeedingResummary — covers both a brand-new moment (added here) and an existing
-          // one that just gained a note (added further down), so a background call is never fired
-          // twice for the same moment in one turn.
-          if (rawDescription.trim()) momentIdsNeedingResummary.add(newMomentId)
-        }
-      }
+          .filter(Boolean)
 
-      if (!momentId) continue
-      touchedMomentIds.add(momentId)
+        const taggedGroupRefs = [...taggedGroups.entries()].map(([id, name]) => ({ id, name }))
+        const taggedTagRefs = [...taggedTags.entries()].map(([id, name]) => ({ id, name }))
 
-      // Each note is an independent insert (no dedup/lookup state to race on), so they're fired
-      // together instead of one round-trip at a time. A note with no "person" (or one the model
-      // didn't tie to a specific attendee) is a general event-level detail — same "notes" table,
-      // same moment_id, just person_id: null — rather than being silently dropped.
-      //
-      // A note that DOES name a person but fails to resolve used to be dropped outright, on the
-      // reasoning that a resolution failure isn't an intentional general note. Measured on the
-      // founder's account 2026-08-26, that reasoning cost real content: 561 of 896 people share a
-      // first name with someone else, so "Sarah just got a new job" resolves to nobody (nine
-      // Sarahs, all unmapped by ambiguousKeys) and the sentence was thrown away while the reply
-      // cheerfully confirmed it. It lands on the EVENT now, carrying the name the user actually
-      // said, so the words survive and the person can be corrected later.
-      await Promise.all(
-        (momentEntry.notes ?? []).map((note: any) => {
-          const rawPerson = note.person?.trim()
-          if (!rawPerson) {
-            return supabaseClient.from("notes").insert({
-              person_id: null,
-              moment_id: momentId,
-              content: note.note,
-              source: "home",
+        // Only log genuine recall attempts, not new captures/corrections/idle chat — powers the
+        // Home dashboard's "Recall assists this month" stat.
+        if (parsed.is_lookup) {
+          const latestUserMessage = [...messages].reverse().find((m: any) => m.role === "user")
+          if (latestUserMessage?.content) {
+            await supabaseClient.from("search_log").insert({
+              user_id: user.id,
+              query_text: latestUserMessage.content,
+              matched: !!parsed.found_relevant_info,
             })
           }
-          const personId = idByName[rawPerson.toLowerCase()]
-          if (!personId) {
-            // Prefixed with the name as said, so "which Sarah?" stays answerable later — without it
-            // a general note reading "Was there." is unattributable to anyone. Skipped when the note
-            // already opens with that name, which would just stutter it.
-            const alreadyNamed = note.note?.trim().toLowerCase().startsWith(rawPerson.toLowerCase())
-            return supabaseClient.from("notes").insert({
-              person_id: null,
-              moment_id: momentId,
-              content: alreadyNamed ? note.note : `${rawPerson}: ${note.note}`,
-              source: "home",
-            })
-          }
-          return supabaseClient.from("notes").insert({
-            person_id: personId,
-            moment_id: momentId,
-            content: note.note,
-            source: "home",
+        }
+
+        // Same payload the non-streaming version returned, now as the stream's final event. It carries
+        // the full `reply` as well as the deltas, so a client that missed or ignored them (an old
+        // build, or a reply the extractor couldn't stream) still gets the complete answer here.
+        await send({
+          type: "done",
+          reply: parsed.reply,
+          people: relevantPeople,
+          momentIds: [...touchedMomentIds],
+          groups: taggedGroupRefs,
+          tags: taggedTagRefs,
+          relationshipSuggestions: familyResult.relationshipSuggestions,
+          newPersonSuggestions: familyResult.newPersonSuggestions,
+          mentionedPeopleSuggestions,
+        })
+
+        // Counts and durations only, no PII — same discipline as the `usage` line above. `ttft_ms` is
+        // the thinking time (request to first reply word) and `stream_ms` the writing time; that split
+        // is what the effort decision gets priced from. See PROJECT_HISTORY 2026-09-04.
+        console.log(
+          "timing",
+          JSON.stringify({
+            db_ms: modelStartedAt - startedAt,
+            ttft_ms: ttftMs,
+            stream_ms: modelDoneAt - modelStartedAt,
+            write_ms: Date.now() - modelDoneAt,
+            total_ms: Date.now() - startedAt,
           })
-        })
-      )
-      // This moment's cached summary depends on its notes (see summarize-moment), so any new one —
-      // whether this moment is brand-new or already existed — makes the cache stale. Previously only
-      // a brand-new moment ever regenerated (see momentIdsNeedingResummary above): adding detail to
-      // an ALREADY-recorded event via Home chat left the summary stale until someone opened the event
-      // page and hit the manual refresh button (CLAUDE.md rule 3 — a DB-cached output must be
-      // invalidated when the underlying data actually changes).
-      if ((momentEntry.notes ?? []).length > 0) momentIdsNeedingResummary.add(momentId)
-
-      // After this moment's own notes, so a name the model put in BOTH places (against
-      // instructions) has already been handled once and gets deduped rather than double-written.
-      const momentLabel =
-        momentEntry.moment_fields?.occasion ??
-        (moments ?? []).find((m: any) => m.id === momentId)?.occasion ??
-        null
-      await collectMentionedNames(momentEntry.mentioned_names, momentId, momentLabel)
-
-      for (const groupName of momentEntry.moment_groups ?? []) {
-        const groupId = await findOrCreateGroupId(groupName)
-        if (groupId) {
-          await supabaseClient
-            .from("moment_groups")
-            .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
-          taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
+        )
+      } catch (streamError) {
+        // Everything before the first byte is still an ordinary 500 via the outer catch; this
+        // handles the window after, where the only way to tell the client is an event.
+        console.error("converse: failed after streaming began", String(streamError))
+        await send({ type: "error", code: "converse_failed" })
+      } finally {
+        try {
+          await writer.close()
+        } catch {
+          // Already closed or aborted by the client — nothing left to do.
         }
       }
+    })()
+    // Same reason summarize-moment is dispatched this way: without it the runtime may tear the
+    // isolate down once the handler returns, and the write pass is still running in there.
+    // @ts-ignore -- EdgeRuntime is a Supabase Edge Runtime global, not in the Deno std lib types
+    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(streamTask)
 
-      for (const tagName of momentEntry.moment_tags ?? []) {
-        const tagId = await findOrCreateTagId(tagName)
-        if (tagId) {
-          await supabaseClient
-            .from("moment_tags")
-            .upsert({ moment_id: momentId, tag_id: tagId }, { onConflict: "moment_id,tag_id", ignoreDuplicates: true })
-          taggedTags.set(tagId, tagNameById[tagId] ?? tagName)
-        }
-      }
-
-      // Pets at this event (2026-08-20). Unlike groups and tags there is deliberately no
-      // find-or-CREATE here: a pet needs an owner, and one invented from a bare name at an event
-      // would be an ownerless orphan showing on nobody's profile — the exact silent write the
-      // top-level pets loop refuses to make. A name that isn't already on file (or created earlier
-      // this same turn, which is why that loop runs first) is dropped and logged.
-      //
-      // Ambiguity is resolved the same way as everywhere else: `idByPetName` has already had every
-      // shared bare name deleted out of it, so two dogs called Bella resolve to NEITHER rather than
-      // to whichever was indexed last. The prompt tells the model to ask which one instead.
-      for (const rawPetName of momentEntry.moment_pets ?? []) {
-        const petName = String(rawPetName ?? "").trim()
-        if (!petName) continue
-        const key = petName.toLowerCase()
-        const petId = ambiguousPetKeys.has(key) ? null : idByPetName[key] ?? null
-        if (!petId) {
-          console.error("Pet event tag skipped: name not resolved", petName)
-          continue
-        }
-        const { error } = await supabaseClient
-          .from("moment_pets")
-          .upsert({ moment_id: momentId, pet_id: petId }, { onConflict: "moment_id,pet_id", ignoreDuplicates: true })
-        if (error) console.error("Pet event tag failed", petName, error.message)
-      }
-    }
-
-    // A new name that came up outside any event ("I should call my new neighbor Dave"). There's no
-    // moment to hang a note on, so nothing is written unless the founder accepts the banner — the
-    // frontend writes it as a plain profile note at that point.
-    await collectMentionedNames(parsed.mentioned_names, null, null)
-
-    // Fire every moment's summary regeneration now, once each, in the background — after all notes
-    // for all moments this turn have landed above. Doesn't block this response (the frontend already
-    // re-fetches the moment when its event page opens); see momentIdsNeedingResummary's declaration
-    // above for why this covers both new and already-existing moments.
-    for (const momentId of momentIdsNeedingResummary) {
-      const summarizePromise = fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/summarize-moment`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: req.headers.get("Authorization")!,
-          apikey: Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-        },
-        body: JSON.stringify({ momentId }),
-      }).catch((e) => console.error("Background summarize-moment kickoff failed", String(e)))
-      // @ts-ignore -- EdgeRuntime is a Supabase Edge Runtime global, not in the Deno std lib types
-      if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(summarizePromise)
-    }
-
-    // A group's dates and place, straight out of the conversation (2026-08-23). Only ever FILLS
-    // IN a field that is currently null — never overwrites one, because a value the founder typed
-    // on the group's own page is a stated fact and a value inferred from a passing sentence is a
-    // guess, and the guess must not win.
-    //
-    // Position in the turn doesn't matter: every tagging decision was made by the model before any
-    // of these writes ran, so a window recorded here first shows up in the NEXT turn's roster,
-    // which is the intent — this is about the group being recognisable from now on.
-    for (const detail of parsed.group_details ?? []) {
-      if (!detail?.group) continue
-      const groupId = await findOrCreateGroupId(detail.group)
-      if (!groupId) continue
-
-      // Read back what's already there. On a database without the migration this errors, and the
-      // whole block becomes a no-op rather than failing the turn.
-      const { data: current, error: readError } = await supabaseClient
-        .from("groups")
-        .select("start_date, end_date, location")
-        .eq("id", groupId)
-        .single()
-      if (readError || !current) continue
-
-      // The model is told "YYYY-MM-DD or null" but writes prose for a living, so anything that
-      // isn't literally an ISO date is dropped rather than handed to a `date` column — a stray
-      // "null"/"unknown"/"the 23rd" would fail the whole update and lose the other two fields
-      // with it. Same reason `location` is checked for the string "null".
-      const isoDate = (value: unknown): string | null =>
-        typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? value.trim() : null
-      const cleanText = (value: unknown): string | null => {
-        if (typeof value !== "string") return null
-        const trimmed = value.trim()
-        return trimmed && trimmed.toLowerCase() !== "null" ? trimmed : null
-      }
-
-      const start = isoDate(detail.start_date)
-      const end = isoDate(detail.end_date)
-      const patch: Record<string, string> = {}
-      if (!current.start_date && start) patch.start_date = start
-      // An end with no start is not a window (nothing reads it), and an end BEFORE the start would
-      // read as open-ended and quietly stop matching on dates — drop both rather than store either.
-      const effectiveStart = current.start_date ?? patch.start_date ?? null
-      if (!current.end_date && end && effectiveStart && end >= effectiveStart) patch.end_date = end
-      const location = cleanText(detail.location)
-      if (!current.location && location) patch.location = location
-      if (Object.keys(patch).length === 0) continue
-
-      const { error: writeError } = await supabaseClient.from("groups").update(patch).eq("id", groupId)
-      if (writeError) console.error("group_details update failed", groupId, writeError.message)
-    }
-
-    for (const tag of parsed.person_group_tags ?? []) {
-      const personId = idByName[tag.person?.trim().toLowerCase()]
-      const groupId = tag.group ? await findOrCreateGroupId(tag.group) : null
-      if (personId && groupId) {
-        await supabaseClient
-          .from("person_groups")
-          .upsert({ person_id: personId, group_id: groupId }, { onConflict: "person_id,group_id", ignoreDuplicates: true })
-        taggedGroups.set(groupId, groupNameById[groupId] ?? tag.group)
-      }
-    }
-
-    const relevantPeople = (parsed.relevant_people ?? [])
-      .map((name: string) => {
-        const id = idByName[name.trim().toLowerCase()]
-        // Always render the canonical profile spelling on the button, never whatever the AI
-        // typed — guarantees the button is spelled correctly even if the reply prose isn't.
-        return id ? { id, name: nameById[id] } : null
-      })
-      .filter(Boolean)
-
-    const taggedGroupRefs = [...taggedGroups.entries()].map(([id, name]) => ({ id, name }))
-    const taggedTagRefs = [...taggedTags.entries()].map(([id, name]) => ({ id, name }))
-
-    // Only log genuine recall attempts, not new captures/corrections/idle chat — powers the
-    // Home dashboard's "Recall assists this month" stat.
-    if (parsed.is_lookup) {
-      const latestUserMessage = [...messages].reverse().find((m: any) => m.role === "user")
-      if (latestUserMessage?.content) {
-        await supabaseClient.from("search_log").insert({
-          user_id: user.id,
-          query_text: latestUserMessage.content,
-          matched: !!parsed.found_relevant_info,
-        })
-      }
-    }
-
-    return new Response(
-      JSON.stringify({
-        reply: parsed.reply,
-        people: relevantPeople,
-        momentIds: [...touchedMomentIds],
-        groups: taggedGroupRefs,
-        tags: taggedTagRefs,
-        relationshipSuggestions: familyResult.relationshipSuggestions,
-        newPersonSuggestions: familyResult.newPersonSuggestions,
-        mentionedPeopleSuggestions,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    )
+    return new Response(readable, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    })
   } catch (error) {
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,

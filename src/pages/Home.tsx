@@ -9,6 +9,7 @@ import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import { EventChip, GroupChip } from '../components/Chips'
 import RefreshButton from '../components/RefreshButton'
 import { summarize } from '../lib/summarize'
+import { streamConverse } from '../lib/converseStream'
 import RelationshipSuggestionBanners, {
   toStagedNewPersonSuggestions,
   type RelationshipSuggestion,
@@ -89,6 +90,10 @@ export default function Home({
   const [thread, setThread] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  // The model's summarized thinking while it works. It's ~60% of the wait and lands entirely
+  // before the first word of the reply, so showing it is the difference between a pause that reads
+  // as progress and one that reads as a hang. Cleared the moment real reply text starts.
+  const [statusLine, setStatusLine] = useState('')
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const [stats, setStats] = useState<{ people: number; events: number; groups: number; notes: number } | null>(null)
@@ -326,42 +331,76 @@ export default function Home({
     const newThread: ChatMessage[] = [...thread, { role: 'user', content: text }]
     setThread(newThread)
     setSending(true)
+    setStatusLine('')
 
     // Only send role + content to the AI — it doesn't need the "people" chip data
     const apiMessages = newThread.map((m) => ({ role: m.role, content: m.content }))
 
-    const { data, error } = await supabase.functions.invoke('converse', {
-      body: { messages: apiMessages },
-    })
+    // Accumulated outside React state as well as in it: the delta handler fires many times a
+    // second, and reading the growing reply back out of a state setter would make each fragment
+    // depend on the previous render having committed.
+    let streamedReply = ''
 
-    setSending(false)
+    try {
+      const data = await streamConverse(apiMessages, {
+        onReplyDelta: (delta) => {
+          streamedReply += delta
+          // First word of the reply — the thinking is over, so the placeholder gives way to the
+          // answer itself. `sending` clearing here is what removes the typing dots; from this
+          // point the growing text IS the progress indicator.
+          setSending(false)
+          setStatusLine('')
+          setThread([...newThread, { role: 'assistant', content: streamedReply }])
+        },
+        onStatus: (delta) => {
+          // Summarized thinking, which all lands before the reply and is most of the wait. Shown
+          // in place of the bare "…" so the pause reads as work rather than a hang.
+          setStatusLine((prev) => (prev + delta).slice(-160))
+        },
+      })
 
-    if (error || !data) {
-      setThread([...newThread, { role: 'assistant', content: "Sorry, something went wrong. Let's try again." }])
-      return
-    }
+      // A single message can now describe several distinct events at once, so converse returns
+      // a list of moment IDs touched this turn rather than just one.
+      const events = (
+        await Promise.all(
+          data.momentIds.map(async (id) => {
+            const { data: moment } = await supabase.from('moments').select('occasion, raw_description').eq('id', id).single()
+            return moment ? { id, summary: summarize(moment.occasion, moment.raw_description) } : null
+          })
+        )
+      ).filter((e): e is EventRef => e !== null)
 
-    // A single message can now describe several distinct events at once, so converse returns
-    // a list of moment IDs touched this turn rather than just one.
-    const events = (
-      await Promise.all(
-        ((data.momentIds ?? []) as string[]).map(async (id) => {
-          const { data: moment } = await supabase.from('moments').select('occasion, raw_description').eq('id', id).single()
-          return moment ? { id, summary: summarize(moment.occasion, moment.raw_description) } : null
-        })
-      )
-    ).filter((e): e is EventRef => e !== null)
+      // `data.reply`, not the accumulated deltas: a reply the server couldn't stream incrementally
+      // arrives only in the final event, and this is also where the chips first appear.
+      setThread([
+        ...newThread,
+        { role: 'assistant', content: data.reply || streamedReply, people: data.people, events, groups: data.groups },
+      ])
 
-    setThread([...newThread, { role: 'assistant', content: data.reply, people: data.people ?? [], events, groups: data.groups ?? [] }])
-
-    if (data.relationshipSuggestions?.length > 0) {
-      setRelationshipSuggestions((prev) => [...prev, ...data.relationshipSuggestions])
-    }
-    if (data.newPersonSuggestions?.length > 0) {
-      setNewPersonSuggestions((prev) => [...prev, ...toStagedNewPersonSuggestions(data.newPersonSuggestions)])
-    }
-    if (data.mentionedPeopleSuggestions?.length > 0) {
-      setMentionedPeopleSuggestions((prev) => [...prev, ...data.mentionedPeopleSuggestions])
+      if (data.relationshipSuggestions.length > 0) {
+        setRelationshipSuggestions((prev) => [...prev, ...(data.relationshipSuggestions as RelationshipSuggestion[])])
+      }
+      if (data.newPersonSuggestions.length > 0) {
+        setNewPersonSuggestions((prev) => [
+          ...prev,
+          ...toStagedNewPersonSuggestions(data.newPersonSuggestions as Omit<NewPersonSuggestion, 'stage'>[]),
+        ])
+      }
+      if (data.mentionedPeopleSuggestions.length > 0) {
+        setMentionedPeopleSuggestions((prev) => [...prev, ...(data.mentionedPeopleSuggestions as MentionedPersonSuggestion[])])
+      }
+    } catch {
+      // Keep whatever was streamed before the failure rather than blanking it — a half-written
+      // answer the user already read is more use than an apology that replaces it.
+      setThread([
+        ...newThread,
+        { role: 'assistant', content: streamedReply || "Sorry, something went wrong. Let's try again." },
+      ])
+    } finally {
+      // Belt and braces: cleared on the first delta above, but a turn that fails before any delta
+      // (or streams nothing at all) still has to release the composer.
+      setSending(false)
+      setStatusLine('')
     }
   }
 
@@ -369,6 +408,7 @@ export default function Home({
     <HomeView
       thread={thread}
       sending={sending}
+      statusLine={statusLine}
       input={input}
       onInputChange={setInput}
       onSend={handleSend}
@@ -416,6 +456,7 @@ export default function Home({
 export function HomeView({
   thread,
   sending,
+  statusLine = '',
   input,
   onInputChange,
   onSend,
@@ -459,6 +500,9 @@ export function HomeView({
 }: {
   thread: ChatMessage[]
   sending: boolean
+  /** The model's live thinking summary, shown in place of the "…" bubble. Optional: the demo,
+   *  which has no backend, simply never sets it. */
+  statusLine?: string
   input: string
   onInputChange: (value: string) => void
   onSend: () => void
@@ -497,6 +541,10 @@ export function HomeView({
   devTools?: ReactNode
   readOnly?: boolean
 }) {
+  // Lives here rather than in the container: the mic and the Send button it guards are both owned
+  // by this component, so threading it through as a prop would buy nothing.
+  const [transcribing, setTranscribing] = useState(false)
+
   return (
     <div style={styles.page}>
       <h1 style={styles.heading}>Grove</h1>
@@ -786,7 +834,11 @@ export function HomeView({
             )}
           </div>
         ))}
-        {sending && <div style={styles.assistantBubble}>…</div>}
+        {sending && (
+          <div style={{ ...styles.assistantBubble, ...(statusLine ? styles.statusBubble : null) }}>
+            {statusLine || '…'}
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -818,9 +870,13 @@ export function HomeView({
                 value={input}
                 onChange={onInputChange}
                 disabled={sending}
+                onBusyChange={setTranscribing}
               />
             )}
-            <button onClick={onSend} disabled={sending} style={styles.button}>
+            {/* Send is also blocked while a voice note is still transcribing. Without that guard
+                the button stays live mid-dictation and sends a half-transcribed sentence — the
+                review-queue screens have always passed onBusyChange for exactly this reason. */}
+            <button onClick={onSend} disabled={sending || transcribing} style={styles.button}>
               Send
             </button>
           </div>
@@ -1025,6 +1081,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: radius.xl,
     maxWidth: '80%',
     boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+  },
+  // The thinking summary, deliberately quieter than a real reply: it's the model's working-out,
+  // not its answer, and it gets replaced the instant the answer starts.
+  statusBubble: {
+    color: neutral.grey600,
+    fontSize: fontSize.small,
+    fontStyle: 'italic',
+    boxShadow: 'none',
+    backgroundColor: 'transparent',
   },
   peopleRow: { display: 'flex', gap: space.md, marginTop: '0.4rem', flexWrap: 'wrap' },
   personChip: {

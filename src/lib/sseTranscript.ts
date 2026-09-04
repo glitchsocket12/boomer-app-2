@@ -1,9 +1,14 @@
-// Pure parsing for the server-sent-event stream the `transcribe` Edge Function returns.
+// Pure parsing for the server-sent-event streams this app's Edge Functions return.
 //
 // Split out from transcribeStream.ts so it can be tested without mocking `fetch` or a Supabase
 // session — the rest of that file is I/O and nothing else, and this is the part with the edge cases:
 // a network chunk boundary can fall anywhere, including the middle of a JSON payload or between the
 // two newlines that end a frame.
+//
+// `parseSseFrames` is the transport half and knows nothing about any particular function's events;
+// `consumeSseChunk` below layers the transcriber's event shapes on top of it, and converseStream.ts
+// layers its own on the same primitive. Anything that reads an SSE stream in this app goes through
+// parseSseFrames rather than re-deriving the chunk-boundary handling.
 
 export type TranscriptEvent =
   | { type: 'delta'; text: string }
@@ -11,12 +16,15 @@ export type TranscriptEvent =
   | { type: 'error'; code: string }
 
 /**
- * Folds one newly-arrived chunk of the stream into whatever was left over from the last one.
+ * Splits one newly-arrived chunk into whole JSON payloads, carrying the partial trailing frame.
  *
- * Returns the complete events the chunk finished off, plus the trailing partial frame to hand back
- * in on the next call. Callers keep no other state.
+ * Returns the payloads the chunk finished off, plus the leftover to hand back in on the next call.
+ * Callers keep no other state.
  */
-export function consumeSseChunk(buffer: string, chunk: string): { events: TranscriptEvent[]; buffer: string } {
+export function parseSseFrames(
+  buffer: string,
+  chunk: string
+): { payloads: Record<string, unknown>[]; buffer: string } {
   // CRLF normalised first. SSE producers are free to end frames with \r\n\r\n — OpenAI's own
   // transcription stream does — and that sequence contains no \n\n, so a parser that only splits on
   // \n\n silently accumulates the entire stream and reports nothing. Normalising the combined
@@ -27,21 +35,41 @@ export function consumeSseChunk(buffer: string, chunk: string): { events: Transc
   // definition — even if it looks like whole JSON, the rest of it may still be in flight.
   const frames = combined.split('\n\n')
   const remainder = frames.pop() ?? ''
-  const events: TranscriptEvent[] = []
+  const payloads: Record<string, unknown>[] = []
 
   for (const frame of frames) {
     const line = frame.split('\n').find((l) => l.startsWith('data:'))
     if (!line) continue
     const raw = line.slice(5).trim()
     if (!raw || raw === '[DONE]') continue
-    let parsed: { type?: string; text?: string; code?: string }
     try {
-      parsed = JSON.parse(raw)
+      const parsed = JSON.parse(raw)
+      // A JSON scalar or array is well-formed but isn't an event; treating it as one would let
+      // `parsed.type` read as undefined off a string and silently match nothing further down.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) payloads.push(parsed)
     } catch {
       // A frame that isn't JSON is skipped rather than thrown on: one malformed frame should cost
-      // the user that fragment, not the whole recording.
+      // the user that fragment, not the whole stream.
       continue
     }
+  }
+
+  return { payloads, buffer: remainder }
+}
+
+/**
+ * Folds one newly-arrived chunk of the transcriber's stream into whatever was left over from the
+ * last one.
+ *
+ * Returns the complete events the chunk finished off, plus the trailing partial frame to hand back
+ * in on the next call. Callers keep no other state.
+ */
+export function consumeSseChunk(buffer: string, chunk: string): { events: TranscriptEvent[]; buffer: string } {
+  const { payloads, buffer: remainder } = parseSseFrames(buffer, chunk)
+  const events: TranscriptEvent[] = []
+
+  for (const payload of payloads) {
+    const parsed = payload as { type?: string; text?: string; code?: string }
     if (parsed.type === 'delta' && typeof parsed.text === 'string' && parsed.text) {
       events.push({ type: 'delta', text: parsed.text })
     } else if (parsed.type === 'done' && typeof parsed.text === 'string') {
