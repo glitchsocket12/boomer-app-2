@@ -80,8 +80,20 @@ export default function SettingsPage({
   // happens to omit — see buildTimeZoneOptions' own comment.
   const timeZoneOptions = useMemo(() => buildTimeZoneOptions(timeZone), [timeZone])
 
+  // Auto-tagging (2026-08-23). Both counts are their own small queries with no error handling
+  // beyond "null means don't render the line" — a count that can't be read must never stop the
+  // rest of Settings from working.
+  const [unscannedCount, setUnscannedCount] = useState<number | null>(null)
+  const [aiTagCount, setAiTagCount] = useState<number | null>(null)
+  const [scanning, setScanning] = useState(false)
+  const [scanReport, setScanReport] = useState<string | null>(null)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [undoConfirm, setUndoConfirm] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+
   useEffect(() => {
     loadCurrentUser()
+    loadTaggingCounts()
   }, [])
 
   async function loadCurrentUser() {
@@ -100,6 +112,82 @@ export default function SettingsPage({
     // post-signin auto-detect hasn't landed) — picking an option here doesn't save until the
     // user actually changes the dropdown, at which point handleSelectTimeZone persists it.
     setTimeZone(data?.time_zone ?? detectBrowserTimeZone())
+  }
+
+  async function loadTaggingCounts() {
+    const [unscanned, aiTags] = await Promise.all([
+      supabase.from('moments').select('id', { count: 'exact', head: true }).is('tag_scan_at', null),
+      supabase.from('moment_tags').select('moment_id', { count: 'exact', head: true }).eq('source', 'ai_scan'),
+    ])
+    setUnscannedCount(unscanned.error ? null : (unscanned.count ?? 0))
+    setAiTagCount(aiTags.error ? null : (aiTags.count ?? 0))
+  }
+
+  /**
+   * Reads a batch of never-scanned events, then — once the backlog is empty — looks across
+   * everything it collected for kinds of event that keep coming up with no tag to cover them.
+   *
+   * The trend pass is deliberately gated on the backlog being finished: clustering half the
+   * library would propose tags off a partial count, and it's a second API call for an answer
+   * that's about to change.
+   */
+  async function handleScan() {
+    setScanning(true)
+    setScanError(null)
+    setScanReport(null)
+
+    const { data, error } = await supabase.functions.invoke('scan-event-tags', { body: {} })
+    if (error || !data) {
+      setScanning(false)
+      setScanError("Couldn't read your events just now — please try again in a minute.")
+      return
+    }
+
+    // A run whose AI calls died must never be worded as a run that found nothing (§12). Those
+    // events were not stamped, so they're still waiting — say that plainly.
+    if (data.extractionFailures > 0 && data.scanned === 0) {
+      setScanning(false)
+      setScanError("Couldn't read your events just now — nothing was changed. Please try again in a minute.")
+      await loadTaggingCounts()
+      return
+    }
+
+    const parts: string[] = []
+    parts.push(`Read ${data.scanned} event${data.scanned === 1 ? '' : 's'}.`)
+    if (data.tagsApplied > 0) parts.push(`Added ${data.tagsApplied} tag${data.tagsApplied === 1 ? '' : 's'}.`)
+    if (data.groupsSuggested > 0) {
+      parts.push(`${data.groupsSuggested} may belong to a group — you'll be asked on the home page.`)
+    }
+
+    if (data.remaining > 0) {
+      parts.push(`${data.remaining} to go — press the button again to keep going.`)
+    } else {
+      const trends = await supabase.functions.invoke('suggest-tag-trends', { body: {} })
+      const found = trends.data?.proposals ?? 0
+      if (found > 0) parts.push(`Found ${found} new tag idea${found === 1 ? '' : 's'} — see Manage tags below.`)
+    }
+    if (data.extractionFailures > 0) {
+      parts.push(`${data.extractionFailures} batch${data.extractionFailures === 1 ? '' : 'es'} couldn't be read and will be retried.`)
+    }
+
+    setScanning(false)
+    setScanReport(parts.join(' '))
+    await loadTaggingCounts()
+  }
+
+  /** Takes back only what the app applied on its own — `source` is null on everything hand-added. */
+  async function handleUndoScan() {
+    setUndoing(true)
+    setScanError(null)
+    const { error, count } = await supabase.from('moment_tags').delete({ count: 'exact' }).eq('source', 'ai_scan')
+    setUndoing(false)
+    setUndoConfirm(false)
+    if (error) {
+      setScanError("Couldn't remove those tags — please try again.")
+      return
+    }
+    setScanReport(`Removed ${count ?? 0} tag${count === 1 ? '' : 's'}.`)
+    await loadTaggingCounts()
   }
 
   async function handleUpdateEmail(e: FormEvent) {
@@ -437,6 +525,53 @@ export default function SettingsPage({
       </section>
 
       <section style={styles.section}>
+        <h2 style={styles.sectionHeading}>Tagging your events</h2>
+        <p style={styles.body}>
+          The app can read through the events you've already saved and put tags on them — the same thing it does for
+          new events coming in from your calendar. Tags you already have get added straight away. If it spots a kind
+          of event you have no tag for yet, it collects those up and asks you on the Manage tags page instead of
+          inventing names on its own.
+        </p>
+        {unscannedCount !== null && (
+          <p style={styles.body}>
+            {unscannedCount === 0
+              ? 'Every event has been looked at.'
+              : `${unscannedCount} event${unscannedCount === 1 ? " hasn't" : "s haven't"} been looked at yet.`}
+          </p>
+        )}
+        <button onClick={handleScan} style={styles.actionButtonPrimary} disabled={scanning}>
+          {scanning ? 'Reading your events…' : unscannedCount === 0 ? 'Look for tag ideas again' : 'Scan my events'}
+        </button>
+        {scanReport && <p style={styles.successText}>{scanReport}</p>}
+        {scanError && <p style={styles.errorText}>{scanError}</p>}
+
+        {aiTagCount !== null && aiTagCount > 0 && (
+          <div style={styles.undoBlock}>
+            {undoConfirm ? (
+              <>
+                <p style={styles.body}>
+                  Take back all {aiTagCount} tag{aiTagCount === 1 ? '' : 's'} the app added by itself? Tags you added
+                  yourself stay exactly where they are, and no events are deleted.
+                </p>
+                <div style={styles.buttonRow}>
+                  <button onClick={handleUndoScan} style={styles.dangerButton} disabled={undoing}>
+                    {undoing ? '…' : 'Yes, remove them'}
+                  </button>
+                  <button onClick={() => setUndoConfirm(false)} style={styles.actionButtonPrimary} disabled={undoing}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button onClick={() => setUndoConfirm(true)} style={styles.linkRow}>
+                Remove the {aiTagCount} tag{aiTagCount === 1 ? '' : 's'} the app added →
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section style={styles.section}>
         <h2 style={styles.sectionHeading}>Your lists</h2>
         <button onClick={onOpenManageTags} style={styles.linkRow}>
           Manage tags →
@@ -523,6 +658,19 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   errorText: { color: colors.danger, fontSize: fontSize.label, margin: '0.5rem 0 0' },
   successText: { color: colors.success, fontSize: fontSize.label, margin: '0.5rem 0 0' },
+  undoBlock: { marginTop: '0.75rem', borderTop: `1px solid ${neutral.warmLine}`, paddingTop: '0.5rem' },
+  buttonRow: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap' },
+  dangerButton: {
+    fontSize: fontSize.bodyLg,
+    padding: '0.6rem 1rem',
+    borderRadius: radius.md,
+    border: 'none',
+    backgroundColor: colors.danger,
+    color: colors.onFill,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    fontFamily,
+  },
   toneGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem' },
   toneCard: {
     display: 'flex',

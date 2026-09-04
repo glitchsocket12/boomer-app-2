@@ -276,3 +276,81 @@ describe('deriveEventGroupSuggestions — group windows', () => {
     expect(out).toEqual([])
   })
 })
+
+describe('deriveEventGroupSuggestions — the scan\'s own picks', () => {
+  it('suggests a group off the AI pick alone, with no attendees and no window', () => {
+    const out = deriveEventGroupSuggestions(
+      [{ id: 'e1', title: 'Squadron Christmas party' }],
+      [],
+      [],
+      groupNames,
+      new Map(),
+      new Map([['e1', ['af']]])
+    )
+    expect(out).toEqual([
+      {
+        kind: 'event_group',
+        momentId: 'e1',
+        momentTitle: 'Squadron Christmas party',
+        groupId: 'af',
+        groupName: 'Air Force',
+        reason: 'Its name and notes point to that group.',
+      },
+    ])
+  })
+
+  it('yields to the attendance reason when both land on the same pair', () => {
+    const out = deriveEventGroupSuggestions(
+      events,
+      [
+        { moment_id: 'e1', person_id: 'p1' },
+        { moment_id: 'e1', person_id: 'p2' },
+      ],
+      [
+        { person_id: 'p1', group_id: 'lpc' },
+        { person_id: 'p2', group_id: 'lpc' },
+      ],
+      groupNames,
+      new Map(),
+      new Map([['e1', ['lpc']]])
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0].reason).toBe('Everyone who was there is a member.')
+  })
+
+  it('drops a pick naming a group that no longer exists', () => {
+    const out = deriveEventGroupSuggestions(
+      events,
+      [],
+      [],
+      groupNames,
+      new Map(),
+      new Map([['e1', ['deleted-group']]])
+    )
+    expect(out).toEqual([])
+  })
+
+  it('ignores picks for an event that is not in the untagged pool', () => {
+    const out = deriveEventGroupSuggestions(
+      events,
+      [],
+      [],
+      groupNames,
+      new Map(),
+      new Map([['some-other-event', ['af']]])
+    )
+    expect(out).toEqual([])
+  })
+
+  it('asks about each group when the scan picked more than one', () => {
+    const out = deriveEventGroupSuggestions(
+      events,
+      [],
+      [],
+      groupNames,
+      new Map(),
+      new Map([['e1', ['af', 'lpc']]])
+    )
+    expect(out.map((s) => s.groupId)).toEqual(['af', 'lpc'])
+  })
+})

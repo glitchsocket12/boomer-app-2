@@ -14,6 +14,12 @@ import { matchGroupWindow, type GroupWindow } from './groupWindow'
 // group's own dates, and often in its own place. That one needs no attendees at all, which is the
 // whole point — the case that prompted it was a brand-new group with zero members and a solo post
 // on its first day. See lib/groupWindow.ts for the rules and the precision guards.
+//
+// A third arrived with auto-tagging: scan-event-tags read the event's own title and notes and
+// picked a group. It reaches neither of the others' evidence — a calendar import often has no
+// rostered attendees AND no group with dates on it — so it is the only signal that can place
+// "Squadron Christmas party" without anything structural to go on. It is also the weakest, being
+// an inference rather than a fact about the data, which is why it runs last.
 export type EventGroupSuggestion = {
   kind: 'event_group'
   momentId: string
@@ -52,6 +58,10 @@ const MAX_WINDOW_SUGGESTIONS_PER_MOMENT = 2
 
 const ATTENDANCE_REASON = 'Everyone who was there is a member.'
 
+// Deliberately says where the guess came from. The other two reasons cite evidence the founder can
+// check for themselves; this one can't, so it should read as the softer claim it is.
+const AI_REASON = "Its name and notes point to that group."
+
 // At least this many attendees before a shared group means anything. One attendee who happens to
 // be in eleven groups would otherwise produce eleven suggestions off a single data point.
 const MIN_ATTENDEES = 2
@@ -71,7 +81,9 @@ export function deriveEventGroupSuggestions(
   groupNameById: Map<string, string>,
   // Optional so every caller and test that only cares about the attendance rule is unaffected,
   // and so a database where the window migration hasn't run yet simply passes nothing.
-  groupWindowById: Map<string, GroupWindow> = new Map()
+  groupWindowById: Map<string, GroupWindow> = new Map(),
+  // scan-event-tags' own picks, moment id → group ids. Optional for the same reason.
+  aiGroupIdsByMoment: Map<string, string[]> = new Map()
 ): EventGroupSuggestion[] {
   const attendeesByMoment = new Map<string, Set<string>>()
   for (const row of attendance) {
@@ -170,6 +182,17 @@ export function deriveEventGroupSuggestions(
     }
   }
 
+  // Third pass, last for the same reason the second is second: `push` keeps whichever reason
+  // arrived first, and a fact about the data ("everyone who was there is a member") explains the
+  // question better than the model's read of a title ever will.
+  for (const moment of untaggedMoments) {
+    for (const groupId of aiGroupIdsByMoment.get(moment.id) ?? []) {
+      const groupName = groupNameById.get(groupId)
+      if (!groupName) continue
+      push(moment, groupId, groupName, AI_REASON)
+    }
+  }
+
   return out
 }
 
@@ -180,17 +203,17 @@ export function deriveEventGroupSuggestions(
 export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise<EventGroupSuggestion[]> {
   if (!dismissals.supported) return []
 
-  // All four are account-wide, so all four are paged (lib/pagedSelect.ts). `tagged` matters most:
+  // All five are account-wide, so all five are paged (lib/pagedSelect.ts). `tagged` matters most:
   // a moment_groups row lost to the 1000-row cap makes an already-tagged event look untagged, and
   // the card asks to tag it again — the exact shape of the founder's "Yes doesn't stick" report.
   //
-  // The group WINDOW is its own separate query rather than three more columns on the groups
-  // select, and its result is used only if it came back: a `.select()` naming a column that
-  // doesn't exist yet fails the WHOLE query, so folding start_date/end_date/location into the
-  // select above would take the attendance rule down too on any database where the
-  // 2026-08-23 migration hasn't been pasted in. Separate queries fail independently — the same
-  // split converse/index.ts already makes for pets, gender and notebooks.
-  const [momentsRes, taggedRes, groupsRes, windowsRes] = await Promise.all([
+  // The group WINDOW and the AI PICKS are each their own separate query rather than more columns
+  // on the selects above, and each result is used only if it came back: a `.select()` naming a
+  // column that doesn't exist yet fails the WHOLE query, so folding start_date/end_date/location
+  // or suggested_group_ids into a shared select would take the attendance rule down too on any
+  // database where the matching 2026-08-23 migration hasn't been pasted in. Separate queries fail
+  // independently — the same split converse/index.ts already makes for pets, gender and notebooks.
+  const [momentsRes, taggedRes, groupsRes, windowsRes, aiPicksRes] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from('moments')
@@ -202,6 +225,16 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
     fetchAllRows((from, to) => supabase.from('groups').select('id, name').order('id').range(from, to)),
     fetchAllRows((from, to) =>
       supabase.from('groups').select('id, start_date, end_date, location').order('id').range(from, to)
+    ),
+    // Only rows the scan actually wrote something to, so this stays small however big the library
+    // gets — most events never get a group pick at all.
+    fetchAllRows((from, to) =>
+      supabase
+        .from('moments')
+        .select('id, suggested_group_ids')
+        .not('suggested_group_ids', 'eq', '[]')
+        .order('id')
+        .range(from, to)
     ),
   ])
 
@@ -252,6 +285,16 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
     })
   }
 
+  // The scan's group picks, same fail-open stance: an empty map before the migration runs simply
+  // turns this rule off. jsonb comes back as unknown, so the shape is checked rather than trusted.
+  const aiGroupIdsByMoment = new Map<string, string[]>()
+  for (const row of (aiPicksRes.data as { id: string; suggested_group_ids: unknown }[] | null) ?? []) {
+    const ids = (Array.isArray(row.suggested_group_ids) ? row.suggested_group_ids : []).filter(
+      (id): id is string => typeof id === 'string' && id !== ''
+    )
+    if (ids.length > 0) aiGroupIdsByMoment.set(row.id, ids)
+  }
+
   // Attendance comes from notes carrying a person_id — the same signal EventDetail's "Who was
   // there" and suggestConnections' own attendance pass read. Scoped by the untagged moment ids
   // rather than by people: the moment list is the smaller side, which is the precaution the
@@ -280,7 +323,8 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
     attendance,
     (membershipData as MembershipRow[] | null) ?? [],
     groupNameById,
-    groupWindowById
+    groupWindowById,
+    aiGroupIdsByMoment
   ).filter((s) => !dismissals.has('event_group', s.momentId, s.groupId))
 }
 
