@@ -1,0 +1,82 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build)",
+      "Bash(npm run lint)",
+      "Bash(npm run check)",
+      "Bash(npm run check:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm ci)",
+      "Bash(npm install)",
+      "Bash(npx vitest:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx oxlint:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull origin:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push origin:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git stash list:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(sed -n:*)",
+      "Bash(awk:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(comm:*)",
+      "Bash(diff:*)",
+      "Bash(md5sum:*)",
+      "Bash(echo:*)",
+      "Bash(true)",
+      "mcp__Supabase",
+      "mcp__Supabase__execute_sql",
+      "mcp__Supabase__list_projects",
+      "mcp__Supabase__list_tables",
+      "mcp__Supabase__list_migrations",
+      "mcp__Supabase__list_extensions",
+      "mcp__Supabase__list_edge_functions",
+      "mcp__Supabase__get_edge_function",
+      "mcp__Supabase__get_project",
+      "mcp__Supabase__get_project_url",
+      "mcp__Supabase__get_advisors",
+      "mcp__Supabase__query_logs",
+      "mcp__Supabase__search_docs",
+      "mcp__Supabase__generate_typescript_types",
+      "mcp__Supabase__apply_migration",
+      "mcp__Supabase__deploy_edge_function"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

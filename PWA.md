@@ -1,6 +1,6 @@
 # Putting Grove on your phone
 
-_Written 2026-08-01. This replaces the native-iPhone-app plan for now — see the "Why not a real app" section at the bottom for the reasoning._
+_Written 2026-08-01, still current. This replaced the native-iPhone-app plan at the time; **that call was reversed on 2026-08-22** — a real App Store app is back on, via Capacitor and a rented cloud Mac (`NATIVE.md`). Everything below still stands: the home-screen version is what you use today, and it stays after a store listing exists._
 
 Grove is now installable on your iPhone home screen. No App Store, no Mac, no $99/year, no Apple review. It gets an icon, opens full screen with no browser bar, and behaves like an app.
 
@@ -37,7 +37,7 @@ You'll get a dark green icon with a cream "B" on your home screen. Tapping it op
 - Direct camera-roll access (the Google Photos import is the workaround, and it already works)
 - Push notifications — technically possible for installed apps on iOS 16.4+, but nothing is wired up for it yet
 - Face ID lock on the app itself
-- An App Store listing (you don't want one yet)
+- An App Store listing (decided 2026-08-22 that you do want one — not built yet, see `NATIVE.md`)
 
 If the camera roll ever becomes the thing you actually need, that's the trigger to revisit a real native app — and the note in PROJECT_CONTEXT §9 has the measured cost of doing it.
 
@@ -122,6 +122,8 @@ Worth adding later if either of these becomes true: you want the app to open ins
 ---
 
 ## Why not a real native app
+
+> **Superseded 2026-08-22 — kept for the reasoning, which is still sound.** The founder decided to go native after all, via **Capacitor + a rented cloud Mac**: renting a Mac removes the one constraint this section is built on. See `NATIVE.md` for the pre-flight audit and PROJECT_CONTEXT §9 / item 105 for where it sits in the build order. The PWA below stays either way.
 
 Short version: **Xcode only runs on macOS.** Building and signing an iPhone app requires a Mac, not once but for every single update. You work on a PC and have occasional access to your wife's Mac — that's a favour you'd have to keep asking, not a workflow.
 
