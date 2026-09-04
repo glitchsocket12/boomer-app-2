@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { loadReviewCounts } from '../lib/reviewQueues'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
-import { formatEventWhen, nextOccurrenceDate } from '../lib/dates'
+import { formatDateRange, formatEventWhen, nextOccurrenceDate } from '../lib/dates'
+import { eventSpan } from '../lib/eventSpan'
 import { fetchMomentParentIds } from '../lib/moments'
+import { resolveRootIds } from '../lib/timelineTree'
 import CountdownsSection from '../components/CountdownsSection'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
@@ -33,6 +35,9 @@ type PersonRow = {
 
 type CalendarEntry = {
   key: string
+  // Null on a reminder (birthday/anniversary) entry — those aren't events and have no sub-events.
+  momentId: string | null
+  row: MomentRow | null
   date: Date
   title: string
   sub: string
@@ -40,10 +45,46 @@ type CalendarEntry = {
   onClick: () => void
 }
 
+// One line of the Timeline: an event (with its sub-events folded in, collapsed by default) or a
+// reminder. `anchor` is where the row SITS in the list and `endTime` decides which side of the
+// Today divider it falls on — for a trip those are the two ends of its whole span, not its start
+// date twice. See the timelineRows memo.
+type TimelineRow = {
+  key: string
+  rootId: string | null
+  entry: CalendarEntry
+  children: CalendarEntry[]
+  anchor: Date
+  endTime: number
+  dayLabel: string
+  sub: string
+}
+
 const MONTH_DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
 function fullName(p: { name: string; last_name: string | null }): string {
   return p.last_name ? `${p.name} ${p.last_name}` : p.name
+}
+
+function isoOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// MIRROR of stripBirthdaySuffix in supabase/functions/scan-calendar-sources/index.ts, with one
+// deliberate difference: this copy also strips a trailing bare apostrophe, so "Mark Berzins'
+// birthday" normalizes to "mark berzins" and lines up with the contact of that name. The Deno copy
+// leaves the apostrophe on, which is harmless there (its output becomes a suggested contact name a
+// human reads and edits in BirthdayImportReview) but would break the match here. The fix is
+// deliberately not backported — it would change the text shown for birthday candidates already
+// sitting in someone's review queue. Don't "fix" these two into parity.
+function normalizeBirthdayName(title: string): string {
+  return title
+    .replace(/[’']s\s+birthday$/i, '')
+    .replace(/\s+birthday$/i, '')
+    .replace(/[’']$/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
 }
 
 export default function Calendar({
@@ -63,6 +104,9 @@ export default function Calendar({
   const [momentParentById, setMomentParentById] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [tagFilter, setTagFilter] = useState('all')
+  // Which trips are showing their sub-events. Collapsed by default — the whole point is that a
+  // wedding weekend is one line until you ask for its parts.
+  const [expandedRoots, setExpandedRoots] = useState<Set<string>>(new Set())
   const [reviewCount, setReviewCount] = useState(0)
   const today = useMemo(() => {
     const d = new Date()
@@ -112,6 +156,8 @@ export default function Calendar({
     setLoading(false)
   }
 
+  // Chips stay derived from the full set, so hiding a duplicate birthday below can never take a
+  // filter chip away with it.
   const distinctTags = useMemo(() => {
     const names = new Set<string>()
     for (const m of moments) {
@@ -122,12 +168,45 @@ export default function Calendar({
     return [...names].sort()
   }, [moments])
 
+  // A birthday that lives on a contact card AND was imported as its own calendar event lands on
+  // the same day twice — same person, two rows (founder, 2026-09-04: minimize duplicative outputs
+  // even when several inputs point at the same thing). The contact's reminder wins: it recurs every
+  // year and opens the person. The event is only hidden from this page; it still exists and is
+  // still on the Events page.
+  //
+  // Deliberately narrow — it matches only the reminder's NEXT occurrence, so a birthday event from
+  // a past year stays on the timeline as history, where it can carry photos and notes. Known gap: a
+  // Feb 29 birthday never matches, because new Date(y, 1, 29) rolls forward to Mar 1.
+  const visibleMoments = useMemo(() => {
+    const parentIds = new Set(momentParentById.values())
+    const birthdayKeys = new Set<string>()
+    for (const p of people) {
+      for (const r of p.reminders ?? []) {
+        if (!/^birthday$/i.test(r.label.trim())) continue
+        const iso = isoOf(nextOccurrenceDate(r.month, r.day))
+        birthdayKeys.add(`${iso}|${normalizeBirthdayName(fullName(p))}`)
+        birthdayKeys.add(`${iso}|${normalizeBirthdayName(p.name)}`)
+      }
+    }
+    if (birthdayKeys.size === 0) return moments
+    return moments.filter((m) => {
+      // Only ever the event's own title, never the summarize() fallback — an AI-written summary
+      // that happens to read like a name must not make an event disappear.
+      if (!m.occasion || !/birthday/i.test(m.occasion)) return true
+      // Never hide a row that has sub-events hanging off it.
+      if (parentIds.has(m.id)) return true
+      return !birthdayKeys.has(`${m.event_date}|${normalizeBirthdayName(m.occasion)}`)
+    })
+  }, [moments, people, momentParentById])
+
   const momentEntries: CalendarEntry[] = useMemo(
     () =>
-      moments.map((m) => {
+      visibleMoments.map((m) => {
         const tagNames = (m.moment_tags ?? []).map((mt) => mt.tags?.name).filter((n): n is string => !!n)
         return {
           key: `moment-${m.id}`,
+          momentId: m.id,
+          row: m,
           date: new Date(`${m.event_date}T00:00:00`),
           title: m.occasion || summarize(m.occasion, m.raw_description) || 'Untitled moment',
           sub: tagNames[0] ?? formatEventWhen(m),
@@ -135,7 +214,7 @@ export default function Calendar({
           onClick: () => onSelectEvent({ id: m.id, summary: m.occasion || 'Untitled moment' }),
         }
       }),
-    [moments]
+    [visibleMoments]
   )
 
   const reminderEntries: CalendarEntry[] = useMemo(
@@ -143,6 +222,8 @@ export default function Calendar({
       people.flatMap((p) =>
         (p.reminders ?? []).map((r) => ({
           key: `reminder-${r.id}`,
+          momentId: null,
+          row: null,
           date: nextOccurrenceDate(r.month, r.day),
           title: `${fullName(p)}'s ${r.label.toLowerCase()}`,
           sub: r.label,
@@ -156,19 +237,184 @@ export default function Calendar({
   const filteredMomentEntries =
     tagFilter === 'all' ? momentEntries : momentEntries.filter((e) => e.tagNames.includes(tagFilter))
 
-  // Upcoming: only what's still ahead, soonest first — reminders always shown (there's no
-  // tag concept for them), moments respect the tag filter like everywhere else in the app.
-  const upcoming = [...filteredMomentEntries, ...reminderEntries]
-    .filter((e) => e.date.getTime() >= today.getTime())
-    .sort((a, b) => a.date.getTime() - b.date.getTime())
+  // The Timeline, as rows rather than a flat list (2026-09-04): a trip collapses to ONE row with
+  // its sub-events tucked underneath, because a wedding weekend was taking four lines and burying
+  // everything around it.
+  //
+  // Continuous Timeline (2026-08-07 redesign) — past and upcoming share one scrollable region with
+  // a "Today" divider between them. Reminders only ever carry their NEXT occurrence
+  // (nextOccurrenceDate always resolves forward), so in practice the past half is events only.
+  const timelineRows = useMemo(() => {
+    const entryById = new Map<string, CalendarEntry>()
+    for (const e of momentEntries) if (e.momentId) entryById.set(e.momentId, e)
+    const rootById = resolveRootIds(momentParentById, new Set(entryById.keys()))
+    const rootOf = (id: string) => rootById.get(id) ?? id
+    const matches = (e: CalendarEntry) => tagFilter === 'all' || e.tagNames.includes(tagFilter)
 
-  // Continuous Timeline (2026-08-07 redesign) — past events feed into the same list Upcoming
-  // already built, sharing a scrollable region with a "Today" divider in between. Reminders only
-  // ever carry their NEXT occurrence (nextOccurrenceDate always resolves forward), so the past
-  // half is moments-only; a reminder's own history isn't modeled anywhere else in the app either.
-  const pastMoments = filteredMomentEntries
-    .filter((e) => e.date.getTime() < today.getTime())
-    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    // A trip earns a row if IT or any of its parts matches the filter, and a visible trip then
+    // shows ALL its parts. Otherwise tapping a tag would blow the trip back apart into exactly the
+    // flat rows this change exists to remove — and the "3 sub-events" count would stop matching
+    // what's actually underneath it.
+    const visibleRootIds = new Set<string>()
+    for (const e of momentEntries) {
+      if (e.momentId && matches(e)) visibleRootIds.add(rootOf(e.momentId))
+    }
+
+    const childrenByRoot = new Map<string, CalendarEntry[]>()
+    const rootEntries: CalendarEntry[] = []
+    for (const e of momentEntries) {
+      if (!e.momentId) continue
+      const rootId = rootOf(e.momentId)
+      if (!visibleRootIds.has(rootId)) continue
+      if (rootId === e.momentId) {
+        rootEntries.push(e)
+      } else {
+        const list = childrenByRoot.get(rootId) ?? []
+        list.push(e)
+        childrenByRoot.set(rootId, list)
+      }
+    }
+
+    const eventRows: TimelineRow[] = rootEntries.map((entry) => {
+      const children = (childrenByRoot.get(entry.momentId!) ?? [])
+        .slice()
+        .sort((a, b) => a.date.getTime() - b.date.getTime())
+      // eventSpan is what makes the collapsed row honest: the wedding is stored on Sep 12 with no
+      // end date while its first night starts Sep 10, so its own date would file the trip two days
+      // after it began. It also shrugs off the one row whose end date is stored BEFORE its start.
+      const span = entry.row
+        ? eventSpan(entry.row, children.map((c) => c.row).filter((r): r is MomentRow => !!r))
+        : null
+      const start = span ? new Date(`${span.start}T00:00:00`) : entry.date
+      const end = span ? new Date(`${span.end}T00:00:00`) : entry.date
+      const multiDay = !!span && span.end !== span.start
+      const sameMonth =
+        multiDay && start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()
+      return {
+        key: entry.key,
+        rootId: entry.momentId,
+        entry,
+        children,
+        anchor: start,
+        endTime: end.getTime(),
+        // "10–12" only when both ends share a month; a span across a month boundary would read as
+        // nonsense in a 3-character slot, so it keeps the start day and leans on the subtitle.
+        dayLabel: sameMonth ? `${start.getDate()}–${end.getDate()}` : String(start.getDate()),
+        // Without this the badge could read "SEP 10–12" over a subtitle reading "September 12".
+        sub:
+          multiDay && span
+            ? [formatDateRange(span.start, span.end), entry.tagNames[0]].filter(Boolean).join(' · ')
+            : entry.sub,
+      }
+    })
+
+    const reminderRows: TimelineRow[] = reminderEntries.map((entry) => ({
+      key: entry.key,
+      rootId: null,
+      entry,
+      children: [],
+      anchor: entry.date,
+      endTime: entry.date.getTime(),
+      dayLabel: String(entry.date.getDate()),
+      sub: entry.sub,
+    }))
+
+    // Sorted by when a thing STARTS, but filed past/upcoming by when it ENDS — a trip that's
+    // running right now belongs above the divider, not greyed out below it. Same ruling as
+    // compareEventsNewestFirst in lib/dates.ts (founder, 2026-09-03).
+    const all = [...eventRows, ...reminderRows]
+    const byAnchor = (a: TimelineRow, b: TimelineRow) => a.anchor.getTime() - b.anchor.getTime()
+    const todayTime = today.getTime()
+    return {
+      past: all.filter((r) => r.endTime < todayTime).sort(byAnchor),
+      upcoming: all.filter((r) => r.endTime >= todayTime).sort(byAnchor),
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [momentEntries, reminderEntries, momentParentById, tagFilter, today])
+
+  function toggleRoot(rootId: string) {
+    setExpandedRoots((prev) => {
+      const next = new Set(prev)
+      if (next.has(rootId)) next.delete(rootId)
+      else next.add(rootId)
+      return next
+    })
+  }
+
+  function renderTimelineRow(r: TimelineRow, past: boolean) {
+    const month = r.anchor.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()
+    const isRange = r.dayLabel.includes('–')
+    const dayStyle = isRange
+      ? past
+        ? styles.upcomingDayRangePast
+        : styles.upcomingDayRange
+      : past
+        ? styles.upcomingDayPast
+        : styles.upcomingDay
+    const body = (
+      <>
+        <div style={styles.upcomingDate}>
+          <div style={past ? styles.upcomingMonthPast : styles.upcomingMonth}>{month}</div>
+          <div style={dayStyle}>{r.dayLabel}</div>
+        </div>
+        <div style={styles.upcomingInfo}>
+          <div style={past ? styles.upcomingTitlePast : styles.upcomingTitle}>{r.entry.title}</div>
+          <div style={styles.upcomingSub}>{r.sub}</div>
+        </div>
+      </>
+    )
+
+    // A row with nothing under it stays exactly what it always was: one button, one click target.
+    if (!r.rootId || r.children.length === 0) {
+      return (
+        <button key={r.key} onClick={r.entry.onClick} style={styles.upcomingRow}>
+          {body}
+        </button>
+      )
+    }
+
+    const rootId = r.rootId
+    const expanded = expandedRoots.has(rootId)
+    const count = r.children.length
+    return (
+      <Fragment key={r.key}>
+        {/* The toggle can't live inside the row's own <button> — nesting buttons is invalid HTML
+            and the click bubbles, so tapping "3 sub-events" would also open the event. The row
+            becomes a <div> holding two siblings instead. */}
+        <div style={styles.upcomingRowWrap}>
+          <button onClick={r.entry.onClick} style={styles.upcomingRowMain}>
+            {body}
+          </button>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => toggleRoot(rootId)}
+            style={styles.subEventToggle}
+          >
+            {count} sub-event{count === 1 ? '' : 's'} {expanded ? '▾' : '▸'}
+          </button>
+        </div>
+        {expanded && (
+          <div style={styles.childRowList}>
+            {r.children.map((c) => (
+              <button key={c.key} onClick={c.onClick} style={styles.childRow}>
+                <div style={styles.childDate}>
+                  <div style={styles.upcomingMonthPast}>
+                    {c.date.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}
+                  </div>
+                  <div style={styles.childDay}>{c.date.getDate()}</div>
+                </div>
+                <div style={styles.upcomingInfo}>
+                  <div style={styles.childTitle}>{c.title}</div>
+                  <div style={styles.upcomingSub}>{c.sub}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </Fragment>
+    )
+  }
 
   // Scrolls the Timeline card back to the Today divider — used on the "Today" button, and once on
   // load so a long history doesn't leave you scrolled to the very top by default.
@@ -216,6 +462,8 @@ export default function Calendar({
           const list = buckets.get(r.day) ?? []
           list.push({
             key: `reminder-tile-${r.id}`,
+            momentId: null,
+            row: null,
             date: new Date(viewYear, viewMonth, r.day),
             title: `${fullName(p)}'s ${r.label.toLowerCase()}`,
             sub: r.label,
@@ -294,52 +542,26 @@ export default function Calendar({
       <div style={styles.card}>
         <div style={styles.timelineHeaderRow}>
           <h2 style={styles.sectionHeading}>Timeline</h2>
-          {(pastMoments.length > 0 || upcoming.length > 0) && (
+          {(timelineRows.past.length > 0 || timelineRows.upcoming.length > 0) && (
             <button onClick={() => scrollToToday()} style={styles.todayButton}>
               Today
             </button>
           )}
         </div>
-        {pastMoments.length === 0 && upcoming.length === 0 ? (
+        {timelineRows.past.length === 0 && timelineRows.upcoming.length === 0 ? (
           <p style={styles.empty}>Nothing here yet.</p>
         ) : (
           <div style={styles.upcomingList} ref={timelineScrollRef}>
-            {pastMoments.map((e) => (
-              <button key={e.key} onClick={e.onClick} style={styles.upcomingRow}>
-                <div style={styles.upcomingDate}>
-                  <div style={styles.upcomingMonthPast}>
-                    {e.date.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}
-                  </div>
-                  <div style={styles.upcomingDayPast}>{e.date.getDate()}</div>
-                </div>
-                <div style={styles.upcomingInfo}>
-                  <div style={styles.upcomingTitlePast}>{e.title}</div>
-                  <div style={styles.upcomingSub}>{e.sub}</div>
-                </div>
-              </button>
-            ))}
+            {timelineRows.past.map((r) => renderTimelineRow(r, true))}
 
             <div ref={todayMarkerRef} style={styles.todayDivider}>
               <span>Today · {today.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}</span>
             </div>
 
-            {upcoming.length === 0 ? (
+            {timelineRows.upcoming.length === 0 ? (
               <p style={styles.empty}>Nothing coming up yet.</p>
             ) : (
-              upcoming.map((e) => (
-                <button key={e.key} onClick={e.onClick} style={styles.upcomingRow}>
-                  <div style={styles.upcomingDate}>
-                    <div style={styles.upcomingMonth}>
-                      {e.date.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}
-                    </div>
-                    <div style={styles.upcomingDay}>{e.date.getDate()}</div>
-                  </div>
-                  <div style={styles.upcomingInfo}>
-                    <div style={styles.upcomingTitle}>{e.title}</div>
-                    <div style={styles.upcomingSub}>{e.sub}</div>
-                  </div>
-                </button>
-              ))
+              timelineRows.upcoming.map((r) => renderTimelineRow(r, false))
             )}
           </div>
         )}
@@ -510,7 +732,7 @@ export default function Calendar({
         )}
       </div>
 
-      {upcoming.length === 0 && filteredMomentEntries.length === 0 && dayTiles.size === 0 && (
+      {timelineRows.upcoming.length === 0 && filteredMomentEntries.length === 0 && dayTiles.size === 0 && (
         <p style={styles.empty}>
           Dates you add to events, and birthdays/anniversaries on people's profiles, will show up here.
         </p>
@@ -615,9 +837,69 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
     width: '100%',
   },
+  // A trip's row is a <div> so the sub-event toggle can sit beside the click target rather than
+  // inside it. It owns the divider; upcomingRowMain deliberately carries no border at all.
+  upcomingRowWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.85rem',
+    width: '100%',
+    borderBottom: `1px solid ${colors.divider}`,
+  },
+  upcomingRowMain: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.85rem',
+    padding: '0.6rem 0',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    textAlign: 'left',
+    fontFamily,
+    flex: 1,
+    minWidth: 0,
+  },
+  subEventToggle: {
+    flexShrink: 0,
+    fontSize: fontSize.label,
+    background: 'none',
+    border: 'none',
+    color: colors.textMuted,
+    cursor: 'pointer',
+    padding: 0,
+    fontFamily,
+    whiteSpace: 'nowrap',
+  },
+  // 3.6rem = the 2.75rem date badge plus the row's 0.85rem gap, so sub-events line up under their
+  // parent's title rather than under its date.
+  childRowList: {
+    marginLeft: '3.6rem',
+    borderLeft: `2px solid ${colors.lineLight}`,
+    paddingLeft: space.lg,
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  childRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.6rem',
+    padding: '0.4rem 0',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    textAlign: 'left',
+    fontFamily,
+    width: '100%',
+  },
+  childDate: { width: '2.25rem', textAlign: 'center', flexShrink: 0 },
+  childDay: { fontSize: '0.95rem', color: colors.textBody, fontWeight: 600, lineHeight: 1.2 },
+  childTitle: { fontSize: fontSize.body, color: colors.textBody },
   upcomingDate: { width: '2.75rem', textAlign: 'center', flexShrink: 0 },
   upcomingMonth: { fontSize: '0.72rem', color: colors.textFaintest, letterSpacing: '0.03em' },
   upcomingDay: { fontSize: '1.15rem', color: colors.ink, fontWeight: 'bold', lineHeight: 1.2 },
+  // A span ("10–12") at upcomingDay's 1.15rem overflows the fixed 2.75rem badge into the title.
+  upcomingDayRange: { fontSize: '0.95rem', color: colors.ink, fontWeight: 'bold', lineHeight: 1.2, whiteSpace: 'nowrap' },
+  upcomingDayRangePast: { fontSize: '0.95rem', color: colors.textFaint, fontWeight: 'bold', lineHeight: 1.2, whiteSpace: 'nowrap' },
   // Past Timeline rows read a step quieter than upcoming ones — "already happened" vs. "still ahead".
   upcomingMonthPast: { fontSize: '0.72rem', color: colors.textFaintest, letterSpacing: '0.03em' },
   upcomingDayPast: { fontSize: '1.15rem', color: colors.textFaint, fontWeight: 'bold', lineHeight: 1.2 },
