@@ -80,10 +80,26 @@ describe('createReplyExtractor', () => {
     expect(pushCharByChar('{\n  "reply"   :   "Saved."\n}')).toBe('Saved.')
   })
 
-  it('emits nothing and reports not-started for plain prose with no envelope', () => {
+  // Measured live 2026-09-04: pure lookup questions come back as prose with no envelope at all,
+  // and converse has had a salvage path for that since long before streaming. Withholding those
+  // until the end would leave the most common "just asking a question" turn feeling exactly as
+  // slow as before.
+  it('streams plain prose that has no envelope at all', () => {
     const extractor = createReplyExtractor()
-    expect(extractor.push('Sure — Maria was at the wedding in June.')).toBe('')
-    expect(extractor.started()).toBe(false)
+    expect(extractor.push('Sure — Maria was at the wedding in June.')).toBe('Sure — Maria was at the wedding in June.')
+    expect(extractor.started()).toBe(true)
+  })
+
+  it('streams prose arriving one character at a time, losing nothing at the front', () => {
+    expect(pushCharByChar('Manuel is in three groups.')).toBe('Manuel is in three groups.')
+  })
+
+  it('waits for a non-whitespace character before deciding prose vs envelope', () => {
+    const extractor = createReplyExtractor()
+    // Leading whitespace alone must not be mistaken for prose, or a pretty-printed envelope would
+    // stream its own JSON scaffolding to the user.
+    expect(extractor.push('  \n ')).toBe('')
+    expect(extractor.push('{"reply": "Saved."}')).toBe('Saved.')
   })
 
   it('reports started once the key is found, so the caller knows not to fall back', () => {
@@ -101,12 +117,12 @@ describe('createReplyExtractor', () => {
     expect(out).toBe('I found four people who were at that')
   })
 
-  it('gives up rather than buffering forever when the key never arrives', () => {
+  it('gives up rather than buffering forever when an opened envelope never yields the key', () => {
     const extractor = createReplyExtractor()
-    // Well past the seek cap, then a valid opener — by which point this is not an envelope we
-    // should be streaming, and the final text is the authority.
-    extractor.push('x'.repeat(4000))
-    expect(extractor.push('{"reply": "too late"}')).toBe('')
+    // Opens like an envelope, so prose mode is correctly declined — but the key never arrives.
+    // Past the seek cap it must stop scanning instead of buffering the rest of the response.
+    extractor.push('{' + '"filler": "'.repeat(400))
+    expect(extractor.push('"reply": "too late"}')).toBe('')
     expect(extractor.started()).toBe(false)
   })
 
@@ -200,5 +216,23 @@ describe('readAnthropicSse', () => {
       })
     )
     expect(result.text).toBe('{"reply": "ok"}')
+  })
+})
+
+// Guards the 2026-09-04 finding: thinking display is left at its default, which still emits a
+// thinking_delta per reasoning step but with an empty string. Forwarding those would flood the SSE
+// stream with frames that can never change what the user sees.
+describe('readAnthropicSse thinking display default', () => {
+  it('does not forward empty thinking deltas', async () => {
+    const thinking: string[] = []
+    await readAnthropicSse(
+      anthropicStream([
+        { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } },
+        { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: '' } },
+        textDelta('{"reply": "ok"}'),
+      ]),
+      { onThinkingDelta: (t) => thinking.push(t) }
+    )
+    expect(thinking).toEqual([])
   })
 })

@@ -59,7 +59,13 @@ const SIMPLE_ESCAPES: Record<string, string> = {
  * every failure mode here has to degrade to "emit nothing" instead of throwing.
  */
 export function createReplyExtractor(): ReplyExtractor {
-  type State = "seeking" | "inString" | "finished"
+  // "prose" is the no-envelope case, and it is NOT an edge case: measured live 2026-09-04, a pure
+  // lookup question ("which group is X in?") gets answered conversationally with no JSON at all —
+  // converse has carried a plain-prose salvage path for exactly this since long before streaming.
+  // Without this mode those turns stream nothing and land in one lump at the end, which is the
+  // whole complaint. Decided from the first non-whitespace character: an envelope always opens
+  // with `{` or a ``` fence, prose never does.
+  type State = "seeking" | "inString" | "prose" | "finished"
   let state: State = "seeking"
   // Only used while seeking. Trimmed to a short tail on every miss so it can't grow without bound;
   // `seekedChars` is what actually enforces the cap, since the trimming would otherwise keep
@@ -120,10 +126,25 @@ export function createReplyExtractor(): ReplyExtractor {
       if (!delta || state === "finished") return ""
 
       if (state === "inString") return consumeStringChars(delta)
+      // Plain prose: every character is reply text, verbatim, no unescaping.
+      if (state === "prose") return delta
 
       // state === "seeking"
       seekedChars += delta.length
       seekBuffer += delta
+
+      // Decide envelope-vs-prose as soon as there's a non-whitespace character to judge. Doing it
+      // here rather than after the seek cap is what keeps a short prose answer from being withheld
+      // until the very end.
+      const lead = seekBuffer.trimStart()
+      if (lead && lead[0] !== "{" && lead[0] !== "`") {
+        state = "prose"
+        latched = true
+        const buffered = seekBuffer
+        seekBuffer = ""
+        return buffered
+      }
+
       const match = OPENER.exec(seekBuffer)
       if (!match) {
         // Past the cap this is not an envelope we can stream — stop for good rather than scanning
@@ -205,7 +226,10 @@ export async function readAnthropicSse(
           text += delta.text
           const revealed = extractor.push(delta.text)
           if (revealed && handlers.onReplyDelta) await handlers.onReplyDelta(revealed)
-        } else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+        } else if (delta?.type === "thinking_delta" && delta.thinking) {
+          // Truthiness, not just typeof: with thinking display left at its default the API still
+          // sends a thinking_delta per step, carrying an EMPTY string. Forwarding those would push
+          // hundreds of useless frames down the wire for a status line that can never change.
           if (handlers.onThinkingDelta) await handlers.onThinkingDelta(delta.thinking)
         }
       } else if (event.type === "message_delta") {

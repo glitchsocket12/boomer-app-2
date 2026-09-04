@@ -736,16 +736,23 @@ ${recentMomentLines}`
         // envelope is finished, which measured as a 7-17 second blank wait on the Home page. The
         // reply text is now relayed to the client as it's written; see streamConverse below.
         stream: true,
-        // display: "summarized" is FREE — thinking happens and bills identically under every
-        // display setting; the default ("omitted") just returns empty thinking blocks. Since
-        // ~60% of this call's output tokens are thinking, and all of it lands BEFORE the first
-        // word of the reply, the default is precisely what makes the wait read as a dead pause.
-        // Surfacing it gives the UI something true to show while the model works.
+        // NO `thinking` block here, and that absence is deliberate — do not "helpfully" add one.
         //
-        // Deliberately NO output_config here: effort defaults to "high", and turning it down is a
-        // real quality trade the founder has reserved for themselves once the streamed timings
-        // show what it would actually buy (CLAUDE.md rule 3 — don't silently downgrade).
-        thinking: { type: "adaptive", display: "summarized" },
+        // Tried on 2026-09-04: `thinking: { type: "adaptive", display: "summarized" }`, on the
+        // documented grounds that display is free (thinking happens and bills the same either way)
+        // and would give the UI a live status line during the wait. Measured on two live calls, it
+        // did something the docs don't mention: the model stopped emitting the JSON envelope this
+        // whole function is built on and answered in plain prose instead — both calls fell through
+        // to the prose salvage path, so every write field (notes, moments, family signals) was
+        // silently discarded while the reply still read perfectly. The second call also spent
+        // 6,801 thinking tokens and 59.7 seconds, against 357-754 tokens before the change.
+        //
+        // Omitting the block runs adaptive thinking anyway on this model, which is the behaviour
+        // this function was tuned against. The status line isn't worth the envelope.
+        //
+        // Also deliberately NO output_config: effort defaults to "high", and turning it down is a
+        // real quality trade the founder has reserved for themselves once the timings show what it
+        // would actually buy (CLAUDE.md rule 3 — don't silently downgrade).
         // Four tiers ordered stable-to-volatile so a write only invalidates its own tier and
         // everything after it, never what comes before: instructions (never changes) -> roster +
         // notebooks (rare writes) -> moment archive (now append-only, so ordinary captures leave
