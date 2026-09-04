@@ -56,6 +56,7 @@ export type Moment = {
   location: string | null
   when_text: string | null
   event_date: string | null
+  event_end_date: string | null
   raw_description: string
   summary: string | null
   created_at: string
@@ -966,7 +967,7 @@ export default function GroupDetail({
       supabase
         .from('moments')
         .select(
-          'id, occasion, location, when_text, event_date, raw_description, summary, created_at, notes(people(id, name, last_name)), moment_groups(group_id, groups(id, name))'
+          'id, occasion, location, when_text, event_date, event_end_date, raw_description, summary, created_at, notes(people(id, name, last_name)), moment_groups(group_id, groups(id, name))'
         )
         .in('id', momentIds)
         .order('id')

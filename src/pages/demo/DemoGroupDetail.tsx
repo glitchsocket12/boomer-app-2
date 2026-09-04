@@ -33,6 +33,9 @@ export default function DemoGroupDetail({
     location: m.location,
     when_text: m.when_text,
     event_date: m.event_date,
+    // No demo event carries an end date yet; present so this shapes its data like the real
+    // container (compareEventsNewestFirst reads it), per the demo-parity rule in §9.
+    event_end_date: null,
     raw_description: m.raw_description,
     summary: m.summary,
     created_at: m.created_at,
