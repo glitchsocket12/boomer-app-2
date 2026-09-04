@@ -4840,3 +4840,24 @@ Its group-suggestion work was superseded in a more interesting way. The branch a
 2. **Check what is deployed before believing a local diff is unfinished.** §10's own working rule, and this is the second time it has paid: the migration was 80% already applied, and re-running it blind would have been harmless only by luck of it being written re-runnable.
 3. **Uncommitted work rots at the speed of the branch it is not on.** Nothing was wrong with the 2026-08-23 code the day it was written. Twelve days and 24 commits later, two thirds of it was worse than what had replaced it.
 4. **`.env` credentials expire silently.** The persisted `SUPABASE_ACCESS_TOKEN` returned `Unauthorized` on a plain read. The Supabase MCP connector carried working credentials and did every migration, query and function read this session — worth reaching for first now.
+
+---
+
+## 2026-09-04 — Clicking the two buttons nobody had clicked
+
+The auto-tagging feature shipped with two write paths that had never run from the UI: approving a trend proposal in Manage tags, and the Settings undo. Both had unit tests; neither had been pressed by a human. The founder asked for them to be verified against the real account.
+
+**The problem with testing an undo on real data.** `handleUndoScan` is `delete().eq('source','ai_scan')` — account-wide, unfiltered, on 77 real rows. Reading the code first turned up the thing that made this more than a routine click-through: the undo does **not** clear `moments.tag_scan_at`. So "press undo, then re-scan to put them back" does not work — every event is still stamped as scanned and the scan skips it. Testing the button honestly meant being able to put 77 rows back without the feature's help.
+
+**The fixture.** `create table _ai_scan_backup_20260904 as select moment_id, tag_id from moment_tags where source='ai_scan'` — a real table, not a transcribed text file, so the restore could not drift from what was deleted. Then the two paths were exercised in an order that made one test the other:
+
+1. **Approve**, on the smallest proposal ("Outdoor Activities", 3 events), with one event — "Target shooting in Canyon City" — deliberately **unchecked** first. Result: the tag was created, exactly 2 rows landed, both `source='ai_scan'`, and the unchecked event was left alone. That is the interesting half: if the checkbox state were ignored, the failure would be silent and would tag an event the founder had explicitly excluded.
+2. **Hand-add** that same tag to that same excluded event, through the app's own "+ → Add a tag" picker. That produced a `source = null` row on the *same tag* as the two AI rows — a probe for the undo's central promise, sitting where a sloppy `delete` would take it.
+3. **Undo.** "Removed 79 tags." Result: 79 AI rows gone, all 59 hand-added rows intact — including the one on the shared tag. The provenance split holds *within* a single tag, not just between tags.
+4. **Restore** from the backup table; 0 rows missing; the Settings panel read "Remove the 79 tags the app added" again after a full page reload, so the restore was confirmed through the app rather than only in SQL. Backup table dropped.
+
+Everything the UI claimed matched the database at every step — 9 unscanned, 77 then 79 AI tags, the confirm/cancel round trip, and the count in the confirm sentence.
+
+**The lesson worth keeping: a destructive path is testable on real data if, and only if, you build the restore before you press the button — and the restore cannot be the feature's own undo.** The temptation here was to trust "just re-scan afterwards", which reads as obviously true and is false, for a reason (`tag_scan_at`) that is three files away from the button. Read what the button actually does, then decide what insurance the test needs.
+
+**And a design tension now recorded in PROJECT_CONTEXT.md rather than discovered twice:** the cost guarantee (`tag_scan_at`, one API call per event ever) and the undo pull against each other. Undo is cheap and one-way; getting the tags back is manual and costs a full re-scan. That is a defensible trade, but it is not what "undo" usually implies, and it is now written down.
