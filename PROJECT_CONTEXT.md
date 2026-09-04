@@ -85,7 +85,9 @@ src/
 │   │                            safe client-side, no proxy). Reads `VITE_GEOAPIFY_API_KEY`; returns
 │   │                            [] (no error) if unset or the call fails — see §2/§10 for the
 │   │                            founder's signup step.
-│   ├── dates.ts               — eventSortDate/formatMonthYear (tested)
+│   ├── dates.ts               — eventSortDate (which day an event is FILED under — labels,
+│   │                            date-range filter) vs eventSortEndDate/compareEventsNewestFirst
+│   │                            (which day it ENDED — timeline order + year headers), formatMonthYear (tested)
 │   ├── countdowns.ts          — (2026-08-06, item 83) the Calendar Countdowns section's date math
 │   │                            + write path. Pure/tested: `breakdown` (calendar-correct
 │   │                            years/months/weeks/days/h/m/s — walks real months, clamps Jan 31
@@ -991,10 +993,15 @@ src/
 │   │                            as a member they already are. Hint line appears only when
 │   │                            something actually rolled up. explicitMembers state stays
 │   │                            the narrow write-target; `members` is the merged read.
-│   ├── Events.tsx             — all moments, sorted by event_date (fallback
-│   │                            created_at), full date incl. day (e.g. "August 3,
+│   ├── Events.tsx             — all moments, sorted newest-first by event_END_date
+│   │                            (`compareEventsNewestFirst`, 2026-09-03 — a trip
+│   │                            running Aug 26–30 outranks a single day on Aug 27;
+│   │                            event_date breaks ties, then created_at), full date
+│   │                            incl. day (e.g. "August 3,
 │   │                            2026") via formatEventWhen (2026-08-03), grouped under
-│   │                            sticky year headers (2026, 2025, ...; float at
+│   │                            sticky year headers keyed on the same end date, so a
+│   │                            year-spanning event can't split one year into two
+│   │                            non-adjacent groups (2026, 2025, ...; float at
 │   │                            top of viewport until next year's section
 │   │                            arrives, 2026-07-21); manual "add event"
 │   │                            (blank shell, no form) → lands on its detail page;

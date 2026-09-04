@@ -14,7 +14,7 @@ import {
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
-import { eventSortDate } from '../lib/dates'
+import { compareEventsNewestFirst } from '../lib/dates'
 import { sortByLastName } from '../lib/people'
 import { DEFAULT_GROUP_TYPES, loadGroupTypeNames } from '../lib/groupTypes'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
@@ -895,9 +895,7 @@ export default function GroupDetail({
         .range(from, to)
     )
 
-    const sorted = ((data as unknown as Moment[]) ?? []).sort(
-      (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
-    )
+    const sorted = ((data as unknown as Moment[]) ?? []).sort(compareEventsNewestFirst)
     setMoments(sorted)
     if (!silent) setLoading(false)
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
-import { eventSortDate, formatEventWhen, formatFullDate } from '../lib/dates'
+import { compareEventsNewestFirst, eventSortDate, eventSortEndDate, formatEventWhen, formatFullDate } from '../lib/dates'
 import { createEventShell } from '../lib/moments'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
@@ -171,10 +171,16 @@ export function filterMoments(
   })
 }
 
+// Only merges CONSECUTIVE same-year entries, so the year it buckets on has to be the same year
+// the list was sorted by — hence eventSortEndDate, matching compareEventsNewestFirst. Bucketing
+// on the START year instead would split a single year into two non-adjacent groups (duplicate
+// React keys, headings running 2026 / 2027 / 2026) the moment one event spans a year boundary:
+// a trip running December 28 – January 3 sorts above a January 1 event but starts a year earlier.
+// Such a trip therefore files under the year it finished; its card still shows the full range.
 export function groupMomentsByYear(filteredMoments: DecoratedMoment[]): { year: number; items: DecoratedMoment[] }[] {
   const yearGroups: { year: number; items: DecoratedMoment[] }[] = []
   for (const entry of filteredMoments) {
-    const year = eventSortDate(entry.moment).getFullYear()
+    const year = eventSortEndDate(entry.moment).getFullYear()
     const lastGroup = yearGroups[yearGroups.length - 1]
     if (lastGroup && lastGroup.year === year) {
       lastGroup.items.push(entry)
@@ -257,9 +263,7 @@ export default function Events({
         .range(from, to)
     )
 
-    const sorted = ((data as unknown as Moment[]) ?? []).sort(
-      (a, b) => eventSortDate(b).getTime() - eventSortDate(a).getTime()
-    )
+    const sorted = ((data as unknown as Moment[]) ?? []).sort(compareEventsNewestFirst)
     setMoments(sorted)
     setLoading(false)
   }

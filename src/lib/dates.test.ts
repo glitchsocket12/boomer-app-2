@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { eventSortDate, formatMonthYear, formatDateRange, formatFullDate, formatEventWhen } from './dates'
+import {
+  compareEventsNewestFirst,
+  eventSortDate,
+  eventSortEndDate,
+  formatMonthYear,
+  formatDateRange,
+  formatFullDate,
+  formatEventWhen,
+} from './dates'
 
 describe('eventSortDate', () => {
   it('uses event_date when set', () => {
@@ -23,6 +31,76 @@ describe('eventSortDate', () => {
     expect(result.getDate()).toBe(1)
     expect(result.getMonth()).toBe(0)
     expect(result.getFullYear()).toBe(2026)
+  })
+})
+
+describe('eventSortEndDate', () => {
+  const created_at = '2026-07-01T12:00:00Z'
+
+  it('uses event_end_date when it is after the start', () => {
+    const result = eventSortEndDate({ event_date: '2026-08-26', event_end_date: '2026-08-30', created_at })
+    expect(result.getMonth()).toBe(7)
+    expect(result.getDate()).toBe(30)
+  })
+
+  it('falls back to the start date when there is no end date', () => {
+    const result = eventSortEndDate({ event_date: '2026-08-27', event_end_date: null, created_at })
+    expect(result.getDate()).toBe(27)
+  })
+
+  it('ignores an end date stored before its start', () => {
+    const result = eventSortEndDate({ event_date: '2026-09-12', event_end_date: '2026-08-15', created_at })
+    expect(result.getMonth()).toBe(8)
+    expect(result.getDate()).toBe(12)
+  })
+
+  it('falls back to created_at when there is no event_date at all', () => {
+    const result = eventSortEndDate({ event_date: null, event_end_date: '2026-08-30', created_at })
+    expect(result.toISOString()).toBe(new Date(created_at).toISOString())
+  })
+})
+
+describe('compareEventsNewestFirst', () => {
+  const created_at = '2026-07-01T12:00:00Z'
+  const occasions = (list: { occasion: string; event_date: string | null; event_end_date?: string | null }[]) =>
+    [...list].map((m) => ({ ...m, created_at })).sort(compareEventsNewestFirst).map((m) => m.occasion)
+
+  // The founder's case (2026-09-03): a visit that ran Aug 26–30 was sorting below a single day on
+  // Aug 27, because it *started* first.
+  it('puts a still-running trip above a shorter event that started later', () => {
+    expect(
+      occasions([
+        { occasion: 'Air museum', event_date: '2026-08-27', event_end_date: null },
+        { occasion: 'Mary Alice visit', event_date: '2026-08-26', event_end_date: '2026-08-30' },
+      ])
+    ).toEqual(['Mary Alice visit', 'Air museum'])
+  })
+
+  it('breaks a tie on the end date with the later start date', () => {
+    expect(
+      occasions([
+        { occasion: 'Long trip', event_date: '2026-08-26', event_end_date: '2026-08-30' },
+        { occasion: 'Last-day dinner', event_date: '2026-08-30', event_end_date: null },
+      ])
+    ).toEqual(['Last-day dinner', 'Long trip'])
+  })
+
+  it('still orders single-day events newest first', () => {
+    expect(
+      occasions([
+        { occasion: 'Older', event_date: '2026-03-15', event_end_date: null },
+        { occasion: 'Newer', event_date: '2026-05-02', event_end_date: null },
+      ])
+    ).toEqual(['Newer', 'Older'])
+  })
+
+  it('is unaffected by an end date that predates its start', () => {
+    expect(
+      occasions([
+        { occasion: 'Backwards dates', event_date: '2026-09-12', event_end_date: '2026-08-15' },
+        { occasion: 'Early September', event_date: '2026-09-05', event_end_date: null },
+      ])
+    ).toEqual(['Backwards dates', 'Early September'])
   })
 })
 
