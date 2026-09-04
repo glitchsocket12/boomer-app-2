@@ -1,8 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { findLocationClusters, tallyLocations, type LocationCluster, type LocationRow } from '../lib/locationGroups'
+import { buildRecentLocations } from '../lib/recentLocations'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, space } from '../lib/theme'
+import AddressSuggestInput from '../components/AddressSuggestInput'
 
 // Backlog item 66. `moments.location` is free text with no id behind it, so the same real place
 // typed three ways is three unrelated values — and once they exist, nothing in the app can tell
@@ -28,10 +30,24 @@ export default function ManageLocations({
   const [done, setDone] = useState<string | null>(null)
   const [mergingKey, setMergingKey] = useState<string | null>(null)
   const [mergeTarget, setMergeTarget] = useState('')
+  const editBoxRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     load()
   }, [])
+
+  // Both boxes on this screen are address entry, so they get the same dropdown as everywhere else
+  // (2026-08-30): the places already on file, then live Geoapify results. It matters most here —
+  // the right spelling is often none of the ones that got typed, and this is the screen that
+  // decides what every event ends up saying. The values are already distinct; running them through
+  // the shared helper is what keeps the ordering rules identical to the other address fields.
+  const knownLocations = useMemo(() => buildRecentLocations((locations ?? []).map((l) => l.value)), [locations])
+
+  // AddressSuggestInput owns its own <input>, so the `autoFocus` the plain box carried has to be
+  // applied from out here instead — clicking Edit still has to land the cursor in the box.
+  useEffect(() => {
+    if (editingValue !== null) editBoxRef.current?.querySelector('input')?.focus()
+  }, [editingValue])
 
   async function load() {
     // Paged: `moments` is account-sized, and a location past row 1000 would silently look like it
@@ -160,14 +176,14 @@ export default function ManageLocations({
                         </label>
                       ))}
                       {/* Free text as well as the radios: often the RIGHT spelling is none of the
-                          three that got typed, and forcing a pick would just bake in a bad one. */}
-                      <input
-                        type="text"
+                          three that got typed, and forcing a pick would just bake in a bad one.
+                          Autocompleting it (2026-08-30) is how a real, complete address gets in
+                          here instead of a fourth hand-typed variant. */}
+                      <AddressSuggestInput
                         value={mergeTarget}
-                        onChange={(e) => setMergeTarget(e.target.value)}
-                        style={styles.editInput}
+                        onChange={setMergeTarget}
+                        recentValues={knownLocations}
                         disabled={saving}
-                        aria-label="Version to keep"
                       />
                       <div style={styles.buttonRow}>
                         <button type="submit" style={styles.saveButton} disabled={saving || !mergeTarget.trim()}>
@@ -196,15 +212,14 @@ export default function ManageLocations({
               <div key={row.value} style={styles.row}>
                 {editingValue === row.value ? (
                   <form onSubmit={handleSaveEdit} style={styles.editForm}>
-                    <input
-                      type="text"
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      style={styles.editInput}
-                      autoFocus
-                      disabled={saving}
-                      aria-label="Location"
-                    />
+                    <div ref={editBoxRef}>
+                      <AddressSuggestInput
+                        value={editText}
+                        onChange={setEditText}
+                        recentValues={knownLocations}
+                        disabled={saving}
+                      />
+                    </div>
                     <div style={styles.buttonRow}>
                       <button type="submit" style={styles.saveButton} disabled={saving}>
                         {saving ? '…' : 'Save'}
@@ -309,15 +324,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontFamily,
   },
   editForm: { display: 'flex', flexDirection: 'column', gap: space.sm, width: '100%' },
-  editInput: {
-    width: '100%',
-    boxSizing: 'border-box',
-    fontSize: fontSize.bodyLg,
-    padding: '0.5rem 0.6rem',
-    borderRadius: radius.sm,
-    border: border.default,
-    fontFamily,
-  },
   editHint: { fontSize: fontSize.small, color: colors.textFaintest, lineHeight: 1.4, margin: 0 },
   buttonRow: { display: 'flex', gap: space.md },
   saveButton: {

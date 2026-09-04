@@ -9,6 +9,7 @@ import ManagePanel from '../components/ManagePanel'
 import FloatingActionBubble, { type BubbleNav } from '../components/FloatingActionBubble'
 import SearchBox from '../components/SearchBox'
 import SearchAddPicker from '../components/SearchAddPicker'
+import AddressSuggestInput from '../components/AddressSuggestInput'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import VoiceInputButton from '../components/VoiceInputButton'
 import SummaryText from '../components/SummaryText'
@@ -16,10 +17,16 @@ import EventEnrichmentBoxes, {
   type EnrichmentGame,
   type EnrichmentWeather,
 } from '../components/EventEnrichmentBoxes'
+import AttendeeChip from '../components/event/AttendeeChip'
+import PetAttendeeChip from '../components/event/PetAttendeeChip'
+import AssociatedGroupChip from '../components/event/AssociatedGroupChip'
+import SuggestedAttendeeChip from '../components/event/SuggestedAttendeeChip'
+import { chipStyles, TRASH_ICON } from '../components/event/chipStyles'
 import { startGooglePhotosAuth } from '../lib/googlePhotosAuth'
 import { startGooglePhotosImport } from '../lib/googlePhotosImport'
 import { summarize } from '../lib/summarize'
 import { formatFullDate } from '../lib/dates'
+import { buildRecentLocations } from '../lib/recentLocations'
 import { sortByLastName } from '../lib/people'
 import { sortSubEventsByDate } from '../lib/subEvents'
 import { coversWindow, weatherWindow } from '../lib/eventSpan'
@@ -239,6 +246,10 @@ export default function EventDetail({
   const [dateInput, setDateInput] = useState('')
   const [locationInput, setLocationInput] = useState('')
   const [savingBasics, setSavingBasics] = useState(false)
+  // Every place already written on an event, for the Location box's "you've typed this before"
+  // dropdown (2026-08-30). Loaded on demand when the form opens rather than with the page — it's
+  // an account-wide read that only matters once someone is actually typing an address.
+  const [recentLocations, setRecentLocations] = useState<string[]>([])
 
   useEffect(() => {
     loadMoment()
@@ -1228,6 +1239,31 @@ export default function EventDetail({
     setDateInput(moment?.event_date ?? '')
     setLocationInput(moment?.location ?? '')
     setEditingBasics(true)
+    loadRecentLocations()
+  }
+
+  /**
+   * The addresses this account has typed before, newest first — the local half of
+   * AddressSuggestInput's dropdown (the live Geoapify half is inside the component). Fired when
+   * the edit form opens and not awaited: the box is usable immediately and the dropdown only has
+   * to be ready by the third character typed, so this never blocks the form appearing.
+   *
+   * Only the `location` column is read, not whole rows — this list is one string per event, and
+   * the page already holds everything else it needs. Paged (lib/pagedSelect.ts) because it's
+   * account-wide: past 1000 events an unpaged read would silently stop offering the oldest
+   * places back, with nothing to show it had.
+   */
+  async function loadRecentLocations() {
+    if (recentLocations.length > 0) return
+    const { data } = await fetchAllRows((from, to) =>
+      supabase
+        .from('moments')
+        .select('location')
+        .order('event_date', { ascending: false, nullsFirst: false })
+        .order('id')
+        .range(from, to)
+    )
+    setRecentLocations(buildRecentLocations((data as { location: string | null }[]).map((m) => m.location)))
   }
 
   // Name, date, and location saved together as one write (2026-08-07 — previously two separate
@@ -1258,6 +1294,9 @@ export default function EventDetail({
 
     setMoment({ ...moment, occasion: newOccasion, event_date: newDate, location: newLocation })
     setEditingBasics(false)
+    // Fold the place just saved into the suggestion list rather than re-reading the account, so
+    // reopening the form offers it back straight away. Newest first, same rule as the query.
+    if (newLocation) setRecentLocations((prev) => buildRecentLocations([newLocation, ...prev]))
     onRenamed?.(summarize(newOccasion, moment.raw_description))
 
     // The date and the place are the two inputs both boxes are built from, and the title is what
@@ -1423,6 +1462,7 @@ export default function EventDetail({
       titleInput={titleInput}
       dateInput={dateInput}
       locationInput={locationInput}
+      recentLocations={recentLocations}
       savingBasics={savingBasics}
       onStartEditBasics={startEditingBasics}
       onTitleInputChange={setTitleInput}
@@ -1553,6 +1593,7 @@ export function EventDetailView({
   titleInput = '',
   dateInput = '',
   locationInput = '',
+  recentLocations = [],
   savingBasics = false,
   onStartEditBasics = () => {},
   onTitleInputChange = () => {},
@@ -1677,6 +1718,7 @@ export function EventDetailView({
   titleInput?: string
   dateInput?: string
   locationInput?: string
+  recentLocations?: string[]
   savingBasics?: boolean
   onStartEditBasics?: () => void
   onTitleInputChange?: (v: string) => void
@@ -1978,13 +2020,18 @@ export function EventDetailView({
           </label>
           <label style={styles.metaEditLabel}>
             Location
-            <input
-              type="text"
-              value={locationInput}
-              onChange={(e) => onLocationInputChange(e.target.value)}
-              placeholder="Where was this?"
-              style={styles.metaEditInput}
-            />
+            {/* Same box the calendar-import card and a person's Addresses use (2026-08-30):
+                places already on your events first, then live Geoapify results. Plain text still
+                saves fine — the dropdown is an offer, never a required pick. */}
+            <div style={styles.metaEditAddress}>
+              <AddressSuggestInput
+                value={locationInput}
+                onChange={onLocationInputChange}
+                recentValues={recentLocations}
+                placeholder="Where was this?"
+                disabled={savingBasics}
+              />
+            </div>
           </label>
           <button type="submit" disabled={savingBasics} style={styles.saveButton}>
             {savingBasics ? '…' : 'Save'}
@@ -2817,16 +2864,6 @@ export function EventDetailView({
   )
 }
 
-const TRASH_ICON = (
-  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 6h18" />
-    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-    <path d="M10 11v6" />
-    <path d="M14 11v6" />
-  </svg>
-)
-
 const PENCIL_ICON = (
   <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 20h9" />
@@ -2931,134 +2968,7 @@ function RelatedEventTile({
           }}
           aria-label={`Unlink ${name} from this event`}
           className="touch-action"
-          style={styles.cornerBadge}
-        >
-          {TRASH_ICON}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// Clicking the chip always goes to the person's profile — same as any other chip in the app.
-// Hovering reveals a small trash badge in the corner (a separate control, not a swap of the
-// chip's own content/click behavior), matching GroupDetail.tsx's MemberChip pattern, which was
-// specifically chosen after an earlier hover-swap version caused a resize-driven flicker loop.
-// `onRemove` omitted (demo read-only mode, or a sub-event rollup with nothing on this event to
-// untag) simply never shows the hover badge.
-function AttendeeChip({
-  person,
-  isSelf = false,
-  viaSubEvent = false,
-  onSelect,
-  onRemove,
-}: {
-  person: PersonRef
-  isSelf?: boolean
-  viaSubEvent?: boolean
-  onSelect: () => void
-  onRemove?: () => void
-}) {
-  const [hovered, setHovered] = useState(false)
-  const label = isSelf ? 'You' : fullName(person)
-
-  return (
-    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <button
-        onClick={onSelect}
-        style={styles.attendeeChip}
-        title={viaSubEvent ? `${label} is tagged on a sub-event — untag them there` : undefined}
-      >
-        {label}
-      </button>
-      {(hovered || IS_TOUCH) && onRemove && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onRemove()
-          }}
-          aria-label={`Untag ${label} from this event`}
-          className="touch-action" style={styles.cornerBadge}
-        >
-          {TRASH_ICON}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// AttendeeChip's twin for a pet (2026-08-20). Same chip, same corner-badge untag, with the species
-// emoji in front — that prefix is doing real work: it's what stops "Bella" in this row from reading
-// as a person when the family also knows a Bella.
-function PetAttendeeChip({
-  pet,
-  viaSubEvent = false,
-  onSelect,
-  onRemove,
-}: {
-  pet: Pet
-  viaSubEvent?: boolean
-  onSelect: () => void
-  onRemove?: () => void
-}) {
-  const [hovered, setHovered] = useState(false)
-
-  return (
-    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <button
-        onClick={onSelect}
-        style={styles.attendeeChip}
-        title={viaSubEvent ? `${pet.name} is tagged on a sub-event — untag them there` : undefined}
-      >
-        <span style={styles.petChipEmoji}>{petEmoji(pet)}</span> {pet.name}
-      </button>
-      {(hovered || IS_TOUCH) && onRemove && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onRemove()
-          }}
-          aria-label={`Untag ${pet.name} from this event`}
-          className="touch-action" style={styles.cornerBadge}
-        >
-          {TRASH_ICON}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// Clicking goes to the group's profile, same as any other chip. Hovering reveals a trash badge
-// that untags the group from this event — same corner-badge pattern as AttendeeChip above,
-// reused here for groups instead of people (matching GroupDetail.tsx's AssociatedGroupChip).
-// `onRemove` omitted (demo read-only mode) simply never shows the hover badge.
-function AssociatedGroupChip({
-  group,
-  displayName,
-  onSelect,
-  onRemove,
-}: {
-  group: GroupRef
-  displayName?: string
-  onSelect: () => void
-  onRemove?: () => void
-}) {
-  const [hovered, setHovered] = useState(false)
-
-  return (
-    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <button onClick={onSelect} style={styles.groupChip}>
-        <span style={styles.groupDot} />
-        {displayName ?? group.name}
-      </button>
-      {(hovered || IS_TOUCH) && onRemove && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onRemove()
-          }}
-          aria-label={`Untag ${displayName ?? group.name} from this event`}
-          className="touch-action" style={styles.cornerBadge}
+          style={chipStyles.cornerBadge}
         >
           {TRASH_ICON}
         </button>
@@ -3074,7 +2984,7 @@ function TagChip({ tag, onRemove }: { tag: TagRef; onRemove?: () => void }) {
   const [hovered, setHovered] = useState(false)
 
   return (
-    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <div style={chipStyles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
       <span style={styles.tagChip}>#{tag.name}</span>
       {(hovered || IS_TOUCH) && onRemove && (
         <button
@@ -3083,55 +2993,9 @@ function TagChip({ tag, onRemove }: { tag: TagRef; onRemove?: () => void }) {
             onRemove()
           }}
           aria-label={`Untag ${tag.name} from this event`}
-          className="touch-action" style={styles.cornerBadge}
+          className="touch-action" style={chipStyles.cornerBadge}
         >
           {TRASH_ICON}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// The main chip approves (adds them to Who Was There) on click, same as before. Hovering reveals
-// a small "×" badge in the corner — a separate control, so denying doesn't resize the main chip
-// and can't flicker, matching GroupDetail.tsx's SuggestionChip pattern.
-function SuggestedAttendeeChip({
-  person,
-  added = false,
-  onApprove,
-  onUndo,
-  onDeny,
-}: {
-  person: PersonRef
-  /** Already tagged on this event — the chip holds its slot with a tick instead of disappearing. */
-  added?: boolean
-  onApprove: () => void
-  onUndo?: () => void
-  onDeny: () => void
-}) {
-  const [hovered, setHovered] = useState(false)
-  const label = `${person.name}${person.last_name ? ` ${person.last_name}` : ''}`
-
-  return (
-    <div style={styles.badgeWrapper} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <button onClick={added ? onUndo : onApprove} style={added ? styles.suggestChipAdded : styles.suggestChip}>
-        {/* Fixed-width glyph cell: "+" and "✓" aren't the same width, and letting the chip resize
-            as it flips would reintroduce the reflow this whole thing exists to stop. */}
-        <span style={styles.chipGlyph}>{added ? '✓' : '+'}</span>
-        {label}
-      </button>
-      {/* No dismiss badge once they're added — "don't suggest them again" contradicts having just
-          said yes, and the way back is the same chip. */}
-      {!added && (hovered || IS_TOUCH) && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onDeny()
-          }}
-          aria-label={`Don't suggest ${label} for this event again`}
-          className="touch-action" style={styles.cornerBadge}
-        >
-          ×
         </button>
       )}
     </div>
@@ -3315,6 +3179,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: radius.md,
     border: border.default,
   },
+  // AddressSuggestInput sizes its input to 100% of whatever wraps it, and its dropdown is
+  // absolutely positioned against the same box — so the Location field needs a real width here
+  // instead of the intrinsic one a bare <input> would have had inside this wrapping <label>.
+  metaEditAddress: { width: '260px', maxWidth: '100%' },
   parentLink: {
     display: 'block',
     background: 'none',
@@ -3408,65 +3276,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     whiteSpace: 'nowrap',
   },
   chipRow: { display: 'flex', gap: space.md, flexWrap: 'wrap', marginBottom: space.xl },
-  attendeeChip: {
-    fontSize: fontSize.body,
-    padding: '0.35rem 0.8rem',
-    borderRadius: radius.pill,
-    border: border.primary,
-    backgroundColor: 'transparent',
-    color: colors.ink,
-    cursor: 'pointer',
-    fontFamily,
-  },
-  // Emoji inherit the button's italic/style context otherwise, same reason PetDetail and the
-  // People list each set this on theirs.
-  petChipEmoji: { fontStyle: 'normal' },
-  suggestChip: {
-    fontSize: fontSize.body,
-    padding: '0.35rem 0.8rem',
-    borderRadius: radius.pill,
-    border: `1px dashed ${colors.primary}`,
-    backgroundColor: 'transparent',
-    color: colors.ink,
-    cursor: 'pointer',
-    fontFamily,
-  },
-  // A suggestion that's already been said yes to, holding its slot in the grid. Every box-model
-  // value matches suggestChip exactly — only the border style and fill change, so flipping between
-  // the two can't move the chip or anything after it.
-  suggestChipAdded: {
-    fontSize: fontSize.body,
-    padding: '0.35rem 0.8rem',
-    borderRadius: radius.pill,
-    border: border.primary,
-    backgroundColor: colors.inkWash,
-    color: colors.ink,
-    cursor: 'pointer',
-    fontFamily,
-  },
-  chipGlyph: { display: 'inline-block', width: '0.9em', textAlign: 'center', marginRight: '0.3em' },
-  groupChip: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '0.45rem',
-    fontSize: '0.88rem',
-    fontWeight: 700,
-    padding: '0.35rem 0.85rem 0.35rem 0.7rem',
-    borderRadius: radius.md,
-    border: border.suggestFill,
-    backgroundColor: colors.suggestBg,
-    color: colors.suggest,
-    cursor: 'pointer',
-    fontFamily,
-    letterSpacing: '0.02em',
-  },
-  groupDot: {
-    width: '7px',
-    height: '7px',
-    borderRadius: radius.circle,
-    backgroundColor: colors.suggestFill,
-    flexShrink: 0,
-  },
   tagChip: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -3477,26 +3286,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: '#F4F3EE',
     color: '#605C50',
     fontFamily,
-  },
-  badgeWrapper: { position: 'relative', display: 'inline-block' },
-  cornerBadge: {
-    position: 'absolute',
-    top: '-8px',
-    right: '-8px',
-    width: '18px',
-    height: '18px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.circle,
-    border: border.danger,
-    backgroundColor: colors.surface,
-    color: colors.danger,
-    fontSize: fontSize.small,
-    lineHeight: 1,
-    padding: 0,
-    cursor: 'pointer',
-    boxShadow: shadow.button,
   },
   notesList: { display: 'flex', flexDirection: 'column', gap: space.xl },
   noteCardWrapper: { position: 'relative' },

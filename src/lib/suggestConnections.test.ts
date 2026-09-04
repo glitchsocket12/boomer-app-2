@@ -11,7 +11,7 @@ function personGroup(n: number): HomeSuggestion {
 }
 
 function eventGroup(n: number): HomeSuggestion {
-  return { kind: 'event_group', momentId: `m${n}`, momentTitle: `Event ${n}`, groupId: `g${n}`, groupName: `Group ${n}` }
+  return { kind: 'event_group', momentId: `m${n}`, momentTitle: `Event ${n}`, groupId: `g${n}`, groupName: `Group ${n}`, reason: 'attendees' }
 }
 
 describe('sampleAcrossKinds', () => {

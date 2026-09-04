@@ -4,6 +4,7 @@ import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { findLikelyMatch } from '../lib/likelyDuplicate'
 import { formatDateRange } from '../lib/dates'
+import { buildRecentLocations } from '../lib/recentLocations'
 import { type TagRef } from '../lib/tags'
 import { getRelationshipsMap, type PersonRelationships } from '../lib/relationshipsTable'
 import { suggestFamilyMembers } from '../lib/relationshipSuggestions'
@@ -275,21 +276,14 @@ export default function ImportReview({
     [existingMoments]
   )
 
-  // Feeds AddressSuggestInput's "you've typed this before" suggestions — deduped case-insensitively,
-  // most-recent first, from data already loaded above (no extra query).
-  const recentLocations = useMemo(() => {
-    const seen = new Set<string>()
-    const result: string[] = []
-    for (const m of existingMoments) {
-      const loc = m.location?.trim()
-      if (!loc) continue
-      const key = loc.toLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
-      result.push(loc)
-    }
-    return result
-  }, [existingMoments])
+  // Feeds AddressSuggestInput's "you've typed this before" suggestions, from data already loaded
+  // above (no extra query). `existingMoments` is already sorted event_date descending, which is
+  // what makes the list most-recent-first — see lib/recentLocations.ts, shared with EventDetail
+  // and ManageLocations so every address box offers the same list.
+  const recentLocations = useMemo(
+    () => buildRecentLocations(existingMoments.map((m) => m.location)),
+    [existingMoments]
+  )
 
   return (
     <div style={styles.page}>

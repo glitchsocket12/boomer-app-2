@@ -12,6 +12,13 @@ export type EventGroupSuggestion = {
   momentTitle: string
   groupId: string
   groupName: string
+  /**
+   * Which signal produced this, so the card can say WHY. 'attendees' is the original arithmetic
+   * below; 'ai' is scan-event-tags having read the event's own title and notes (2026-08-23) —
+   * the case attendee overlap can never reach, because a calendar-imported event often has no
+   * rostered attendees at all.
+   */
+  reason: 'attendees' | 'ai'
 }
 
 export type AttendanceRow = { moment_id: string; person_id: string }
@@ -82,8 +89,42 @@ export function deriveEventGroupSuggestions(
     for (const groupId of shared) {
       const groupName = groupNameById.get(groupId)
       if (!groupName) continue
-      out.push({ kind: 'event_group', momentId: moment.id, momentTitle: moment.title, groupId, groupName })
+      out.push({ kind: 'event_group', momentId: moment.id, momentTitle: moment.title, groupId, groupName, reason: 'attendees' })
     }
+  }
+  return out
+}
+
+/**
+ * Folds scan-event-tags' group picks in with the attendee-derived ones.
+ *
+ * Both signals answer the same question and land on the same card, the same accept write and the
+ * same "No" store — so they share one pool rather than becoming a second suggestion kind. Where
+ * they agree on a (moment, group), 'attendees' wins: "everyone who was there is a member" is a
+ * fact about the data, while the AI's read of the title is an inference, and the card should give
+ * the stronger reason.
+ *
+ * Pure so the precedence is testable without a database.
+ */
+export function mergeEventGroupSuggestions(
+  derived: EventGroupSuggestion[],
+  aiPairs: { momentId: string; groupId: string }[],
+  untaggedTitleById: Map<string, string>,
+  groupNameById: Map<string, string>
+): EventGroupSuggestion[] {
+  const seen = new Set(derived.map((s) => `${s.momentId}:${s.groupId}`))
+  const out = [...derived]
+
+  for (const pair of aiPairs) {
+    const key = `${pair.momentId}:${pair.groupId}`
+    if (seen.has(key)) continue
+    // Only events still in the untagged pool — an event that has since been given this group (or
+    // any group) isn't a question any more.
+    const momentTitle = untaggedTitleById.get(pair.momentId)
+    const groupName = groupNameById.get(pair.groupId)
+    if (!momentTitle || !groupName) continue
+    seen.add(key)
+    out.push({ kind: 'event_group', momentId: pair.momentId, momentTitle, groupId: pair.groupId, groupName, reason: 'ai' })
   }
   return out
 }
@@ -110,6 +151,10 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
     .map((m) => ({ id: m.id, title: m.occasion?.trim() || 'Untitled moment' }))
   if (untagged.length === 0) return []
 
+  const groupNameById = new Map(
+    ((groupsRes.data as { id: string; name: string }[] | null) ?? []).map((g) => [g.id, g.name])
+  )
+
   // Attendance comes from notes carrying a person_id — the same signal EventDetail's "Who was
   // there" and suggestConnections' own attendance pass read. Scoped by the untagged moment ids
   // rather than by people: the moment list is the smaller side, which is the precaution the
@@ -124,21 +169,53 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
       .range(from, to)
   )
   const attendance = (attendanceData as AttendanceRow[] | null) ?? []
-  if (attendance.length === 0) return []
 
-  const { data: membershipData } = await fetchAllRows((from, to) =>
-    supabase.from('person_groups').select('person_id, group_id').order('person_id').order('group_id').range(from, to)
-  )
-  const groupNameById = new Map(
-    ((groupsRes.data as { id: string; name: string }[] | null) ?? []).map((g) => [g.id, g.name])
-  )
+  // No attendance means no attendee arithmetic — but the AI picks below don't depend on it at all,
+  // and this is precisely the account shape they exist to serve, so this branch must not bail out
+  // of the whole function the way it used to.
+  let derived: EventGroupSuggestion[] = []
+  if (attendance.length > 0) {
+    const { data: membershipData } = await fetchAllRows((from, to) =>
+      supabase.from('person_groups').select('person_id, group_id').order('person_id').order('group_id').range(from, to)
+    )
+    derived = deriveEventGroupSuggestions(untagged, attendance, (membershipData as MembershipRow[] | null) ?? [], groupNameById)
+  }
 
-  return deriveEventGroupSuggestions(
-    untagged,
-    attendance,
-    (membershipData as MembershipRow[] | null) ?? [],
+  const merged = mergeEventGroupSuggestions(
+    derived,
+    await loadAiGroupPicks(),
+    new Map(untagged.map((m) => [m.id, m.title])),
     groupNameById
-  ).filter((s) => !dismissals.has('event_group', s.momentId, s.groupId))
+  )
+  return merged.filter((s) => !dismissals.has('event_group', s.momentId, s.groupId))
+}
+
+/**
+ * scan-event-tags' group picks (2026-08-23).
+ *
+ * Its OWN query, never folded into the moments select above, and fail-open on any error: before
+ * the matching migration runs, naming `suggested_group_ids` would 400 the ENTIRE select and take
+ * the whole card down rather than just this one signal (PROJECT_CONTEXT.md §12).
+ */
+async function loadAiGroupPicks(): Promise<{ momentId: string; groupId: string }[]> {
+  const { data, error } = await fetchAllRows((from, to) =>
+    supabase
+      .from('moments')
+      .select('id, suggested_group_ids')
+      .not('suggested_group_ids', 'eq', '[]')
+      .order('id')
+      .range(from, to)
+  )
+  if (error || !data) return []
+
+  const out: { momentId: string; groupId: string }[] = []
+  for (const row of data as { id: string; suggested_group_ids: unknown }[]) {
+    const ids = Array.isArray(row.suggested_group_ids) ? row.suggested_group_ids : []
+    for (const groupId of ids) {
+      if (typeof groupId === 'string' && groupId) out.push({ momentId: row.id, groupId })
+    }
+  }
+  return out
 }
 
 // Copy of EventDetail.tsx's handleTagGroup — same upsert, same conflict target, so tagging from

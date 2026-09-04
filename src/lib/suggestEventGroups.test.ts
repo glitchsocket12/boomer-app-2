@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveEventGroupSuggestions } from './suggestEventGroups'
+import { deriveEventGroupSuggestions, mergeEventGroupSuggestions, type EventGroupSuggestion } from './suggestEventGroups'
 
 const groupNames = new Map([
   ['lpc', 'LPC'],
@@ -24,7 +24,7 @@ describe('deriveEventGroupSuggestions', () => {
       groupNames
     )
     expect(out).toEqual([
-      { kind: 'event_group', momentId: 'e1', momentTitle: "Clare's 30th birthday party", groupId: 'lpc', groupName: 'LPC' },
+      { kind: 'event_group', momentId: 'e1', momentTitle: "Clare's 30th birthday party", groupId: 'lpc', groupName: 'LPC', reason: 'attendees' },
     ])
   })
 
@@ -116,5 +116,69 @@ describe('deriveEventGroupSuggestions', () => {
       groupNames
     )
     expect(out.map((s) => s.momentId)).toEqual(['e1'])
+  })
+})
+
+describe('mergeEventGroupSuggestions', () => {
+  const titles = new Map([
+    ['e1', "Clare's 30th birthday party"],
+    ['e2', 'Crew Dogs Christmas Party'],
+  ])
+  const derived: EventGroupSuggestion[] = [
+    { kind: 'event_group', momentId: 'e1', momentTitle: "Clare's 30th birthday party", groupId: 'lpc', groupName: 'LPC', reason: 'attendees' },
+  ]
+
+  it('adds an AI pick the attendee pass could never reach', () => {
+    const out = mergeEventGroupSuggestions(derived, [{ momentId: 'e2', groupId: 'af' }], titles, groupNames)
+    expect(out).toHaveLength(2)
+    expect(out[1]).toEqual({
+      kind: 'event_group',
+      momentId: 'e2',
+      momentTitle: 'Crew Dogs Christmas Party',
+      groupId: 'af',
+      groupName: 'Air Force',
+      reason: 'ai',
+    })
+  })
+
+  it('never asks the same question twice, and keeps the stronger reason when both agree', () => {
+    const out = mergeEventGroupSuggestions(derived, [{ momentId: 'e1', groupId: 'lpc' }], titles, groupNames)
+    expect(out).toEqual(derived)
+  })
+
+  it('drops an AI pick for an event that is no longer in the untagged pool', () => {
+    const out = mergeEventGroupSuggestions([], [{ momentId: 'gone', groupId: 'af' }], titles, groupNames)
+    expect(out).toEqual([])
+  })
+
+  it('drops an AI pick naming a group that no longer exists', () => {
+    const out = mergeEventGroupSuggestions([], [{ momentId: 'e2', groupId: 'deleted' }], titles, groupNames)
+    expect(out).toEqual([])
+  })
+
+  it('collapses a duplicate pair inside the AI picks themselves', () => {
+    const out = mergeEventGroupSuggestions(
+      [],
+      [
+        { momentId: 'e2', groupId: 'af' },
+        { momentId: 'e2', groupId: 'af' },
+      ],
+      titles,
+      groupNames
+    )
+    expect(out).toHaveLength(1)
+  })
+
+  it('lets one event carry two different groups, since they are separate questions', () => {
+    const out = mergeEventGroupSuggestions(
+      [],
+      [
+        { momentId: 'e2', groupId: 'af' },
+        { momentId: 'e2', groupId: 'volins' },
+      ],
+      titles,
+      groupNames
+    )
+    expect(out.map((s) => s.groupName)).toEqual(['Air Force', 'The Volins'])
   })
 })

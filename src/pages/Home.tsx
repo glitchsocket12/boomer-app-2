@@ -676,7 +676,10 @@ export function HomeView({
                             >
                               {groupLabel(s.groupId, s.groupName)}
                             </button>
-                            ? Everyone who was there is a member.
+                            ?{' '}
+                            {s.reason === 'ai'
+                              ? "Its name and notes point to that group."
+                              : 'Everyone who was there is a member.'}
                           </>
                         )}
                         {s.kind === 'family_group' && (
