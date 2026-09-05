@@ -32,3 +32,18 @@ Neither of these removes the general rule of checking in before *major/architect
      `~/.claude/projects/<project>/<session-id>.jsonl` (and `subagents/` beside it); weight cache
      reads 0.1x, cache writes 2x, output 5x. Connectors are deferred — their names cost ~20 tokens
      each and pruning them is not the win it looks like.
+   - **One session per job — this is the biggest lever and it is free.** Measured 2026-09-04:
+     a 746-step session spent **58% of its tokens re-reading its own conversation**, against 12%
+     on builds/tests/deploys and under 2% on editing code. Every step re-reads everything before
+     it, so cost grows with the square of session length, not with the work done. That session
+     covered three unrelated jobs in one thread; by the third, every step was re-reading the first
+     two. When the topic changes, start a new session — say so if the founder hasn't.
+   - **Prefer fewer, larger steps.** Step count is the multiplier on the above. Batch independent
+     tool calls into one message; don't poll, re-query logs, or re-check state that hasn't changed.
+   - **Default to terse output.** Replies cost 5x what reading does (13% of that session). Write
+     the full account when a decision or a postmortem needs it; otherwise report the result.
+   - **The subagent rule above cuts both ways.** Wrong for known targets (one burned 44% of a
+     session to return 4,000 tokens); right when the *scope itself* is the unknown — "which of
+     these five functions share this bug" is a real fan-out, and four such agents came to 9% of
+     the 2026-09-04 session while reading far more than would have fitted in it. Ask which case
+     you are in before spawning, and never spawn to avoid reading three named files.
