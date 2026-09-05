@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
 import { compareEventsNewestFirst, eventSortDate, eventSortEndDate, formatEventWhen, formatFullDate } from '../lib/dates'
 import { createEventShell } from '../lib/moments'
+import { centerInWindow } from '../lib/centerInScroller'
 import { PersonChip, GroupChip } from '../components/Chips'
 import SearchBox from '../components/SearchBox'
 import FilterPanel from '../components/FilterPanel'
@@ -189,6 +190,21 @@ export function groupMomentsByYear(filteredMoments: DecoratedMoment[]): { year: 
     }
   }
   return yearGroups
+}
+
+// Which card the Today line goes above. The list runs newest-first, so every event that hasn't
+// finished yet sits at the top and the past follows — one clean split, no interleaving. Returns the
+// id of the first PAST event, or null when everything on screen is still upcoming (the caller then
+// parks the line at the very bottom).
+//
+// Deliberately measured with eventSortEndDate, the same function the sort and the year bucketing
+// use. Anything else and the line drifts away from the order it is supposed to be marking.
+export function firstPastMomentId(filteredMoments: DecoratedMoment[], now = new Date()): string | null {
+  const todayStart = new Date(now)
+  todayStart.setHours(0, 0, 0, 0)
+  // An event that ends today still counts as today, not past — matches the Calendar timeline's split.
+  const found = filteredMoments.find((entry) => eventSortEndDate(entry.moment) < todayStart)
+  return found ? found.moment.id : null
 }
 
 export default function Events({
@@ -422,6 +438,32 @@ export function EventsView({
   const decorated = decorateMoments(rootMoments, childrenByParentId)
   const filteredMoments = filterMoments(decorated, filters, groupLabel)
   const yearGroups = groupMomentsByYear(filteredMoments)
+
+  // The Today line, and the jump back to it. Imported calendar events are real events with real
+  // future dates, so on a newest-first list they stack up above everything that has actually
+  // happened — opening at the top of the page meant opening on a pile of things nobody has done
+  // yet. So the page opens on the boundary instead, with the most recent real event just below it.
+  const todayMarkerRef = useRef<HTMLDivElement>(null)
+  const todayLabel = useMemo(
+    () => new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric' }),
+    [],
+  )
+  const boundaryId = firstPastMomentId(filteredMoments)
+  const hasEvents = filteredMoments.length > 0
+
+  function scrollToToday(smooth = true) {
+    centerInWindow(todayMarkerRef.current, smooth)
+  }
+
+  // Once per mount, and never in the landing-page demo — that one is embedded partway down a
+  // marketing page, and scrolling the window on load would yank the reader out of the pitch.
+  const didInitialScroll = useRef(false)
+  useEffect(() => {
+    if (readOnly || didInitialScroll.current || !todayMarkerRef.current) return
+    didInitialScroll.current = true
+    scrollToToday(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasEvents, readOnly])
   const query = filters.search.trim().toLowerCase()
   const activeCount = countActiveFilters(filters)
 
@@ -512,6 +554,11 @@ export function EventsView({
             <button type="button" onClick={onImportEvents} style={styles.importButton}>
               Import Events
             </button>
+            {hasEvents && (
+              <button type="button" onClick={() => scrollToToday()} style={styles.todayButton}>
+                Today
+              </button>
+            )}
             <button type="button" onClick={onAddEvent} style={styles.addButton} disabled={creating}>
               {creating ? '…' : '+ Add Event'}
             </button>
@@ -726,6 +773,13 @@ export function EventsView({
                 const expanded = expandedParents.has(moment.id)
                 return (
                   <div key={moment.id}>
+                    {moment.id === boundaryId && (
+                      <div ref={todayMarkerRef} style={styles.todayDivider}>
+                        <span style={styles.todayDividerLine} />
+                        <span>Today · {todayLabel}</span>
+                        <span style={styles.todayDividerLine} />
+                      </div>
+                    )}
                     <div style={styles.card}>
                       <div style={styles.cardHeaderRow}>
                         <div style={styles.cardHeaderMain}>
@@ -793,6 +847,13 @@ export function EventsView({
             </div>
           </div>
         ))}
+        {hasEvents && boundaryId === null && (
+          <div ref={todayMarkerRef} style={styles.todayDivider}>
+            <span style={styles.todayDividerLine} />
+            <span>Today · {todayLabel}</span>
+            <span style={styles.todayDividerLine} />
+          </div>
+        )}
       </div>
     </div>
   )
@@ -920,6 +981,34 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '0.6rem 0 0.4rem 0',
     backgroundColor: colors.appBg,
     borderBottom: `1px solid ${neutral.grey200}`,
+  },
+  // The Today line. A real rule across the page, unlike the Calendar timeline's bare label — this
+  // list is long and the boundary has to survive being scrolled past at speed.
+  todayDivider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.md,
+    margin: '0.2rem 0',
+    fontSize: '0.68rem',
+    fontWeight: 700,
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+    color: colors.primary,
+    // The year heading is sticky at the top of the window, so a line parked flush with the top of
+    // the viewport would sit underneath it. Only matters if this is ever top-aligned rather than
+    // centred, but it costs nothing to be right.
+    scrollMarginTop: '3rem',
+  },
+  todayDividerLine: { flex: 1, height: '1px', backgroundColor: colors.primary, opacity: 0.35 },
+  todayButton: {
+    fontSize: fontSize.small,
+    padding: '0.3rem 0.7rem',
+    borderRadius: radius.sm,
+    border: border.inkPale,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
   },
   yearCards: { display: 'flex', flexDirection: 'column', gap: space.xl, marginTop: space.lg },
   card: {
