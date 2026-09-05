@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/pagedSelect'
 import { summarize } from '../lib/summarize'
@@ -10,6 +10,10 @@ import SearchBox from '../components/SearchBox'
 import FilterPanel from '../components/FilterPanel'
 import { useGroupRoster, type GroupLabelFn } from '../lib/groupRoster'
 import { border, colors, fontFamily, fontSize, maxWidth, neutral, radius, shadow, space } from '../lib/theme'
+
+// Lazy on its own, not just as part of this page's chunk: EventsMap pulls in Leaflet, and the whole
+// case for adding that dependency is that it only ever loads for someone who opens the map.
+const EventsMap = lazy(() => import('../components/EventsMap'))
 
 export type PersonRef = { id: string; name: string; last_name: string | null }
 
@@ -233,6 +237,9 @@ export default function Events({
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [childrenByParentId, setChildrenByParentId] = useState<Map<string, ChildEventRef[]>>(new Map())
+  // Held here rather than inside EventsView so that view stays a pure render — the map does its own
+  // Supabase reads, and the landing-page demo renders EventsView with no network at all.
+  const [mapOpen, setMapOpen] = useState(false)
   const groupRoster = useGroupRoster()
 
   useEffect(() => {
@@ -315,24 +322,41 @@ export default function Events({
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
   return (
-    <EventsView
-      moments={moments}
-      distinctTags={distinctTags}
-      filters={filters}
-      onFiltersChange={onFiltersChange}
-      onAddEvent={handleAddEvent}
-      creating={creating}
-      createError={createError}
-      onManageTags={onManageTags}
-      onManageLocations={onManageLocations}
-      onImportEvents={onImportEvents}
-      onSelectPerson={onSelectPerson}
-      onSelectGroup={onSelectGroup}
-      onSelectEvent={onSelectEvent}
-      childrenByParentId={childrenByParentId}
-      groupLabel={groupRoster.label}
-      groupParentById={groupRoster.parentById}
-    />
+    <>
+      <EventsView
+        moments={moments}
+        distinctTags={distinctTags}
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+        onAddEvent={handleAddEvent}
+        creating={creating}
+        createError={createError}
+        onManageTags={onManageTags}
+        onManageLocations={onManageLocations}
+        onImportEvents={onImportEvents}
+        onOpenMap={() => setMapOpen(true)}
+        onSelectPerson={onSelectPerson}
+        onSelectGroup={onSelectGroup}
+        onSelectEvent={onSelectEvent}
+        childrenByParentId={childrenByParentId}
+        groupLabel={groupRoster.label}
+        groupParentById={groupRoster.parentById}
+      />
+      {mapOpen && (
+        // No fallback UI: the chunk is small and the overlay appearing a frame late reads better
+        // than a spinner flashing over the list.
+        <Suspense fallback={null}>
+          <EventsMap
+            moments={moments}
+            onClose={() => setMapOpen(false)}
+            onSelectEvent={onSelectEvent}
+            // Clicking through from a pin lands on the list already narrowed to that place, using
+            // the filter the page already has rather than a second filtering path.
+            onFilterLocation={(location) => onFiltersChange({ ...filters, locationFilter: location })}
+          />
+        </Suspense>
+      )}
+    </>
   )
 }
 
@@ -394,6 +418,7 @@ export function EventsView({
   onManageTags,
   onManageLocations,
   onImportEvents,
+  onOpenMap,
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
@@ -414,6 +439,7 @@ export function EventsView({
   // a link it never renders.
   onManageLocations?: () => void
   onImportEvents?: () => void
+  onOpenMap?: () => void
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
@@ -572,6 +598,9 @@ export function EventsView({
           </button>
           <button type="button" onClick={onManageLocations} style={styles.manageTagsLink}>
             Manage locations →
+          </button>
+          <button type="button" onClick={onOpenMap} style={styles.manageTagsLink}>
+            Map →
           </button>
         </div>
       )}

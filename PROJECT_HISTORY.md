@@ -4978,3 +4978,58 @@ The replacement is tests that cannot be pointed at the wrong copy: `HomeView` re
 The confirmation the user reads is derived from rows that landed. `saveStatus` is computed from a `SaveTally` that every content write records into — previously the errors were destructured away at every `notes` insert, the `moments` insert and all seven `people` writes — and `nothing_to_save` is kept distinct from `saved` so a question is never reported as either a save or an error. When a save fails, the correction renders *underneath* the reply rather than replacing it: by the time we know, the reply has already streamed and been read, and quietly rewriting it would be its own dishonesty.
 
 Still open, and deliberately not folded in: `update-group` (unhardened, `max_tokens: 1500` — the exact value `update-moment` was raised from for this reason — and every write error discarded while reporting `changed: true`), `update-moment`'s residual `ok: true` hole for malformed-but-not-truncated JSON, `add-fact`'s lost classification, and `NoteWithDetection.tsx`, which renders "Nothing else to add from that one — your note's saved" for every one of those failures because they all return HTTP 200. On those surfaces the note itself is written verbatim *before* the AI call, so what is lost is enrichment, not the user's words — which is why converse went first.
+
+## 2026-09-05 — The Events map, and the fact that there was no geography in the app at all
+
+The founder's ask read like a small one: a "Map" option next to Manage tags and Manage locations,
+opening "an interactive map, which pin points events to geographic regions around the world, so you
+can click and see events based on where they occurred. Similar feature to the apple iphone photos
+map feature."
+
+The map turned out to be the cheap half. `moments.location` has always been free text with no id
+and no coordinates behind it, so on the day the ask arrived there was nothing anywhere in the
+database that could be plotted. Every real decision in this build was about where coordinates come
+from, not about drawing.
+
+**The one question worth putting to the founder was the map style**, because their data decides it.
+Measured on the real account at build time: 149 events carry a location, across 138 distinct
+strings, and the great majority are metro Denver. A dependency-free option existed and was
+genuinely tempting — `PanZoomSvg.tsx` already does drag-pan and pinch-zoom, and hand-drawn country
+outlines would have cost zero new dependencies in a repo that had eight. It was put to the founder
+against a real zoomable map and rejected, for a reason that only shows up when you look at the
+data: a vector world map has nothing to draw below a state outline, so zooming into Denver would
+show one dot and then blank space. The founder chose the real map. Leaflet became the ninth
+runtime dependency on the TipTap precedent — it lands in a lazily-imported chunk (47 kB gzipped)
+and the entry bundle moved 134.69 → 134.74 kB gzipped, which is the whole argument.
+
+**Geoapify, not Open-Meteo, and §12 is why.** The app already had a geocoder wired up inside
+`enrich-event`, so reaching for it was the obvious move and would have been wrong. §12's regression
+guard records that Open-Meteo takes a single place NAME rather than an address, that "Oracle Park"
+resolves to Oracle, Arizona, and that several major venues aren't in its gazetteer at all — which
+is why that code geocodes a city and never a venue. Half of this account's locations are house
+addresses. `lib/geoapify.ts` had been receiving `lat`/`lon` on every autocomplete response since
+2026-07-26 and throwing them away on line 19, so the fix was one new function on a key that was
+already live.
+
+**The cache is the feature, not an optimisation.** `location_coords` is keyed by `clusterKey()` —
+by PLACE, not by moment — which is what turns 149 located events into ~138 lookups that happen once
+each, ever, and what makes a ManageLocations bulk rename re-key rather than invalidate. It carries
+the same three states as the enrichment columns for the same CLAUDE.md rule 3 reason: no row =
+never looked, `source='none'` = looked and found nothing, and without that sentinel a single
+unfindable address becomes an API call on every page load forever. `manual` is the third, and it
+exists because §12 guarantees some pins land confidently in the wrong state — so every place on the
+map carries a "Not this place" correction that no later automatic pass is allowed to overwrite.
+
+**Two traps that produce silent failures rather than errors**, both worth knowing before touching
+this again. Leaflet's default marker is three PNGs referenced by relative URL; they do not survive
+bundling, and the symptom is invisible markers with a clean console — every pin here is a
+`divIcon`, which also gets to carry the event count. And with no Geoapify key configured every
+geocode returns null, which is indistinguishable from "no match" unless you check separately, so
+`hasGeoapifyKey()` exists purely to stop a keyless environment writing 138 permanent "not found"
+rows that no later fix would clear.
+
+Clustering is forty lines in `lib/mapClusters.ts` rather than `leaflet.markercluster` — a second
+dependency for arithmetic, which would also have owned its own rendering and fought the divIcons.
+It buckets on a grid rather than by distance specifically so clusters cannot reshuffle under the
+cursor while you pan; that property is asserted in the tests, because a distance-based rewrite
+would break it and the symptom (pins twitching during a drag) reads as a render bug.
