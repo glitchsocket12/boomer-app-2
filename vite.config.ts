@@ -11,6 +11,13 @@ export default defineConfig({
     port: process.env.PORT ? Number(process.env.PORT) : 5173,
   },
   test: {
+    // `.claude/worktrees/` holds git worktrees for other Claude Code sessions — each one a FULL
+    // copy of this repo, test files included. Without this exclusion `npm run check` runs every
+    // suite twice (131 files instead of 66, 26s instead of 10s) and, worse, half of those runs are
+    // against a different checkout: a green result could be reporting someone else's stale code,
+    // and a red one could be a failure that doesn't exist here. Vitest's default `exclude` is
+    // replaced wholesale when set, so node_modules/dist have to be restated.
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.claude/**'],
     // `src/lib/supabase.ts` calls `createClient(url, key)` at module scope, so ANY test that
     // imports a `src/lib/*` module builds a real Supabase client just by loading the file — and
     // supabase-js throws "supabaseUrl is required" when the value is undefined. Locally that never

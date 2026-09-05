@@ -16,6 +16,15 @@
 export interface StreamedMessage {
   /** Concatenated text blocks, i.e. exactly what `content.find(b => b.type === "text").text` was. */
   text: string
+  /**
+   * Concatenated tool-call input, when the turn produced one.
+   *
+   * A forced `tool_choice` suppresses text entirely, so for converse this — not `text` — is where
+   * the envelope now lives. Kept separate rather than merged into `text` so a caller can tell
+   * "the model called the tool" from "the model wrote prose", which is the exact distinction that
+   * was missing when a lost envelope looked like a successful answer.
+   */
+  toolJson: string
   /** null when the model produced no text block at all — the caller's max_tokens check needs this. */
   stopReason: string | null
   usage: Record<string, unknown> | null
@@ -190,6 +199,7 @@ export async function readAnthropicSse(
 
   let buffer = ""
   let text = ""
+  let toolJson = ""
   let stopReason: string | null = null
   let usage: Record<string, unknown> | null = null
 
@@ -226,6 +236,14 @@ export async function readAnthropicSse(
           text += delta.text
           const revealed = extractor.push(delta.text)
           if (revealed && handlers.onReplyDelta) await handlers.onReplyDelta(revealed)
+        } else if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          // Tool input streams exactly like text — the same growing JSON, arriving in fragments
+          // that can split mid-escape — so it goes through the SAME extractor. Only one of the two
+          // channels is ever active on a given turn (a forced tool call emits no text block), so
+          // sharing one state machine can't double-emit.
+          toolJson += delta.partial_json
+          const revealed = extractor.push(delta.partial_json)
+          if (revealed && handlers.onReplyDelta) await handlers.onReplyDelta(revealed)
         } else if (delta?.type === "thinking_delta" && delta.thinking) {
           // Truthiness, not just typeof: with thinking display left at its default the API still
           // sends a thinking_delta per step, carrying an EMPTY string. Forwarding those would push
@@ -243,5 +261,5 @@ export async function readAnthropicSse(
     }
   }
 
-  return { text, stopReason, usage }
+  return { text, toolJson, stopReason, usage }
 }

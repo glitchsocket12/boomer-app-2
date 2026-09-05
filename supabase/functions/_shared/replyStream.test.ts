@@ -236,3 +236,48 @@ describe('readAnthropicSse thinking display default', () => {
     expect(thinking).toEqual([])
   })
 })
+
+// Tool-call input (2026-09-04). converse now forces a tool call, which suppresses the text block
+// entirely, so this — not `text` — is where the envelope arrives. The reply still has to stream
+// from it, and the caller has to be able to tell a tool call from prose.
+describe('readAnthropicSse with a forced tool call', () => {
+  const jsonDelta = (partial_json: string) => ({
+    type: 'content_block_delta',
+    delta: { type: 'input_json_delta', partial_json },
+  })
+
+  it('accumulates tool input separately from text and streams the reply out of it', async () => {
+    const replies: string[] = []
+    const result = await readAnthropicSse(
+      anthropicStream([
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'save_to_grove' } },
+        jsonDelta('{"reply": "Got it — '),
+        jsonDelta('logged that.", "moments": [{"new_moment": true}]}'),
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+      ]),
+      { onReplyDelta: (t) => replies.push(t) }
+    )
+    expect(replies.join('')).toBe('Got it — logged that.')
+    expect(result.toolJson).toBe('{"reply": "Got it — logged that.", "moments": [{"new_moment": true}]}')
+    // Empty text is the signal that the envelope came through the tool channel, not as prose.
+    expect(result.text).toBe('')
+    expect(result.stopReason).toBe('tool_use')
+    expect(JSON.parse(result.toolJson).moments).toHaveLength(1)
+  })
+
+  it('leaves toolJson empty when the model answered as prose instead', async () => {
+    // The failure this whole change exists to make detectable: no tool call at all.
+    const result = await readAnthropicSse(anthropicStream([textDelta('Manuel is in three groups.')]))
+    expect(result.toolJson).toBe('')
+    expect(result.text).toBe('Manuel is in three groups.')
+  })
+
+  it('survives a tool input split mid-escape, like any other chunked JSON', async () => {
+    const replies: string[] = []
+    await readAnthropicSse(
+      anthropicStream([jsonDelta('{"reply": "She said \\'), jsonDelta('"hi\\" today."}')], 3),
+      { onReplyDelta: (t) => replies.push(t) }
+    )
+    expect(replies.join('')).toBe('She said "hi" today.')
+  })
+})

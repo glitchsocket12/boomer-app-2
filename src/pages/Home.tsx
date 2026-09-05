@@ -43,6 +43,12 @@ export type PersonRef = { id: string; name: string }
 export type EventRef = { id: string; summary: string }
 export type GroupRef = { id: string; name: string }
 export type ChatMessage = {
+  /**
+   * Set on an assistant turn whose save didn't fully land. The reply has already been streamed and
+   * read by then — it cannot be retracted — so this renders as a correction underneath it rather
+   * than replacing it. Absent means there was nothing to save or it all saved.
+   */
+  saveFailed?: boolean
   role: 'user' | 'assistant'
   content: string
   people?: PersonRef[]
@@ -374,7 +380,16 @@ export default function Home({
       // arrives only in the final event, and this is also where the chips first appear.
       setThread([
         ...newThread,
-        { role: 'assistant', content: data.reply || streamedReply, people: data.people, events, groups: data.groups },
+        {
+          role: 'assistant',
+          content: data.reply || streamedReply,
+          people: data.people,
+          events,
+          groups: data.groups,
+          // 'partial' counts as failed for display purposes: if any part of what they told us
+          // didn't land, they need to know, and "some of it saved" is not a reassurance.
+          saveFailed: data.saveStatus === 'failed' || data.saveStatus === 'partial',
+        },
       ])
 
       if (data.relationshipSuggestions.length > 0) {
@@ -391,10 +406,16 @@ export default function Home({
       }
     } catch {
       // Keep whatever was streamed before the failure rather than blanking it — a half-written
-      // answer the user already read is more use than an apology that replaces it.
+      // answer the user already read is more use than an apology that replaces it. But flag the
+      // save: a turn that died mid-write-pass reached us as a confident-looking reply with no
+      // `done` event behind it, and that combination is exactly what used to pass for success.
       setThread([
         ...newThread,
-        { role: 'assistant', content: streamedReply || "Sorry, something went wrong. Let's try again." },
+        {
+          role: 'assistant',
+          content: streamedReply || "Sorry, something went wrong. Let's try again.",
+          saveFailed: true,
+        },
       ])
     } finally {
       // Belt and braces: cleared on the first delta above, but a turn that fails before any delta
@@ -817,6 +838,15 @@ export function HomeView({
         {thread.map((m, i) => (
           <div key={i}>
             <div style={m.role === 'user' ? styles.userBubble : styles.assistantBubble}>{m.content}</div>
+            {/* Contradicts the reply above it when the save didn't land. Deliberately placed after
+                the bubble rather than replacing its text: by the time we know, the reply has
+                already streamed and been read, and quietly rewriting it would be its own kind of
+                dishonesty. */}
+            {m.saveFailed && (
+              <p style={styles.saveFailedNotice}>
+                I couldn't save that one — nothing was recorded. Try sending it again.
+              </p>
+            )}
             {((m.people && m.people.length > 0) || (m.events && m.events.length > 0) || (m.groups && m.groups.length > 0)) && (
               <div style={styles.peopleRow}>
                 {m.people?.map((p) => (
@@ -1090,6 +1120,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontStyle: 'italic',
     boxShadow: 'none',
     backgroundColor: 'transparent',
+  },
+  // Same red as the other "couldn't save that" message in this file, so a failed save reads the
+  // same way wherever it happens.
+  saveFailedNotice: {
+    fontSize: fontSize.body,
+    color: neutral.redDeep,
+    margin: '0.35rem 0 0',
+    alignSelf: 'flex-start',
+    maxWidth: '80%',
   },
   peopleRow: { display: 'flex', gap: space.md, marginTop: '0.4rem', flexWrap: 'wrap' },
   personChip: {

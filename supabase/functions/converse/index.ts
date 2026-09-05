@@ -7,6 +7,8 @@ import {
   inferLastNameFromSignals,
 } from "../_shared/relationships.ts"
 import { readAnthropicSse } from "../_shared/replyStream.ts"
+import { SAVE_TOOL, SAVE_TOOL_NAME, normalizeEnvelope } from "../_shared/converseTool.ts"
+import { createSaveTally } from "../_shared/saveOutcome.ts"
 import { archiveSplitIndex } from "../_shared/promptCache.ts"
 import { findSelfPerson, buildSelfInstruction, buildKinInstruction } from "../_shared/selfContext.ts"
 import { fetchAllRelationshipRows } from "../_shared/relationshipsTable.ts"
@@ -600,7 +602,7 @@ How to use it:
 
 VOICE — in your "reply" text, always address the user directly as "you"/"your". Never refer to the user by their own recorded name or as "the user"/"User" in the reply — that third-person phrasing is reserved for how OTHER people are described. Stay consistent within a single reply: don't mix "I did X for you" with "...and then Name went to the store" when "Name" is the user themselves.
 
-At the end of EVERY turn, respond with ONLY a JSON object in this exact shape and nothing else:
+On EVERY turn, answer by calling the ${SAVE_TOOL_NAME} tool — never with a plain message. That call is the only way anything reaches the user or the database: "reply" is the text they read, and the other fields are what gets saved. A turn that is purely a question still calls it, filling in "reply" and leaving the rest empty. The fields carry these meanings:
 {"reply": "the natural conversational text to show the user - a few sentences, factual, not overly enthusiastic", "is_lookup": false, "found_relevant_info": false, ${NEW_PEOPLE_JSON_FIELD}, "renames": [{"old_name": "...", "new_name": "..."}], "last_name_updates": [{"person": "...", "last_name": "..."}], "nickname_updates": [{"person": "...", "nicknames": ["NewNickname1"]}], ${HOW_YOU_KNOW_JSON_FIELD}, ${FORMER_NAME_JSON_FIELD}, "relevant_people": ["Name1"], "person_group_tags": [{"person": "Name1", "group": "Group Name"}], "group_details": [{"group": "Group Name", "start_date": "YYYY-MM-DD or null", "end_date": "YYYY-MM-DD or null", "location": "Place or null"}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "pets": [{"name": "Biscuit", "owners": ["Name1"], "species": "dog or null", "breed": "golden retriever or null", "birth_date": "YYYY-MM-DD or null", "adopted_date": "YYYY-MM-DD or null", "deceased_date": "YYYY-MM-DD or null", "attributes": [{"label": "Vet", "value": "Dr. Ruiz"}]}], "moments": [{"moment_id": "the MOMENT_ID this entry relates to, or null", "new_moment": false, "moment_fields": null, "notes": [{"person": "Name1, or null for a general note about the event itself", "note": "..."}], "mentioned_names": [{"name": "Name1", "note": "who they are / how they came up"}], "moment_groups": ["Group Name"], "moment_tags": ["tag-name"], "moment_pets": ["Biscuit"]}], ${FAMILY_SIGNAL_JSON_FIELD_MULTI_SUBJECT}}
 When "moment_fields" is set, it has this shape: {"occasion": "...", "location": "...", "when_text": "...", "event_date": "YYYY-MM-DD or null", "event_end_date": "YYYY-MM-DD or null"}.
 
@@ -751,6 +753,17 @@ ${recentMomentLines}`
         // envelope is finished, which measured as a 7-17 second blank wait on the Home page. The
         // reply text is now relayed to the client as it's written; see streamConverse below.
         stream: true,
+        // The envelope is a FORCED TOOL CALL, not a shape requested in the prompt (2026-09-04).
+        // Before this, "respond with ONLY a JSON object in this exact shape" was enforced nowhere,
+        // and a turn where the model answered conversationally instead dropped every write field
+        // while still reading like success — that is how a capture was lost with the user told
+        // "Noted — logged as a moment". `tool_choice` naming the tool makes a prose-only turn
+        // impossible to express. See _shared/converseTool.ts for why `strict` is NOT set.
+        //
+        // Tools render BEFORE `system` in the cache prefix, so SAVE_TOOL must stay byte-stable;
+        // adding it invalidated every tier once, on the deploy that introduced it.
+        tools: [SAVE_TOOL],
+        tool_choice: { type: "tool", name: SAVE_TOOL_NAME },
         // NO `thinking` block here, and that absence is deliberate — do not "helpfully" add one.
         //
         // Tried on 2026-09-04: `thinking: { type: "adaptive", display: "summarized" }`, on the
@@ -850,23 +863,36 @@ ${recentMomentLines}`
           onThinkingDelta: (text) => send({ type: "status", text }),
         })
         const modelDoneAt = Date.now()
+        // Counts what actually reaches the database, so the reply can be contradicted when it
+        // claims a save that didn't happen. Every content write below records into it; `search_log`
+        // deliberately does not (see saveOutcome.ts — it fires on lookups and would report a
+        // question as a save).
+        const tally = createSaveTally()
+        // Runs one Supabase write and records whether it landed. Every content write goes through
+        // this rather than a bare `await`: before 2026-09-04 the errors were destructured away at
+        // every notes insert, the moments insert and all seven people writes, so a database failure
+        // was as silent as a lost envelope. Returns true when the row landed, so callers can gate
+        // follow-on bookkeeping on the write instead of assuming it.
+        const write = async (q: PromiseLike<{ error: unknown }>, table: string): Promise<boolean> =>
+          tally.record((await q).error, table)
         // Cache-health check required whenever this function is touched (CLAUDE.md rule 3): on a repeat
         // turn with no writes between, cache_read_input_tokens must be non-zero. If it's zero, some
         // per-request value is leaking into a cached tier — check the .order() clauses on the roster
         // queries first. No PII: counts only.
         console.log("usage", JSON.stringify(streamed.usage ?? null))
-        // Shaped as the old `content.find(b => b.type === "text")` result so every check below reads
-        // the same as it did before streaming — readAnthropicSse already concatenated the text blocks.
-        const textBlock = streamed.text ? { text: streamed.text } : null
+        // Since the envelope became a forced tool call, `text` is normally EMPTY and the content
+        // lives in `toolJson` — so the "did we get anything back" check has to look at both, or it
+        // would report every healthy turn as a failure.
+        const gotSomething = Boolean(streamed.toolJson || streamed.text)
 
-        // No text block at all. The usual cause is the reply budget being spent entirely on thinking
-        // (see max_tokens above) — distinguishable from every other failure by stop_reason, and worth
-        // telling apart because the honest advice differs: this one is "ask something narrower", not
-        // "try again", which would just burn another full budget on the identical question.
-        const ranOutThinking = !textBlock && streamed.stopReason === "max_tokens"
-        if (!textBlock) {
+        // Nothing at all came back. The usual cause is the reply budget being spent entirely on
+        // thinking (see max_tokens above) — distinguishable from every other failure by stop_reason,
+        // and worth telling apart because the honest advice differs: this one is "ask something
+        // narrower", not "try again", which would just burn another full budget on the same question.
+        const ranOutThinking = !gotSomething && streamed.stopReason === "max_tokens"
+        if (!gotSomething) {
           console.error(
-            "Anthropic response had no text block",
+            "Anthropic response had no tool call and no text",
             JSON.stringify({ stop_reason: streamed.stopReason, usage: streamed.usage })
           )
         }
@@ -874,14 +900,24 @@ ${recentMomentLines}`
         let parsed: any = { reply: ranOutThinking
           ? "That one took more thinking than I had room for. Try asking about a smaller group, or narrowing the question."
           : "Sorry, I couldn't process that.", is_lookup: false, found_relevant_info: false, new_people: [], renames: [], last_name_updates: [], nickname_updates: [], how_you_know_updates: [], former_name_updates: [], relevant_people: [], person_group_tags: [], mentioned_names: [], pets: [], moments: [], family_signals: [] }
+        // The envelope now arrives as the forced tool call's input. `text` is the fallback for a
+        // turn that somehow produced prose anyway (and for talking to an older deployment during a
+        // rollout) — it should be empty in normal operation.
+        const envelopeJson = streamed.toolJson || streamed.text
         let rawText = ""
+        // Whether we got a usable envelope at all. THIS is the variable whose absence made the
+        // 2026-09-04 data loss invisible: the parse failure was logged and then execution fell
+        // straight through every write site with empty arrays, and nothing downstream could tell
+        // that apart from "there was genuinely nothing to save".
+        let envelopeOk = false
         try {
-          rawText = textBlock?.text ?? ""
+          rawText = envelopeJson
           // Pull out just the JSON object, even if there's stray text before/after it
           const start = rawText.indexOf("{")
           const end = rawText.lastIndexOf("}")
           const jsonSlice = rawText.slice(start, end + 1)
           parsed = { ...parsed, ...JSON.parse(jsonSlice) }
+          envelopeOk = true
         } catch (parseError) {
           console.error("Failed to parse AI reply as JSON", String(parseError), "raw text was:", rawText)
           // The JSON was likely truncated mid-generation (hit max_tokens) — pull just the "reply" text
@@ -896,7 +932,17 @@ ${recentMomentLines}`
             // text, so use it as-is rather than discarding a real response the user already got.
             parsed.reply = rawText.trim()
           }
+          // Salvaging the sentence is NOT the same as salvaging the turn. Whatever the user asked
+          // to be remembered is gone, so this is recorded as a failure even though the reply reads
+          // fine — that mismatch is precisely the bug.
+          tally.envelopeLost()
         }
+
+        // Coerce every list field into an actual list before anything iterates it. The tool is
+        // forced but not strict, so the model can still hand back a bare value where a list was
+        // declared — `relevant_people: "Manuel"` did exactly that on the day this shipped and threw
+        // `.map is not a function` mid-write-pass, AFTER the reply had streamed. See converseTool.ts.
+        parsed = normalizeEnvelope(parsed)
 
         // Drop any hallucinated/malformed date before it reaches an insert — see dateValidation.ts.
         for (const momentEntry of parsed.moments ?? []) {
@@ -909,7 +955,7 @@ ${recentMomentLines}`
           const oldKey = rename.old_name.toLowerCase()
           const existingId = idByName[oldKey]
           if (existingId) {
-            await supabaseClient.from("people").update({ name: rename.new_name }).eq("id", existingId)
+            await write(supabaseClient.from("people").update({ name: rename.new_name }).eq("id", existingId), "people")
             idByName[rename.new_name.toLowerCase()] = existingId
             nameById[existingId] = rename.new_name
           }
@@ -943,11 +989,12 @@ ${recentMomentLines}`
             const [first, ...rest] = name.trim().split(" ")
             const lastName =
               rest.length > 0 ? rest.join(" ") : inferLastNameFromSignals(name, parsed.family_signals ?? [], { idByName, nameById, lastNameById })
-            const { data: newPerson } = await supabaseClient
+            const { data: newPerson, error: newPersonError } = await supabaseClient
               .from("people")
               .insert({ user_id: user.id, name: first, last_name: lastName, how_you_know_them: howYouKnowThem })
               .select()
               .single()
+            tally.record(newPersonError, "people")
             if (newPerson) {
               idByName[key] = newPerson.id
               nameById[newPerson.id] = name.trim()
@@ -963,7 +1010,7 @@ ${recentMomentLines}`
               .eq("id", existingId)
               .single()
             if (existing && !existing.how_you_know_them) {
-              await supabaseClient.from("people").update({ how_you_know_them: howYouKnowThem }).eq("id", existingId)
+              await write(supabaseClient.from("people").update({ how_you_know_them: howYouKnowThem }).eq("id", existingId), "people")
             }
           }
         }
@@ -976,13 +1023,13 @@ ${recentMomentLines}`
           if (!id || !value) continue
           const { data: existing } = await supabaseClient.from("people").select("how_you_know_them").eq("id", id).single()
           if (existing && !existing.how_you_know_them) {
-            await supabaseClient.from("people").update({ how_you_know_them: value }).eq("id", id)
+            await write(supabaseClient.from("people").update({ how_you_know_them: value }).eq("id", id), "people")
           }
         }
 
         for (const update of parsed.last_name_updates ?? []) {
           const id = idByName[update.person.toLowerCase()]
-          if (id) await supabaseClient.from("people").update({ last_name: update.last_name }).eq("id", id)
+          if (id) await write(supabaseClient.from("people").update({ last_name: update.last_name }).eq("id", id), "people")
         }
 
         for (const update of parsed.nickname_updates ?? []) {
@@ -993,7 +1040,7 @@ ${recentMomentLines}`
           const existing = nicknamesById[id] ?? []
           const merged = mergeNicknames(existing, update.nicknames)
           if (merged) {
-            await supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id)
+            await write(supabaseClient.from("people").update({ nicknames: merged.join(", ") }).eq("id", id), "people")
             nicknamesById[id] = merged
           }
         }
@@ -1006,7 +1053,7 @@ ${recentMomentLines}`
           const existing = formerById[id] ?? []
           const merged = mergeFormerLastNames(existing, update.former_last_names)
           if (merged) {
-            await supabaseClient.from("people").update({ former_last_names: merged.join(", ") }).eq("id", id)
+            await write(supabaseClient.from("people").update({ former_last_names: merged.join(", ") }).eq("id", id), "people")
             formerById[id] = merged
           }
         }
@@ -1085,6 +1132,7 @@ ${recentMomentLines}`
             }
             if (Object.keys(patch).length > 0) {
               const { error } = await supabaseClient.from("pets").update(patch).eq("id", petId)
+              tally.record(error, "pets")
               if (error) console.error("Pet update failed", petName, error.message)
             }
           } else {
@@ -1093,6 +1141,7 @@ ${recentMomentLines}`
               .insert({ user_id: user.id, name: petName, ...incoming, attributes: incomingAttributes })
               .select("id")
               .single()
+            tally.record(error, "pets")
             if (error || !newPet) {
               console.error("Pet insert failed", petName, error?.message)
               continue
@@ -1107,6 +1156,7 @@ ${recentMomentLines}`
             const { error } = await supabaseClient
               .from("person_pets")
               .upsert({ person_id: ownerId, pet_id: resolvedPetId }, { onConflict: "person_id,pet_id", ignoreDuplicates: true })
+            tally.record(error, "person_pets")
             if (error) console.error("Pet link failed", petName, error.message)
             idByOwnerAndPetName[`${ownerId}|${key}`] = resolvedPetId
           }
@@ -1121,11 +1171,15 @@ ${recentMomentLines}`
           // lands here too; splitParent leaves it alone, so we'd create a genuinely new group rather
           // than guess which of the two the user meant.
           const { parentId, childName } = groupIndex.splitParent(name)
-          const { data: newGroup } = await supabaseClient
+          const { data: newGroup, error: newGroupError } = await supabaseClient
             .from("groups")
             .insert({ user_id: userId, name: childName, parent_group_id: parentId })
             .select()
             .single()
+          // Recorded so a failed create is a counted failure rather than just an absent tag —
+          // returning null here silently skips the moment_groups write further down, which would
+          // otherwise leave the turn looking like "nothing to tag".
+          tally.record(newGroupError, "groups")
           if (newGroup) {
             groupIndex.add(newGroup)
             return newGroup.id
@@ -1157,6 +1211,9 @@ ${recentMomentLines}`
               tagNameById[existing.id] = existing.name
               return existing.id
             }
+            // Only counted once the recovery lookup has also failed — a losing race against a
+            // concurrent create is recovered from, not a lost write.
+            tally.record(error, "tags")
           }
           return null
         }
@@ -1213,10 +1270,15 @@ ${recentMomentLines}`
             const existingId = idByName[key]
             if (existingId) {
               if (momentId) {
-                await supabaseClient
-                  .from("notes")
-                  .insert({ person_id: existingId, moment_id: momentId, content: note, source: "home" })
-                momentIdsNeedingResummary.add(momentId)
+                const landed = await write(
+                  supabaseClient
+                    .from("notes")
+                    .insert({ person_id: existingId, moment_id: momentId, content: note, source: "home" }),
+                  "notes"
+                )
+                // Only queue a re-summary for a note that actually exists — otherwise a failed
+                // insert still spends a summarize-moment call rewriting the same old summary.
+                if (landed) momentIdsNeedingResummary.add(momentId)
               }
               continue
             }
@@ -1232,6 +1294,7 @@ ${recentMomentLines}`
                 .insert({ person_id: null, moment_id: momentId, content: note, source: "home" })
                 .select("id")
                 .single()
+              tally.record(error, "notes")
               if (error) console.error("Mentioned-name note insert failed", name, error.message)
               noteId = newNote?.id ?? null
               if (!error) momentIdsNeedingResummary.add(momentId)
@@ -1244,7 +1307,7 @@ ${recentMomentLines}`
           let momentId: string | null = momentEntry.moment_id ?? null
 
           if (momentEntry.new_moment) {
-            const { data: newMoment } = await supabaseClient
+            const { data: newMoment, error: newMomentError } = await supabaseClient
               .from("moments")
               .insert({
                 user_id: user.id,
@@ -1257,6 +1320,8 @@ ${recentMomentLines}`
               })
               .select()
               .single()
+            tally.record(newMomentError, "moments")
+            if (newMomentError) console.error("Moment insert failed", newMomentError.message)
             if (newMoment) {
               // Through a local const so the non-null type survives into the Set.add below —
               // assigning to the outer `momentId` (declared string | null) doesn't narrow it.
@@ -1285,7 +1350,10 @@ ${recentMomentLines}`
           // Sarahs, all unmapped by ambiguousKeys) and the sentence was thrown away while the reply
           // cheerfully confirmed it. It lands on the EVENT now, carrying the name the user actually
           // said, so the words survive and the person can be corrected later.
-          await Promise.all(
+          // Results are collected rather than discarded (2026-09-04). These are the single largest
+          // content write in the app — the user's actual words — and their errors used to be thrown
+          // away by the bare `Promise.all`, so a failed note was indistinguishable from a saved one.
+          const noteResults = await Promise.all(
             (momentEntry.notes ?? []).map((note: any) => {
               const rawPerson = note.person?.trim()
               if (!rawPerson) {
@@ -1317,6 +1385,7 @@ ${recentMomentLines}`
               })
             })
           )
+          for (const result of noteResults) tally.record((result as { error?: unknown })?.error, "notes")
           // This moment's cached summary depends on its notes (see summarize-moment), so any new one —
           // whether this moment is brand-new or already existed — makes the cache stale. Previously only
           // a brand-new moment ever regenerated (see momentIdsNeedingResummary above): adding detail to
@@ -1336,20 +1405,28 @@ ${recentMomentLines}`
           for (const groupName of momentEntry.moment_groups ?? []) {
             const groupId = await findOrCreateGroupId(groupName)
             if (groupId) {
-              await supabaseClient
-                .from("moment_groups")
-                .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true })
-              taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
+              const landed = await write(
+                supabaseClient
+                  .from("moment_groups")
+                  .upsert({ moment_id: momentId, group_id: groupId }, { onConflict: "moment_id,group_id", ignoreDuplicates: true }),
+                "moment_groups"
+              )
+              // Only claim the tag on the reply's chip row if it actually landed — this Map is what
+              // the user sees as "tagged to <group>".
+              if (landed) taggedGroups.set(groupId, groupNameById[groupId] ?? groupName)
             }
           }
 
           for (const tagName of momentEntry.moment_tags ?? []) {
             const tagId = await findOrCreateTagId(tagName)
             if (tagId) {
-              await supabaseClient
-                .from("moment_tags")
-                .upsert({ moment_id: momentId, tag_id: tagId }, { onConflict: "moment_id,tag_id", ignoreDuplicates: true })
-              taggedTags.set(tagId, tagNameById[tagId] ?? tagName)
+              const landed = await write(
+                supabaseClient
+                  .from("moment_tags")
+                  .upsert({ moment_id: momentId, tag_id: tagId }, { onConflict: "moment_id,tag_id", ignoreDuplicates: true }),
+                "moment_tags"
+              )
+              if (landed) taggedTags.set(tagId, tagNameById[tagId] ?? tagName)
             }
           }
 
@@ -1374,6 +1451,7 @@ ${recentMomentLines}`
             const { error } = await supabaseClient
               .from("moment_pets")
               .upsert({ moment_id: momentId, pet_id: petId }, { onConflict: "moment_id,pet_id", ignoreDuplicates: true })
+            tally.record(error, "moment_pets")
             if (error) console.error("Pet event tag failed", petName, error.message)
           }
         }
@@ -1448,6 +1526,7 @@ ${recentMomentLines}`
           if (Object.keys(patch).length === 0) continue
 
           const { error: writeError } = await supabaseClient.from("groups").update(patch).eq("id", groupId)
+          tally.record(writeError, "groups")
           if (writeError) console.error("group_details update failed", groupId, writeError.message)
         }
 
@@ -1455,10 +1534,13 @@ ${recentMomentLines}`
           const personId = idByName[tag.person?.trim().toLowerCase()]
           const groupId = tag.group ? await findOrCreateGroupId(tag.group) : null
           if (personId && groupId) {
-            await supabaseClient
-              .from("person_groups")
-              .upsert({ person_id: personId, group_id: groupId }, { onConflict: "person_id,group_id", ignoreDuplicates: true })
-            taggedGroups.set(groupId, groupNameById[groupId] ?? tag.group)
+            const landed = await write(
+              supabaseClient
+                .from("person_groups")
+                .upsert({ person_id: personId, group_id: groupId }, { onConflict: "person_id,group_id", ignoreDuplicates: true }),
+              "person_groups"
+            )
+            if (landed) taggedGroups.set(groupId, groupNameById[groupId] ?? tag.group)
           }
         }
 
@@ -1490,6 +1572,14 @@ ${recentMomentLines}`
         // Same payload the non-streaming version returned, now as the stream's final event. It carries
         // the full `reply` as well as the deltas, so a client that missed or ignored them (an old
         // build, or a reply the extractor couldn't stream) still gets the complete answer here.
+        // The save half of the turn, derived from rows that actually landed rather than from what
+        // the model said it did. This is the field that makes "Noted — logged as a moment" with an
+        // empty database impossible to show as a success.
+        const save = tally.snapshot()
+        if (save.status !== "saved" && save.status !== "nothing_to_save") {
+          console.error("save incomplete", JSON.stringify({ ...save, envelopeOk }))
+        }
+
         await send({
           type: "done",
           reply: parsed.reply,
@@ -1500,6 +1590,8 @@ ${recentMomentLines}`
           relationshipSuggestions: familyResult.relationshipSuggestions,
           newPersonSuggestions: familyResult.newPersonSuggestions,
           mentionedPeopleSuggestions,
+          saveStatus: save.status,
+          envelopeOk,
         })
 
         // Counts and durations only, no PII — same discipline as the `usage` line above. `ttft_ms` is
@@ -1513,6 +1605,11 @@ ${recentMomentLines}`
             stream_ms: modelDoneAt - modelStartedAt,
             write_ms: Date.now() - modelDoneAt,
             total_ms: Date.now() - startedAt,
+            // Row counts, so a turn that saved nothing is visible in the logs without needing a
+            // database query to notice it. `write_ms: 1` used to be the only tell.
+            rows_written: save.written,
+            rows_failed: save.failed,
+            save_status: save.status,
           })
         )
       } catch (streamError) {

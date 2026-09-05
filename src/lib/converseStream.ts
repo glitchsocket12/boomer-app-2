@@ -13,6 +13,15 @@ const FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/converse
 
 const FALLBACK_REPLY = "Sorry, something went wrong. Let's try again."
 
+/**
+ * How the save half of the turn actually went, derived server-side from rows that landed.
+ *
+ * `nothing_to_save` is a success — most turns are questions. It is deliberately distinct from
+ * `saved` so the UI stays quiet rather than claiming a save, and from `failed` so a question is
+ * never reported as an error.
+ */
+export type SaveStatus = 'saved' | 'partial' | 'nothing_to_save' | 'failed'
+
 export interface ConverseResult {
   reply: string
   people: { id: string; name: string }[]
@@ -22,6 +31,7 @@ export interface ConverseResult {
   relationshipSuggestions: unknown[]
   newPersonSuggestions: unknown[]
   mentionedPeopleSuggestions: unknown[]
+  saveStatus: SaveStatus
 }
 
 export class ConverseError extends Error {
@@ -41,7 +51,14 @@ function toResult(payload: Record<string, unknown>): ConverseResult {
     relationshipSuggestions: (payload.relationshipSuggestions as unknown[]) ?? [],
     newPersonSuggestions: (payload.newPersonSuggestions as unknown[]) ?? [],
     mentionedPeopleSuggestions: (payload.mentionedPeopleSuggestions as unknown[]) ?? [],
+    // Defaults to 'nothing_to_save', NOT 'saved'. An old deployment that doesn't send the field
+    // must not have its silence read as a confirmation — that assumption is the whole bug.
+    saveStatus: isSaveStatus(payload.saveStatus) ? payload.saveStatus : 'nothing_to_save',
   }
+}
+
+function isSaveStatus(value: unknown): value is SaveStatus {
+  return value === 'saved' || value === 'partial' || value === 'nothing_to_save' || value === 'failed'
 }
 
 /**

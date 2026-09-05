@@ -4925,3 +4925,42 @@ The cut was taken at a fixed distance from the end (`length - 20`). Appending a 
 Fixed by quantising the boundary to a chunk of 25 (`_shared/promptCache.ts`'s `archiveSplitIndex`, with tests that assert on a *sequence* of list sizes rather than a single value — a version that looks right for one input is exactly how this shipped). The boundary now moves roughly once per 25 captures instead of once per capture: measured over 60 simulated writes, 3 rebuilds instead of 60. Cost is a slightly larger uncached tail (20-44 moments instead of exactly 20).
 
 **Both halves of this bug had the same shape, and it is worth naming: a prefix cache is only as stable as the thing that decides where the prefix ends.** First the ordering was unstable (a random UUID), then the boundary was. Each looked correct in isolation, each was verified as correct in isolation, and each was broken specifically by a write — the one event nobody thinks to test after, because the test costs real data.
+
+---
+
+## 2026-09-05 — Grove told the founder it saved a note, and hadn't. Closing that for good.
+
+**The founder's framing, which was the right one:** *"you can't have a memory app that doesn't save notes."* They also asked the question worth recording: how can Claude or ChatGPT process information in real time with no issue, when this app — which is also AI — can't?
+
+**The answer, and it reframes the bug.** Chat assistants do one job: write a reply. If the reply is good, the turn worked. converse does two in one breath — write a reply AND hand back structured data to file — and the two were bundled by *asking the model, in prose, to hide the data inside its reply as JSON*. Nothing enforced it. When the model answered conversationally, which is the natural response to "I checked the oil in the car", the envelope vanished and every write field with it. The reply still read perfectly. **Claude has the same problem and solves it differently: it files things through tool calls, a separate channel the API validates, where "didn't file anything" is visible rather than inferred.** The bug was never the model's competence; it was that we picked the mechanism that can silently evaporate.
+
+### Phase 0 saved the design, twice
+
+Probing the API before building found two things the docs would not have:
+
+1. **`strict: true` DOES work on `claude-sonnet-5`**, despite the structured-outputs page not listing that model. Adopting the doc's model list at face value would have ruled out the right design.
+2. **…but not for this envelope.** Two successive 400s, each precise and useful: `Schemas contains too many optional parameters (27) ... (limit: 24)` — fixed by making the nested `pets`/`moments` fields required, which is why those `required` lists are total — and then `The compiled grammar is too large, which would cause performance issues`, which is not fixable without gutting the envelope.
+
+So: **forced `tool_choice`, no `strict`.** Forced tool use is what actually fixes the reported bug (prose becomes inexpressible); `strict` would only have added type guarantees on top. The probe ran as a throwaway Edge Function rather than a local script, so the `ANTHROPIC_API_KEY` never left the project's own secrets and the test ran in the exact runtime converse runs in.
+
+### The failure the forced call does *not* fix, found within minutes
+
+`tool_choice` guarantees the tool is **called**. Without `strict`, nothing guarantees the input **shape**. Minutes after v90 shipped, a lookup came back with `relevant_people` as a non-array and the write pass died on `(parsed.relevant_people ?? []).map is not a function` — *after* the reply had streamed. Hence `normalizeEnvelope`, which coerces every list field and **wraps** a bare value rather than dropping it (`"Manuel"` plainly means `["Manuel"]`; discarding content to satisfy a type is the failure this whole change exists to prevent).
+
+Worth noting the new error path caught it and told the client, rather than failing silently — the safety net worked on its first real outing.
+
+### Verification, and a trap that nearly invalidated all of it
+
+The plan said verify against the database, never the screen. Doing so: a capture produced `save_status: "saved"`, `rows_written: 1`, and a real `moments` row — the reply "Got it — logged that you rotated the tires" was true this time. A lookup produced `nothing_to_save`, `rows_written: 0`, correctly quiet. The same "what concerts are in my records?" question that had fallen to prose at 00:35 on the old code (visible in `function_logs`) came through the tool cleanly afterwards.
+
+**Then the frontend verification turned out to be worthless, and it took a failing test to notice.** Stubbing a failed save produced no warning in the browser. The cause was not the code: `.claude/worktrees/` holds git worktrees for *other* Claude Code sessions, each a full copy of the repo, and the dev server on port 5173 belonged to one of them. Every frontend check in this session had been running against a different checkout. The same worktree was also inflating `npm run check` from 66 test files to 131 — half of them another session's code, where a green result proves nothing about this one and a red one is someone else's problem. Both are now excluded in `vite.config.ts`.
+
+The replacement is tests that cannot be pointed at the wrong copy: `HomeView` rendered through `renderToStaticMarkup` asserting the correction appears under the reply (and stays quiet on a question), and `streamConverse` driven against a stubbed transport asserting `saveStatus` survives the trip. Writing them immediately caught a second self-inflicted trap — React escapes apostrophes to `&#x27;`, so `toContain("couldn't save that one")` fails in a way that looks exactly like the notice not rendering.
+
+**Two lessons, both about verification rather than code.** First: *a browser check is only as trustworthy as the server behind it, and on a machine running several agent sessions that server may not be yours* — check what the dev server is actually serving before believing a UI result. Second, the one this whole day keeps re-teaching: **deliberately testing the failure path is what finds the bugs.** The happy path passed at every stage. Both real defects — the `.map` crash and the unverifiable frontend — surfaced only from forcing a failure and from asserting on a negative.
+
+### What is now true
+
+The confirmation the user reads is derived from rows that landed. `saveStatus` is computed from a `SaveTally` that every content write records into — previously the errors were destructured away at every `notes` insert, the `moments` insert and all seven `people` writes — and `nothing_to_save` is kept distinct from `saved` so a question is never reported as either a save or an error. When a save fails, the correction renders *underneath* the reply rather than replacing it: by the time we know, the reply has already streamed and been read, and quietly rewriting it would be its own dishonesty.
+
+Still open, and deliberately not folded in: `update-group` (unhardened, `max_tokens: 1500` — the exact value `update-moment` was raised from for this reason — and every write error discarded while reporting `changed: true`), `update-moment`'s residual `ok: true` hole for malformed-but-not-truncated JSON, `add-fact`'s lost classification, and `NoteWithDetection.tsx`, which renders "Nothing else to add from that one — your note's saved" for every one of those failures because they all return HTTP 200. On those surfaces the note itself is written verbatim *before* the AI call, so what is lost is enrichment, not the user's words — which is why converse went first.
