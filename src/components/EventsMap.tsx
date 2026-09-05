@@ -77,12 +77,11 @@ function sleep(ms: number): Promise<void> {
 
 export default function EventsMap({
   moments,
-  onClose,
   onSelectEvent,
   onFilterLocation,
 }: {
+  /** Already filtered by the Events page — the map shows whatever the list would have shown. */
   moments: Moment[]
-  onClose: () => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   /** Hands a place back to the Events list's own location filter, rather than filtering in here. */
   onFilterLocation: (location: string) => void
@@ -360,32 +359,16 @@ export default function EventsMap({
 
   // ---- chrome -----------------------------------------------------------------------------------
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const knownLocations = useMemo(() => [...places.values()].map((p) => p.sample), [places])
 
   return (
-    <div style={styles.overlay} role="dialog" aria-modal="true" aria-label="Map of events">
-      <div style={styles.header}>
-        <div>
-          <h2 style={styles.title}>Where things happened</h2>
-          <p style={styles.subtitle}>
-            {phase === 'loading' && 'Loading places…'}
-            {phase === 'geocoding' && `Finding place ${progress.done} of ${progress.total}…`}
-            {phase === 'ready' &&
-              `${pins.length} ${pins.length === 1 ? 'place' : 'places'} · ${plottedEvents} ${plottedEvents === 1 ? 'event' : 'events'} on the map`}
-          </p>
-        </div>
-        <button type="button" onClick={onClose} style={styles.closeButton} aria-label="Close the map">
-          ✕
-        </button>
-      </div>
+    <div style={styles.wrap}>
+      <p style={styles.status}>
+        {phase === 'loading' && 'Loading places…'}
+        {phase === 'geocoding' && `Finding place ${progress.done} of ${progress.total}…`}
+        {phase === 'ready' &&
+          `${pins.length} ${pins.length === 1 ? 'place' : 'places'} · ${plottedEvents} ${plottedEvents === 1 ? 'event' : 'events'} on the map`}
+      </p>
 
       {tableMissing && (
         <p style={styles.notice}>
@@ -450,11 +433,11 @@ export default function EventsMap({
                     key={moment.id}
                     type="button"
                     onClick={() => {
+                      // Navigates away to the event's own page, so there is nothing to close.
                       onSelectEvent({
                         id: moment.id,
                         summary: summarize(moment.occasion, moment.raw_description),
                       })
-                      onClose()
                     }}
                     style={styles.eventRow}
                   >
@@ -491,10 +474,8 @@ export default function EventsMap({
                   <div style={styles.placeActions}>
                     <button
                       type="button"
-                      onClick={() => {
-                        onFilterLocation(pin.location)
-                        onClose()
-                      }}
+                      // onFilterLocation both sets the filter and switches back to the list.
+                      onClick={() => onFilterLocation(pin.location)}
                       style={styles.placeAction}
                     >
                       Show these in the list →
@@ -521,41 +502,29 @@ export default function EventsMap({
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
-  // Full-screen rather than a centred dialog: a map in a small box is a map you can't read, and
-  // this is the one screen in the app that wants the whole phone.
-  overlay: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 1000,
-    backgroundColor: colors.surface,
+  // An inline panel, not an overlay: the map is one of two views of the Events page (founder ask,
+  // 2026-09-05), so the page's own sticky header stays put above it and this fills what's left.
+  // `relative` anchors the place panel, which is absolutely positioned inside it.
+  wrap: {
+    position: 'relative',
+    height: '100%',
     display: 'flex',
     flexDirection: 'column',
+    backgroundColor: colors.surface,
+    border: border.light,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
     fontFamily,
   },
-  header: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: space.lg,
-    padding: `${space.lg} ${space.xl}`,
+  status: {
+    flexShrink: 0,
+    fontSize: fontSize.tiny,
+    color: colors.textFaintest,
+    margin: 0,
+    padding: `${space.md} ${space.lg}`,
     borderBottom: border.light,
   },
-  title: { fontSize: fontSize.h2, color: colors.ink, margin: 0 },
-  subtitle: { fontSize: fontSize.tiny, color: colors.textFaintest, margin: `${space.xs} 0 0` },
-  closeButton: {
-    flexShrink: 0,
-    width: '44px',
-    height: '44px',
-    fontSize: fontSize.lead,
-    lineHeight: 1,
-    color: colors.ink,
-    backgroundColor: 'transparent',
-    border: border.default,
-    borderRadius: radius.md,
-    cursor: 'pointer',
-    fontFamily,
-  },
-  notice: { fontSize: fontSize.body, color: colors.ink, margin: 0, padding: `${space.md} ${space.xl}` },
+  notice: { fontSize: fontSize.body, color: colors.ink, margin: 0, padding: `${space.md} ${space.lg}` },
   // flex:1 with minHeight:0 so the map takes the leftover height instead of overflowing the
   // viewport — Leaflet needs a real height on its container or it renders a zero-pixel map.
   map: { flex: 1, minHeight: 0, width: '100%' },

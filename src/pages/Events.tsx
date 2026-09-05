@@ -237,9 +237,6 @@ export default function Events({
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [childrenByParentId, setChildrenByParentId] = useState<Map<string, ChildEventRef[]>>(new Map())
-  // Held here rather than inside EventsView so that view stays a pure render — the map does its own
-  // Supabase reads, and the landing-page demo renders EventsView with no network at all.
-  const [mapOpen, setMapOpen] = useState(false)
   const groupRoster = useGroupRoster()
 
   useEffect(() => {
@@ -322,41 +319,40 @@ export default function Events({
   if (loading) return <p style={{ textAlign: 'center', marginTop: '3rem' }}>Loading…</p>
 
   return (
-    <>
-      <EventsView
-        moments={moments}
-        distinctTags={distinctTags}
-        filters={filters}
-        onFiltersChange={onFiltersChange}
-        onAddEvent={handleAddEvent}
-        creating={creating}
-        createError={createError}
-        onManageTags={onManageTags}
-        onManageLocations={onManageLocations}
-        onImportEvents={onImportEvents}
-        onOpenMap={() => setMapOpen(true)}
-        onSelectPerson={onSelectPerson}
-        onSelectGroup={onSelectGroup}
-        onSelectEvent={onSelectEvent}
-        childrenByParentId={childrenByParentId}
-        groupLabel={groupRoster.label}
-        groupParentById={groupRoster.parentById}
-      />
-      {mapOpen && (
-        // No fallback UI: the chunk is small and the overlay appearing a frame late reads better
-        // than a spinner flashing over the list.
+    <EventsView
+      moments={moments}
+      distinctTags={distinctTags}
+      filters={filters}
+      onFiltersChange={onFiltersChange}
+      onAddEvent={handleAddEvent}
+      creating={creating}
+      createError={createError}
+      onManageTags={onManageTags}
+      onManageLocations={onManageLocations}
+      onImportEvents={onImportEvents}
+      renderMap={({ moments: visible, showList }) => (
+        // No fallback UI: the chunk is small, and a spinner flashing in the panel reads worse than
+        // the map arriving a frame late.
         <Suspense fallback={null}>
           <EventsMap
-            moments={moments}
-            onClose={() => setMapOpen(false)}
+            moments={visible}
             onSelectEvent={onSelectEvent}
-            // Clicking through from a pin lands on the list already narrowed to that place, using
-            // the filter the page already has rather than a second filtering path.
-            onFilterLocation={(location) => onFiltersChange({ ...filters, locationFilter: location })}
+            // Clicking through from a pin narrows the list to that place and shows it, using the
+            // filter the page already has rather than a second filtering path.
+            onFilterLocation={(location) => {
+              onFiltersChange({ ...filters, locationFilter: location })
+              showList()
+            }}
           />
         </Suspense>
       )}
-    </>
+      onSelectPerson={onSelectPerson}
+      onSelectGroup={onSelectGroup}
+      onSelectEvent={onSelectEvent}
+      childrenByParentId={childrenByParentId}
+      groupLabel={groupRoster.label}
+      groupParentById={groupRoster.parentById}
+    />
   )
 }
 
@@ -418,7 +414,7 @@ export function EventsView({
   onManageTags,
   onManageLocations,
   onImportEvents,
-  onOpenMap,
+  renderMap,
   onSelectPerson,
   onSelectGroup,
   onSelectEvent,
@@ -439,7 +435,14 @@ export function EventsView({
   // a link it never renders.
   onManageLocations?: () => void
   onImportEvents?: () => void
-  onOpenMap?: () => void
+  /**
+   * Supplies the Map view's contents. A render prop rather than a plain node so this component
+   * stays a pure render while the map still gets the FILTERED events — the filtering happens in
+   * here, the Supabase reads happen in the container, and neither has to know about the other.
+   * Absent (like the other optional props) for the read-only landing-page demo, which is also what
+   * hides the List/Map toggle there.
+   */
+  renderMap?: (args: { moments: Moment[]; showList: () => void }) => React.ReactNode
   onSelectPerson: (person: { id: string; name: string }) => void
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
@@ -453,6 +456,43 @@ export function EventsView({
 }) {
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
   const [filterPanelOpen, setFilterPanelOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list')
+
+  // The sticky bar's height, measured rather than guessed, because it changes: filter chips appear
+  // and disappear, and the whole thing wraps to more rows on a phone. Two things need the number —
+  // the year headings, which stick BELOW the bar rather than under it, and the map, which fills
+  // whatever viewport is left beneath it.
+  const headerRef = useRef<HTMLDivElement>(null)
+  const [headerHeight, setHeaderHeight] = useState(0)
+  useEffect(() => {
+    const el = headerRef.current
+    if (!el) return
+    const measure = () => setHeaderHeight(el.getBoundingClientRect().height)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // How far down the document the map starts — header height is NOT enough on its own, because the
+  // nav bar and the page's own top padding sit above it. Kept as a document offset (rect + scrollY)
+  // rather than a viewport position so it doesn't change as you scroll.
+  const mapSlotRef = useRef<HTMLDivElement>(null)
+  const [mapSlotTop, setMapSlotTop] = useState(0)
+  useEffect(() => {
+    if (viewMode !== 'map') return
+    // Switching views changes the page's height under the browser, so start from a known scroll
+    // position and measure from there.
+    window.scrollTo(0, 0)
+    const measure = () => {
+      const el = mapSlotRef.current
+      if (el) setMapSlotTop(el.getBoundingClientRect().top + window.scrollY)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [viewMode, headerHeight])
   const filterOptions = useFilterOptions(moments, groupParentById)
 
   // Sub-events are visually bundled under their parent (see the card rendering below) rather
@@ -571,6 +611,11 @@ export function EventsView({
 
   return (
     <div style={styles.page}>
+      {/* Everything down to the filter chips travels with the scroll (founder ask, 2026-09-05):
+          on a list this long, scrolling back to the top to reach search, Filters or the view
+          toggle was most of the navigating. The negative margins bleed the background out over
+          the page's own horizontal padding, so cards pass UNDER this bar rather than beside it. */}
+      <div ref={headerRef} style={styles.stickyHeader}>
       <div style={styles.headingRow}>
         <h1 style={styles.heading}>Events</h1>
         {!readOnly && (
@@ -599,9 +644,6 @@ export function EventsView({
           <button type="button" onClick={onManageLocations} style={styles.manageTagsLink}>
             Manage locations →
           </button>
-          <button type="button" onClick={onOpenMap} style={styles.manageTagsLink}>
-            Map →
-          </button>
         </div>
       )}
       {createError && <p style={styles.addErrorText}>{createError}</p>}
@@ -618,6 +660,24 @@ export function EventsView({
           <button type="button" onClick={() => setFilterPanelOpen(true)} style={styles.filtersButton}>
             Filters{activeCount > 0 ? ` · ${activeCount}` : ''}
           </button>
+          {/* Two views of the same filtered set, not two places to be — so the toggle sits with
+              search and Filters rather than with the Manage links, and the map inherits whatever
+              is filtered here. Absent for the read-only demo, which has no map. */}
+          {renderMap && (
+            <div style={styles.viewToggle} role="group" aria-label="View events as">
+              {(['list', 'map'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setViewMode(mode)}
+                  aria-pressed={viewMode === mode}
+                  style={viewMode === mode ? styles.viewToggleOn : styles.viewToggleOff}
+                >
+                  {mode === 'list' ? 'List' : 'Map'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -630,6 +690,7 @@ export function EventsView({
           ))}
         </div>
       )}
+      </div>
 
       <FilterPanel
         open={filterPanelOpen}
@@ -782,6 +843,22 @@ export function EventsView({
         )}
       </FilterPanel>
 
+      {viewMode === 'map' && renderMap ? (
+        // Sized from this slot's OWN distance down the page, not from the header's height: the nav
+        // bar and the page's top padding sit above the header too, and sizing off the header alone
+        // ran the map ~70px past the bottom of the window. Measured this way the map ends exactly
+        // at the bottom edge, so the page doesn't scroll at all in this view.
+        <div
+          ref={mapSlotRef}
+          style={{ ...styles.mapSlot, height: `calc(100vh - ${mapSlotTop}px - 1rem)` }}
+        >
+          {renderMap({
+            moments: filteredMoments.map((entry) => entry.moment),
+            showList: () => setViewMode('list'),
+          })}
+        </div>
+      ) : (
+        <>
       {moments.length > 0 && filteredMoments.length === 0 && (
         <p style={styles.empty}>
           {query
@@ -795,7 +872,9 @@ export function EventsView({
       <div style={styles.list}>
         {yearGroups.map(({ year, items }) => (
           <div key={year}>
-            <h2 style={styles.yearHeading}>{year}</h2>
+            {/* Parks just under the sticky bar rather than at the top of the window, which is
+                where it used to land — behind it. */}
+            <h2 style={{ ...styles.yearHeading, top: headerHeight }}>{year}</h2>
             <div style={styles.yearCards}>
               {items.map(({ moment, attendees, summary, groups }) => {
                 const children = childrenByParentId.get(moment.id) ?? []
@@ -884,12 +963,56 @@ export function EventsView({
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   )
 }
 
 const styles: { [key: string]: React.CSSProperties } = {
   page: { maxWidth: maxWidth.page, margin: '0 auto', padding: '2rem 1.5rem', fontFamily },
+  // zIndex 2 clears the year headings (1), which have to pass beneath this rather than over it.
+  // The negative margin + matching padding widen the opaque background to cover `page`'s own
+  // 1.5rem padding, so cards scrolling past don't show along the edges of the bar.
+  stickyHeader: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 2,
+    backgroundColor: colors.appBg,
+    margin: '0 -1.5rem',
+    padding: '0.75rem 1.5rem 0',
+  },
+  // Segmented control: one border around the pair, so it reads as two states of one thing rather
+  // than two separate buttons. Height matches the Filters button beside it.
+  viewToggle: {
+    flexShrink: 0,
+    display: 'flex',
+    border: border.default,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: neutral.white,
+  },
+  viewToggleOn: {
+    fontSize: fontSize.base,
+    padding: '0.65rem 0.9rem',
+    border: 'none',
+    backgroundColor: colors.primary,
+    color: colors.onFill,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  viewToggleOff: {
+    fontSize: fontSize.base,
+    padding: '0.65rem 0.9rem',
+    border: 'none',
+    backgroundColor: 'transparent',
+    color: colors.ink,
+    cursor: 'pointer',
+    fontFamily,
+  },
+  // minHeight keeps the map usable when the sticky bar has wrapped to several rows on a phone and
+  // the calc() would otherwise leave it a sliver.
+  mapSlot: { minHeight: '320px' },
   headingRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.xl, marginBottom: space.xl, flexWrap: 'wrap' },
   heading: { fontSize: fontSize.h1, color: colors.ink, margin: 0 },
   // Wraps so the two buttons stack instead of squeezing the heading on a phone (§10).
