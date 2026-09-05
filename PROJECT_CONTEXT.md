@@ -129,6 +129,7 @@ _One line per file: path — what it does. No dates, no history (§11 budget). *
 - `acceptCandidate.ts` — the ONE write path turning a calendar-import candidate into a real `moments` row.
 - `reviewQueues.ts` — the one owner of "what's waiting to be reviewed" (the counts every inbox and nudge reads).
 - `resolvedCardScroll.ts` — the accept/reject landing behaviour shared by all review queues (hold scroll position).
+- `centerInScroller.ts` — `centerInScroller(box, marker, smooth)`: parks a marker mid-box by moving the box's own scrollTop, hand-animated with a timer that lands it even when no frame paints. Both "Today" buttons (Calendar Timeline, Countdowns) use it; never use `scrollIntoView` for these — it drags the page too, and native smooth scrolling is silently dropped whenever the page isn't painting.
 - `googlePhotosAuth.ts` — `startGooglePhotosAuth()`: builds Google's OAuth URL, state in sessionStorage.
 - `googlePhotosImport.ts` — `startGooglePhotosImport(momentId?, callbacks)`: picker session → resized upload to the private `photos` bucket.
 - `transcribeStream.ts` — `transcribeAudio()`: I/O against the streaming `transcribe` Edge Function.
