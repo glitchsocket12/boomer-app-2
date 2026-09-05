@@ -4,6 +4,7 @@ import type { Dismissals } from './dismissedSuggestions'
 import { eventSpan, type DatedRow } from './eventSpan'
 import { formatDateRange } from './dates'
 import { matchGroupWindow, type GroupWindow } from './groupWindow'
+import { hasInheritedGroup } from './inheritedGroups'
 
 // "This event has no group on it, but everyone who was there belongs to the same one." Roughly
 // half of a mature account's events end up untagged (78 of 151 on the founder's account,
@@ -252,16 +253,23 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
   // start date and no end while the days under it carry the real shape, and those days may well
   // be tagged already (see eventSpan's own note).
   const childrenByParent = new Map<string, MomentRow[]>()
+  const parentById = new Map<string, string>()
   for (const m of allMoments) {
     if (!m.parent_moment_id) continue
+    parentById.set(m.id, m.parent_moment_id)
     const list = childrenByParent.get(m.parent_moment_id)
     if (list) list.push(m)
     else childrenByParent.set(m.parent_moment_id, [m])
   }
 
+  // A day inside a tagged trip counts as tagged and is never asked about — see inheritedGroups.ts.
+  // This reuses the "any group at all silences the cards" semantic that already applies to a
+  // directly-tagged moment, rather than suppressing only the inherited group's own card, so a day
+  // under a tagged trip behaves exactly like the trip it sits in. Costs no extra query: `tagged`
+  // and `parent_moment_id` are both already in hand.
   const tagged = new Set((taggedRes.data as { moment_id: string }[] | null)?.map((r) => r.moment_id) ?? [])
   const untagged: UntaggedMoment[] = allMoments
-    .filter((m) => !tagged.has(m.id))
+    .filter((m) => !tagged.has(m.id) && !hasInheritedGroup(m.id, parentById, tagged))
     .map((m) => ({
       id: m.id,
       title: m.occasion?.trim() || 'Untitled moment',

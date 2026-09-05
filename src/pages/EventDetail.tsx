@@ -64,6 +64,8 @@ type PinnedChip = { person: PersonRef; box: 'siblings' | 'group' | 'family'; ind
  * who adds one person and sits still sees the summary catch up while they're still on the page.
  */
 const SUMMARY_SETTLE_MS = 4000
+/** How far up the parent chain an inherited group is followed — see loadInheritedGroups. */
+const MAX_INHERIT_DEPTH = 5
 export type GroupRef = {
   id: string
   name: string
@@ -214,6 +216,10 @@ export default function EventDetail({
   const [photosRefreshKey, setPhotosRefreshKey] = useState(0)
   const photosImportHandle = useRef<{ cancel: () => void } | null>(null)
   const [parentEvent, setParentEvent] = useState<OtherEvent | null>(null)
+  // Groups this event is in because an ancestor is in them — see lib/inheritedGroups.ts. Held
+  // apart from moment.moment_groups on purpose: these have no row of their own, so they render
+  // without a remove control and are changed on the parent instead.
+  const [inheritedGroups, setInheritedGroups] = useState<GroupRef[]>([])
   const [siblingEvents, setSiblingEvents] = useState<SiblingEventRef[]>([])
   const [childEvents, setChildEvents] = useState<ChildEventRef[]>([])
   // Related events (2026-08-26) — links to other events that are NOT sub-events. `available`
@@ -362,12 +368,45 @@ export default function EventDetail({
     const parentId = error ? null : (data as { parent_moment_id: string | null } | null)?.parent_moment_id ?? null
     if (!parentId) {
       setParentEvent(null)
+      setInheritedGroups([])
       setSiblingEvents([])
       return
     }
     const { data: parent } = await supabase.from('moments').select('id, occasion, raw_description').eq('id', parentId).single()
     setParentEvent((parent as OtherEvent) ?? null)
+    loadInheritedGroups(parentId)
     loadSiblingEvents(parentId)
+  }
+
+  /**
+   * The groups this event inherits from the trip it sits in (founder, 2026-09-04). Climbs the
+   * parent chain rather than reading the immediate parent only: real data already contains a
+   * grandchild ("Wedding Welcome Party" -> "Wedding Reception" -> the wedding), and a group on the
+   * wedding should reach the welcome party too. MAX_INHERIT_DEPTH plus the `seen` set bound it
+   * either way, since the DB CHECK only blocks a row being its own direct parent.
+   *
+   * Its own fail-open queries, same reasoning as loadParentEvent above: an unmigrated column or a
+   * bad hop leaves the inherited row empty instead of taking the event page down.
+   */
+  async function loadInheritedGroups(parentId: string) {
+    const collected = new Map<string, GroupRef>()
+    const seen = new Set<string>([eventId])
+    let currentId: string | null = parentId
+    for (let hop = 0; hop < MAX_INHERIT_DEPTH && currentId && !seen.has(currentId); hop++) {
+      seen.add(currentId)
+      const { data, error } = await supabase
+        .from('moments')
+        .select('parent_moment_id, moment_groups(groups(id, name, parent_group_id))')
+        .eq('id', currentId)
+        .single()
+      if (error) break
+      const row = data as unknown as { parent_moment_id: string | null; moment_groups: { groups: GroupRef | null }[] } | null
+      for (const mg of row?.moment_groups ?? []) {
+        if (mg.groups) collected.set(mg.groups.id, mg.groups)
+      }
+      currentId = row?.parent_moment_id ?? null
+    }
+    setInheritedGroups([...collected.values()])
   }
 
   // Item 87 (2026-08-10): the crowd at a multi-day event is largely the same crowd every day, so a
@@ -1425,6 +1464,7 @@ export default function EventDetail({
       onSelectGroup={onSelectGroup}
       onSelectEvent={onSelectEvent}
       parentEvent={parentEvent}
+      inheritedGroups={inheritedGroups}
       siblingEvents={siblingEvents}
       childEvents={childEvents}
       addingSubEvent={addingSubEvent}
@@ -1555,6 +1595,7 @@ export function EventDetailView({
   onSelectGroup,
   onSelectEvent,
   parentEvent = null,
+  inheritedGroups = [],
   siblingEvents = [],
   childEvents = [],
   addingSubEvent = false,
@@ -1680,6 +1721,8 @@ export function EventDetailView({
   onSelectGroup: (group: { id: string; name: string }) => void
   onSelectEvent: (event: { id: string; summary: string }) => void
   parentEvent?: OtherEvent | null
+  /** Groups coming from an ancestor event rather than from a moment_groups row of this event's own. */
+  inheritedGroups?: GroupRef[]
   siblingEvents?: SiblingEventRef[]
   childEvents?: ChildEventRef[]
   subEventIds?: string[]
@@ -1922,6 +1965,11 @@ export function EventDetailView({
   const groups = (moment.moment_groups ?? [])
     .map((mg) => mg.groups)
     .filter((g): g is GroupRef => g !== null)
+
+  // A group tagged on the trip AND on this day by hand is one group, shown once, as the removable
+  // one — the row on this event is the thing the founder can actually act on here.
+  const ownGroupIds = new Set(groups.map((g) => g.id))
+  const inherited = inheritedGroups.filter((g) => !ownGroupIds.has(g.id))
 
   const tags = (moment.moment_tags ?? [])
     .map((mt) => mt.tags)
@@ -2375,7 +2423,28 @@ export function EventDetailView({
           </div>
         </>
       ) : (
-        <p style={styles.empty}>{readOnly ? 'No groups at this time.' : ADD_HINT.group}</p>
+        inherited.length === 0 && <p style={styles.empty}>{readOnly ? 'No groups at this time.' : ADD_HINT.group}</p>
+      )}
+
+      {inherited.length > 0 && (
+        <>
+          <p style={styles.chatHint}>
+            {parentEvent
+              ? `Also part of these through ${momentTitle(parentEvent)} — change them there.`
+              : 'Also part of these through the event this one sits in — change them there.'}
+          </p>
+          <div style={styles.chipRow}>
+            {inherited.map((g) => (
+              // No onRemove on purpose: there is no moment_groups row on this event to remove.
+              <AssociatedGroupChip
+                key={g.id}
+                group={g}
+                displayName={groupDisplayName(g, groupNameById, groupParentById)}
+                onSelect={() => onSelectGroup(g)}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       <h2 style={styles.subheading}>Tags</h2>
