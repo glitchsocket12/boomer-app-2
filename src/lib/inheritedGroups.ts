@@ -12,6 +12,11 @@
 // on its own needs no cleanup, and every trip already tagged inherits the moment this ships with
 // no backfill. Writing a row per day would go stale the first time the founder changed their mind.
 //
+// It suppresses ONE GROUP, not the whole event (founder, 2026-09-05). The first cut silenced a day
+// entirely once its trip carried any group, which also swallowed a genuinely new pick — "Jake and
+// Caroline Volin" for a hike inside the Portugal family trip, a group the trip itself doesn't have.
+// A day still gets asked about groups it doesn't already inherit.
+//
 // Cycle-guarded like timelineTree.ts: the moments_parent_not_self CHECK only rejects a row being
 // its own direct parent, so a corrupted A -> B -> A chain is still representable and would hang
 // the page without the `seen` set.
@@ -30,21 +35,9 @@ export function resolveAncestorIds(momentId: string, parentById: ReadonlyMap<str
 }
 
 /**
- * Does this moment sit under a parent that carries a group? `taggedMomentIds` is the set of
- * moments with at least one moment_groups row — which is all the suggestion filter needs, since
- * "has any group at all" is already what silences group cards for a directly-tagged moment.
- */
-export function hasInheritedGroup(
-  momentId: string,
-  parentById: ReadonlyMap<string, string>,
-  taggedMomentIds: ReadonlySet<string>
-): boolean {
-  return resolveAncestorIds(momentId, parentById).some((id) => taggedMomentIds.has(id))
-}
-
-/**
  * The group ids this moment inherits from its ancestors, minus any it already carries directly —
- * a day tagged to its trip's group by hand shouldn't render the same chip twice.
+ * a day tagged to its trip's group by hand shouldn't render the same chip twice, and the
+ * suggestion filter has nothing left to suppress there either.
  */
 export function resolveInheritedGroupIds(
   momentId: string,

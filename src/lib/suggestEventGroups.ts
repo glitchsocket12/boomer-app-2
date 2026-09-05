@@ -4,7 +4,7 @@ import type { Dismissals } from './dismissedSuggestions'
 import { eventSpan, type DatedRow } from './eventSpan'
 import { formatDateRange } from './dates'
 import { matchGroupWindow, type GroupWindow } from './groupWindow'
-import { hasInheritedGroup } from './inheritedGroups'
+import { resolveInheritedGroupIds } from './inheritedGroups'
 
 // "This event has no group on it, but everyone who was there belongs to the same one." Roughly
 // half of a mature account's events end up untagged (78 of 151 on the founder's account,
@@ -222,7 +222,9 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
         .order('id')
         .range(from, to)
     ),
-    fetchAllRows((from, to) => supabase.from('moment_groups').select('moment_id').order('moment_id').order('group_id').range(from, to)),
+    // group_id comes along for the inheritance filter below — which group a sub-event already has
+    // through its parent, not merely whether it has one.
+    fetchAllRows((from, to) => supabase.from('moment_groups').select('moment_id, group_id').order('moment_id').order('group_id').range(from, to)),
     fetchAllRows((from, to) => supabase.from('groups').select('id, name').order('id').range(from, to)),
     fetchAllRows((from, to) =>
       supabase.from('groups').select('id, start_date, end_date, location').order('id').range(from, to)
@@ -262,14 +264,24 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
     else childrenByParent.set(m.parent_moment_id, [m])
   }
 
-  // A day inside a tagged trip counts as tagged and is never asked about — see inheritedGroups.ts.
-  // This reuses the "any group at all silences the cards" semantic that already applies to a
-  // directly-tagged moment, rather than suppressing only the inherited group's own card, so a day
-  // under a tagged trip behaves exactly like the trip it sits in. Costs no extra query: `tagged`
-  // and `parent_moment_id` are both already in hand.
-  const tagged = new Set((taggedRes.data as { moment_id: string }[] | null)?.map((r) => r.moment_id) ?? [])
+  // Direct moment_groups rows, kept per group rather than collapsed to "has one": the inheritance
+  // filter at the bottom needs to know WHICH group a day already has through its trip.
+  const taggedRows = (taggedRes.data as { moment_id: string; group_id: string }[] | null) ?? []
+  const directGroupIdsByMoment = new Map<string, Set<string>>()
+  for (const row of taggedRows) {
+    const ids = directGroupIdsByMoment.get(row.moment_id)
+    if (ids) ids.add(row.group_id)
+    else directGroupIdsByMoment.set(row.moment_id, new Set([row.group_id]))
+  }
+
+  // A moment with a group row of its own still drops out entirely — unchanged, and the older rule.
+  // A day inside a tagged trip does NOT: it stays eligible, and only the groups it already
+  // inherits are filtered out of its suggestions below. The founder asked for that narrower shape
+  // (2026-09-05) after the blunt version also swallowed a genuinely new pick — "Jake and Caroline
+  // Volin" for a hike inside the Portugal family trip, a group the trip itself doesn't carry.
+  const tagged = new Set(taggedRows.map((r) => r.moment_id))
   const untagged: UntaggedMoment[] = allMoments
-    .filter((m) => !tagged.has(m.id) && !hasInheritedGroup(m.id, parentById, tagged))
+    .filter((m) => !tagged.has(m.id))
     .map((m) => ({
       id: m.id,
       title: m.occasion?.trim() || 'Untitled moment',
@@ -326,6 +338,7 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
     ((groupsRes.data as { id: string; name: string }[] | null) ?? []).map((g) => [g.id, g.name])
   )
 
+  const inheritedByMoment = new Map<string, Set<string>>()
   return deriveEventGroupSuggestions(
     untagged,
     attendance,
@@ -333,7 +346,19 @@ export async function loadEventGroupSuggestions(dismissals: Dismissals): Promise
     groupNameById,
     groupWindowById,
     aiGroupIdsByMoment
-  ).filter((s) => !dismissals.has('event_group', s.momentId, s.groupId))
+  )
+    // Don't ask a day to join a group it's already in through its trip (see inheritedGroups.ts).
+    // Computed per moment only for the moments that actually produced a suggestion, and memoised,
+    // so a big library doesn't walk the parent chain hundreds of times over.
+    .filter((s) => {
+      let inherited = inheritedByMoment.get(s.momentId)
+      if (!inherited) {
+        inherited = resolveInheritedGroupIds(s.momentId, parentById, directGroupIdsByMoment)
+        inheritedByMoment.set(s.momentId, inherited)
+      }
+      return !inherited.has(s.groupId)
+    })
+    .filter((s) => !dismissals.has('event_group', s.momentId, s.groupId))
 }
 
 // Copy of EventDetail.tsx's handleTagGroup — same upsert, same conflict target, so tagging from

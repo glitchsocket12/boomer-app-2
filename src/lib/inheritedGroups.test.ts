@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasInheritedGroup, resolveAncestorIds, resolveInheritedGroupIds } from './inheritedGroups'
+import { resolveAncestorIds, resolveInheritedGroupIds } from './inheritedGroups'
 
 // day3 -> trip, and a three-deep chain modelled on the real one (welcome -> reception -> wedding).
 const parentById = new Map<string, string>([
@@ -26,24 +26,6 @@ describe('resolveAncestorIds', () => {
   })
 })
 
-describe('hasInheritedGroup', () => {
-  it('is true for a day inside a tagged trip — the card the founder kept being shown', () => {
-    expect(hasInheritedGroup('day3', parentById, new Set(['trip']))).toBe(true)
-  })
-
-  it('is false when the trip carries no group of its own', () => {
-    expect(hasInheritedGroup('day3', parentById, new Set())).toBe(false)
-  })
-
-  it('is false for a root event, however many of its children are tagged', () => {
-    expect(hasInheritedGroup('trip', parentById, new Set(['day3']))).toBe(false)
-  })
-
-  it('reaches a grandparent', () => {
-    expect(hasInheritedGroup('welcome', parentById, new Set(['wedding']))).toBe(true)
-  })
-})
-
 describe('resolveInheritedGroupIds', () => {
   const direct = new Map<string, Set<string>>([
     ['trip', new Set(['airforce'])],
@@ -51,7 +33,7 @@ describe('resolveInheritedGroupIds', () => {
     ['reception', new Set(['friends'])],
   ])
 
-  it('hands a day its trip’s groups', () => {
+  it('hands a day its trip’s groups — the card the founder kept being shown', () => {
     expect([...resolveInheritedGroupIds('day3', parentById, direct)]).toEqual(['airforce'])
   })
 
@@ -66,5 +48,22 @@ describe('resolveInheritedGroupIds', () => {
 
   it('is empty for a root event', () => {
     expect([...resolveInheritedGroupIds('trip', parentById, direct)]).toEqual([])
+  })
+
+  it('is empty when the trip carries no group of its own', () => {
+    expect([...resolveInheritedGroupIds('day3', parentById, new Map())]).toEqual([])
+  })
+
+  it('never reaches up: a tagged day does not put its trip in that group', () => {
+    const dayTagged = new Map<string, Set<string>>([['day3', new Set(['airforce'])]])
+    expect([...resolveInheritedGroupIds('trip', parentById, dayTagged)]).toEqual([])
+  })
+
+  // The Portugal case (founder, 2026-09-05): only the inherited group is filtered, so a pick for
+  // a DIFFERENT group on the same day survives.
+  it('leaves a group the trip does not carry alone', () => {
+    const inherited = resolveInheritedGroupIds('day3', parentById, direct)
+    expect(inherited.has('airforce')).toBe(true)
+    expect(inherited.has('jake-and-caroline')).toBe(false)
   })
 })
