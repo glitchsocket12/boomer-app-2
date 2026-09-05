@@ -7,6 +7,7 @@ import { formatDateRange, formatEventWhen, nextOccurrenceDate } from '../lib/dat
 import { eventSpan } from '../lib/eventSpan'
 import { fetchMomentParentIds } from '../lib/moments'
 import { resolveRootIds } from '../lib/timelineTree'
+import { centerInScroller } from '../lib/centerInScroller'
 import CountdownsSection from '../components/CountdownsSection'
 import { border, colors, fontFamily, fontSize, maxWidth, radius, shadow, space } from '../lib/theme'
 
@@ -417,9 +418,11 @@ export default function Calendar({
   }
 
   // Scrolls the Timeline card back to the Today divider — used on the "Today" button, and once on
-  // load so a long history doesn't leave you scrolled to the very top by default.
+  // load so a long history doesn't leave you scrolled to the very top by default. Moves the list's
+  // own scrollTop rather than calling scrollIntoView, which would drag the page along with it and
+  // relies on a smooth-scroll animation the browser doesn't always run — see centerInScroller.
   function scrollToToday(smooth = true) {
-    todayMarkerRef.current?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' })
+    centerInScroller(timelineScrollRef.current, todayMarkerRef.current, smooth)
   }
 
   useEffect(() => {

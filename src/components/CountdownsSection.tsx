@@ -20,6 +20,7 @@ import {
   type RepeatRule,
   type UnitKey,
 } from '../lib/countdowns'
+import { centerInScroller } from '../lib/centerInScroller'
 import { createEventShell } from '../lib/moments'
 import { formatFullDate } from '../lib/dates'
 import { qualifiedName } from '../lib/qualifiedName'
@@ -149,14 +150,11 @@ export default function CountdownsSection({
   /**
    * Scroll the Today line to the middle of its own box by setting scrollTop directly.
    * `scrollIntoView` would drag the PAGE to the section as well, which is the jumping-around the
-   * founder asked to be rid of.
+   * founder asked to be rid of. Shared with the Calendar timeline's Today button — see
+   * centerInScroller for why the browser's own smooth scrolling isn't trusted to run.
    */
   function scrollToToday(smooth = true) {
-    const list = listRef.current
-    const marker = todayRef.current
-    if (!list || !marker) return
-    const top = marker.offsetTop - list.clientHeight / 2 + marker.offsetHeight / 2
-    list.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' })
+    centerInScroller(listRef.current, todayRef.current, smooth)
   }
 
   // Open the section already sitting on today, so the first thing in view is the most recent past
@@ -696,8 +694,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     flexDirection: 'column',
     gap: space.md,
     marginTop: '0.85rem',
-    // `relative` so a card's offsetTop is measured against this box — that's what the Today button
-    // scrolls to without touching the page's own scroll position.
     position: 'relative',
     maxHeight: '26rem',
     overflowY: 'auto',
