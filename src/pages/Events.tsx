@@ -473,7 +473,9 @@ export function EventsView({
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+    // The bar only renders once there are events, so this has to re-run when they arrive — on a
+    // first load the ref is still null and there would otherwise be nothing to observe.
+  }, [moments.length > 0])
 
   // How far down the document the map starts — header height is NOT enough on its own, because the
   // nav bar and the page's own top padding sit above it. Kept as a document offset (rect + scrollY)
@@ -492,7 +494,10 @@ export function EventsView({
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [viewMode, headerHeight])
+    // `filters` is in here because the filter chips sit ABOVE the map and outside the sticky bar:
+    // clearing a filter while the map is open shortens the page above it, and without re-measuring
+    // the map would keep its old height and leave a gap at the bottom.
+  }, [viewMode, headerHeight, filters])
   const filterOptions = useFilterOptions(moments, groupParentById)
 
   // Sub-events are visually bundled under their parent (see the card rendering below) rather
@@ -611,11 +616,6 @@ export function EventsView({
 
   return (
     <div style={styles.page}>
-      {/* Everything down to the filter chips travels with the scroll (founder ask, 2026-09-05):
-          on a list this long, scrolling back to the top to reach search, Filters or the view
-          toggle was most of the navigating. The negative margins bleed the background out over
-          the page's own horizontal padding, so cards pass UNDER this bar rather than beside it. */}
-      <div ref={headerRef} style={styles.stickyHeader}>
       <div style={styles.headingRow}>
         <h1 style={styles.heading}>Events</h1>
         {!readOnly && (
@@ -654,8 +654,14 @@ export function EventsView({
         </p>
       )}
 
+      {/* Only the search row travels with the scroll (founder ask, 2026-09-05, narrowed from "everything
+          above the list" once they saw it): this and the year headings are the two things you actually
+          navigate by, and pinning the title and the Manage links alongside them cost half a phone
+          screen for controls you use once a session. The negative margins bleed the opaque background
+          out over the page's own horizontal padding, so cards pass UNDER this bar, not beside it. */}
       {moments.length > 0 && (
-        <div style={styles.searchRow}>
+        <div ref={headerRef} style={styles.stickyHeader}>
+        <div style={{ ...styles.searchRow, marginBottom: 0 }}>
           <SearchBox value={filters.search} onChange={(value) => patchFilters({ search: value })} placeholder="Search events…" />
           <button type="button" onClick={() => setFilterPanelOpen(true)} style={styles.filtersButton}>
             Filters{activeCount > 0 ? ` · ${activeCount}` : ''}
@@ -679,6 +685,7 @@ export function EventsView({
             </div>
           )}
         </div>
+        </div>
       )}
 
       {activeFilterChips.length > 0 && (
@@ -690,7 +697,6 @@ export function EventsView({
           ))}
         </div>
       )}
-      </div>
 
       <FilterPanel
         open={filterPanelOpen}
@@ -980,7 +986,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     zIndex: 2,
     backgroundColor: colors.appBg,
     margin: '0 -1.5rem',
-    padding: '0.75rem 1.5rem 0',
+    // Symmetric padding, and the search row inside carries no bottom margin of its own — otherwise
+    // the opaque background trailed nearly 2rem below the controls and read as a grey slab.
+    padding: '0.75rem 1.5rem',
   },
   // Segmented control: one border around the pair, so it reads as two states of one thing rather
   // than two separate buttons. Height matches the Filters button beside it.
